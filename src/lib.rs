@@ -84,6 +84,7 @@ pub mod reviewer;
 pub mod roadmap_guard;
 pub mod rust_skills_guard;
 pub mod schema_evolution;
+pub mod self_governance;
 pub mod semantic_abi_ratchet;
 pub mod shadow_traffic_harness;
 pub mod shuffle_shard_simulator;

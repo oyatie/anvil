@@ -7,6 +7,14 @@ use tracing::{info, warn};
 use crate::ai_driver::{ModelExecutionConfig, SubscriptionExecutor};
 use crate::git_manager::PrDiffContext;
 
+#[path = "reviewer/lens_feedback_engine.rs"]
+pub mod lens_feedback_engine;
+
+pub use lens_feedback_engine::{
+    CanonicalLens, LensEvaluationFinding, LensFeedbackEngine, LensFeedbackReport,
+    LensFindingSeverity,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineReviewComment {
     pub path: String,

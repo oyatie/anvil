@@ -84,6 +84,17 @@ pub async fn execute_pr_review(
         )
         .await?;
 
+    // 1.5. Reconcile 16-Lens Matrix findings against living architecture decisions (ADRs)
+    let lens_report = crate::reviewer::LensFeedbackEngine::reconcile_lens_findings(
+        &repo_dir,
+        &review_resp.summary,
+        pr_number,
+    )?;
+    info!(
+        "📊 [16-Lens Pipeline Accounting] PR {}#{}: {}",
+        repo, pr_number, lens_report.summary
+    );
+
     // 2. DocGuard: Documentation & Doctrine Parity
     let doc_report = state
         .doc_guard

@@ -31,6 +31,10 @@ pub async fn run_server(state: AppState) -> Result<()> {
 
     let _ = state.github_client.ensure_webhook_extension().await;
 
+    // Spawn Autonomous Self-Governor (Process Registry, Quota Enforcer & Resource Reaper)
+    let self_governor = crate::self_governance::SelfGovernor::new();
+    self_governor.spawn_monitoring_daemon();
+
     // Spawn Outage Recovery & Full PR/Issue Reconciliation Sweep on startup
     let recovery_client = state.github_client.clone();
     let recovery_state_mgr = state.state_mgr.clone();

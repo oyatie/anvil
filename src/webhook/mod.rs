@@ -167,8 +167,13 @@ pub struct ApiResponse {
     pub message: String,
 }
 
+pub async fn healthz_handler() -> &'static str {
+    "ok"
+}
+
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        .route("/healthz", axum::routing::get(healthz_handler))
         .route("/webhook", post(webhook_handler))
         .route("/api/review", post(manual_review_handler))
         .route("/api/fix", post(manual_fix_handler))
@@ -178,4 +183,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/heal-queue", post(manual_heal_queue_handler))
         .route("/api/reconcile", post(manual_reconcile_handler))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_healthz_handler() {
+        let resp = healthz_handler().await;
+        assert_eq!(resp, "ok");
+    }
 }

@@ -4,6 +4,12 @@ info:
   version: 1.0.0
   description: HTTP webhook and manual on-demand triggers for Anvil 60-Gate Delivery Engine.
 paths:
+  /healthz:
+    get:
+      summary: Liveness probe endpoint
+      responses:
+        '200':
+          description: Service is healthy
   /webhook:
     post:
       summary: Ingest GitHub Webhook Event

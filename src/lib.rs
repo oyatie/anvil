@@ -76,6 +76,7 @@ pub mod preview_env_reaper;
 pub mod progressive_rollout;
 pub mod psa_admission_guard;
 pub mod queue_healer;
+pub mod recovery;
 pub mod remote_cache_optimizer;
 pub mod replay_harness;
 pub mod review_memory;

@@ -31,6 +31,18 @@ pub async fn run_server(state: AppState) -> Result<()> {
 
     let _ = state.github_client.ensure_webhook_extension().await;
 
+    // Spawn Outage Recovery & Full PR/Issue Reconciliation Sweep on startup
+    let recovery_client = state.github_client.clone();
+    let recovery_state_mgr = state.state_mgr.clone();
+    let recovery_repos = state.config.watched_repos.clone();
+    tokio::spawn(async move {
+        let reconciler =
+            crate::recovery::OutageRecoveryReconciler::new(recovery_client, recovery_state_mgr);
+        if let Err(e) = reconciler.run_full_sweep(&recovery_repos).await {
+            tracing::warn!("Outage recovery reconciliation sweep noticed: {}", e);
+        }
+    });
+
     // Spawn background upstream sync for rust-skills repository
     let rsg_clone = state.rust_skills_guard.clone();
     tokio::spawn(async move {

@@ -96,6 +96,7 @@ pub mod unresolved_review_guard;
 pub mod upgrade_train;
 pub mod vex_scanner;
 pub mod wasm_sandbox;
+pub mod watchdog;
 pub mod webhook;
 pub mod zero_day_patcher;
 pub mod zero_trust_workload;

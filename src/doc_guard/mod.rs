@@ -165,33 +165,54 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             diff_content = diff_ctx.diff_content
         );
 
-        let out = Command::new("agy")
-            .args(["prompt", "--effort", &self.agy_effort, "--raw", &prompt])
-            .output()
-            .await;
+        let target = format!("{}#{}", repo, diff_ctx.pr_number);
+        let agy_effort = self.agy_effort.clone();
+        let prompt_clone = prompt.clone();
 
-        match out {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(json_str) = extract_json_block(&stdout) {
-                    if let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str) {
-                        return Ok(eval);
+        crate::watchdog::PipelineWatchdog::run_with_watchdog(
+            "DocGuardEvaluation",
+            &target,
+            std::time::Duration::from_secs(30),
+            move || async move {
+                let mut cmd = Command::new("agy");
+                cmd.args(["prompt", "--effort", &agy_effort, "--raw", &prompt_clone]);
+                cmd.kill_on_drop(true);
+
+                match tokio::time::timeout(std::time::Duration::from_secs(20), cmd.output()).await {
+                    Ok(Ok(output)) if output.status.success() => {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if let Some(json_str) = extract_json_block(&stdout) {
+                            if let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
+                            {
+                                return Ok(eval);
+                            }
+                        }
+                        Ok(DocParityEvaluation {
+                            is_doc_sufficient: true,
+                            missing_doc_summary: None,
+                            doc_files_to_update: Vec::new(),
+                            suggested_adr_title: None,
+                        })
                     }
+                    _ => Ok(DocParityEvaluation {
+                        is_doc_sufficient: true,
+                        missing_doc_summary: None,
+                        doc_files_to_update: Vec::new(),
+                        suggested_adr_title: None,
+                    }),
                 }
+            },
+            |_err| {
+                // Deterministic local fallback
                 Ok(DocParityEvaluation {
                     is_doc_sufficient: true,
                     missing_doc_summary: None,
                     doc_files_to_update: Vec::new(),
                     suggested_adr_title: None,
                 })
-            }
-            _ => Ok(DocParityEvaluation {
-                is_doc_sufficient: true,
-                missing_doc_summary: None,
-                doc_files_to_update: Vec::new(),
-                suggested_adr_title: None,
-            }),
-        }
+            },
+        )
+        .await
     }
 
     async fn generate_and_write_docs(

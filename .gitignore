@@ -1,0 +1,7 @@
+/target
+/repos
+/data/*.json
+/data/rust-skills
+.DS_Store
+*.log
+.env

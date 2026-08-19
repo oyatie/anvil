@@ -1,0 +1,76 @@
+openapi: 3.0.3
+info:
+  title: Anvil Autonomous Delivery Fabric API
+  version: 1.0.0
+  description: HTTP webhook and manual on-demand triggers for Anvil 60-Gate Delivery Engine.
+paths:
+  /webhook:
+    post:
+      summary: Ingest GitHub Webhook Event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Event processed or dropped cleanly
+        '202':
+          description: Event queued for asynchronous pipeline execution
+  /api/review:
+    post:
+      summary: Trigger manual PR review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo, pr_number]
+              properties:
+                repo:
+                  type: string
+                pr_number:
+                  type: integer
+                force:
+                  type: boolean
+      responses:
+        '202':
+          description: Manual review queued
+  /api/fix:
+    post:
+      summary: Trigger manual PR comment resolution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo, pr_number]
+              properties:
+                repo:
+                  type: string
+                pr_number:
+                  type: integer
+      responses:
+        '202':
+          description: Fix pipeline queued
+  /api/certify:
+    post:
+      summary: Trigger 60-Gate Pre-Merge Certification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo, pr_number]
+              properties:
+                repo:
+                  type: string
+                pr_number:
+                  type: integer
+      responses:
+        '202':
+          description: Certification queued

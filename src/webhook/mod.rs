@@ -181,6 +181,7 @@ pub struct AppState {
     pub github_client: Arc<GitHubClient>,
     pub state_mgr: Arc<StateManager>,
     pub metrics: Arc<crate::metrics::PrometheusRegistry>,
+    pub self_governor: Arc<crate::self_governance::SelfGovernor>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -211,6 +212,18 @@ pub async fn metrics_handler(
 /// Constructs the Axum HTTP router with webhook ingress, healthz probes, and on-demand API endpoints.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        .route(
+            "/",
+            axum::routing::get(crate::dashboard::dashboard_html_handler),
+        )
+        .route(
+            "/dashboard",
+            axum::routing::get(crate::dashboard::dashboard_html_handler),
+        )
+        .route(
+            "/api/dashboard/state",
+            axum::routing::get(crate::dashboard::dashboard_state_api_handler),
+        )
         .route("/healthz", axum::routing::get(healthz_handler))
         .route("/metrics", axum::routing::get(metrics_handler))
         .route("/webhook", post(webhook_handler))

@@ -210,8 +210,8 @@ impl MergeEnlister {
                         repo, pr_number
                     );
                 } else {
-                    warn!(
-                        "Warning submitting formal review on {}#{}: {}. Attempting direct merge queue enlistment...",
+                    bail!(
+                        "🚨 Merge queue enlistment blocked: Failed to submit mandatory approving review on PR {}#{}: {}. Invariant 2 requires strict review authorization.",
                         repo, pr_number, e
                     );
                 }

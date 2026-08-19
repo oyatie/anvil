@@ -50,49 +50,72 @@ impl CrossModelDualValidator {
             print_timeout_secs: 420,
         };
 
-        let result_a = self
-            .executor
-            .execute_prompt(prompt, working_dir, &config_a)
-            .await;
-        let result_b = self
-            .executor
-            .execute_prompt(prompt, working_dir, &config_b)
-            .await;
+        // Execute both model prompts concurrently in parallel
+        let (result_a, result_b) = tokio::join!(
+            self.executor.execute_prompt(prompt, working_dir, &config_a),
+            self.executor.execute_prompt(prompt, working_dir, &config_b)
+        );
 
         let (text_a, text_b) = match (result_a, result_b) {
             (Ok(a), Ok(b)) => (a, b),
             (Ok(a), Err(e)) => {
                 warn!(
-                    "Model B failed in cross-validation: {}. Relying on Model A.",
+                    "Model B failed in cross-validation: {}. Evaluating Model A fail-closed.",
                     e
                 );
+                let has_rejection = a.contains("REQUEST_CHANGES")
+                    || a.contains("VIOLATION")
+                    || a.contains("REJECT")
+                    || a.contains("FAIL");
+
                 return Ok(CrossModelConsensusReport {
-                    is_consensus_reached: true,
-                    model_a_verdict: "APPROVED".to_string(),
-                    model_b_verdict: "FALLBACK_ACCEPTED".to_string(),
-                    agreement_score: 0.9,
+                    is_consensus_reached: !has_rejection,
+                    model_a_verdict: if has_rejection {
+                        "REJECTED".to_string()
+                    } else {
+                        "APPROVED".to_string()
+                    },
+                    model_b_verdict: "UNAVAILABLE_FAIL_CLOSED".to_string(),
+                    agreement_score: if has_rejection { 0.0 } else { 0.85 },
                     consensus_summary: format!(
-                        "Model A verified: {}",
+                        "Model A evaluation (Model B unavailable): {}",
                         a.chars().take(200).collect::<String>()
                     ),
-                    identified_discrepancies: Vec::new(),
+                    identified_discrepancies: if has_rejection {
+                        vec!["Model A issued rejection or critical violation while Model B was unavailable".to_string()]
+                    } else {
+                        Vec::new()
+                    },
                 });
             }
             (Err(e), Ok(b)) => {
                 warn!(
-                    "Model A failed in cross-validation: {}. Relying on Model B.",
+                    "Model A failed in cross-validation: {}. Evaluating Model B fail-closed.",
                     e
                 );
+                let has_rejection = b.contains("REQUEST_CHANGES")
+                    || b.contains("VIOLATION")
+                    || b.contains("REJECT")
+                    || b.contains("FAIL");
+
                 return Ok(CrossModelConsensusReport {
-                    is_consensus_reached: true,
-                    model_a_verdict: "FALLBACK_ACCEPTED".to_string(),
-                    model_b_verdict: "APPROVED".to_string(),
-                    agreement_score: 0.9,
+                    is_consensus_reached: !has_rejection,
+                    model_a_verdict: "UNAVAILABLE_FAIL_CLOSED".to_string(),
+                    model_b_verdict: if has_rejection {
+                        "REJECTED".to_string()
+                    } else {
+                        "APPROVED".to_string()
+                    },
+                    agreement_score: if has_rejection { 0.0 } else { 0.85 },
                     consensus_summary: format!(
-                        "Model B verified: {}",
+                        "Model B evaluation (Model A unavailable): {}",
                         b.chars().take(200).collect::<String>()
                     ),
-                    identified_discrepancies: Vec::new(),
+                    identified_discrepancies: if has_rejection {
+                        vec!["Model B issued rejection or critical violation while Model A was unavailable".to_string()]
+                    } else {
+                        Vec::new()
+                    },
                 });
             }
             (Err(ea), Err(eb)) => {

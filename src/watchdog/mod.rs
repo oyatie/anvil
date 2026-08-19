@@ -72,7 +72,8 @@ pub struct ProgressSignal {
 
 #[derive(Clone)]
 pub struct ActivityHandle {
-    last_activity_epoch_ms: Arc<AtomicU64>,
+    base_anchor: Instant,
+    last_activity_elapsed_ms: Arc<AtomicU64>,
     progress_tx: mpsc::UnboundedSender<ProgressSignal>,
 }
 
@@ -80,7 +81,8 @@ impl ActivityHandle {
     pub fn new() -> (Self, mpsc::UnboundedReceiver<ProgressSignal>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let handle = Self {
-            last_activity_epoch_ms: Arc::new(AtomicU64::new(current_epoch_ms())),
+            base_anchor: Instant::now(),
+            last_activity_elapsed_ms: Arc::new(AtomicU64::new(0)),
             progress_tx: tx,
         };
         (handle, rx)
@@ -88,8 +90,9 @@ impl ActivityHandle {
 
     /// Emits a vital sign / progress heartbeat resetting the inactivity timer
     pub fn report_progress(&self, step: &str, bytes_or_tokens: usize) {
-        self.last_activity_epoch_ms
-            .store(current_epoch_ms(), Ordering::Relaxed);
+        let elapsed = self.base_anchor.elapsed().as_millis() as u64;
+        self.last_activity_elapsed_ms
+            .store(elapsed, Ordering::Relaxed);
         let _ = self.progress_tx.send(ProgressSignal {
             step_description: step.to_string(),
             bytes_or_tokens_processed: bytes_or_tokens,
@@ -97,21 +100,14 @@ impl ActivityHandle {
     }
 
     pub fn last_activity_elapsed(&self) -> Duration {
-        let last = self.last_activity_epoch_ms.load(Ordering::Relaxed);
-        let now = current_epoch_ms();
-        if now > last {
-            Duration::from_millis(now - last)
+        let last_elapsed_ms = self.last_activity_elapsed_ms.load(Ordering::Relaxed);
+        let current_elapsed_ms = self.base_anchor.elapsed().as_millis() as u64;
+        if current_elapsed_ms >= last_elapsed_ms {
+            Duration::from_millis(current_elapsed_ms - last_elapsed_ms)
         } else {
             Duration::ZERO
         }
     }
-}
-
-fn current_epoch_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .as_millis() as u64
 }
 
 pub struct PipelineWatchdog;

@@ -99,6 +99,7 @@ impl CiTriager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn analyze_failure_logs(
         &self,
         repo: &str,
@@ -190,7 +191,7 @@ Output strictly valid JSON matching this schema:
             branch, run_id, diag.failure_category
         );
         let body = format!(
-            "{}\n\n---\n*🤖 Automated Trunk Health Triage by **Oyatie Autonomous Engineering Pipeline***\n*Run URL: https://github.com/{}/actions/runs/{}*",
+            "{}\n\n*Run URL: https://github.com/{}/actions/runs/{}*\n\n---\n*🤖 Triaged by Oyatie Anvil*",
             diag.formatted_markdown, repo, run_id
         );
 

@@ -10,6 +10,12 @@ pub struct AstMutation {
 
 pub struct AstMutatorEngine;
 
+impl Default for AstMutatorEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AstMutatorEngine {
     pub fn new() -> Self {
         Self
@@ -50,9 +56,7 @@ impl AstMutatorEngine {
                     mutated_line: trimmed.replace(" <= ", " < "),
                     mutation_type: "BoundaryShrink (<= -> <)".to_string(),
                 });
-            } else if trimmed.contains(" < ")
-                && !trimmed.contains("<T>")
-                && !trimmed.contains(" < ")
+            } else if trimmed.contains(" < ") && !trimmed.contains("<T>") && !trimmed.contains("<<")
             {
                 mutations.push(AstMutation {
                     file_path: file_path.to_string(),

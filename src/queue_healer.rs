@@ -165,7 +165,10 @@ Apply all necessary file edits directly in the repository workspace now."#####,
                 .await;
 
             let commit_msg = format!(
-                "fix(merge-train): auto-heal merge queue divergence for PR #{}",
+                "fix(merge-train): auto-heal merge queue divergence for PR #{}\n\n\
+                X-Anvil-Action: queue-heal\n\
+                X-Anvil-Version: 0.1.0\n\n\
+                *🤖 Healed by Oyatie Anvil*",
                 pr_number
             );
             let commit_out = Command::new("git")
@@ -189,9 +192,7 @@ Apply all necessary file edits directly in the repository workspace now."#####,
                     );
 
                     // Post comment to PR
-                    let heal_note = format!(
-                        "🛠️ **Merge Queue Self-Healing Applied:**\n\n- Re-synchronized against latest trunk `main`\n- Resolved semantic merge train conflicts\n- Passed local test verification gate\n\n*Re-enlisting into GitHub Merge Queue...*"
-                    );
+                    let heal_note = "🛠️ **Merge Queue Self-Healing Applied:**\n\n- Re-synchronized against latest trunk `main`\n- Resolved semantic merge train conflicts\n- Passed local test verification gate\n\n*Re-enlisting into GitHub Merge Queue...*\n\n---\n*🤖 Healed by Oyatie Anvil*".to_string();
                     let _ = self
                         .github_client
                         .post_pr_comment(repo, pr_number, &heal_note)

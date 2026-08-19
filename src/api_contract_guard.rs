@@ -15,6 +15,12 @@ pub struct ApiContractReport {
 
 pub struct ApiContractGuard;
 
+impl Default for ApiContractGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ApiContractGuard {
     pub fn new() -> Self {
         Self

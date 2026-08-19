@@ -19,6 +19,12 @@ pub struct FinOpsUnitCostRatchet {
     scanner: AllocationScanner,
 }
 
+impl Default for FinOpsUnitCostRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FinOpsUnitCostRatchet {
     pub fn new() -> Self {
         let scanner = AllocationScanner::new();

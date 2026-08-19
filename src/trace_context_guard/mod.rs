@@ -20,6 +20,12 @@ pub struct TraceContextGuard {
     tracker: SpanTracker,
 }
 
+impl Default for TraceContextGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TraceContextGuard {
     pub fn new() -> Self {
         let tracker = SpanTracker::new();

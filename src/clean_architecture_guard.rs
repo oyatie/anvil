@@ -23,6 +23,12 @@ pub struct CleanArchitectureReport {
 
 pub struct CleanArchitectureGuard;
 
+impl Default for CleanArchitectureGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CleanArchitectureGuard {
     pub fn new() -> Self {
         Self
@@ -61,8 +67,8 @@ impl CleanArchitectureGuard {
         )];
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 continue;
             }
 

@@ -24,6 +24,12 @@ pub struct AttestationReport {
 
 pub struct AttestationGuard;
 
+impl Default for AttestationGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AttestationGuard {
     pub fn new() -> Self {
         Self

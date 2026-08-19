@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod phase_validator;
-pub use phase_validator::{MigrationPhase, MigrationPhaseFinding, MigrationPhaseValidator};
+pub use phase_validator::{MigrationPhaseFinding, MigrationPhaseValidator};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationLifecycleReport {
@@ -17,6 +17,12 @@ pub struct MigrationLifecycleReport {
 
 pub struct MigrationLifecycleOrchestrator {
     validator: MigrationPhaseValidator,
+}
+
+impl Default for MigrationLifecycleOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MigrationLifecycleOrchestrator {

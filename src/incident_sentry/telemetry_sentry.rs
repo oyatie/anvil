@@ -17,6 +17,12 @@ pub struct IncidentSentryDecision {
 
 pub struct TelemetrySentry;
 
+impl Default for TelemetrySentry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TelemetrySentry {
     pub fn new() -> Self {
         Self

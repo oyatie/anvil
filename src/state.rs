@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tokio::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct PrState {
@@ -18,6 +19,7 @@ pub struct PrState {
 pub struct StateManager {
     file_path: PathBuf,
     states: RwLock<HashMap<String, PrState>>,
+    locks: RwLock<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl StateManager {
@@ -39,7 +41,24 @@ impl StateManager {
         Ok(Self {
             file_path,
             states: RwLock::new(states),
+            locks: RwLock::new(HashMap::new()),
         })
+    }
+
+    /// Obtains an exclusive per-PR lock to prevent concurrent TOCTOU races
+    pub async fn acquire_pr_lock(&self, repo: &str, pr_number: u64) -> Arc<Mutex<()>> {
+        let key = Self::key(repo, pr_number);
+        {
+            let locks_read = self.locks.read().await;
+            if let Some(lock) = locks_read.get(&key) {
+                return lock.clone();
+            }
+        }
+        let mut locks_write = self.locks.write().await;
+        locks_write
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     fn key(repo: &str, pr_number: u64) -> String {

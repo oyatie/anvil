@@ -28,6 +28,12 @@ pub struct RegressionDecision {
 
 pub struct RegressionBudgetEvaluator;
 
+impl Default for RegressionBudgetEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegressionBudgetEvaluator {
     pub fn new() -> Self {
         Self

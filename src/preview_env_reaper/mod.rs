@@ -19,6 +19,12 @@ pub struct PreviewEnvReaper {
     engine: PreviewReaperEngine,
 }
 
+impl Default for PreviewEnvReaper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PreviewEnvReaper {
     pub fn new() -> Self {
         let engine = PreviewReaperEngine::new();

@@ -16,7 +16,9 @@ pub struct UnresolvedReviewReport {
 }
 
 pub struct UnresolvedReviewGuard {
+    #[allow(dead_code)]
     github_client: Arc<GitHubClient>,
+    #[allow(dead_code)]
     scanner: ThreadScanner,
 }
 

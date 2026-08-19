@@ -162,12 +162,15 @@ Note: If compliant, output `{{"is_cedar_compliant": true, "missing_policies_summ
             Ok(eval) => Ok(eval),
             Err(e) => {
                 warn!(
-                    "Failed to parse CedarGuard JSON: {}. Assuming compliant.",
+                    "Failed to parse CedarGuard JSON response: {}. Failing closed.",
                     e
                 );
                 Ok(CedarPolicyEvaluation {
-                    is_cedar_compliant: true,
-                    missing_policies_summary: None,
+                    is_cedar_compliant: false,
+                    missing_policies_summary: Some(format!(
+                        "CedarGuard evaluation failed to produce valid JSON: {}. Failing closed for zero-trust security.",
+                        e
+                    )),
                     suggested_policy_files: Vec::new(),
                     generated_cedar_policy: None,
                 })

@@ -19,6 +19,12 @@ pub struct EphemeralSecretInjector {
     validator: OidcPolicyValidator,
 }
 
+impl Default for EphemeralSecretInjector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EphemeralSecretInjector {
     pub fn new() -> Self {
         let validator = OidcPolicyValidator::new();

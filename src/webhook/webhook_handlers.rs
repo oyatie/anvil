@@ -336,7 +336,8 @@ pub async fn webhook_handler(
     }
 
     // Case 4: Merge Group Events (merge_group)
-    if event_type == "merge_group" && (action == "checks_requested" || action == "destroyed") {
+    // Only trigger auto-healing when a merge group is destroyed due to check failure
+    if event_type == "merge_group" && action == "destroyed" {
         if let Some(mg) = payload.merge_group {
             if let Some(pr_number) = QueueHealer::extract_pr_number_from_merge_ref(&mg.head_ref) {
                 let state_clone = state.clone();

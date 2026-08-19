@@ -6,7 +6,12 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod digest_pinner;
+pub mod environment_pipeline;
+
 pub use digest_pinner::{DigestPinFinding, DigestPinner};
+pub use environment_pipeline::{
+    DeploymentEnvironment, EnvironmentPromotionGateResult, EnvironmentPromotionPolicy,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitOpsPromotionReport {
@@ -17,6 +22,12 @@ pub struct GitOpsPromotionReport {
 
 pub struct GitOpsPromotionEngine {
     pinner: DigestPinner,
+}
+
+impl Default for GitOpsPromotionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GitOpsPromotionEngine {

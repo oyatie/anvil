@@ -5,7 +5,14 @@ use tracing::{error, info, warn};
 
 use super::provider::{ModelExecutionConfig, ModelProvider};
 
+#[derive(Debug, Clone)]
 pub struct SubscriptionExecutor;
+
+impl Default for SubscriptionExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SubscriptionExecutor {
     pub fn new() -> Self {

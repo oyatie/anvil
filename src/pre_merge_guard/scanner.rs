@@ -23,13 +23,8 @@ impl PreMergeScanner {
         for (pattern, desc) in secret_patterns {
             if let Ok(re) = Regex::new(pattern) {
                 for line in diff.lines() {
-                    if line.starts_with('+') && !line.starts_with("+++") {
-                        if re.is_match(line) {
-                            return GateStatus::Failed(format!(
-                                "Potential credential leak: {}",
-                                desc
-                            ));
-                        }
+                    if line.starts_with('+') && !line.starts_with("+++") && re.is_match(line) {
+                        return GateStatus::Failed(format!("Potential credential leak: {}", desc));
                     }
                 }
             }
@@ -53,12 +48,10 @@ impl PreMergeScanner {
             for pattern in destructive_patterns {
                 if let Ok(re) = Regex::new(pattern) {
                     for line in diff.lines() {
-                        if line.starts_with('+') && !line.starts_with("+++") {
-                            if re.is_match(line) {
-                                return GateStatus::Warning(
+                        if line.starts_with('+') && !line.starts_with("+++") && re.is_match(line) {
+                            return GateStatus::Warning(
                                     "Destructive schema migration detected (DROP/NOT NULL without multi-phase rollout). Verify backwards compatibility across cell nodes.".to_string(),
                                 );
-                            }
                         }
                     }
                 }
@@ -83,13 +76,11 @@ impl PreMergeScanner {
         for (pattern, desc) in flake_patterns {
             if let Ok(re) = Regex::new(pattern) {
                 for line in diff.lines() {
-                    if line.starts_with('+') && !line.starts_with("+++") {
-                        if re.is_match(line) {
-                            return GateStatus::Warning(format!(
-                                "Concurrency/Timing Warning: {}",
-                                desc
-                            ));
-                        }
+                    if line.starts_with('+') && !line.starts_with("+++") && re.is_match(line) {
+                        return GateStatus::Warning(format!(
+                            "Concurrency/Timing Warning: {}",
+                            desc
+                        ));
                     }
                 }
             }

@@ -3,9 +3,11 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod graphql;
 pub mod reviews;
 
 use crate::reviewer::ReviewResponse;
+pub use graphql::{GitHubGraphQLClient, ReviewThreadNode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrMetadata {
@@ -50,6 +52,12 @@ struct GhPrViewOutput {
 }
 
 pub struct GitHubClient;
+
+impl Default for GitHubClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl GitHubClient {
     pub fn new() -> Self {
@@ -172,6 +180,20 @@ impl GitHubClient {
         reviews::submit_pr_review_impl(repo, pr_number, head_sha, review).await
     }
 
+    /// Resolves an open review thread via GitHub GraphQL API
+    pub async fn resolve_review_thread(&self, thread_id: &str) -> Result<()> {
+        GitHubGraphQLClient::resolve_review_thread(thread_id).await
+    }
+
+    /// Fetches all review threads for a pull request
+    pub async fn fetch_review_threads(
+        &self,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<Vec<ReviewThreadNode>> {
+        GitHubGraphQLClient::fetch_review_threads(repo, pr_number).await
+    }
+
     pub async fn post_pr_comment(&self, repo: &str, pr_number: u64, body: &str) -> Result<()> {
         let output = Command::new("gh")
             .args([
@@ -197,6 +219,64 @@ impl GitHubClient {
             repo, pr_number
         );
         Ok(())
+    }
+
+    /// Finds and updates an existing comment matching the given marker, or creates a new one
+    pub async fn upsert_pr_comment(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        marker: &str,
+        body: &str,
+    ) -> Result<()> {
+        let list_endpoint = format!("repos/{}/issues/{}/comments", repo, pr_number);
+        let output = Command::new("gh")
+            .args(["api", &list_endpoint])
+            .output()
+            .await
+            .context("Failed to fetch PR issue comments from GitHub API")?;
+
+        if output.status.success() {
+            #[derive(Deserialize)]
+            struct IssueCommentItem {
+                id: u64,
+                body: Option<String>,
+            }
+
+            if let Ok(comments) = serde_json::from_slice::<Vec<IssueCommentItem>>(&output.stdout) {
+                if let Some(existing) = comments
+                    .iter()
+                    .find(|c| c.body.as_ref().map(|b| b.contains(marker)).unwrap_or(false))
+                {
+                    info!(
+                        "Found existing Anvil comment #{} on {}#{}. Updating in-place...",
+                        existing.id, repo, pr_number
+                    );
+                    let patch_endpoint = format!("repos/{}/issues/comments/{}", repo, existing.id);
+                    let patch_out = Command::new("gh")
+                        .args([
+                            "api",
+                            "--method",
+                            "PATCH",
+                            &patch_endpoint,
+                            "-f",
+                            &format!("body={}", body),
+                        ])
+                        .output()
+                        .await;
+
+                    if let Ok(res) = patch_out {
+                        if res.status.success() {
+                            info!("Successfully updated comment #{} in-place", existing.id);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: Post new comment if no existing comment found or update failed
+        self.post_pr_comment(repo, pr_number, body).await
     }
 
     pub async fn fetch_review_comments(

@@ -8,9 +8,9 @@ use crate::git_manager::PrDiffContext;
 pub mod cadence_classifier;
 pub mod regression_budget;
 
-pub use cadence_classifier::{CadenceRoutingFinding, CiCadenceClassifier, WorkflowCadence};
+pub use cadence_classifier::{CadenceRoutingFinding, CiCadenceClassifier};
 pub use regression_budget::{
-    CiDurationSnapshot, OptimizationSuggestion, RegressionBudgetEvaluator, RegressionDecision,
+    CiDurationSnapshot, OptimizationSuggestion, RegressionBudgetEvaluator,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +27,12 @@ pub struct CiWallclockReport {
 pub struct CiWallclockEconomicsRatchet {
     evaluator: RegressionBudgetEvaluator,
     classifier: CiCadenceClassifier,
+}
+
+impl Default for CiWallclockEconomicsRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CiWallclockEconomicsRatchet {

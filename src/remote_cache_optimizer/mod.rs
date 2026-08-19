@@ -5,10 +5,12 @@ use tracing::info;
 
 use crate::git_manager::PrDiffContext;
 
+pub mod bitrot_scrubber;
 pub mod cache_hit_ratchet;
 pub mod cache_keys;
 
-pub use cache_hit_ratchet::{CacheHitDecision, CacheHitMetrics, CacheHitRateRatchet};
+pub use bitrot_scrubber::{CasBitRotScrubber, CasScrubReport};
+pub use cache_hit_ratchet::{CacheHitMetrics, CacheHitRateRatchet};
 pub use cache_keys::CacheKeyGenerator;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +24,12 @@ pub struct CacheReport {
 pub struct RemoteCacheOptimizer {
     key_gen: CacheKeyGenerator,
     hit_ratchet: CacheHitRateRatchet,
+}
+
+impl Default for RemoteCacheOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RemoteCacheOptimizer {

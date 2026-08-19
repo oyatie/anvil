@@ -1,19 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ModelProvider {
+    #[default]
     AnthropicClaudeCode,
     OpenAiCodex,
     CursorAgent,
     XAiGrok,
     Antigravity,
     SubscriptionEnsemble,
-}
-
-impl Default for ModelProvider {
-    fn default() -> Self {
-        ModelProvider::AnthropicClaudeCode
-    }
 }
 
 impl ModelProvider {

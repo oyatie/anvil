@@ -12,6 +12,12 @@ pub struct UpstreamRegulatorySync {
     snapshot: RwLock<DynamicRegistrySnapshot>,
 }
 
+impl Default for UpstreamRegulatorySync {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UpstreamRegulatorySync {
     pub fn new() -> Self {
         let baseline_rules = Self::build_dynamic_living_baseline();

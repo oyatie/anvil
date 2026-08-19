@@ -19,6 +19,12 @@ pub struct CiRunnerEconomicsOptimizer {
     allocator: RunnerSkuAllocator,
 }
 
+impl Default for CiRunnerEconomicsOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CiRunnerEconomicsOptimizer {
     pub fn new() -> Self {
         let allocator = RunnerSkuAllocator::new();

@@ -11,6 +11,12 @@ pub struct ClusterDriftFinding {
 
 pub struct ClusterDiffEvaluator;
 
+impl Default for ClusterDiffEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClusterDiffEvaluator {
     pub fn new() -> Self {
         Self

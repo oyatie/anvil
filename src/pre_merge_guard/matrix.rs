@@ -3,6 +3,7 @@ use super::GateStatus;
 pub struct MatrixRenderer;
 
 impl MatrixRenderer {
+    #[allow(clippy::too_many_arguments)]
     pub fn render_matrix(
         doc_status: &GateStatus,
         cedar_status: &GateStatus,
@@ -81,7 +82,8 @@ impl MatrixRenderer {
         };
 
         format!(
-            r###"### 🛡️ Oyatie Hyperscale Full-Lifecycle Quality & GitOps Matrix (70 Gates)
+            r###"<!-- ANVIL_SCORECARD_RECEIPT -->
+### 🛡️ Oyatie Hyperscale Full-Lifecycle Quality & GitOps Matrix (70 Gates)
 
 | Quality Gate | Status | Details |
 |---|---|---|
@@ -157,7 +159,7 @@ impl MatrixRenderer {
 ---
 **Verdict**: {}
 
-*🤖 Certified by **Anvil Hyperscale Delivery Fabric***"###,
+*🤖 Certified by Oyatie Anvil*"###,
             doc_status.badge(),
             cedar_status.badge(),
             compliance_status.badge(),

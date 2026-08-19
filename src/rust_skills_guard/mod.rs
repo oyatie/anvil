@@ -7,7 +7,7 @@ pub mod engine;
 pub mod syncer;
 
 pub use engine::{RustQualityEngine, RustQualityFinding};
-pub use syncer::{UpstreamRuleMeta, UpstreamRustSkillsSyncer};
+pub use syncer::UpstreamRustSkillsSyncer;
 
 use crate::git_manager::PrDiffContext;
 

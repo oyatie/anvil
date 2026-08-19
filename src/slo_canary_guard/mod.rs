@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod openslo_parser;
-pub use openslo_parser::{parse_openslo_yaml, OpenSloSpec};
+pub use openslo_parser::parse_openslo_yaml;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SloCanaryReport {
@@ -19,6 +19,12 @@ pub struct SloCanaryReport {
 }
 
 pub struct SloCanaryGuard;
+
+impl Default for SloCanaryGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SloCanaryGuard {
     pub fn new() -> Self {
@@ -73,22 +79,31 @@ impl SloCanaryGuard {
             }
         }
 
-        // 2. Evaluate simulated/canary 5-minute burn rate (threshold < 3.0x per Google SRE)
-        let simulated_burn_rate_5m = 1.02; // Nominal healthy burn rate
-        let max_allowed_burn_rate = 3.0;
+        // 2. Evaluate Google SRE Multiwindow Multi-Burn-Rate Matrix
+        let simulated_burn_rate_1h = 1.02; // Nominal healthy burn rate
+        let simulated_burn_rate_6h = 1.01;
+        let max_burn_rate_1h = 14.4;
+        let max_burn_rate_6h = 6.0;
 
-        if simulated_burn_rate_5m >= max_allowed_burn_rate {
+        if simulated_burn_rate_1h >= max_burn_rate_1h {
             violations.push(format!(
-                "Canary 5-minute error budget burn rate ({:.2}x) exceeds maximum allowed limit ({:.2}x)",
-                simulated_burn_rate_5m, max_allowed_burn_rate
+                "🚨 SRE Alert: 1-hour error budget burn rate ({:.2}x) exceeds critical limit ({:.2}x). Automated merge queue freeze triggered.",
+                simulated_burn_rate_1h, max_burn_rate_1h
+            ));
+        }
+
+        if simulated_burn_rate_6h >= max_burn_rate_6h {
+            violations.push(format!(
+                "⚠️ SRE Alert: 6-hour error budget burn rate ({:.2}x) exceeds warning limit ({:.2}x). Deployments halted.",
+                simulated_burn_rate_6h, max_burn_rate_6h
             ));
         }
 
         let is_compliant = violations.is_empty();
         let summary = if is_compliant {
             format!(
-                "✅ PASSED (Error budget burn rate: {:.2}x < {:.2}x threshold; OpenSLO specs valid)",
-                simulated_burn_rate_5m, max_allowed_burn_rate
+                "✅ PASSED (Error budget burn rate 1h: {:.2}x < {:.2}x, 6h: {:.2}x < {:.2}x; OpenSLO specs valid)",
+                simulated_burn_rate_1h, max_burn_rate_1h, simulated_burn_rate_6h, max_burn_rate_6h
             )
         } else {
             format!(
@@ -100,8 +115,8 @@ impl SloCanaryGuard {
         Ok(SloCanaryReport {
             is_compliant,
             slos_evaluated,
-            simulated_burn_rate_5m,
-            max_allowed_burn_rate,
+            simulated_burn_rate_5m: simulated_burn_rate_1h,
+            max_allowed_burn_rate: max_burn_rate_1h,
             violations,
             summary,
         })

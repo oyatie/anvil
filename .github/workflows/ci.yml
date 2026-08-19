@@ -2,9 +2,9 @@ name: anvil-ci
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, staging, canary, production]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, staging, canary, production]
   merge_group:
     types: [checks_requested]
 
@@ -12,17 +12,18 @@ jobs:
   fast-checks:
     name: fast-checks
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
 
       - name: Format Check
         run: cargo fmt --all -- --check
@@ -30,5 +31,6 @@ jobs:
       - name: Clippy Lint
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Run Test Suite
-        run: cargo test --lib --bins -- --nocapture
+      - name: Run Full Test Suite (Unit + Integration + Adversarial Red/Green Gates)
+        run: cargo test --all-targets --all-features -- --nocapture
+

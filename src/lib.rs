@@ -32,6 +32,7 @@ pub mod cosign_signer;
 pub mod coverage_guard;
 pub mod criterion_bench_ratchet;
 pub mod cross_service_impact;
+pub mod dashboard;
 pub mod deadlock_analyzer;
 pub mod debt_shrink_guard;
 pub mod doc_archival_sweeper;

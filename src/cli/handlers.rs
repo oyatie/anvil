@@ -671,6 +671,52 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 issue, dry_run, report.files_archived.len(), report.stubs_written.len(), report.summary
             );
         }
+        Commands::Swap { binary } => {
+            let green_binary = binary.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("target/release/anvil")
+            });
+            let current_exe = std::env::current_exe()?;
+            info!(
+                "🔄 Initiating Zero-Downtime Blue/Green Self-Replacement: {:?} -> {:?}",
+                green_binary, current_exe
+            );
+            crate::recovery::BlueGreenSupervisor::execute_atomic_binary_swap(
+                &current_exe,
+                &green_binary,
+            )
+            .await?;
+            println!(
+                "🎉 Blue/Green Self-Replacement Successful!\n  - Swapped Target: {:?}\n  - Source Green Binary: {:?}\n  - Status: Atomic Binary Replacement Complete (Zero Downtime)",
+                current_exe,
+                green_binary
+            );
+        }
+        Commands::Recover { repo } => {
+            let repos = if let Some(r) = repo {
+                vec![r]
+            } else {
+                state.config.watched_repos.clone()
+            };
+            info!(
+                "🔍 Running Full Outage Recovery & PR/Issue Reconciliation Sweep on {:?}",
+                repos
+            );
+            let reconciler = crate::recovery::OutageRecoveryReconciler::new(
+                state.github_client.clone(),
+                state.state_mgr.clone(),
+            );
+            let report = reconciler.run_full_sweep(&repos).await?;
+            println!(
+                "🛡️ Outage Recovery Sweep Complete:\n  - Repos Scanned: {:?}\n  - Total PRs Inspected: {}\n  - PRs Requiring Certification: {}\n  - Issues Reconciled: {}\n  - Status: {}",
+                report.repos_scanned,
+                report.total_prs_inspected,
+                report.prs_requiring_certification.len(),
+                report.issues_reconciled,
+                report.status
+            );
+        }
         Commands::Forward => {
             info!(
                 "Starting webhook forwarders for {:?}",

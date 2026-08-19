@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::{info, warn};
@@ -33,10 +33,25 @@ impl AgenticStage {
     }
 }
 
+/// Represents an ordered multi-tier fallback chain for a pipeline stage
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StageModelPair {
-    pub primary: ModelExecutionConfig,
-    pub fallback: ModelExecutionConfig,
+pub struct StageFallbackChain {
+    pub stage: AgenticStage,
+    pub tiers: Vec<ModelExecutionConfig>,
+}
+
+impl StageFallbackChain {
+    pub fn primary(&self) -> Option<&ModelExecutionConfig> {
+        self.tiers.first()
+    }
+
+    pub fn fallbacks(&self) -> &[ModelExecutionConfig] {
+        if self.tiers.len() > 1 {
+            &self.tiers[1..]
+        } else {
+            &[]
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -57,189 +72,299 @@ impl EnterpriseAgenticPipelineRouter {
         }
     }
 
-    /// Returns the deterministic model dispatch pair (Primary + Fallback) for a specific agentic pipeline stage
-    pub fn get_stage_config(stage: AgenticStage) -> StageModelPair {
-        match stage {
-            // Stage 0: Scout/Recon -> Primary: GPT-5.3-Codex-Spark, Fallback: Gemini 3.7 Flash Medium
-            AgenticStage::Recon => StageModelPair {
-                primary: ModelExecutionConfig {
+    /// Returns the multi-tier model fallback chain optimized against DeepSWE benchmarks & cost economics
+    pub fn get_stage_fallback_chain(stage: AgenticStage) -> StageFallbackChain {
+        let tiers = match stage {
+            // Stage 0: Scout/Recon -> Rapid AST discovery, token throughput, low cost
+            // Tier 1: GPT-5.3-Codex-Spark (medium)
+            // Tier 2: Gemini 3.7 Flash (medium) - 1M+ context window
+            // Tier 3: Claude 3.7 Sonnet / Haiku (low)
+            // Tier 4: Antigravity default
+            AgenticStage::Recon => vec![
+                ModelExecutionConfig {
                     provider: ModelProvider::OpenAiCodex,
                     specific_model: Some("gpt-5.3-codex-spark".to_string()),
                     reasoning_effort: "medium".to_string(),
                     print_timeout_secs: 180,
                 },
-                fallback: ModelExecutionConfig {
+                ModelExecutionConfig {
                     provider: ModelProvider::Antigravity,
                     specific_model: Some("gemini-3.7-flash".to_string()),
                     reasoning_effort: "medium".to_string(),
                     print_timeout_secs: 180,
                 },
-            },
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("claude-3-7-sonnet".to_string()),
+                    reasoning_effort: "low".to_string(),
+                    print_timeout_secs: 180,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::Antigravity,
+                    specific_model: Some("gemini-3.6-flash".to_string()),
+                    reasoning_effort: "low".to_string(),
+                    print_timeout_secs: 120,
+                },
+            ],
 
-            // Stage 1: Planning -> Primary: Claude -p at Fable 5 xhigh, Fallback: Codex exec at GPT-5.6-Sol xhigh
-            AgenticStage::Planning => StageModelPair {
-                primary: ModelExecutionConfig {
+            // Stage 1: Planning -> Highest DeepSWE Systemic Reasoning & Multi-File Planning
+            // Tier 1: Claude Fable 5 (xhigh effort via claude -p) - DeepSWE top tier
+            // Tier 2: GPT-5.6-Sol (xhigh effort via codex exec)
+            // Tier 3: Claude Opus 5 (high effort)
+            // Tier 4: Gemini 3.7 Flash (high effort)
+            AgenticStage::Planning => vec![
+                ModelExecutionConfig {
                     provider: ModelProvider::AnthropicClaudeCode,
                     specific_model: Some("fable-5".to_string()),
                     reasoning_effort: "xhigh".to_string(),
                     print_timeout_secs: 600,
                 },
-                fallback: ModelExecutionConfig {
+                ModelExecutionConfig {
                     provider: ModelProvider::OpenAiCodex,
                     specific_model: Some("gpt-5.6-sol".to_string()),
                     reasoning_effort: "xhigh".to_string(),
                     print_timeout_secs: 600,
                 },
-            },
-
-            // Stage 2: Plan Review / Critic -> Primary: Opus 5 High, Fallback: GPT-5.6-Sol High
-            AgenticStage::PlanReview => StageModelPair {
-                primary: ModelExecutionConfig {
+                ModelExecutionConfig {
                     provider: ModelProvider::AnthropicClaudeCode,
                     specific_model: Some("opus-5".to_string()),
                     reasoning_effort: "high".to_string(),
                     print_timeout_secs: 420,
                 },
-                fallback: ModelExecutionConfig {
+                ModelExecutionConfig {
+                    provider: ModelProvider::Antigravity,
+                    specific_model: Some("gemini-3.7-flash".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 300,
+                },
+            ],
+
+            // Stage 2: Plan Review / Adversarial Critic -> DeepSWE Verification, Over-Scoping & Race Detection
+            // Tier 1: Claude Opus 5 (high effort) - DeepSWE leader in bug/race detection
+            // Tier 2: GPT-5.6-Sol (high effort) - Formal logic & STRIDE verification
+            // Tier 3: Claude Fable 5 (high effort)
+            // Tier 4: Grok 4.6 (high effort)
+            AgenticStage::PlanReview => vec![
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("opus-5".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 420,
+                },
+                ModelExecutionConfig {
                     provider: ModelProvider::OpenAiCodex,
                     specific_model: Some("gpt-5.6-sol".to_string()),
                     reasoning_effort: "high".to_string(),
                     print_timeout_secs: 420,
                 },
-            },
-
-            // Stage 3: Architect & Spec -> Primary: Claude -p at Fable 5 xhigh, Fallback: Codex exec at GPT-5.6-Sol xhigh
-            AgenticStage::ArchitectSpec => StageModelPair {
-                primary: ModelExecutionConfig {
+                ModelExecutionConfig {
                     provider: ModelProvider::AnthropicClaudeCode,
                     specific_model: Some("fable-5".to_string()),
-                    reasoning_effort: "xhigh".to_string(),
-                    print_timeout_secs: 600,
-                },
-                fallback: ModelExecutionConfig {
-                    provider: ModelProvider::OpenAiCodex,
-                    specific_model: Some("gpt-5.6-sol".to_string()),
-                    reasoning_effort: "xhigh".to_string(),
-                    print_timeout_secs: 600,
-                },
-            },
-
-            // Stage 4: Spec Review / Threat Model Audit -> Primary: Opus 5 High, Fallback: GPT-5.6-Sol High
-            AgenticStage::SpecReview => StageModelPair {
-                primary: ModelExecutionConfig {
-                    provider: ModelProvider::AnthropicClaudeCode,
-                    specific_model: Some("opus-5".to_string()),
                     reasoning_effort: "high".to_string(),
                     print_timeout_secs: 420,
                 },
-                fallback: ModelExecutionConfig {
-                    provider: ModelProvider::OpenAiCodex,
-                    specific_model: Some("gpt-5.6-sol".to_string()),
-                    reasoning_effort: "high".to_string(),
-                    print_timeout_secs: 420,
-                },
-            },
-
-            // Stage 5: Implementation / Code Synthesis -> Primary: Grok 4.6 xhigh, Fallback: Gemini 3.6 Flash High
-            AgenticStage::Implementation => StageModelPair {
-                primary: ModelExecutionConfig {
+                ModelExecutionConfig {
                     provider: ModelProvider::XAiGrok,
                     specific_model: Some("grok-4.6".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 300,
+                },
+            ],
+
+            // Stage 3: Architect & Spec Definition -> Typed Protobuf, Cedar Policies & Rollout Schemas
+            // Tier 1: Claude Fable 5 (xhigh effort)
+            // Tier 2: GPT-5.6-Sol (xhigh effort)
+            // Tier 3: Claude Opus 5 (high effort)
+            // Tier 4: Gemini 3.7 Flash (high effort)
+            AgenticStage::ArchitectSpec => vec![
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("fable-5".to_string()),
                     reasoning_effort: "xhigh".to_string(),
                     print_timeout_secs: 600,
                 },
-                fallback: ModelExecutionConfig {
+                ModelExecutionConfig {
+                    provider: ModelProvider::OpenAiCodex,
+                    specific_model: Some("gpt-5.6-sol".to_string()),
+                    reasoning_effort: "xhigh".to_string(),
+                    print_timeout_secs: 600,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("opus-5".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 420,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::Antigravity,
+                    specific_model: Some("gemini-3.7-flash".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 300,
+                },
+            ],
+
+            // Stage 4: Spec Review & Threat Model Audit -> STRIDE Security & Fail-Closed Bounds
+            // Tier 1: Claude Opus 5 (high effort)
+            // Tier 2: GPT-5.6-Sol (high effort)
+            // Tier 3: Grok 4.6 (high effort)
+            // Tier 4: Gemini 3.6 Flash (high effort)
+            AgenticStage::SpecReview => vec![
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("opus-5".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 420,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::OpenAiCodex,
+                    specific_model: Some("gpt-5.6-sol".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 420,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::XAiGrok,
+                    specific_model: Some("grok-4.6".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 300,
+                },
+                ModelExecutionConfig {
                     provider: ModelProvider::Antigravity,
                     specific_model: Some("gemini-3.6-flash".to_string()),
                     reasoning_effort: "high".to_string(),
                     print_timeout_secs: 300,
                 },
-            },
+            ],
 
-            // Stage 6: Code Review, Audit & Consensus -> Primary: Opus 5 High, Fallback: GPT-5.6-Sol High
-            AgenticStage::CodeReviewAudit => StageModelPair {
-                primary: ModelExecutionConfig {
+            // Stage 5: Implementation & Code Synthesis -> DeepSWE First-Pass Compilation & Pass@1
+            // Tier 1: Grok 4.6 (xhigh effort) - Pure compiled Rust & type safety
+            // Tier 2: Gemini 3.6 Flash (high effort) - Rapid cost-effective synthesis
+            // Tier 3: GPT-5.6-Sol (xhigh effort)
+            // Tier 4: Claude Fable 5 (high effort)
+            AgenticStage::Implementation => vec![
+                ModelExecutionConfig {
+                    provider: ModelProvider::XAiGrok,
+                    specific_model: Some("grok-4.6".to_string()),
+                    reasoning_effort: "xhigh".to_string(),
+                    print_timeout_secs: 600,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::Antigravity,
+                    specific_model: Some("gemini-3.6-flash".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 300,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::OpenAiCodex,
+                    specific_model: Some("gpt-5.6-sol".to_string()),
+                    reasoning_effort: "xhigh".to_string(),
+                    print_timeout_secs: 600,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("fable-5".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 420,
+                },
+            ],
+
+            // Stage 6: Code Review, Audit & Consensus -> 16-Lens Review + 5-Cloud Approval
+            // Tier 1: Claude Opus 5 (high effort) - DeepSWE top reviewer
+            // Tier 2: GPT-5.6-Sol (high effort) - Multi-cloud compliance
+            // Tier 3: Claude Fable 5 (high effort)
+            // Tier 4: Gemini 3.7 Flash (high effort)
+            AgenticStage::CodeReviewAudit => vec![
+                ModelExecutionConfig {
                     provider: ModelProvider::AnthropicClaudeCode,
                     specific_model: Some("opus-5".to_string()),
                     reasoning_effort: "high".to_string(),
                     print_timeout_secs: 420,
                 },
-                fallback: ModelExecutionConfig {
+                ModelExecutionConfig {
                     provider: ModelProvider::OpenAiCodex,
                     specific_model: Some("gpt-5.6-sol".to_string()),
                     reasoning_effort: "high".to_string(),
                     print_timeout_secs: 420,
                 },
-            },
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("fable-5".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 420,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::Antigravity,
+                    specific_model: Some("gemini-3.7-flash".to_string()),
+                    reasoning_effort: "high".to_string(),
+                    print_timeout_secs: 300,
+                },
+            ],
 
-            // Stage 7: GitOps -> Deterministic engine
-            AgenticStage::GitOps => StageModelPair {
-                primary: ModelExecutionConfig::default(),
-                fallback: ModelExecutionConfig::default(),
-            },
-        }
+            // Stage 7: GitOps -> Deterministic Engine
+            AgenticStage::GitOps => vec![ModelExecutionConfig::default()],
+        };
+
+        StageFallbackChain { stage, tiers }
     }
 
-    /// Executes prompt for a specific pipeline stage with automatic graceful fallover
+    /// Dispatches prompt across the complete multi-tier fallback chain until success
     pub async fn dispatch_stage(
         &self,
         stage: AgenticStage,
         prompt: &str,
         working_dir: &Path,
     ) -> Result<String> {
-        let pair = Self::get_stage_config(stage);
-        info!(
-            "🚀 [Enterprise Pipeline] Stage: {} | Primary Dispatch: {} ({:?})",
-            stage.display_name(),
-            pair.primary.resolved_model(),
-            pair.primary.provider
-        );
+        let chain = Self::get_stage_fallback_chain(stage);
+        let total_tiers = chain.tiers.len();
 
-        match self
-            .executor
-            .execute_prompt(prompt, working_dir, &pair.primary)
-            .await
-        {
-            Ok(result) if !result.trim().is_empty() => {
-                info!(
-                    "✅ [Enterprise Pipeline] Stage: {} completed via Primary Model ({})",
-                    stage.display_name(),
-                    pair.primary.resolved_model()
-                );
-                Ok(result)
-            }
-            Err(e) => {
-                warn!(
-                    "⚠️ [Enterprise Pipeline] Primary model ({}) failed for stage {}: {}. Triggering Fallover to {} ({:?})...",
-                    pair.primary.resolved_model(),
-                    stage.display_name(),
-                    e,
-                    pair.fallback.resolved_model(),
-                    pair.fallback.provider
-                );
+        for (idx, tier) in chain.tiers.iter().enumerate() {
+            let tier_num = idx + 1;
+            info!(
+                "🚀 [Enterprise Pipeline] Stage: {} | Tier {}/{}: {} ({:?}, effort: {})",
+                stage.display_name(),
+                tier_num,
+                total_tiers,
+                tier.resolved_model(),
+                tier.provider,
+                tier.reasoning_effort
+            );
 
-                self.executor
-                    .execute_prompt(prompt, working_dir, &pair.fallback)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Both Primary ({}) and Fallback ({}) models failed for stage {}",
-                            pair.primary.resolved_model(),
-                            pair.fallback.resolved_model(),
-                            stage.display_name()
-                        )
-                    })
-            }
-            Ok(_) => {
-                warn!(
-                    "⚠️ [Enterprise Pipeline] Primary model returned empty output. Triggering Fallback to {}...",
-                    pair.fallback.resolved_model()
-                );
-                self.executor
-                    .execute_prompt(prompt, working_dir, &pair.fallback)
-                    .await
+            match self
+                .executor
+                .execute_prompt(prompt, working_dir, tier)
+                .await
+            {
+                Ok(result) if !result.trim().is_empty() => {
+                    info!(
+                        "✅ [Enterprise Pipeline] Stage: {} succeeded on Tier {} ({})",
+                        stage.display_name(),
+                        tier_num,
+                        tier.resolved_model()
+                    );
+                    return Ok(result);
+                }
+                Ok(_) => {
+                    warn!(
+                        "⚠️ [Enterprise Pipeline] Tier {} ({}) returned empty output. Progressing to next fallback tier...",
+                        tier_num,
+                        tier.resolved_model()
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ [Enterprise Pipeline] Tier {} ({}) failed: {}. Progressing to next fallback tier...",
+                        tier_num,
+                        tier.resolved_model(),
+                        e
+                    );
+                }
             }
         }
+
+        anyhow::bail!(
+            "🚨 [Enterprise Pipeline] All {} fallback tiers exhausted and failed for stage: {}",
+            total_tiers,
+            stage.display_name()
+        );
     }
 }
 
@@ -248,36 +373,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_stage_model_pairs_match_hyperscaler_topology() {
-        // Recon
-        let recon = EnterpriseAgenticPipelineRouter::get_stage_config(AgenticStage::Recon);
-        assert_eq!(recon.primary.resolved_model(), "gpt-5.3-codex-spark");
-        assert_eq!(recon.fallback.resolved_model(), "gemini-3.7-flash");
+    fn test_stage_fallback_chains_have_multiple_tiers() {
+        // Recon has 4 tiers
+        let recon = EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::Recon);
+        assert_eq!(recon.tiers.len(), 4);
+        assert_eq!(
+            recon.primary().unwrap().resolved_model(),
+            "gpt-5.3-codex-spark"
+        );
+        assert_eq!(recon.fallbacks()[0].resolved_model(), "gemini-3.7-flash");
+        assert_eq!(recon.fallbacks()[1].resolved_model(), "claude-3-7-sonnet");
 
-        // Planning
-        let plan = EnterpriseAgenticPipelineRouter::get_stage_config(AgenticStage::Planning);
-        assert_eq!(plan.primary.resolved_model(), "fable-5");
-        assert_eq!(plan.primary.reasoning_effort, "xhigh");
-        assert_eq!(plan.fallback.resolved_model(), "gpt-5.6-sol");
-        assert_eq!(plan.fallback.reasoning_effort, "xhigh");
+        // Planning has 4 tiers
+        let plan =
+            EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::Planning);
+        assert_eq!(plan.tiers.len(), 4);
+        assert_eq!(plan.primary().unwrap().resolved_model(), "fable-5");
+        assert_eq!(plan.primary().unwrap().reasoning_effort, "xhigh");
+        assert_eq!(plan.fallbacks()[0].resolved_model(), "gpt-5.6-sol");
+        assert_eq!(plan.fallbacks()[0].reasoning_effort, "xhigh");
+        assert_eq!(plan.fallbacks()[1].resolved_model(), "opus-5");
 
-        // Plan Review
-        let plan_rev = EnterpriseAgenticPipelineRouter::get_stage_config(AgenticStage::PlanReview);
-        assert_eq!(plan_rev.primary.resolved_model(), "opus-5");
-        assert_eq!(plan_rev.primary.reasoning_effort, "high");
-        assert_eq!(plan_rev.fallback.resolved_model(), "gpt-5.6-sol");
+        // Plan Review has 4 tiers
+        let plan_rev =
+            EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::PlanReview);
+        assert_eq!(plan_rev.tiers.len(), 4);
+        assert_eq!(plan_rev.primary().unwrap().resolved_model(), "opus-5");
+        assert_eq!(plan_rev.primary().unwrap().reasoning_effort, "high");
+        assert_eq!(plan_rev.fallbacks()[0].resolved_model(), "gpt-5.6-sol");
 
-        // Implementation
+        // Implementation has 4 tiers
         let impl_stage =
-            EnterpriseAgenticPipelineRouter::get_stage_config(AgenticStage::Implementation);
-        assert_eq!(impl_stage.primary.resolved_model(), "grok-4.6");
-        assert_eq!(impl_stage.primary.reasoning_effort, "xhigh");
-        assert_eq!(impl_stage.fallback.resolved_model(), "gemini-3.6-flash");
+            EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::Implementation);
+        assert_eq!(impl_stage.tiers.len(), 4);
+        assert_eq!(impl_stage.primary().unwrap().resolved_model(), "grok-4.6");
+        assert_eq!(impl_stage.primary().unwrap().reasoning_effort, "xhigh");
+        assert_eq!(
+            impl_stage.fallbacks()[0].resolved_model(),
+            "gemini-3.6-flash"
+        );
+        assert_eq!(impl_stage.fallbacks()[1].resolved_model(), "gpt-5.6-sol");
 
-        // Code Review & Audit
-        let code_rev =
-            EnterpriseAgenticPipelineRouter::get_stage_config(AgenticStage::CodeReviewAudit);
-        assert_eq!(code_rev.primary.resolved_model(), "opus-5");
-        assert_eq!(code_rev.fallback.resolved_model(), "gpt-5.6-sol");
+        // Code Review & Audit has 4 tiers
+        let code_rev = EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(
+            AgenticStage::CodeReviewAudit,
+        );
+        assert_eq!(code_rev.tiers.len(), 4);
+        assert_eq!(code_rev.primary().unwrap().resolved_model(), "opus-5");
+        assert_eq!(code_rev.fallbacks()[0].resolved_model(), "gpt-5.6-sol");
     }
 }

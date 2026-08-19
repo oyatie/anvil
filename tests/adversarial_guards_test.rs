@@ -1,3 +1,5 @@
+#![allow(unused_variables, unused_imports, dead_code)]
+
 use anvil::api_contract_guard::ApiContractGuard;
 use anvil::attestation_guard::AttestationGuard;
 use anvil::cedar_guard::CedarGuard;

@@ -1,3 +1,5 @@
+#![allow(unused_variables, unused_imports, dead_code)]
+
 use anvil::adr_drift_ratchet::AdrDriftRatchet;
 use anvil::auto_rollback::AutoRollbackPostmortemEngine;
 use anvil::automated_canary::{AutomatedCanaryAnalysis, MetricDistribution};

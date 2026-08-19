@@ -512,10 +512,15 @@ pub async fn execute_pr_review(
         true,
     )?;
 
-    // Post Certification Matrix
+    // Post or Update Certification Matrix in-place (Zero Clutter)
     state
         .github_client
-        .post_pr_comment(repo, pr_number, &cert_report.summary_markdown)
+        .upsert_pr_comment(
+            repo,
+            pr_number,
+            "<!-- ANVIL_SCORECARD_RECEIPT -->",
+            &cert_report.summary_markdown,
+        )
         .await?;
 
     info!(

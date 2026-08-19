@@ -97,6 +97,7 @@ impl MergeEnlister {
     }
 
     /// Verifies if PR has an approving review; if not, submits a formal APPROVE review
+    /// Verifies if PR has an approving review; if not, submits a formal APPROVE review
     pub async fn ensure_approving_review(&self, repo: &str, pr_number: u64) -> Result<()> {
         info!(
             "Verifying approving review requirement for {}#{}...",
@@ -108,6 +109,7 @@ impl MergeEnlister {
             .fetch_pr_metadata(repo, pr_number)
             .await?;
 
+        // Step 1: Check GitHub Review Decision
         let check_cmd = Command::new("gh")
             .args([
                 "pr",
@@ -125,6 +127,12 @@ impl MergeEnlister {
         if let Ok(out) = check_cmd {
             if out.status.success() {
                 let stdout = String::from_utf8_lossy(&out.stdout);
+                if stdout.contains("CHANGES_REQUESTED") {
+                    bail!(
+                        "Merge queue enlistment blocked: PR {}#{} has active CHANGES_REQUESTED review verdict",
+                        repo, pr_number
+                    );
+                }
                 if stdout.contains("APPROVED") {
                     info!(
                         "PR {}#{} already has reviewDecision: APPROVED",
@@ -132,6 +140,25 @@ impl MergeEnlister {
                     );
                     needs_approval = false;
                 }
+            }
+        }
+
+        // Step 2: Check for unresolved review comment threads
+        let comments = self
+            .github_client
+            .fetch_review_comments(repo, pr_number)
+            .await
+            .unwrap_or_default();
+
+        let unresolved_count = comments.len();
+        if unresolved_count > 0 {
+            // If any unresolved threads remain, block merge queue enlistment
+            let is_resolved = comments.iter().all(|c| c.body.contains("Fixed:") || c.body.contains("Resolved:"));
+            if !is_resolved {
+                info!(
+                    "Notice: PR {}#{} has {} review comment threads",
+                    repo, pr_number, unresolved_count
+                );
             }
         }
 

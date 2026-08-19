@@ -199,6 +199,64 @@ impl GitHubClient {
         Ok(())
     }
 
+    /// Finds and updates an existing comment matching the given marker, or creates a new one
+    pub async fn upsert_pr_comment(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        marker: &str,
+        body: &str,
+    ) -> Result<()> {
+        let list_endpoint = format!("repos/{}/issues/{}/comments", repo, pr_number);
+        let output = Command::new("gh")
+            .args(["api", &list_endpoint])
+            .output()
+            .await
+            .context("Failed to fetch PR issue comments from GitHub API")?;
+
+        if output.status.success() {
+            #[derive(Deserialize)]
+            struct IssueCommentItem {
+                id: u64,
+                body: Option<String>,
+            }
+
+            if let Ok(comments) = serde_json::from_slice::<Vec<IssueCommentItem>>(&output.stdout) {
+                if let Some(existing) = comments
+                    .iter()
+                    .find(|c| c.body.as_ref().map(|b| b.contains(marker)).unwrap_or(false))
+                {
+                    info!(
+                        "Found existing Anvil comment #{} on {}#{}. Updating in-place...",
+                        existing.id, repo, pr_number
+                    );
+                    let patch_endpoint = format!("repos/{}/issues/comments/{}", repo, existing.id);
+                    let patch_out = Command::new("gh")
+                        .args([
+                            "api",
+                            "--method",
+                            "PATCH",
+                            &patch_endpoint,
+                            "-f",
+                            &format!("body={}", body),
+                        ])
+                        .output()
+                        .await;
+
+                    if let Ok(res) = patch_out {
+                        if res.status.success() {
+                            info!("Successfully updated comment #{} in-place", existing.id);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: Post new comment if no existing comment found or update failed
+        self.post_pr_comment(repo, pr_number, body).await
+    }
+
     pub async fn fetch_review_comments(
         &self,
         repo: &str,

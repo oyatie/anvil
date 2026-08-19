@@ -869,3 +869,90 @@ fn test_auto_rollback_green_healthy_canary_passes() {
     );
     assert!(report.postmortem.is_none());
 }
+
+// =========================================================================
+// 26. Automated Git Hook Provisioning & Permissions
+// =========================================================================
+
+#[tokio::test]
+async fn test_git_hook_provisioning_and_permissions() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo_path = temp_dir.path();
+
+    anvil::git_manager::GitManager::install_repo_hooks(repo_path)
+        .await
+        .unwrap();
+
+    let pre_commit = repo_path.join(".git").join("hooks").join("pre-commit");
+    let pre_push = repo_path.join(".git").join("hooks").join("pre-push");
+
+    assert!(pre_commit.exists(), "pre-commit hook must be created");
+    assert!(pre_push.exists(), "pre-push hook must be created");
+
+    let pre_commit_content = tokio::fs::read_to_string(&pre_commit).await.unwrap();
+    assert!(pre_commit_content.contains("cargo fmt"));
+    assert!(pre_commit_content.contains("cargo clippy"));
+
+    let pre_push_content = tokio::fs::read_to_string(&pre_push).await.unwrap();
+    assert!(pre_push_content.contains("red_green_gates_test"));
+}
+
+// =========================================================================
+// 27. Sub-100ms Inner-Loop Local Probe Fast Validator
+// =========================================================================
+
+#[test]
+fn test_local_probe_red_flag_unconventional_commit_or_secret() {
+    let validator = anvil::local_inner_loop::FastValidator::new();
+    let bad_diff = "+ let aws_key = \"AKIAIOSFODNN7EXAMPLE\";";
+    let findings = validator.validate_pre_commit("bad commit msg", bad_diff);
+
+    assert!(
+        findings.iter().any(|f| !f.is_valid),
+        "Expected False Green prevention: Bad commit or secret leak must be flagged"
+    );
+}
+
+#[test]
+fn test_local_probe_green_nominal_conventional_diff() {
+    let validator = anvil::local_inner_loop::FastValidator::new();
+    let good_diff = "+ pub fn calculate_total(a: u32, b: u32) -> u32 { a + b }";
+    let findings =
+        validator.validate_pre_commit("feat(math): add calculate_total function", good_diff);
+
+    assert!(
+        findings.iter().all(|f| f.is_valid),
+        "Expected False Red prevention: Valid conventional commit and safe code must PASS"
+    );
+}
+
+// =========================================================================
+// 28. In-Place PR Comment Marker Verification
+// =========================================================================
+
+#[test]
+fn test_scorecard_contains_anvil_receipt_marker() {
+    let doc_status = anvil::pre_merge_guard::GateStatus::Passed;
+    let matrix_text = anvil::pre_merge_guard::matrix::MatrixRenderer::render_matrix(
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
+        &doc_status, &doc_status, &doc_status,
+        true,
+    );
+
+    assert!(
+        matrix_text.contains("<!-- ANVIL_SCORECARD_RECEIPT -->"),
+        "Matrix scorecard must contain ANVIL_SCORECARD_RECEIPT for in-place comment upserting"
+    );
+}

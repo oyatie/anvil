@@ -71,8 +71,8 @@ use crate::wasm_sandbox::WasmSandboxReport;
 use crate::zero_day_patcher::ZeroDayReport;
 use crate::zero_trust_workload::ZeroTrustWorkloadReport;
 
-use matrix::MatrixRenderer;
-use scanner::PreMergeScanner;
+pub use matrix::MatrixRenderer;
+pub use scanner::PreMergeScanner;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreMergeCertificationReport {

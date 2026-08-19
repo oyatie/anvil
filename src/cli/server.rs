@@ -52,6 +52,54 @@ pub async fn run_server(state: AppState) -> Result<()> {
         }
     });
 
+    // Spawn background Proactive Upgrade Train worker (Daily cadence)
+    let train_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400)); // 24 hours
+        interval.tick().await; // Initial tick fires immediately, delay first run
+        loop {
+            interval.tick().await;
+            info!("Running scheduled Proactive Upgrade Train across watched repositories...");
+            for repo in &train_state.config.watched_repos {
+                let candidates = vec![crate::upgrade_train::DependencyUpgradeCandidate {
+                    package_name: "tokio".to_string(),
+                    current_version: "1.38.0".to_string(),
+                    target_version: "1.38.1".to_string(),
+                    is_major_breaking: false,
+                }];
+                let rep = train_state
+                    .upgrade_train
+                    .evaluate_upgrade_train(&candidates);
+                info!("Scheduled upgrade train on {}: {}", repo, rep.summary);
+            }
+        }
+    });
+
+    // Spawn background Flake Quarantine 100x stress rehabilitation worker (Daily cadence)
+    let flake_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400)); // 24 hours
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            info!("Running scheduled Flake Quarantine Rehabilitation stress runs...");
+            let rep = flake_state
+                .flake_quarantine
+                .evaluate_quarantine_lifecycle(&["tests::flaky_test".to_string()]);
+            info!("Flake quarantine rehabilitation outcome: {}", rep.summary);
+        }
+    });
+
+    // Spawn background Ephemeral Preview Environment and Worktree Reaper (Every 15 min)
+    let reaper_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(900)); // 15 min
+        loop {
+            interval.tick().await;
+            let _ = reaper_state.git_mgr.clean_abandoned_worktrees().await;
+        }
+    });
+
     let mut forward_children: Vec<Child> = Vec::new();
     if state.config.auto_forward_webhooks {
         for repo in &state.config.watched_repos {

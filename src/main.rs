@@ -1,20 +1,4 @@
-#![allow(
-    dead_code,
-    unused_imports,
-    clippy::too_many_arguments,
-    clippy::new_without_default,
-    clippy::collapsible_if,
-    clippy::type_complexity,
-    clippy::large_enum_variant,
-    clippy::manual_strip,
-    clippy::useless_format,
-    clippy::useless_borrows_in_formatting,
-    clippy::double_ended_iterator_last,
-    clippy::single_match,
-    clippy::redundant_closure,
-    clippy::ptr_arg,
-    clippy::derivable_impls
-)]
+#![allow(dead_code)]
 
 use anyhow::Result;
 use std::sync::Arc;

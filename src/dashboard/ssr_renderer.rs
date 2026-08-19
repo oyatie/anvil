@@ -13,8 +13,50 @@ pub struct DashboardStateView {
     pub active_processes_count: usize,
     pub compiler_pass_at_1_ratio: f64,
     pub quality_score_mean: f64,
+    pub fleet_repos: Vec<FleetRepoView>,
+    pub gate_heatmap: Vec<GateHeatmapItem>,
+    pub ai_bandit_models: Vec<ModelBanditView>,
+    pub dora_metrics: DoraMetricsView,
     pub environment_pipeline: Vec<EnvironmentStatusView>,
     pub recent_activities: Vec<ActivityEventView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FleetRepoView {
+    pub name: String,
+    pub head_sha: String,
+    pub open_prs: usize,
+    pub pass_rate: f64,
+    pub lead_time_hours: f64,
+    pub deploy_frequency_per_day: f64,
+    pub health_badge: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateHeatmapItem {
+    pub gate_name: String,
+    pub fail_count: usize,
+    pub pass_percentage: f64,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelBanditView {
+    pub model_name: String,
+    pub trials: usize,
+    pub pass_at_1: f64,
+    pub avg_cost_per_pr: f64,
+    pub p99_latency_sec: f64,
+    pub ucb1_score: f64,
+    pub is_statistically_significant: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoraMetricsView {
+    pub deployment_frequency_per_day: f64,
+    pub lead_time_hours: f64,
+    pub change_failure_rate_pct: f64,
+    pub mttr_minutes: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +82,85 @@ pub struct ActivityEventView {
 pub struct LeptosDashboardRenderer;
 
 impl LeptosDashboardRenderer {
-    /// Renders high-fidelity Leptos-style Server-Side Rendered (SSR) HTML dashboard
+    /// Renders high-fidelity 5-Module Hyperscaler Leptos SSR Control Plane HTML
     pub fn render_html(state: &DashboardStateView) -> String {
+        let repo_cards = state
+            .fleet_repos
+            .iter()
+            .map(|r| {
+                format!(
+                    r#"<div class="card repo-card">
+                        <div class="card-header">
+                            <span class="repo-title">📦 {}</span>
+                            <span class="badge badge-healthy">{}</span>
+                        </div>
+                        <div class="card-body">
+                            <p><strong>Branch SHA:</strong> <code>{}</code></p>
+                            <p><strong>Open PRs:</strong> {} | <strong>Pass Rate:</strong> {:.1}%</p>
+                            <p><strong>DORA Lead Time:</strong> {:.1}h</p>
+                            <p><strong>Deploys/Day:</strong> {:.1}</p>
+                        </div>
+                    </div>"#,
+                    r.name, r.health_badge, r.head_sha, r.open_prs, r.pass_rate, r.lead_time_hours, r.deploy_frequency_per_day
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let heatmap_rows = state
+            .gate_heatmap
+            .iter()
+            .map(|g| {
+                let bar_width = g.pass_percentage.min(100.0);
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td><code>{}</code></td>
+                        <td>{}</td>
+                        <td>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill" style="width: {:.1}%"></div>
+                            </div>
+                            <span class="progress-text">{:.1}%</span>
+                        </td>
+                    </tr>"#,
+                    g.gate_name, g.category, g.fail_count, bar_width, g.pass_percentage
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let model_rows = state
+            .ai_bandit_models
+            .iter()
+            .map(|m| {
+                let sig_badge = if m.is_statistically_significant {
+                    r#"<span class="badge badge-healthy">N>=30 (p<0.05)</span>"#
+                } else {
+                    r#"<span class="badge badge-warning">Exploring (N<30)</span>"#
+                };
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td>{}</td>
+                        <td><strong>{:.1}%</strong></td>
+                        <td>${:.3}</td>
+                        <td>{:.1}s</td>
+                        <td><code>{:.3}</code></td>
+                        <td>{}</td>
+                    </tr>"#,
+                    m.model_name,
+                    m.trials,
+                    m.pass_at_1 * 100.0,
+                    m.avg_cost_per_pr,
+                    m.p99_latency_sec,
+                    m.ucb1_score,
+                    sig_badge
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let env_rows = state
             .environment_pipeline
             .iter()
@@ -52,15 +171,15 @@ impl LeptosDashboardRenderer {
                     "badge-warning"
                 };
                 format!(
-                    r#"<div class="env-card">
-                        <div class="env-header">
+                    r#"<div class="card env-card">
+                        <div class="card-header">
                             <span class="env-title">{}</span>
                             <span class="badge {}">{}</span>
                         </div>
-                        <div class="env-body">
+                        <div class="card-body">
                             <p><strong>Branch:</strong> <code>{}</code></p>
                             <p><strong>Commit SHA:</strong> <code>{}</code></p>
-                            <p><strong>Bake Remaining:</strong> {}m</p>
+                            <p><strong>Bake Window:</strong> {}m</p>
                             <p><strong>SRE Multi-Burn Rate:</strong> {:.2}x</p>
                         </div>
                     </div>"#,
@@ -100,7 +219,7 @@ impl LeptosDashboardRenderer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Oyatie Anvil | Hyperscale Delivery Fabric</title>
+    <title>Oyatie Anvil | Hyperscale Fleet Control Plane</title>
     <style>
         :root {{
             --bg-dark: #0a0e17;
@@ -201,24 +320,25 @@ impl LeptosDashboardRenderer {
         .section-header {{
             font-size: 18px;
             font-weight: 700;
+            margin-top: 24px;
             margin-bottom: 16px;
             display: flex;
             align-items: center;
             gap: 8px;
         }}
-        .pipeline-grid {{
+        .grid-3 {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 16px;
             margin-bottom: 24px;
         }}
-        .env-card {{
+        .card {{
             background: var(--surface-dark);
             border: 1px solid var(--surface-border);
             border-radius: 12px;
             padding: 16px;
         }}
-        .env-header {{
+        .card-header {{
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -226,7 +346,7 @@ impl LeptosDashboardRenderer {
             padding-bottom: 8px;
             border-bottom: 1px solid var(--surface-border);
         }}
-        .env-title {{
+        .repo-title, .env-title {{
             font-size: 15px;
             font-weight: 700;
             color: var(--accent-cyan);
@@ -248,12 +368,12 @@ impl LeptosDashboardRenderer {
             color: var(--accent-amber);
             border: 1px solid rgba(245, 158, 11, 0.3);
         }}
-        .env-body p {{
+        .card-body p {{
             font-size: 13px;
             color: var(--text-secondary);
             margin-bottom: 6px;
         }}
-        .env-body strong {{
+        .card-body strong {{
             color: var(--text-primary);
         }}
         code {{
@@ -291,66 +411,161 @@ impl LeptosDashboardRenderer {
         tr:last-child td {{
             border-bottom: none;
         }}
+        .progress-bar-bg {{
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            height: 8px;
+            width: 120px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+            overflow: hidden;
+        }}
+        .progress-bar-fill {{
+            background: var(--accent-emerald);
+            height: 100%;
+            border-radius: 4px;
+        }}
+        .progress-text {{
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        .dora-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }}
+        @media (max-width: 900px) {{
+            .dora-grid {{ grid-template-columns: repeat(2, 1fr); }}
+        }}
     </style>
     <script>
-        // Auto-refresh telemetry every 5 seconds
-        setInterval(async () => {{
-            try {{
-                const res = await fetch('/api/dashboard/state');
-                if (res.ok) {{
-                    const data = await res.json();
-                    document.getElementById('metric-pass1').innerText = (data.compiler_pass_at_1_ratio * 100).toFixed(1) + '%';
-                    document.getElementById('metric-quota').innerText = '$' + data.quota_spent_usd.toFixed(2) + ' / $' + data.quota_budget_usd.toFixed(0);
-                    document.getElementById('metric-processes').innerText = data.active_processes_count;
-                }}
-            }} catch (e) {{}}
-        }}, 5000);
+        // Server-Sent Events (SSE) live connection with automatic fallback
+        function initFleetSSE() {{
+            const eventSource = new EventSource('/api/events/fleet');
+            eventSource.addEventListener('fleet_event', function(e) {{
+                try {{
+                    const event = JSON.parse(e.data);
+                    console.log('⚡ Fleet SSE Event:', event);
+                    // Prepend new activity
+                    const tableBody = document.querySelector('#activity-tbody');
+                    if (tableBody) {{
+                        const row = document.createElement('tr');
+                        row.innerHTML = `<td>${{event.timestamp_utc}}</td><td><code>${{event.repo}}</code></td><td><strong>${{event.entity_id}}</strong></td><td>${{event.title}}</td><td><span class="badge badge-healthy">${{event.status}}</span></td>`;
+                        tableBody.insertBefore(row, tableBody.firstChild);
+                    }}
+                }} catch(err) {{}}
+            }});
+            eventSource.onerror = function() {{
+                console.warn('SSE disconnected, retrying in 5s...');
+                setTimeout(initFleetSSE, 5000);
+            }};
+        }}
+        initFleetSSE();
     </script>
 </head>
 <body>
     <div class="navbar">
         <div class="brand">
-            <span>⚡ OYATIE ANVIL</span>
+            <span>⚡ OYATIE ANVIL CONTROL PLANE</span>
             <span style="font-size: 12px; color: var(--text-secondary); font-weight: 400;">v{}</span>
         </div>
         <div class="status-pill">
             <span class="status-dot"></span>
-            <span>Autonomous Self-Governor Live (70-Gate Matrix Active)</span>
+            <span>Fleet Live (3 Managed Repos, 70-Gate Matrix Active)</span>
         </div>
     </div>
 
-    <div class="metrics-grid">
-        <div class="metric-card">
-            <span class="metric-title">Pass@1 Compiler Rate</span>
-            <span class="metric-val" id="metric-pass1">{:.1}%</span>
-            <span class="metric-sub">Closed-Loop Bandit SLA &gt;= 90%</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">LLM Quota Budget Spend</span>
-            <span class="metric-val" id="metric-quota">${:.2} / ${:.0}</span>
-            <span class="metric-sub">Circuit Breaker Active</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">Active Process Registry</span>
-            <span class="metric-val" id="metric-processes">{}</span>
-            <span class="metric-sub">Sliding Inactivity SLA &lt;= 30s</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">16-Lens Quality Index</span>
-            <span class="metric-val">{:.2} / 1.0</span>
-            <span class="metric-sub">Zero-Trust &amp; ADR Parity</span>
-        </div>
-    </div>
-
+    <!-- DORA METRICS SUMMARY -->
     <div class="section-header">
-        <span>🚀 Multi-Tier GitOps Promotion Pipeline (DAG)</span>
+        <span>📈 Hyperscaler DORA Metrics (30-Day Fleet Aggregate)</span>
     </div>
-    <div class="pipeline-grid">
+    <div class="dora-grid">
+        <div class="metric-card">
+            <span class="metric-title">Deployment Frequency</span>
+            <span class="metric-val">{:.1}/day</span>
+            <span class="metric-sub">Elite Tier (&gt;= 1.0/day)</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-title">Lead Time for Changes</span>
+            <span class="metric-val">{:.1} hrs</span>
+            <span class="metric-sub">Elite Tier (&lt; 24 hrs)</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-title">Change Failure Rate</span>
+            <span class="metric-val">{:.1}%</span>
+            <span class="metric-sub">Elite Tier (&lt; 5%)</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-title">Mean Time to Restore</span>
+            <span class="metric-val">{:.0} mins</span>
+            <span class="metric-sub">Elite Tier (&lt; 60 mins)</span>
+        </div>
+    </div>
+
+    <!-- MODULE 1: MULTI-REPO FLEET DAG -->
+    <div class="section-header">
+        <span>🌐 Module 1: Multi-Repository Fleet Health &amp; Promotion Topology</span>
+    </div>
+    <div class="grid-3">
         {}
     </div>
 
+    <!-- MODULE 2: 70-GATE FAILURE HEATMAP -->
     <div class="section-header">
-        <span>📋 Autonomous Activity &amp; Reconciliation Log</span>
+        <span>🛡️ Module 2: 70-Gate Full-Lifecycle Failure Heatmap &amp; Flake Quarantine</span>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Gate Name</th>
+                    <th>Category</th>
+                    <th>Failures (30d)</th>
+                    <th>Pass Rate</th>
+                </tr>
+            </thead>
+            <tbody>
+                {}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- MODULE 3: AI MODEL BANDIT PARETO FRONTIER -->
+    <div class="section-header">
+        <span>🤖 Module 3: AI Routing Bandit Pareto Frontier &amp; Statistical Significance (N &gt;= 30)</span>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Model Family</th>
+                    <th>Trials</th>
+                    <th>Pass@1</th>
+                    <th>Avg Cost/PR</th>
+                    <th>P99 Latency</th>
+                    <th>UCB1 Reward</th>
+                    <th>Statistical Power</th>
+                </tr>
+            </thead>
+            <tbody>
+                {}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- MODULE 4: GITOPS PROMOTION DAG -->
+    <div class="section-header">
+        <span>🚀 Module 4: GitOps Multi-Tier Promotion DAG (SRE Error Budget Gauges)</span>
+    </div>
+    <div class="grid-3">
+        {}
+    </div>
+
+    <!-- MODULE 5: REAL-TIME SSE AUDIT EVENT LOG -->
+    <div class="section-header">
+        <span>📡 Module 5: Real-Time SSE Audit Event Log &amp; Attestation Stream</span>
     </div>
     <div class="table-container">
         <table>
@@ -363,7 +578,7 @@ impl LeptosDashboardRenderer {
                     <th>Status</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="activity-tbody">
                 {}
             </tbody>
         </table>
@@ -371,11 +586,13 @@ impl LeptosDashboardRenderer {
 </body>
 </html>"#,
             state.server_version,
-            state.compiler_pass_at_1_ratio * 100.0,
-            state.quota_spent_usd,
-            state.quota_budget_usd,
-            state.active_processes_count,
-            state.quality_score_mean,
+            state.dora_metrics.deployment_frequency_per_day,
+            state.dora_metrics.lead_time_hours,
+            state.dora_metrics.change_failure_rate_pct,
+            state.dora_metrics.mttr_minutes,
+            repo_cards,
+            heatmap_rows,
+            model_rows,
             env_rows,
             activity_rows
         )

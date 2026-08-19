@@ -204,6 +204,14 @@ async fn main() -> Result<()> {
         config.agy_effort.clone(),
     ));
     let metrics = Arc::new(anvil::metrics::PrometheusRegistry::new());
+    let self_governor = Arc::new(anvil::self_governance::SelfGovernor::new());
+    let telemetry_store =
+        Arc::new(anvil::telemetry_store::TelemetryStore::new("data/telemetry").await);
+    let fleet_observer = Arc::new(anvil::fleet_observer::FleetObserver::new(
+        github_client.clone(),
+        telemetry_store.clone(),
+    ));
+    let broadcaster = Arc::new(anvil::webhook::sse::FleetEventBroadcaster::new());
 
     let app_state = AppState {
         config: config.clone(),
@@ -289,8 +297,11 @@ async fn main() -> Result<()> {
         ci_triager: ci_triager.clone(),
         github_client: github_client.clone(),
         state_mgr: state_mgr.clone(),
-        metrics: metrics.clone(),
-        self_governor: Arc::new(anvil::self_governance::SelfGovernor::new()),
+        metrics,
+        self_governor,
+        broadcaster,
+        telemetry_store,
+        fleet_observer,
     };
 
     let res = handle_cli(app_state).await;

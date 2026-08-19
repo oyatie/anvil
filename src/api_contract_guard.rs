@@ -27,7 +27,10 @@ impl ApiContractGuard {
         repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<ApiContractReport> {
-        info!("Running ApiContractGuard schema integrity check on {}#{}...", repo, diff_ctx.pr_number);
+        info!(
+            "Running ApiContractGuard schema integrity check on {}#{}...",
+            repo, diff_ctx.pr_number
+        );
 
         let touches_api = diff_ctx.changed_files.iter().any(|f| {
             f.contains("openapi")
@@ -57,7 +60,9 @@ impl ApiContractGuard {
 
             if let Ok(res) = out {
                 if !res.status.success() {
-                    warn!("check-openapi-refs.mjs flagged drift. Triggering auto-reconciliation...");
+                    warn!(
+                        "check-openapi-refs.mjs flagged drift. Triggering auto-reconciliation..."
+                    );
                     script_failed = true;
                 }
             }
@@ -91,7 +96,10 @@ impl ApiContractGuard {
         let is_intact = !script_failed || !synced_files.is_empty();
 
         let summary = if !synced_files.is_empty() {
-            format!("Auto-reconciled OpenAPI schemas & contract definitions: {}", synced_files.join(", "))
+            format!(
+                "Auto-reconciled OpenAPI schemas & contract definitions: {}",
+                synced_files.join(", ")
+            )
         } else if is_intact {
             "OpenAPI schemas and API contracts are 100% in sync with zero drift.".to_string()
         } else {
@@ -127,7 +135,10 @@ mod tests {
             is_incremental: false,
         };
 
-        let res = guard.ensure_contract_integrity("oyatie/console", &temp_dir, &diff_ctx).await.expect("Valid");
+        let res = guard
+            .ensure_contract_integrity("oyatie/console", &temp_dir, &diff_ctx)
+            .await
+            .expect("Valid");
         assert!(res.is_intact);
         assert!(res.auto_synced_files.is_empty());
     }

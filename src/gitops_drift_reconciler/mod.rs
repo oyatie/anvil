@@ -36,7 +36,9 @@ impl GitOpsDriftReconciler {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let orphan_findings = self.sweeper.scan_orphan_risk(&diff_ctx.changed_files, &diff_ctx.diff_content);
+        let orphan_findings = self
+            .sweeper
+            .scan_orphan_risk(&diff_ctx.changed_files, &diff_ctx.diff_content);
         let is_safe = orphan_findings.is_empty();
 
         let summary = if is_safe {
@@ -76,7 +78,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = rec.evaluate_gitops_drift(Path::new("."), &diff_ctx).unwrap();
+        let rep = rec
+            .evaluate_gitops_drift(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_safe);
     }
 }

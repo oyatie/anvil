@@ -73,7 +73,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = engine.evaluate_flake_bisection(Path::new("."), &diff_ctx).unwrap();
+        let rep = engine
+            .evaluate_flake_bisection(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_clean);
     }
 }

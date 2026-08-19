@@ -25,7 +25,10 @@ impl PsaAdmissionRules {
 
         // Native Kubernetes PSA check: kind: Namespace must carry pod-security.kubernetes.io/enforce: restricted or be registered
         if content.contains("kind: Namespace") {
-            if !content.contains("pod-security.kubernetes.io/enforce:") && !file_path.contains("local-path-storage") && !file_path.contains("ci-workspace-storage") {
+            if !content.contains("pod-security.kubernetes.io/enforce:")
+                && !file_path.contains("local-path-storage")
+                && !file_path.contains("ci-workspace-storage")
+            {
                 findings.push(PsaPolicyFinding {
                     file_path: file_path.to_string(),
                     namespace: "unlabelled".to_string(),

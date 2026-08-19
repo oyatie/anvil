@@ -44,7 +44,12 @@ impl EphemeralWorktree {
 
         let _ = Command::new("git")
             .current_dir(&self.repo_dir)
-            .args(["worktree", "remove", "--force", self.worktree_path.to_str().unwrap()])
+            .args([
+                "worktree",
+                "remove",
+                "--force",
+                self.worktree_path.to_str().unwrap(),
+            ])
             .output()
             .await;
 
@@ -68,7 +73,12 @@ impl Drop for EphemeralWorktree {
             // Synchronous fallback cleanup in case async cleanup was not called
             let _ = std::process::Command::new("git")
                 .current_dir(&self.repo_dir)
-                .args(["worktree", "remove", "--force", self.worktree_path.to_str().unwrap()])
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    self.worktree_path.to_str().unwrap(),
+                ])
                 .output();
 
             let _ = std::fs::remove_dir_all(&self.worktree_path);
@@ -197,7 +207,12 @@ impl GitManager {
 
             if !output_fetch.status.success() {
                 let err = String::from_utf8_lossy(&output_fetch.stderr);
-                bail!("git worktree add failed for {}#{}: {}", repo, pr_number, err);
+                bail!(
+                    "git worktree add failed for {}#{}: {}",
+                    repo,
+                    pr_number,
+                    err
+                );
             }
         }
 
@@ -254,7 +269,10 @@ impl GitManager {
         }
 
         if cleaned > 0 {
-            info!("Successfully reclaimed {} abandoned ephemeral worktree(s).", cleaned);
+            info!(
+                "Successfully reclaimed {} abandoned ephemeral worktree(s).",
+                cleaned
+            );
         }
 
         Ok(cleaned)

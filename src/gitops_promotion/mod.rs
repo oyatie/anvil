@@ -100,7 +100,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = engine.evaluate_manifest_promotions(Path::new("."), &diff_ctx).unwrap();
+        let rep = engine
+            .evaluate_manifest_promotions(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_pinned);
     }
 }

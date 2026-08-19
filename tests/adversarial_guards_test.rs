@@ -61,7 +61,9 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
         is_incremental: false,
     };
 
-    let compliance_rep = compliance_guard.evaluate_compliance(&bad_pipa_diff).unwrap();
+    let compliance_rep = compliance_guard
+        .evaluate_compliance(&bad_pipa_diff)
+        .unwrap();
     assert!(!compliance_rep.is_compliant);
 
     // 2. Kani safety violation: undocumented unsafe block
@@ -73,11 +75,15 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
         head_sha: "bbb".to_string(),
         previous_head_sha: None,
         repo_working_dir: PathBuf::from("."),
-        diff_content: "diff --git a/src/core.rs b/src/core.rs\n+ unsafe fn deref(p: *const u8) -> u8 { *p }".to_string(),
+        diff_content:
+            "diff --git a/src/core.rs b/src/core.rs\n+ unsafe fn deref(p: *const u8) -> u8 { *p }"
+                .to_string(),
         changed_files: vec!["src/core.rs".to_string()],
         is_incremental: false,
     };
 
-    let kani_rep = kani_guard.evaluate_unsafe_invariants(repo_dir, &bad_unsafe_diff).unwrap();
+    let kani_rep = kani_guard
+        .evaluate_unsafe_invariants(repo_dir, &bad_unsafe_diff)
+        .unwrap();
     assert!(!kani_rep.is_verified);
 }

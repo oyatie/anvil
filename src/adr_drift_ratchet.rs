@@ -60,7 +60,11 @@ impl AdrDriftRatchet {
             let required_fields = ["achieves", "origin", "rule", "ensure", "overturn_when"];
             for adr_file in &adr_files {
                 for field in &required_fields {
-                    let re = Regex::new(&format!(r"(?i)\b{}\b", field)).unwrap();
+                    let pattern = match *field {
+                        "overturn_when" => r"(?i)\boverturn[-_ ]when\b".to_string(),
+                        f => format!(r"(?i)\b{}\b", f),
+                    };
+                    let re = Regex::new(&pattern).unwrap();
                     if !re.is_match(&diff_ctx.diff_content) {
                         violations.push(format!(
                             "ADR `{}` is missing required architectural clause: `{}`",
@@ -85,7 +89,8 @@ impl AdrDriftRatchet {
                     scaffolded_adrs
                 )
             } else {
-                "✅ PASSED (Architectural changes fully covered by 5-field ADR specifications)".to_string()
+                "✅ PASSED (Architectural changes fully covered by 5-field ADR specifications)"
+                    .to_string()
             }
         } else {
             format!(
@@ -132,7 +137,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = ratchet.evaluate_adr_parity(Path::new("."), &diff_ctx).unwrap();
+        let rep = ratchet
+            .evaluate_adr_parity(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_compliant);
         assert_eq!(rep.adrs_evaluated, 1);
     }

@@ -28,10 +28,7 @@ impl FormalVerificationGuard {
         }
     }
 
-    pub fn evaluate_formal_invariants(
-        &self,
-        diff_content: &str,
-    ) -> FormalVerificationReport {
+    pub fn evaluate_formal_invariants(&self, diff_content: &str) -> FormalVerificationReport {
         let mut findings = Vec::new();
 
         match self.solver.verify_invariants(diff_content) {

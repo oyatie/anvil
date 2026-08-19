@@ -69,7 +69,9 @@ impl RegressionBudgetEvaluator {
         }
 
         // 2. Diagnose sequential test execution
-        if diff_content.contains("std::thread::sleep") || diff_content.contains("tokio::time::sleep") {
+        if diff_content.contains("std::thread::sleep")
+            || diff_content.contains("tokio::time::sleep")
+        {
             suggestions.push(OptimizationSuggestion {
                 category: "Test Harness / Concurrency".to_string(),
                 diagnosis: "Hardcoded sleep timers detected in test suites, extending worker wallclock sequentially.".to_string(),
@@ -79,7 +81,10 @@ impl RegressionBudgetEvaluator {
         }
 
         // 3. Diagnose un-cached build.rs
-        if diff_content.contains("fn main()") && diff_content.contains("build.rs") && !diff_content.contains("cargo:rerun-if-changed") {
+        if diff_content.contains("fn main()")
+            && diff_content.contains("build.rs")
+            && !diff_content.contains("cargo:rerun-if-changed")
+        {
             suggestions.push(OptimizationSuggestion {
                 category: "Build Script Caching".to_string(),
                 diagnosis: "`build.rs` runs unconditionally on every compile due to missing rerun triggers.".to_string(),
@@ -157,7 +162,10 @@ mod tests {
 
         assert!(!decision.is_acceptable);
         assert_eq!(decision.suggestions.len(), 2);
-        assert_eq!(decision.suggestions[0].category, "Compile-Time / Macro Trimming");
+        assert_eq!(
+            decision.suggestions[0].category,
+            "Compile-Time / Macro Trimming"
+        );
     }
 
     #[test]

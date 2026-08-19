@@ -35,7 +35,10 @@ impl MainlineCiHealer {
         repo: &str,
         branches: &[&str],
     ) -> Result<MainlineHealReport> {
-        info!("Running MainlineCiHealer (Autonomous Trunk CI Healer) on {} across {:?}...", repo, branches);
+        info!(
+            "Running MainlineCiHealer (Autonomous Trunk CI Healer) on {} across {:?}...",
+            repo, branches
+        );
 
         let mut active_failures = Vec::new();
 

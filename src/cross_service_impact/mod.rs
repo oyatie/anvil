@@ -47,7 +47,9 @@ impl CrossServiceImpactEngine {
                 }
             }
 
-            let file_findings = self.validator.evaluate_service_contracts(&current_file, file_diff);
+            let file_findings = self
+                .validator
+                .evaluate_service_contracts(&current_file, file_diff);
             breaking_findings.extend(file_findings);
         }
 
@@ -89,7 +91,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = engine.evaluate_cross_service_impact(Path::new("."), &diff_ctx).unwrap();
+        let rep = engine
+            .evaluate_cross_service_impact(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_compatible);
     }
 }

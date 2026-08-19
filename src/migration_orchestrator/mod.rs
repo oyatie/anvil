@@ -51,7 +51,9 @@ impl MigrationLifecycleOrchestrator {
                 }
             }
 
-            let file_findings = self.validator.validate_migration_sql(&current_file, file_diff);
+            let file_findings = self
+                .validator
+                .validate_migration_sql(&current_file, file_diff);
             findings.extend(file_findings);
         }
 
@@ -93,7 +95,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = orch.evaluate_migration_lifecycle(Path::new("."), &diff_ctx).unwrap();
+        let rep = orch
+            .evaluate_migration_lifecycle(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_ordered);
     }
 }

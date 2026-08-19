@@ -33,12 +33,14 @@ impl FastValidator {
             message: if is_conventional {
                 "Valid conventional commit format.".to_string()
             } else {
-                "Commit message must follow conventional commit format (e.g. feat:, fix:, docs:).".to_string()
+                "Commit message must follow conventional commit format (e.g. feat:, fix:, docs:)."
+                    .to_string()
             },
         });
 
         // 2. Fast secret check
-        let has_secret = staged_diff.contains("ghp_") || staged_diff.contains("AWS_SECRET_ACCESS_KEY=");
+        let has_secret =
+            staged_diff.contains("ghp_") || staged_diff.contains("AWS_SECRET_ACCESS_KEY=");
         findings.push(ProbeFinding {
             check_name: "Sub-Second Secret Scan".to_string(),
             is_valid: !has_secret,
@@ -60,7 +62,8 @@ mod tests {
     #[test]
     fn test_validates_conventional_commit() {
         let validator = FastValidator::new();
-        let findings = validator.validate_pre_commit("feat(auth): add cedar pdp check", "+ fn ok() {}");
+        let findings =
+            validator.validate_pre_commit("feat(auth): add cedar pdp check", "+ fn ok() {}");
         assert!(findings.iter().all(|f| f.is_valid));
     }
 

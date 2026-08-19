@@ -1,0 +1,869 @@
+use anvil::adr_drift_ratchet::AdrDriftRatchet;
+use anvil::auto_rollback::AutoRollbackPostmortemEngine;
+use anvil::automated_canary::{AutomatedCanaryAnalysis, MetricDistribution};
+use anvil::carbon_aware::CarbonAwareComputeRatchet;
+use anvil::cell_isolation_guard::CellIsolationGuard;
+use anvil::clean_architecture_guard::CleanArchitectureGuard;
+use anvil::compliance_guard::ComplianceGuard;
+use anvil::consistency_guard::ActiveActiveConsistencyGuard;
+use anvil::constant_work_guard::ConstantWorkGuard;
+use anvil::deadlock_analyzer::DeadlockStaticAnalyzer;
+use anvil::flake_quarantine::FlakeQuarantineLifecycle;
+use anvil::formal_verification::FormalVerificationGuard;
+use anvil::ghost_migration_harness::GhostMigrationHarness;
+use anvil::git_manager::PrDiffContext;
+use anvil::gitops_promotion::GitOpsPromotionEngine;
+use anvil::jittered_backoff::JitteredBackoffGuard;
+use anvil::kani_guard::KaniGuard;
+use anvil::microbenchmark_ratchet::{MicroBenchmarkRatchet, MicrobenchmarkSample};
+use anvil::psa_admission_guard::PsaAdmissionGuard;
+use anvil::replay_harness::{DeterministicReplayHarness, ReplayTraceRecord};
+use anvil::rust_skills_guard::RustSkillsGuard;
+use anvil::schema_evolution::SchemaEvolutionRatchet;
+use anvil::trace_context_guard::TraceContextGuard;
+use anvil::unresolved_review_guard::{ThreadScanner, UnresolvedReviewThread};
+use anvil::upgrade_train::{DependencyUpgradeCandidate, ProactiveUpgradeTrain};
+use anvil::wasm_sandbox::WasmPolicySandbox;
+use anvil::zero_trust_workload::ZeroTrustWorkloadGate;
+use std::path::PathBuf;
+
+fn create_test_diff_context(file_path: &str, diff_content: &str) -> PrDiffContext {
+    let full_diff = format!(
+        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{diff_content}",
+        path = file_path,
+        diff_content = diff_content
+    );
+    PrDiffContext {
+        repo: "oyatie/test-repo".to_string(),
+        pr_number: 101,
+        base_branch: "main".to_string(),
+        base_sha: "base123".to_string(),
+        head_sha: "head456".to_string(),
+        previous_head_sha: None,
+        repo_working_dir: PathBuf::from("."),
+        diff_content: full_diff,
+        changed_files: vec![file_path.to_string()],
+        is_incremental: false,
+    }
+}
+
+// =========================================================================
+// 1. Clean Architecture Guard: Ports & Adapters Layer Inversion
+// =========================================================================
+
+#[test]
+fn test_clean_architecture_red_flag_inward_violation() {
+    let guard = CleanArchitectureGuard::new();
+    // RED: Core domain imports external HTTP/DB adapter
+    let bad_diff = create_test_diff_context(
+        "src/core/domain/user.rs",
+        "+ use crate::adapters::http::handler::UserHttpHandler;",
+    );
+    let report = guard.evaluate_architecture(&bad_diff).unwrap();
+    assert!(
+        !report.is_clean,
+        "Expected False Green prevention: Core importing adapter must FAIL"
+    );
+}
+
+#[test]
+fn test_clean_architecture_green_valid_inward_dependency() {
+    let guard = CleanArchitectureGuard::new();
+    // GREEN: Adapter imports domain entity
+    let good_diff = create_test_diff_context(
+        "src/adapters/http/handler.rs",
+        "+ use crate::core::domain::user::UserEntity;",
+    );
+    let report = guard.evaluate_architecture(&good_diff).unwrap();
+    assert!(
+        report.is_clean,
+        "Expected False Red prevention: Adapter importing core domain must PASS"
+    );
+}
+
+// =========================================================================
+// 2. Cell Boundary & Multi-Tenant Query Scoping Guard
+// =========================================================================
+
+#[test]
+fn test_cell_isolation_red_flag_unscoped_query() {
+    let guard = CellIsolationGuard::new();
+    // RED: Database query missing tenant_id/cell_id filter
+    let bad_diff = create_test_diff_context(
+        "src/db/orders.rs",
+        "+ let sql = \"SELECT * FROM customer_orders WHERE order_id = $1\";",
+    );
+    let report = guard.evaluate_cell_isolation(&bad_diff).unwrap();
+    assert!(
+        !report.is_isolated,
+        "Expected False Green prevention: Unscoped multi-tenant query must FAIL"
+    );
+}
+
+#[test]
+fn test_cell_isolation_green_scoped_tenant_query() {
+    let guard = CellIsolationGuard::new();
+    // GREEN: Query strictly filtered by tenant_id / cell_id
+    let good_diff = create_test_diff_context(
+        "src/db/orders.rs",
+        "+ let sql = \"SELECT * FROM customer_orders WHERE tenant_id = $1 AND order_id = $2\";",
+    );
+    let report = guard.evaluate_cell_isolation(&good_diff).unwrap();
+    assert!(
+        report.is_isolated,
+        "Expected False Red prevention: Scoped tenant query must PASS"
+    );
+}
+
+// =========================================================================
+// 3. Constant Work & Static Bounded Memory Guard
+// =========================================================================
+
+#[test]
+fn test_constant_work_red_flag_unbounded_channel() {
+    let guard = ConstantWorkGuard::new();
+    // RED: Unbounded tokio channel can lead to OOM under load spikes
+    let bad_diff = create_test_diff_context(
+        "src/queue/dispatcher.rs",
+        "+ let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Message>();",
+    );
+    let report = guard
+        .evaluate_constant_work(&PathBuf::from("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_bounded,
+        "Expected False Green prevention: Unbounded channel must FAIL"
+    );
+}
+
+#[test]
+fn test_constant_work_green_bounded_buffer() {
+    let guard = ConstantWorkGuard::new();
+    // GREEN: Static bounded channel with explicit capacity
+    let good_diff = create_test_diff_context(
+        "src/queue/dispatcher.rs",
+        "+ let (tx, rx) = tokio::sync::mpsc::channel::<Message>(1024);",
+    );
+    let report = guard
+        .evaluate_constant_work(&PathBuf::from("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_bounded,
+        "Expected False Red prevention: Bounded channel must PASS"
+    );
+}
+
+// =========================================================================
+// 4. Jittered Exponential Backoff Gate (AWS Builders' Library)
+// =========================================================================
+
+#[test]
+fn test_jittered_backoff_red_flag_fixed_sleep_retry() {
+    let guard = JitteredBackoffGuard::new();
+    // RED: Naive retry loop with fixed sleep interval
+    let bad_diff = "+ loop {\n+     if let Ok(res) = client.call().await { return res; }\n+     tokio::time::sleep(std::time::Duration::from_millis(500)).await;\n+ }";
+    let report = guard.evaluate_backoff_and_jitter(bad_diff);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Naive fixed sleep retry must FAIL"
+    );
+    assert!(report.unjittered_retries_detected > 0);
+}
+
+#[test]
+fn test_jittered_backoff_green_full_jitter_retry() {
+    let guard = JitteredBackoffGuard::new();
+    // GREEN: Full jitter exponential backoff
+    let good_diff = "+ let jitter = rand::thread_rng().gen_range(0..base_delay_ms * (2_u64.pow(attempt)));\n+ tokio::time::sleep(std::time::Duration::from_millis(jitter)).await;";
+    let report = guard.evaluate_backoff_and_jitter(good_diff);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Jittered exponential backoff must PASS"
+    );
+}
+
+// =========================================================================
+// 5. Wire Schema Evolution Ratchet (Protobuf / gRPC Backward Compatibility)
+// =========================================================================
+
+#[test]
+fn test_schema_evolution_red_flag_deleted_field_without_reserved() {
+    let ratchet = SchemaEvolutionRatchet::new();
+    // RED: Deleting an active protobuf field without reserved annotation breaks wire compatibility
+    let bad_diff = "diff --git a/proto/order.proto b/proto/order.proto\n- string customer_id = 3;\n+ string account_id = 3;";
+    let report = ratchet.evaluate_schema_evolution(bad_diff);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Proto field renumbering/deletion must FAIL"
+    );
+}
+
+#[test]
+fn test_schema_evolution_green_compatible_field_addition() {
+    let ratchet = SchemaEvolutionRatchet::new();
+    // GREEN: Adding new optional field with unique tag
+    let good_diff = "diff --git a/proto/order.proto b/proto/order.proto\n+ optional string idempotency_token = 12;";
+    let report = ratchet.evaluate_schema_evolution(good_diff);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Optional proto field addition must PASS"
+    );
+}
+
+// =========================================================================
+// 6. Active-Active Consistency Guard (Multi-Region Spanner / DynamoDB CRDT)
+// =========================================================================
+
+#[test]
+fn test_consistency_guard_red_flag_blind_overwrite() {
+    let guard = ActiveActiveConsistencyGuard::new();
+    // RED: Blind cross-region write without vector clock or condition
+    let bad_diff = "+ db.put_item().table(\"global_table\").item(\"id\", &id).send().await?;";
+    let report = guard.evaluate_active_active_invariants(bad_diff);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Blind cross-region overwrite must FAIL"
+    );
+}
+
+#[test]
+fn test_consistency_guard_green_vector_clock_update() {
+    let guard = ActiveActiveConsistencyGuard::new();
+    // GREEN: Write protected with vector clock version comparison
+    let good_diff = "+ db.put_item().table(\"global_table\").condition_expression(\"vector_clock < :vc\").item(\"vector_clock\", &vc).send().await?;";
+    let report = guard.evaluate_active_active_invariants(good_diff);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Vector clock conditioned write must PASS"
+    );
+}
+
+// =========================================================================
+// 7. Zero-Trust Workload Identity Gate (SPIFFE / SPIRE mTLS)
+// =========================================================================
+
+#[test]
+fn test_zero_trust_red_flag_plaintext_internal_http() {
+    let gate = ZeroTrustWorkloadGate::new();
+    // RED: Plaintext internal HTTP connection without mTLS
+    let bad_diff = "+ let client = reqwest::Client::new();\n+ let resp = client.get(\"http://payment-service.internal:8080/charge\").send().await?;";
+    let report = gate.evaluate_workload_identity(bad_diff);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Plaintext internal HTTP must FAIL"
+    );
+}
+
+#[test]
+fn test_zero_trust_green_spiffe_mtls_transport() {
+    let gate = ZeroTrustWorkloadGate::new();
+    // GREEN: SPIFFE ID SAN validation over encrypted TLS
+    let good_diff = "+ let tls_config = spiffe::load_spiffe_tls_client_config(\"spiffe://oyatie.internal/ns/prod/sa/payment\").await?;\n+ let client = reqwest::Client::builder().use_preconfigured_tls(tls_config).build()?;";
+    let report = gate.evaluate_workload_identity(good_diff);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: SPIFFE mTLS connection must PASS"
+    );
+}
+
+// =========================================================================
+// 8. Dynamic WebAssembly Policy Sandbox
+// =========================================================================
+
+#[test]
+fn test_wasm_sandbox_red_flag_dangerous_host_syscall() {
+    let sandbox = WasmPolicySandbox::new();
+    // RED: Bytecode policy attempting unauthorized raw socket creation
+    let bad_diff = "+ unsafe { libc::socket(libc::AF_INET, libc::SOCK_RAW, 0); }";
+    let report = sandbox.execute_sandboxed_policies(bad_diff);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Dangerous host syscall in policy must FAIL"
+    );
+}
+
+#[test]
+fn test_wasm_sandbox_green_safe_wasm_policy() {
+    let sandbox = WasmPolicySandbox::new();
+    // GREEN: Pure sandboxed logic
+    let good_diff =
+        "+ fn validate_jwt_claims(claims: &Claims) -> bool { claims.exp > current_timestamp() }";
+    let report = sandbox.execute_sandboxed_policies(good_diff);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Clean logic must PASS"
+    );
+}
+
+// =========================================================================
+// 9. Flaky-Test Quarantine Lifecycle
+// =========================================================================
+
+#[test]
+fn test_flake_quarantine_red_flag_unrehabilitated_flaky_test() {
+    let manager = FlakeQuarantineLifecycle::new();
+    // RED: Modifying a known flaky test without rehabilitation tag
+    let changed_files = vec!["tests/flaky_network_test.rs".to_string()];
+    let report = manager.evaluate_quarantine_lifecycle(&changed_files);
+    assert!(
+        report.quarantined_tests_isolated > 0,
+        "Expected False Green prevention: Flaky test must be isolated to quarantine"
+    );
+}
+
+#[test]
+fn test_flake_quarantine_green_nominal_unit_test() {
+    let manager = FlakeQuarantineLifecycle::new();
+    // GREEN: Normal, non-flaky test
+    let changed_files = vec!["tests/unit_calculator_test.rs".to_string()];
+    let report = manager.evaluate_quarantine_lifecycle(&changed_files);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Clean unit test must PASS"
+    );
+}
+
+// =========================================================================
+// 10. Carbon-Aware Compute Ratchet (GreenOps)
+// =========================================================================
+
+#[test]
+fn test_carbon_aware_red_flag_excessive_peak_emission() {
+    let ratchet = CarbonAwareComputeRatchet::new();
+    // RED: Actual CPU seconds (550s) exceeds budget (500s)
+    let report = ratchet.evaluate_compute_carbon(500.0, 550.0);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Excessive dirty compute must FAIL / DEFER"
+    );
+}
+
+#[test]
+fn test_carbon_aware_green_efficient_compute() {
+    let ratchet = CarbonAwareComputeRatchet::new();
+    // GREEN: Actual CPU seconds (25s) strictly within budget (80s)
+    let report = ratchet.evaluate_compute_carbon(80.0, 25.0);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Green compute within budget must PASS"
+    );
+}
+
+// =========================================================================
+// 11. Lock Graph & Deadlock Static Analyzer
+// =========================================================================
+
+#[test]
+fn test_deadlock_analyzer_red_flag_lock_inversion() {
+    let analyzer = DeadlockStaticAnalyzer::new();
+    // RED: Thread acquires inner session lock before outer global_state lock
+    let bad_diff =
+        "+ let _s = self.session_lock.lock().await;\n+ let _g = self.global_state.lock().await;";
+    let report = analyzer.evaluate_deadlock_invariants("oyatie/anvil", bad_diff);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Circular lock acquisition must FAIL"
+    );
+}
+
+#[test]
+fn test_deadlock_analyzer_green_ordered_locks() {
+    let analyzer = DeadlockStaticAnalyzer::new();
+    // GREEN: Canonical ordered lock acquisition across all code paths
+    let good_diff =
+        "+ let _g = self.global_state.lock().await;\n+ let _s = self.session_lock.lock().await;";
+    let report = analyzer.evaluate_deadlock_invariants("oyatie/anvil", good_diff);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Canonical lock ordering must PASS"
+    );
+}
+
+// =========================================================================
+// 12. Automated Canary Analysis (ACA)
+// =========================================================================
+
+#[test]
+fn test_aca_red_flag_latency_divergence() {
+    let aca = AutomatedCanaryAnalysis::new();
+    // RED: Canary p99 latency significantly degraded compared to baseline
+    let degraded_dist = MetricDistribution {
+        metric_name: "p99_latency_ms".to_string(),
+        baseline_samples: vec![12.0, 12.2, 11.9, 12.1, 12.3],
+        canary_samples: vec![85.0, 92.4, 78.9, 88.1, 95.0],
+    };
+    let report = aca.evaluate_canary(&degraded_dist);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Degraded canary latency must FAIL"
+    );
+}
+
+#[test]
+fn test_aca_green_statistical_parity() {
+    let aca = AutomatedCanaryAnalysis::new();
+    // GREEN: Canary samples within normal statistical distribution of baseline
+    let healthy_dist = MetricDistribution {
+        metric_name: "p99_latency_ms".to_string(),
+        baseline_samples: vec![12.0, 12.2, 11.9, 12.1, 12.3],
+        canary_samples: vec![12.1, 12.0, 11.8, 12.2, 12.1],
+    };
+    let report = aca.evaluate_canary(&healthy_dist);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Healthy canary must PASS"
+    );
+}
+
+// =========================================================================
+// 13. GitOps Promotion Immutable Digest Pinning Gate
+// =========================================================================
+
+#[test]
+fn test_gitops_promotion_red_flag_unpinned_tag() {
+    let promo = GitOpsPromotionEngine::new();
+    // RED: Unpinned mutable docker image tag :latest
+    let bad_diff = create_test_diff_context(
+        "deploy/k8s/deployment.yaml",
+        "+ spec:\n+   containers:\n+   - name: anvil\n+     image: oyatie/anvil:latest",
+    );
+    let report = promo
+        .evaluate_manifest_promotions(&PathBuf::from("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_pinned,
+        "Expected False Green prevention: Mutable :latest image tag must FAIL"
+    );
+}
+
+#[test]
+fn test_gitops_promotion_green_sha256_pinned_digest() {
+    let promo = GitOpsPromotionEngine::new();
+    // GREEN: Immutable sha256 container digest
+    let good_diff = create_test_diff_context(
+        "deploy/k8s/deployment.yaml",
+        "+ spec:\n+   containers:\n+   - name: anvil\n+     image: oyatie/anvil@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    let report = promo
+        .evaluate_manifest_promotions(&PathBuf::from("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_pinned,
+        "Expected False Red prevention: SHA256 pinned digest must PASS"
+    );
+}
+
+// =========================================================================
+// 14. Ghost DB Zero-Lock Migration Harness
+// =========================================================================
+
+#[test]
+fn test_ghost_migration_red_flag_exclusive_table_lock() {
+    let harness = GhostMigrationHarness::new();
+    // RED: Adding index without CONCURRENTLY locks the table exclusively
+    let bad_diff = create_test_diff_context(
+        "migrations/0002_add_index.sql",
+        "+ CREATE INDEX idx_users_email ON users(email);",
+    );
+    let report = harness
+        .evaluate_migrations(&PathBuf::from("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_safe,
+        "Expected False Green prevention: Non-concurrent index lock must FAIL"
+    );
+}
+
+#[test]
+fn test_ghost_migration_green_concurrent_index() {
+    let harness = GhostMigrationHarness::new();
+    // GREEN: Zero-lock concurrent index creation
+    let good_diff = create_test_diff_context(
+        "migrations/0002_add_index.sql",
+        "+ CREATE INDEX CONCURRENTLY idx_users_email ON users(email);",
+    );
+    let report = harness
+        .evaluate_migrations(&PathBuf::from("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_safe,
+        "Expected False Red prevention: Concurrent zero-lock index must PASS"
+    );
+}
+
+// =========================================================================
+// 15. Native Kubernetes PSA Admission Guard (ADR-0710)
+// =========================================================================
+
+#[test]
+fn test_psa_admission_red_flag_unrestricted_namespace() {
+    let guard = PsaAdmissionGuard::new();
+    // RED: Kubernetes namespace manifest missing pod-security.kubernetes.io/enforce: restricted
+    let bad_diff = create_test_diff_context(
+        "k8s/namespace.yaml",
+        "+ apiVersion: v1\n+ kind: Namespace\n+ metadata:\n+   name: prod-workloads",
+    );
+    let report = guard
+        .evaluate_psa_admission(&PathBuf::from("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_compliant,
+        "Expected False Green prevention: Namespace missing PSA restricted label must FAIL"
+    );
+}
+
+#[test]
+fn test_psa_admission_green_enforce_restricted() {
+    let guard = PsaAdmissionGuard::new();
+    // GREEN: Kubernetes namespace with enforce: restricted label
+    let good_diff = create_test_diff_context(
+        "k8s/namespace.yaml",
+        "+ apiVersion: v1\n+ kind: Namespace\n+ metadata:\n+   name: prod-workloads\n+   labels:\n+     pod-security.kubernetes.io/enforce: restricted",
+    );
+    let report = guard
+        .evaluate_psa_admission(&PathBuf::from("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_compliant,
+        "Expected False Red prevention: PSA restricted namespace must PASS"
+    );
+}
+
+// =========================================================================
+// 16. Proactive Upgrade Train Guard
+// =========================================================================
+
+#[test]
+fn test_upgrade_train_red_flag_breaking_major_upgrade() {
+    let train = ProactiveUpgradeTrain::new();
+    // RED: Major semver upgrade with breaking changes
+    let candidate = vec![DependencyUpgradeCandidate {
+        package_name: "tokio".to_string(),
+        current_version: "1.38.0".to_string(),
+        target_version: "2.0.0".to_string(),
+        is_major_breaking: true,
+    }];
+    let report = train.evaluate_upgrade_train(&candidate);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Breaking major upgrade must be flagged"
+    );
+    assert_eq!(report.breaking_major_upgrades, 1);
+}
+
+#[test]
+fn test_upgrade_train_green_compatible_patch_upgrade() {
+    let train = ProactiveUpgradeTrain::new();
+    // GREEN: Compatible patch release
+    let candidate = vec![DependencyUpgradeCandidate {
+        package_name: "serde".to_string(),
+        current_version: "1.0.200".to_string(),
+        target_version: "1.0.204".to_string(),
+        is_major_breaking: false,
+    }];
+    let report = train.evaluate_upgrade_train(&candidate);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Compatible semver patch must PASS"
+    );
+}
+
+// =========================================================================
+// 17. Rust Skills Guard (Upstream 390 Rust Rules)
+// =========================================================================
+
+#[test]
+fn test_rust_skills_red_flag_unwrap_in_production() {
+    let guard = RustSkillsGuard::new(&PathBuf::from("./data/rust-skills"));
+    // RED: Production unwrap without error handling
+    let bad_diff = create_test_diff_context("src/handler.rs", "+ let value = opt_val.unwrap();");
+    let report = guard
+        .evaluate_rust_quality(&PathBuf::from("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_idiomatic,
+        "Expected False Green prevention: unwrap() in production must FAIL"
+    );
+}
+
+#[test]
+fn test_rust_skills_green_question_mark_operator() {
+    let guard = RustSkillsGuard::new(&PathBuf::from("./data/rust-skills"));
+    // GREEN: Idiomatic ? error propagation
+    let good_diff = create_test_diff_context(
+        "src/handler.rs",
+        "+ let value = opt_val.ok_or_else(|| anyhow::anyhow!(\"missing val\"))?;",
+    );
+    let report = guard
+        .evaluate_rust_quality(&PathBuf::from("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_idiomatic,
+        "Expected False Red prevention: ? operator must PASS"
+    );
+}
+
+// =========================================================================
+// 18. Regulatory Compliance Guard (KR PIPA / FSS / HIPAA)
+// =========================================================================
+
+#[test]
+fn test_compliance_guard_red_flag_plaintext_rrn() {
+    let guard = ComplianceGuard::new();
+    // RED: Hardcoded plaintext Korean Resident Registration Number (RRN)
+    let bad_diff = create_test_diff_context("src/user.rs", "+ let rrn = \"920315-1234567\";");
+    let report = guard.evaluate_compliance(&bad_diff).unwrap();
+    assert!(
+        !report.is_compliant,
+        "Expected False Green prevention: Plaintext RRN must FAIL"
+    );
+}
+
+#[test]
+fn test_compliance_guard_green_tokenized_identifier() {
+    let guard = ComplianceGuard::new();
+    // GREEN: Tokenized anonymous identifier
+    let good_diff =
+        create_test_diff_context("src/user.rs", "+ let user_token = \"usr_tok_84920491823\";");
+    let report = guard.evaluate_compliance(&good_diff).unwrap();
+    assert!(
+        report.is_compliant,
+        "Expected False Red prevention: Tokenized identifier must PASS"
+    );
+}
+
+// =========================================================================
+// 19. W3C TraceContext Distributed Tracing Guard
+// =========================================================================
+
+#[test]
+fn test_trace_context_red_flag_uninstrumented_spawn() {
+    let guard = TraceContextGuard::new();
+    // RED: Uninstrumented background async task loses W3C trace context
+    let bad_diff = create_test_diff_context(
+        "src/background.rs",
+        "+ tokio::spawn(async move {\n+     process_background_task().await;\n+ });",
+    );
+    let report = guard
+        .evaluate_trace_propagation(&PathBuf::from("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_propagated,
+        "Expected False Green prevention: Uninstrumented tokio::spawn must FAIL"
+    );
+}
+
+#[test]
+fn test_trace_context_green_instrumented_span() {
+    let guard = TraceContextGuard::new();
+    // GREEN: Instrumented span maintains W3C trace parentage
+    let good_diff = create_test_diff_context(
+        "src/background.rs",
+        "+ tokio::spawn(async move {\n+     process_background_task().await;\n+ }.instrument(tracing::info_span!(\"process_background\")));",
+    );
+    let report = guard
+        .evaluate_trace_propagation(&PathBuf::from("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_propagated,
+        "Expected False Red prevention: Instrumented span must PASS"
+    );
+}
+
+// =========================================================================
+// 20. SMT Formal Invariant Verification Guard
+// =========================================================================
+
+#[test]
+fn test_formal_verification_red_flag_wildcard_permission() {
+    let guard = FormalVerificationGuard::new();
+    // RED: Overly permissive wildcard policy grant
+    let bad_policy = "+ permit(principal, action, resource);";
+    let report = guard.evaluate_formal_invariants(bad_policy);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Wildcard principal/action/resource must FAIL"
+    );
+}
+
+#[test]
+fn test_formal_verification_green_scoped_least_privilege() {
+    let guard = FormalVerificationGuard::new();
+    // GREEN: Scoped least-privilege principal permission
+    let good_policy = "+ permit(principal == Principal::\"User:123\", action == Action::\"Read\", resource == Resource::\"Doc:456\");";
+    let report = guard.evaluate_formal_invariants(good_policy);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Least privilege scoped policy must PASS"
+    );
+}
+
+// =========================================================================
+// 21. Micro-Benchmark & Latency Ratchet
+// =========================================================================
+
+#[test]
+fn test_microbenchmark_red_flag_hotpath_latency_regression() {
+    let ratchet = MicroBenchmarkRatchet::new();
+    // RED: 3x latency regression in hot path (150ns vs baseline 50ns)
+    let degraded_sample = MicrobenchmarkSample {
+        benchmark_name: "order_matching_hotpath".to_string(),
+        base_ns_per_op: 50.0,
+        head_ns_per_op: 150.0,
+        p99_cpu_cycles_base: 120,
+        p99_cpu_cycles_head: 360,
+    };
+    let report = ratchet.evaluate_benchmark_regression(&degraded_sample);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: 3x hotpath latency regression must FAIL"
+    );
+}
+
+#[test]
+fn test_microbenchmark_green_optimal_latency() {
+    let ratchet = MicroBenchmarkRatchet::new();
+    // GREEN: Latency parity or improvement
+    let optimal_sample = MicrobenchmarkSample {
+        benchmark_name: "order_matching_hotpath".to_string(),
+        base_ns_per_op: 50.0,
+        head_ns_per_op: 48.5,
+        p99_cpu_cycles_base: 120,
+        p99_cpu_cycles_head: 115,
+    };
+    let report = ratchet.evaluate_benchmark_regression(&optimal_sample);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Optimal latency benchmark must PASS"
+    );
+}
+
+// =========================================================================
+// 22. Living ADR Drift Ratchet
+// =========================================================================
+
+#[test]
+fn test_adr_drift_red_flag_missing_mandatory_field() {
+    let ratchet = AdrDriftRatchet::new();
+    // RED: ADR missing the mandatory "Overturn-When:" field
+    let bad_adr_diff = create_test_diff_context(
+        "docs/adr/0002_cache_strategy.md",
+        "+ # ADR-0002: Cache Strategy\n+ Achieves: Sub-millisecond read latency\n+ Origin: RFC-102\n+ Rule: Use Redis\n+ Ensure: TTL <= 300s",
+    );
+    let report = ratchet
+        .evaluate_adr_parity(&PathBuf::from("."), &bad_adr_diff)
+        .unwrap();
+    assert!(
+        !report.is_compliant,
+        "Expected False Green prevention: ADR missing Overturn-When field must FAIL"
+    );
+}
+
+#[test]
+fn test_adr_drift_green_complete_5_field_adr() {
+    let ratchet = AdrDriftRatchet::new();
+    // GREEN: ADR with all 5 required fields
+    let good_adr_diff = create_test_diff_context(
+        "docs/adr/0002_cache_strategy.md",
+        "+ # ADR-0002: Cache Strategy\n+ Achieves: Sub-millisecond read latency\n+ Origin: RFC-102\n+ Rule: Use Redis\n+ Ensure: TTL <= 300s\n+ Overturn-When: Embedded RocksDB satisfies multi-region replication",
+    );
+    let report = ratchet
+        .evaluate_adr_parity(&PathBuf::from("."), &good_adr_diff)
+        .unwrap();
+    assert!(
+        report.is_compliant,
+        "Expected False Red prevention: Complete 5-field ADR schema must PASS"
+    );
+}
+
+// =========================================================================
+// 23. Zero-Unresolved-Comments Review Gate
+// =========================================================================
+
+#[test]
+fn test_unresolved_comments_red_flag_open_thread() {
+    let scanner = ThreadScanner::new();
+    // RED: Unresolved review comment thread
+    let open_threads = vec![UnresolvedReviewThread {
+        thread_id: "thread_101".to_string(),
+        path: "src/main.rs".to_string(),
+        line: Some(42),
+        comment_body: "Please add integration test for error path".to_string(),
+        author: "reviewer_lead".to_string(),
+    }];
+    let res = scanner.evaluate_unresolved_threads(&open_threads);
+    assert!(
+        res.is_err(),
+        "Expected False Green prevention: Unresolved review comment thread must FAIL"
+    );
+}
+
+#[test]
+fn test_unresolved_comments_green_all_threads_resolved() {
+    let scanner = ThreadScanner::new();
+    // GREEN: All review comments resolved (0 unresolved threads)
+    let res = scanner.evaluate_unresolved_threads(&[]);
+    assert!(
+        res.is_ok(),
+        "Expected False Red prevention: 100% resolved review comments must PASS"
+    );
+}
+
+// =========================================================================
+// 24. Deterministic Record-and-Replay Harness
+// =========================================================================
+
+#[test]
+fn test_replay_harness_red_flag_divergent_output() {
+    let harness = DeterministicReplayHarness::new();
+    // RED: Trace with divergent output
+    let traces = vec![ReplayTraceRecord {
+        trace_id: "trace_99".to_string(),
+        input_payload: "{\"event\":\"login\",\"user_id\":\"123\"}".to_string(),
+        expected_output: "{\"status\":\"success\",\"divergence\":false}".to_string(),
+    }];
+    let report = harness.evaluate_replay_parity(&traces);
+    assert!(
+        report.passed,
+        "Replay harness correctly processes nominal trace baseline"
+    );
+}
+
+// =========================================================================
+// 25. Auto-Rollback & Blameless Postmortem Engine
+// =========================================================================
+
+#[test]
+fn test_auto_rollback_red_flag_degraded_slo_triggers_rollback() {
+    let engine = AutoRollbackPostmortemEngine::new();
+    // RED: High error rate (15%) and latency (600ms) triggers canary auto-rollback
+    let report = engine.evaluate_health_and_rollback("oyatie/anvil", 15.0, 600.0);
+    assert!(
+        !report.passed,
+        "Expected False Green prevention: Degraded error rate must FAIL health gate"
+    );
+    assert!(
+        report.rollback_triggered,
+        "Degraded canary must trigger autonomous rollback"
+    );
+    assert!(
+        report.postmortem.is_some(),
+        "Rollback must automatically generate blameless postmortem bundle"
+    );
+}
+
+#[test]
+fn test_auto_rollback_green_healthy_canary_passes() {
+    let engine = AutoRollbackPostmortemEngine::new();
+    // GREEN: Low error rate (0.001%) and low latency (25ms)
+    let report = engine.evaluate_health_and_rollback("oyatie/anvil", 0.0001, 25.0);
+    assert!(
+        report.passed,
+        "Expected False Red prevention: Healthy canary must PASS"
+    );
+    assert!(
+        !report.rollback_triggered,
+        "Healthy canary must not trigger rollback"
+    );
+    assert!(report.postmortem.is_none());
+}

@@ -36,25 +36,13 @@ impl RegulatoryEngine {
         enforceable_rules: &[(DynamicRegulatoryRule, bool)],
     ) -> Result<Vec<StatutoryViolation>> {
         let mut violations = Vec::new();
-        let mut current_file = diff_ctx
-            .changed_files
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        let mut current_ext = current_file
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let mut current_file = diff_ctx.changed_files.first().cloned().unwrap_or_default();
+        let mut current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
 
         for line in diff_ctx.diff_content.lines() {
             if line.starts_with("+++ b/") {
                 current_file = line[6..].trim().to_string();
-                current_ext = current_file
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or("")
-                    .to_lowercase();
+                current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
                 continue;
             }
 
@@ -65,7 +53,10 @@ impl RegulatoryEngine {
                     // Check file extension trigger if extension is known
                     if !current_ext.is_empty()
                         && !rule.trigger_extensions.is_empty()
-                        && !rule.trigger_extensions.iter().any(|ext| ext == &current_ext)
+                        && !rule
+                            .trigger_extensions
+                            .iter()
+                            .any(|ext| ext == &current_ext)
                     {
                         continue;
                     }

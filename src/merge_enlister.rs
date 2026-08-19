@@ -17,7 +17,10 @@ impl MergeEnlister {
 
     /// Enlists a certified Pull Request into the repository's Merge Queue, ensuring an Approving Review is present
     pub async fn enlist_into_merge_queue(&self, repo: &str, pr_number: u64) -> Result<()> {
-        info!("Enlisting certified PR {}#{} into GitHub Merge Queue...", repo, pr_number);
+        info!(
+            "Enlisting certified PR {}#{} into GitHub Merge Queue...",
+            repo, pr_number
+        );
 
         // Step 1: Ensure PR has an official Approving Review submitted on GitHub
         self.ensure_approving_review(repo, pr_number).await?;
@@ -34,16 +37,26 @@ impl MergeEnlister {
             "--squash",
         ]);
 
-        let output = cmd.output().await.context("Failed to run gh pr merge --auto")?;
+        let output = cmd
+            .output()
+            .await
+            .context("Failed to run gh pr merge --auto")?;
 
         if output.status.success() {
-            info!("Successfully enlisted {}#{} into Merge Queue (squash)", repo, pr_number);
-            self.post_enlistment_note(repo, pr_number, "Squash & Merge").await?;
+            info!(
+                "Successfully enlisted {}#{} into Merge Queue (squash)",
+                repo, pr_number
+            );
+            self.post_enlistment_note(repo, pr_number, "Squash & Merge")
+                .await?;
             return Ok(());
         }
 
         let err = String::from_utf8_lossy(&output.stderr);
-        warn!("gh pr merge --auto --squash returned: {}. Retrying with --merge...", err);
+        warn!(
+            "gh pr merge --auto --squash returned: {}. Retrying with --merge...",
+            err
+        );
 
         let mut retry_cmd = Command::new("gh");
         retry_cmd.args([
@@ -58,26 +71,42 @@ impl MergeEnlister {
 
         let retry_out = retry_cmd.output().await?;
         if retry_out.status.success() {
-            info!("Successfully enlisted {}#{} into Merge Queue (standard merge)", repo, pr_number);
-            self.post_enlistment_note(repo, pr_number, "Merge Commit").await?;
+            info!(
+                "Successfully enlisted {}#{} into Merge Queue (standard merge)",
+                repo, pr_number
+            );
+            self.post_enlistment_note(repo, pr_number, "Merge Commit")
+                .await?;
             return Ok(());
         }
 
         let err2 = String::from_utf8_lossy(&retry_out.stderr);
         if err2.contains("already") || err2.contains("queued") || err2.contains("merged") {
-            info!("PR {}#{} is already queued or merged: {}", repo, pr_number, err2);
+            info!(
+                "PR {}#{} is already queued or merged: {}",
+                repo, pr_number, err2
+            );
             return Ok(());
         }
 
-        warn!("Could not enlist PR {}#{} into merge queue: {}", repo, pr_number, err2);
+        warn!(
+            "Could not enlist PR {}#{} into merge queue: {}",
+            repo, pr_number, err2
+        );
         bail!("Merge queue enlistment failed: {}", err2);
     }
 
     /// Verifies if PR has an approving review; if not, submits a formal APPROVE review
     pub async fn ensure_approving_review(&self, repo: &str, pr_number: u64) -> Result<()> {
-        info!("Verifying approving review requirement for {}#{}...", repo, pr_number);
+        info!(
+            "Verifying approving review requirement for {}#{}...",
+            repo, pr_number
+        );
 
-        let meta = self.github_client.fetch_pr_metadata(repo, pr_number).await?;
+        let meta = self
+            .github_client
+            .fetch_pr_metadata(repo, pr_number)
+            .await?;
 
         let check_cmd = Command::new("gh")
             .args([
@@ -97,21 +126,30 @@ impl MergeEnlister {
             if out.status.success() {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 if stdout.contains("APPROVED") {
-                    info!("PR {}#{} already has reviewDecision: APPROVED", repo, pr_number);
+                    info!(
+                        "PR {}#{} already has reviewDecision: APPROVED",
+                        repo, pr_number
+                    );
                     needs_approval = false;
                 }
             }
         }
 
         if needs_approval {
-            info!("Submitting formal GitHub APPROVE review for {}#{} before merge queue admission...", repo, pr_number);
+            info!(
+                "Submitting formal GitHub APPROVE review for {}#{} before merge queue admission...",
+                repo, pr_number
+            );
             let approval = ReviewResponse {
                 summary: "### 🟢 Pre-Merge Quality Approval\n\nAll automated review, documentation parity, clean architecture, and hyperscale safety gates have passed with 100% compliance. Certified for merge queue admission.".to_string(),
                 verdict: "APPROVE".to_string(),
                 comments: Vec::new(),
             };
 
-            let _ = self.github_client.submit_pr_review(repo, pr_number, &meta.head_ref_oid, &approval).await;
+            let _ = self
+                .github_client
+                .submit_pr_review(repo, pr_number, &meta.head_ref_oid, &approval)
+                .await;
         }
 
         Ok(())
@@ -122,7 +160,9 @@ impl MergeEnlister {
             "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n*🤖 Autonomous Merge Train Enlistment by **Oyatie Autonomous Engineering Pipeline***\n",
             strategy
         );
-        self.github_client.post_pr_comment(repo, pr_number, &note).await?;
+        self.github_client
+            .post_pr_comment(repo, pr_number, &note)
+            .await?;
         Ok(())
     }
 }

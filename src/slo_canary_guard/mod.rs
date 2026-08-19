@@ -31,7 +31,10 @@ impl SloCanaryGuard {
         repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<SloCanaryReport> {
-        info!("Running SloCanaryGuard (OpenSLO & Error Budget Burn-Rate Gate) on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+        info!(
+            "Running SloCanaryGuard (OpenSLO & Error Budget Burn-Rate Gate) on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let mut slos_evaluated = 0;
         let mut violations = Vec::new();
@@ -46,7 +49,10 @@ impl SloCanaryGuard {
                             Ok(spec) => {
                                 slos_evaluated += 1;
                                 if spec.spec.objectives.is_empty() {
-                                    violations.push(format!("OpenSLO spec `{}` declares 0 objectives", file));
+                                    violations.push(format!(
+                                        "OpenSLO spec `{}` declares 0 objectives",
+                                        file
+                                    ));
                                 }
                                 for obj in &spec.spec.objectives {
                                     if obj.target <= 0.0 || obj.target > 1.0 {
@@ -58,7 +64,8 @@ impl SloCanaryGuard {
                                 }
                             }
                             Err(e) => {
-                                violations.push(format!("OpenSLO YAML parse error in `{}`: {}", file, e));
+                                violations
+                                    .push(format!("OpenSLO YAML parse error in `{}`: {}", file, e));
                             }
                         }
                     }
@@ -121,7 +128,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = guard.evaluate_slo_canary_health(Path::new("."), &diff_ctx).unwrap();
+        let rep = guard
+            .evaluate_slo_canary_health(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_compliant);
         assert!(rep.simulated_burn_rate_5m < rep.max_allowed_burn_rate);
     }

@@ -51,7 +51,9 @@ impl FlakeBisectionBot {
         culprit.map(|sha| FlakeBisectionResult {
             culprit_commit_sha: sha,
             bisection_steps_evaluated: steps,
-            root_cause_flamegraph_url: Some("https://artifacts.oyatie.internal/flamegraphs/flake-culprit.svg".to_string()),
+            root_cause_flamegraph_url: Some(
+                "https://artifacts.oyatie.internal/flamegraphs/flake-culprit.svg".to_string(),
+            ),
         })
     }
 }

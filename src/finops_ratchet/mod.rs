@@ -47,13 +47,16 @@ impl FinOpsUnitCostRatchet {
                 }
             }
 
-            let file_findings = self.scanner.scan_hotpath_allocations(&current_file, file_diff);
+            let file_findings = self
+                .scanner
+                .scan_hotpath_allocations(&current_file, file_diff);
             findings.extend(file_findings);
         }
 
         let is_cost_optimal = findings.is_empty();
         let summary = if is_cost_optimal {
-            "✅ PASSED (Zero-copy semantics and zero unbudgeted heap allocations in hotpaths)".to_string()
+            "✅ PASSED (Zero-copy semantics and zero unbudgeted heap allocations in hotpaths)"
+                .to_string()
         } else {
             format!(
                 "⚠️ CAUTION ({} avoidable hotpath heap allocation(s) detected)",
@@ -89,7 +92,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = ratchet.evaluate_unit_cost(Path::new("."), &diff_ctx).unwrap();
+        let rep = ratchet
+            .evaluate_unit_cost(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_cost_optimal);
     }
 }

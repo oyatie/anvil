@@ -21,15 +21,26 @@ impl LockfileReconciler {
 
     /// Reconciles lockfiles and truth ledgers for a Pull Request branch
     pub async fn reconcile_pr(&self, repo: &str, pr_number: u64) -> Result<bool> {
-        info!("Running lockfile and ledger reconciliation for {}#{}...", repo, pr_number);
+        info!(
+            "Running lockfile and ledger reconciliation for {}#{}...",
+            repo, pr_number
+        );
 
-        let meta = self.github_client.fetch_pr_metadata(repo, pr_number).await?;
+        let meta = self
+            .github_client
+            .fetch_pr_metadata(repo, pr_number)
+            .await?;
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
         // Checkout PR branch
         let _ = Command::new("git")
             .current_dir(&repo_dir)
-            .args(["fetch", "origin", &format!("pull/{}/head", pr_number), "--force"])
+            .args([
+                "fetch",
+                "origin",
+                &format!("pull/{}/head", pr_number),
+                "--force",
+            ])
             .output()
             .await;
 
@@ -61,7 +72,8 @@ impl LockfileReconciler {
         }
 
         // 3. Truth Ledgers & Documentation Manifests
-        let doc_manifest_script = repo_dir.join("scripts/console/generate-documentation-manifest.mjs");
+        let doc_manifest_script =
+            repo_dir.join("scripts/console/generate-documentation-manifest.mjs");
         if doc_manifest_script.exists() {
             info!("Reconciling documentation manifest in {:?}", repo_dir);
             let _ = Command::new("node")
@@ -97,11 +109,17 @@ impl LockfileReconciler {
             .collect();
 
         if reconciled_files.is_empty() {
-            info!("No lockfile or ledger drift found for {}#{}", repo, pr_number);
+            info!(
+                "No lockfile or ledger drift found for {}#{}",
+                repo, pr_number
+            );
             return Ok(false);
         }
 
-        info!("Lockfiles/ledgers reconciled: {:?}. Committing & pushing...", reconciled_files);
+        info!(
+            "Lockfiles/ledgers reconciled: {:?}. Committing & pushing...",
+            reconciled_files
+        );
 
         for file in &reconciled_files {
             let _ = Command::new("git")
@@ -111,7 +129,10 @@ impl LockfileReconciler {
                 .await;
         }
 
-        let commit_msg = format!("chore(deps): auto-reconcile lockfiles and documentation ledgers on PR #{}", pr_number);
+        let commit_msg = format!(
+            "chore(deps): auto-reconcile lockfiles and documentation ledgers on PR #{}",
+            pr_number
+        );
         let _ = Command::new("git")
             .current_dir(&repo_dir)
             .args(["commit", "-m", &commit_msg])
@@ -126,7 +147,10 @@ impl LockfileReconciler {
             .await?;
 
         if push_out.status.success() {
-            info!("Pushed reconciled lockfiles to origin/{}", meta.head_ref_name);
+            info!(
+                "Pushed reconciled lockfiles to origin/{}",
+                meta.head_ref_name
+            );
             Ok(true)
         } else {
             let err = String::from_utf8_lossy(&push_out.stderr);

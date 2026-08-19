@@ -28,7 +28,9 @@ impl OpenVexReachabilityScanner {
         vuln_symbol: &str,
         source_content: &str,
     ) -> OpenVexReport {
-        let stmt = self.pruner.evaluate_cve_reachability(cve_id, package, vuln_symbol, source_content);
+        let stmt =
+            self.pruner
+                .evaluate_cve_reachability(cve_id, package, vuln_symbol, source_content);
         let passed = matches!(stmt.status, VexImpactStatus::NotAffected { .. });
 
         OpenVexReport {
@@ -45,7 +47,12 @@ mod tests {
     #[test]
     fn test_vex_scanner_nominal() {
         let scanner = OpenVexReachabilityScanner::new();
-        let report = scanner.scan_reachability("CVE-2026-9999", "serde", "serde::unsafe_leak", "fn main() {}");
+        let report = scanner.scan_reachability(
+            "CVE-2026-9999",
+            "serde",
+            "serde::unsafe_leak",
+            "fn main() {}",
+        );
         assert!(report.passed);
     }
 }

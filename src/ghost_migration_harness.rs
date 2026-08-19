@@ -53,14 +53,17 @@ impl GhostMigrationHarness {
                 is_safe: true,
                 migrations_evaluated: 0,
                 violations: Vec::new(),
-                summary: "Zero database schema migrations in PR diff; ghost migration check passed.".to_string(),
+                summary:
+                    "Zero database schema migrations in PR diff; ghost migration check passed."
+                        .to_string(),
             });
         }
 
         let migrations_evaluated = migration_files.len();
 
         let create_index_re = Regex::new(r"(?i)CREATE\s+(?:UNIQUE\s+)?INDEX").unwrap();
-        let add_not_null_re = Regex::new(r"(?i)ADD\s+COLUMN\s+([^\s]+)\s+([^\s]+)\s+NOT\s+NULL").unwrap();
+        let add_not_null_re =
+            Regex::new(r"(?i)ADD\s+COLUMN\s+([^\s]+)\s+([^\s]+)\s+NOT\s+NULL").unwrap();
         let drop_column_re = Regex::new(r"(?i)DROP\s+COLUMN\s+([^\s]+)").unwrap();
         let drop_table_re = Regex::new(r"(?i)DROP\s+TABLE\s+([^\s]+)").unwrap();
 
@@ -126,7 +129,10 @@ impl GhostMigrationHarness {
         for f in &migration_files {
             if f.contains("/up.sql") || f.ends_with("_up.sql") {
                 let down_equivalent = f.replace("up.sql", "down.sql");
-                let has_down = diff_ctx.changed_files.iter().any(|cf| cf == &down_equivalent);
+                let has_down = diff_ctx
+                    .changed_files
+                    .iter()
+                    .any(|cf| cf == &down_equivalent);
                 if !has_down {
                     violations.push(MigrationViolation {
                         file_path: (*f).clone(),
@@ -187,7 +193,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = harness.evaluate_migrations(&temp_dir, &diff_ctx).expect("eval");
+        let report = harness
+            .evaluate_migrations(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(report.is_safe);
         assert_eq!(report.migrations_evaluated, 1);
     }
@@ -204,12 +212,16 @@ mod tests {
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+++ b/migrations/002_bad_idx.sql\n+ CREATE INDEX idx_users_email ON users(email);".to_string(),
+            diff_content:
+                "+++ b/migrations/002_bad_idx.sql\n+ CREATE INDEX idx_users_email ON users(email);"
+                    .to_string(),
             changed_files: vec!["migrations/002_bad_idx.sql".to_string()],
             is_incremental: false,
         };
 
-        let report = harness.evaluate_migrations(&temp_dir, &diff_ctx).expect("eval");
+        let report = harness
+            .evaluate_migrations(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(!report.is_safe);
         assert_eq!(report.violations[0].violation_type, "EXCLUSIVE_INDEX_LOCK");
     }

@@ -16,7 +16,11 @@ impl HeavyDependencyScanner {
     }
 
     /// 100% Deterministic scan of Cargo.toml and build.rs diffs for slow-to-compile macro dependencies
-    pub fn scan_heavy_dependencies(&self, file_path: &str, content: &str) -> Vec<HeavyDependencyFinding> {
+    pub fn scan_heavy_dependencies(
+        &self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<HeavyDependencyFinding> {
         let mut findings = Vec::new();
 
         if file_path.ends_with("Cargo.toml") {

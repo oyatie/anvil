@@ -13,10 +13,18 @@ async fn test_live_claude_opus5_high() {
 
     assert_eq!(config.resolved_model(), "opus5");
     let res = executor
-        .execute_prompt("Respond strictly with: OPUS5_HIGH_OK", Path::new("."), &config)
+        .execute_prompt(
+            "Respond strictly with: OPUS5_HIGH_OK",
+            Path::new("."),
+            &config,
+        )
         .await;
 
-    assert!(res.is_ok(), "Claude Code Opus 5 execution failed: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Claude Code Opus 5 execution failed: {:?}",
+        res
+    );
     let output = res.unwrap();
     println!("Claude Opus 5 Live Output: {}", output);
     assert!(!output.trim().is_empty());
@@ -34,7 +42,11 @@ async fn test_live_gpt5_6sol_high_with_fallover() {
 
     assert_eq!(config.resolved_model(), "gpt-5.6-sol");
     let res = executor
-        .execute_prompt("Respond strictly with: GPT5_6SOL_HIGH_OK", Path::new("."), &config)
+        .execute_prompt(
+            "Respond strictly with: GPT5_6SOL_HIGH_OK",
+            Path::new("."),
+            &config,
+        )
         .await;
 
     assert!(res.is_ok(), "Codex GPT-5.6sol execution failed: {:?}", res);
@@ -55,7 +67,11 @@ async fn test_live_gemini3_7_flash_high() {
 
     assert_eq!(config.resolved_model(), "gemini-3.7-flash");
     let res = executor
-        .execute_prompt("Respond strictly with: GEMINI3_7_FLASH_HIGH_OK", Path::new("."), &config)
+        .execute_prompt(
+            "Respond strictly with: GEMINI3_7_FLASH_HIGH_OK",
+            Path::new("."),
+            &config,
+        )
         .await;
 
     assert!(res.is_ok(), "Gemini 3.7 Flash execution failed: {:?}", res);

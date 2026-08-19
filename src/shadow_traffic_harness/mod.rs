@@ -76,7 +76,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = harness.evaluate_shadow_verification(Path::new("."), &diff_ctx).unwrap();
+        let rep = harness
+            .evaluate_shadow_verification(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_verified);
     }
 }

@@ -1,14 +1,15 @@
 use anyhow::Result;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod adr_drift_ratchet;
 mod ai_driver;
 mod api_contract_guard;
 mod attestation_guard;
+mod auto_rollback;
 mod automated_canary;
 mod canary_rollout;
+mod carbon_aware;
 mod cedar_guard;
 mod cell_isolation_guard;
 mod chaos_injector;
@@ -22,6 +23,7 @@ mod cluster_state_auditor;
 mod compile_time_profiler;
 mod compliance_guard;
 mod config;
+mod consistency_guard;
 mod constant_work_guard;
 mod cosign_signer;
 mod coverage_guard;
@@ -38,6 +40,7 @@ mod finops_ratchet;
 mod fixer;
 mod flake_bisector;
 mod flake_cost_dampener;
+mod flake_quarantine;
 mod formal_verification;
 mod ghost_migration_harness;
 mod git_manager;
@@ -48,6 +51,7 @@ mod hermetic_build;
 mod idempotency_guard;
 mod incident_healer;
 mod incident_sentry;
+mod jittered_backoff;
 mod kani_guard;
 mod local_inner_loop;
 mod lockfile_reconciler;
@@ -64,9 +68,11 @@ mod progressive_rollout;
 mod psa_admission_guard;
 mod queue_healer;
 mod remote_cache_optimizer;
+mod replay_harness;
 mod review_memory;
 mod reviewer;
 mod rust_skills_guard;
+mod schema_evolution;
 mod semantic_abi_ratchet;
 mod shadow_traffic_harness;
 mod shuffle_shard_simulator;
@@ -76,15 +82,20 @@ mod state;
 mod supply_chain_guard;
 mod trace_context_guard;
 mod unresolved_review_guard;
+mod upgrade_train;
 mod vex_scanner;
+mod wasm_sandbox;
 mod webhook;
 mod zero_day_patcher;
+mod zero_trust_workload;
 
 use adr_drift_ratchet::AdrDriftRatchet;
 use api_contract_guard::ApiContractGuard;
 use attestation_guard::AttestationGuard;
+use auto_rollback::AutoRollbackPostmortemEngine;
 use automated_canary::AutomatedCanaryAnalysis;
 use canary_rollout::CanaryRolloutGuard;
+use carbon_aware::CarbonAwareComputeRatchet;
 use cedar_guard::CedarGuard;
 use cell_isolation_guard::CellIsolationGuard;
 use chaos_injector::ChaosFaultInjector;
@@ -98,6 +109,7 @@ use cluster_state_auditor::ClusterStateAuditor;
 use compile_time_profiler::CompileTimeProfiler;
 use compliance_guard::ComplianceGuard;
 use config::Config;
+use consistency_guard::ActiveActiveConsistencyGuard;
 use constant_work_guard::ConstantWorkGuard;
 use cosign_signer::CosignProvenanceSigner;
 use coverage_guard::CoverageGuard;
@@ -114,6 +126,7 @@ use finops_ratchet::FinOpsUnitCostRatchet;
 use fixer::Fixer;
 use flake_bisector::FlakeBisectorEngine;
 use flake_cost_dampener::FlakeCostDampener;
+use flake_quarantine::FlakeQuarantineLifecycle;
 use formal_verification::FormalVerificationGuard;
 use ghost_migration_harness::GhostMigrationHarness;
 use git_manager::GitManager;
@@ -124,6 +137,7 @@ use hermetic_build::HermeticBuildValidator;
 use idempotency_guard::IdempotencyGuard;
 use incident_healer::IncidentHealer;
 use incident_sentry::IncidentSentryCircuitBreaker;
+use jittered_backoff::JitteredBackoffGuard;
 use kani_guard::KaniGuard;
 use local_inner_loop::LocalInnerLoopProbe;
 use lockfile_reconciler::LockfileReconciler;
@@ -140,9 +154,11 @@ use progressive_rollout::ProgressiveRingOrchestrator;
 use psa_admission_guard::PsaAdmissionGuard;
 use queue_healer::QueueHealer;
 use remote_cache_optimizer::RemoteCacheOptimizer;
+use replay_harness::DeterministicReplayHarness;
 use review_memory::ReviewMemoryEngine;
 use reviewer::Reviewer;
 use rust_skills_guard::RustSkillsGuard;
+use schema_evolution::SchemaEvolutionRatchet;
 use semantic_abi_ratchet::SemanticAbiRatchet;
 use shadow_traffic_harness::ShadowTrafficHarness;
 use shuffle_shard_simulator::ShuffleShardSimulator;
@@ -152,9 +168,12 @@ use state::StateManager;
 use supply_chain_guard::SupplyChainGuard;
 use trace_context_guard::TraceContextGuard;
 use unresolved_review_guard::UnresolvedReviewGuard;
+use upgrade_train::ProactiveUpgradeTrain;
 use vex_scanner::OpenVexReachabilityScanner;
+use wasm_sandbox::WasmPolicySandbox;
 use webhook::AppState;
 use zero_day_patcher::ZeroDayAutoPatcher;
+use zero_trust_workload::ZeroTrustWorkloadGate;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -237,6 +256,16 @@ async fn main() -> Result<()> {
     let chaos_injector = Arc::new(ChaosFaultInjector::new());
     let stacked_diffs = Arc::new(StackedDiffsOrchestrator::new());
     let microbenchmark_ratchet = Arc::new(MicroBenchmarkRatchet::new());
+    let jittered_backoff = Arc::new(JitteredBackoffGuard::new());
+    let schema_evolution = Arc::new(SchemaEvolutionRatchet::new());
+    let auto_rollback = Arc::new(AutoRollbackPostmortemEngine::new());
+    let wasm_sandbox = Arc::new(WasmPolicySandbox::new());
+    let consistency_guard = Arc::new(ActiveActiveConsistencyGuard::new());
+    let flake_quarantine = Arc::new(FlakeQuarantineLifecycle::new());
+    let zero_trust_workload = Arc::new(ZeroTrustWorkloadGate::new());
+    let carbon_aware = Arc::new(CarbonAwareComputeRatchet::new());
+    let replay_harness = Arc::new(DeterministicReplayHarness::new());
+    let upgrade_train = Arc::new(ProactiveUpgradeTrain::new());
     let chaos_mutation_guard = Arc::new(ChaosMutationGuard::new());
     let feature_flag_ratchet = Arc::new(FeatureFlagRatchet::new());
     let criterion_bench_ratchet = Arc::new(CriterionBenchRatchet::new());
@@ -257,27 +286,6 @@ async fn main() -> Result<()> {
         github_client.clone(),
         config.agy_effort.clone(),
     ));
-
-    // Spawn background upstream sync for rust-skills repository
-    let rsg_clone = rust_skills_guard.clone();
-    tokio::spawn(async move {
-        if let Err(e) = rsg_clone.sync_upstream().await {
-            tracing::warn!("RustSkillsGuard upstream background sync noticed: {}", e);
-        }
-    });
-
-    // Spawn background GC heartbeat for abandoned git worktrees (crash recovery & leak prevention)
-    let git_mgr_gc = git_mgr.clone();
-    tokio::spawn(async move {
-        let _ = git_mgr_gc.clean_abandoned_worktrees().await;
-        let mut interval = tokio::time::interval(Duration::from_secs(600)); // Every 10 min
-        loop {
-            interval.tick().await;
-            if let Err(e) = git_mgr_gc.clean_abandoned_worktrees().await {
-                tracing::warn!("GitManager worktree GC noticed: {}", e);
-            }
-        }
-    });
 
     let app_state = AppState {
         config: config.clone(),
@@ -342,6 +350,16 @@ async fn main() -> Result<()> {
         chaos_injector: chaos_injector.clone(),
         stacked_diffs: stacked_diffs.clone(),
         microbenchmark_ratchet: microbenchmark_ratchet.clone(),
+        jittered_backoff: jittered_backoff.clone(),
+        schema_evolution: schema_evolution.clone(),
+        auto_rollback: auto_rollback.clone(),
+        wasm_sandbox: wasm_sandbox.clone(),
+        consistency_guard: consistency_guard.clone(),
+        flake_quarantine: flake_quarantine.clone(),
+        zero_trust_workload: zero_trust_workload.clone(),
+        carbon_aware: carbon_aware.clone(),
+        replay_harness: replay_harness.clone(),
+        upgrade_train: upgrade_train.clone(),
         chaos_mutation_guard: chaos_mutation_guard.clone(),
         feature_flag_ratchet: feature_flag_ratchet.clone(),
         criterion_bench_ratchet: criterion_bench_ratchet.clone(),
@@ -355,5 +373,12 @@ async fn main() -> Result<()> {
         state_mgr: state_mgr.clone(),
     };
 
-    handle_cli(app_state).await
+    let res = handle_cli(app_state).await;
+    match res {
+        Ok(_) => std::process::exit(0),
+        Err(e) => {
+            tracing::error!("Command failed: {:?}", e);
+            std::process::exit(1);
+        }
+    }
 }

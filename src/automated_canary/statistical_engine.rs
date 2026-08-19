@@ -76,7 +76,11 @@ mod tests {
 
         let verdict = engine.evaluate_canary_distributions(&dist);
         match verdict {
-            CanaryVerdict::Fail { degraded_metric, relative_regression_pct, .. } => {
+            CanaryVerdict::Fail {
+                degraded_metric,
+                relative_regression_pct,
+                ..
+            } => {
                 assert_eq!(degraded_metric, "p99_latency_ms");
                 assert!(relative_regression_pct > 40.0);
             }
@@ -92,6 +96,9 @@ mod tests {
             baseline_samples: vec![10.0, 10.5, 10.2],
             canary_samples: vec![10.1, 10.3, 10.0],
         };
-        assert_eq!(engine.evaluate_canary_distributions(&dist), CanaryVerdict::Pass);
+        assert_eq!(
+            engine.evaluate_canary_distributions(&dist),
+            CanaryVerdict::Pass
+        );
     }
 }

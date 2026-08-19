@@ -28,8 +28,14 @@ impl ModularizationGuard {
     }
 
     /// Evaluates file length and modularization across the PR
-    pub fn evaluate_modularization(&self, diff_ctx: &PrDiffContext) -> Result<ModularizationReport> {
-        info!("Running ModularizationGuard (100-300 lines max) on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+    pub fn evaluate_modularization(
+        &self,
+        diff_ctx: &PrDiffContext,
+    ) -> Result<ModularizationReport> {
+        info!(
+            "Running ModularizationGuard (100-300 lines max) on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let mut oversized_files = Vec::new();
 
@@ -71,7 +77,11 @@ impl ModularizationGuard {
             format!(
                 "Modularization findings ({} oversized files): {}",
                 oversized_files.len(),
-                oversized_files.iter().map(|f| format!("{}: {} lines", f.file_path, f.line_count)).collect::<Vec<_>>().join("; ")
+                oversized_files
+                    .iter()
+                    .map(|f| format!("{}: {} lines", f.file_path, f.line_count))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             )
         };
 

@@ -22,10 +22,7 @@ impl KaniProofRunner {
     pub async fn run_kani_proofs(&self, repo_dir: &Path) -> Result<Vec<KaniProofReport>> {
         info!("Checking for Kani model checker in {}", repo_dir.display());
 
-        let which_out = Command::new("which")
-            .arg("kani")
-            .output()
-            .await;
+        let which_out = Command::new("which").arg("kani").output().await;
 
         let has_kani = which_out.map(|o| o.status.success()).unwrap_or(false);
 

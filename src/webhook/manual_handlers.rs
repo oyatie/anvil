@@ -1,14 +1,9 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Deserialize;
 use tracing::{error, info};
 
-use super::{ApiResponse, AppState};
 use super::pipelines::{execute_pr_certify, execute_pr_fix, execute_pr_review};
+use super::{ApiResponse, AppState};
 
 #[derive(Deserialize, Debug)]
 pub struct ManualReviewRequest {
@@ -62,7 +57,11 @@ pub async fn manual_review_handler(
 ) -> impl IntoResponse {
     info!("Manual review requested for {}#{}", req.repo, req.pr_number);
 
-    let pr_meta = match state.github_client.fetch_pr_metadata(&req.repo, req.pr_number).await {
+    let pr_meta = match state
+        .github_client
+        .fetch_pr_metadata(&req.repo, req.pr_number)
+        .await
+    {
         Ok(meta) => meta,
         Err(err) => {
             return (
@@ -94,7 +93,10 @@ pub async fn manual_review_handler(
         )
         .await
         {
-            error!("Manual PR review failed for {}#{}: {:?}", repo, pr_number, e);
+            error!(
+                "Manual PR review failed for {}#{}: {:?}",
+                repo, pr_number, e
+            );
         }
     });
 
@@ -136,7 +138,10 @@ pub async fn manual_certify_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualCertifyRequest>,
 ) -> impl IntoResponse {
-    info!("Manual certification requested for {}#{}", req.repo, req.pr_number);
+    info!(
+        "Manual certification requested for {}#{}",
+        req.repo, req.pr_number
+    );
 
     let state_clone = state.clone();
     let repo = req.repo.clone();
@@ -144,7 +149,10 @@ pub async fn manual_certify_handler(
 
     tokio::spawn(async move {
         if let Err(e) = execute_pr_certify(&state_clone, &repo, pr_number).await {
-            error!("Pre-Merge certification failed for {}#{}: {:?}", repo, pr_number, e);
+            error!(
+                "Pre-Merge certification failed for {}#{}: {:?}",
+                repo, pr_number, e
+            );
         }
     });
 
@@ -152,7 +160,10 @@ pub async fn manual_certify_handler(
         StatusCode::ACCEPTED,
         Json(ApiResponse {
             success: true,
-            message: format!("Certification pipeline queued for {}#{}", req.repo, req.pr_number),
+            message: format!(
+                "Certification pipeline queued for {}#{}",
+                req.repo, req.pr_number
+            ),
         }),
     )
 }
@@ -161,7 +172,10 @@ pub async fn manual_triage_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualTriageRequest>,
 ) -> impl IntoResponse {
-    info!("Manual triage requested for run #{} on {}", req.run_id, req.repo);
+    info!(
+        "Manual triage requested for run #{} on {}",
+        req.run_id, req.repo
+    );
 
     let state_clone = state.clone();
     let repo = req.repo.clone();
@@ -192,14 +206,20 @@ pub async fn manual_enlist_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualEnlistRequest>,
 ) -> impl IntoResponse {
-    info!("Manual merge queue enlistment requested for {}#{}", req.repo, req.pr_number);
+    info!(
+        "Manual merge queue enlistment requested for {}#{}",
+        req.repo, req.pr_number
+    );
 
     let state_clone = state.clone();
     let repo = req.repo.clone();
     let pr_number = req.pr_number;
 
     tokio::spawn(async move {
-        let _ = state_clone.merge_enlister.enlist_into_merge_queue(&repo, pr_number).await;
+        let _ = state_clone
+            .merge_enlister
+            .enlist_into_merge_queue(&repo, pr_number)
+            .await;
     });
 
     (
@@ -215,14 +235,20 @@ pub async fn manual_heal_queue_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualQueueHealRequest>,
 ) -> impl IntoResponse {
-    info!("Manual queue healing requested for {}#{}", req.repo, req.pr_number);
+    info!(
+        "Manual queue healing requested for {}#{}",
+        req.repo, req.pr_number
+    );
 
     let state_clone = state.clone();
     let repo = req.repo.clone();
     let pr_number = req.pr_number;
 
     tokio::spawn(async move {
-        let _ = state_clone.queue_healer.heal_ejected_pr(&repo, pr_number).await;
+        let _ = state_clone
+            .queue_healer
+            .heal_ejected_pr(&repo, pr_number)
+            .await;
     });
 
     (
@@ -238,14 +264,20 @@ pub async fn manual_reconcile_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualReconcileRequest>,
 ) -> impl IntoResponse {
-    info!("Manual lockfile reconciliation requested for {}#{}", req.repo, req.pr_number);
+    info!(
+        "Manual lockfile reconciliation requested for {}#{}",
+        req.repo, req.pr_number
+    );
 
     let state_clone = state.clone();
     let repo = req.repo.clone();
     let pr_number = req.pr_number;
 
     tokio::spawn(async move {
-        let _ = state_clone.lockfile_reconciler.reconcile_pr(&repo, pr_number).await;
+        let _ = state_clone
+            .lockfile_reconciler
+            .reconcile_pr(&repo, pr_number)
+            .await;
     });
 
     (

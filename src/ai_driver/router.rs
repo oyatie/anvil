@@ -21,24 +21,24 @@ impl SubscriptionExecutor {
     ) -> Result<String> {
         match config.provider {
             ModelProvider::AnthropicClaudeCode => {
-                self.run_claude_subscription(prompt, working_dir, config).await
+                self.run_claude_subscription(prompt, working_dir, config)
+                    .await
             }
             ModelProvider::OpenAiCodex => {
-                self.run_openai_subscription(prompt, working_dir, config).await
+                self.run_openai_subscription(prompt, working_dir, config)
+                    .await
             }
             ModelProvider::CursorAgent => {
-                self.run_cursor_agent_subscription(
-                    prompt,
-                    working_dir,
-                    config.resolved_model(),
-                )
-                .await
+                self.run_cursor_agent_subscription(prompt, working_dir, config.resolved_model())
+                    .await
             }
             ModelProvider::XAiGrok => {
-                self.run_grok_subscription(prompt, working_dir, config).await
+                self.run_grok_subscription(prompt, working_dir, config)
+                    .await
             }
             ModelProvider::SubscriptionEnsemble => {
-                self.run_ensemble_subscription(prompt, working_dir, config).await
+                self.run_ensemble_subscription(prompt, working_dir, config)
+                    .await
             }
             ModelProvider::Antigravity => {
                 self.run_agy_subscription(prompt, working_dir, config).await
@@ -70,7 +70,9 @@ impl SubscriptionExecutor {
         match cmd.output().await {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                if !stdout.trim().is_empty() && !stdout.contains("ERROR: You've hit your usage limit") {
+                if !stdout.trim().is_empty()
+                    && !stdout.contains("ERROR: You've hit your usage limit")
+                {
                     return Ok(stdout);
                 }
             }
@@ -86,8 +88,13 @@ impl SubscriptionExecutor {
         // Fallback: AGY with default subscription (Gemini 3.7 Flash - high effort)
         let mut fallback_config = config.clone();
         fallback_config.provider = ModelProvider::Antigravity;
-        fallback_config.specific_model = Some(ModelProvider::Antigravity.default_frontier_model().to_string());
-        self.run_agy_subscription(prompt, working_dir, &fallback_config).await
+        fallback_config.specific_model = Some(
+            ModelProvider::Antigravity
+                .default_frontier_model()
+                .to_string(),
+        );
+        self.run_agy_subscription(prompt, working_dir, &fallback_config)
+            .await
     }
 
     /// Invokes OpenAI Codex / ChatGPT subscription CLI (`codex exec <prompt> < /dev/null` e.g. gpt-5.6-sol - high reasoning)
@@ -114,7 +121,9 @@ impl SubscriptionExecutor {
         match cmd.output().await {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                if !stdout.trim().is_empty() && !stdout.contains("ERROR: You've hit your usage limit") {
+                if !stdout.trim().is_empty()
+                    && !stdout.contains("ERROR: You've hit your usage limit")
+                {
                     return Ok(stdout);
                 }
                 if stdout.contains("ERROR: You've hit your usage limit") {
@@ -133,15 +142,27 @@ impl SubscriptionExecutor {
         // Fallback: Claude Code subscription (Opus 5) or AGY (Gemini 3.7 Flash)
         let mut claude_config = config.clone();
         claude_config.provider = ModelProvider::AnthropicClaudeCode;
-        claude_config.specific_model = Some(ModelProvider::AnthropicClaudeCode.default_frontier_model().to_string());
-        if let Ok(res) = self.run_claude_subscription(prompt, working_dir, &claude_config).await {
+        claude_config.specific_model = Some(
+            ModelProvider::AnthropicClaudeCode
+                .default_frontier_model()
+                .to_string(),
+        );
+        if let Ok(res) = self
+            .run_claude_subscription(prompt, working_dir, &claude_config)
+            .await
+        {
             return Ok(res);
         }
 
         let mut fallback_config = config.clone();
         fallback_config.provider = ModelProvider::Antigravity;
-        fallback_config.specific_model = Some(ModelProvider::Antigravity.default_frontier_model().to_string());
-        self.run_agy_subscription(prompt, working_dir, &fallback_config).await
+        fallback_config.specific_model = Some(
+            ModelProvider::Antigravity
+                .default_frontier_model()
+                .to_string(),
+        );
+        self.run_agy_subscription(prompt, working_dir, &fallback_config)
+            .await
     }
 
     /// Invokes xAI Grok subscription (`grok-4.6` high reasoning)
@@ -157,7 +178,10 @@ impl SubscriptionExecutor {
             grok_model, config.reasoning_effort
         );
 
-        if let Ok(res) = self.run_cursor_agent_subscription(prompt, working_dir, grok_model).await {
+        if let Ok(res) = self
+            .run_cursor_agent_subscription(prompt, working_dir, grok_model)
+            .await
+        {
             if !res.trim().is_empty() {
                 return Ok(res);
             }
@@ -166,15 +190,27 @@ impl SubscriptionExecutor {
         // Fallback: Claude Code (Opus 5) or AGY (Gemini 3.7 Flash)
         let mut claude_config = config.clone();
         claude_config.provider = ModelProvider::AnthropicClaudeCode;
-        claude_config.specific_model = Some(ModelProvider::AnthropicClaudeCode.default_frontier_model().to_string());
-        if let Ok(res) = self.run_claude_subscription(prompt, working_dir, &claude_config).await {
+        claude_config.specific_model = Some(
+            ModelProvider::AnthropicClaudeCode
+                .default_frontier_model()
+                .to_string(),
+        );
+        if let Ok(res) = self
+            .run_claude_subscription(prompt, working_dir, &claude_config)
+            .await
+        {
             return Ok(res);
         }
 
         let mut fallback_config = config.clone();
         fallback_config.provider = ModelProvider::Antigravity;
-        fallback_config.specific_model = Some(ModelProvider::Antigravity.default_frontier_model().to_string());
-        self.run_agy_subscription(prompt, working_dir, &fallback_config).await
+        fallback_config.specific_model = Some(
+            ModelProvider::Antigravity
+                .default_frontier_model()
+                .to_string(),
+        );
+        self.run_agy_subscription(prompt, working_dir, &fallback_config)
+            .await
     }
 
     /// Invokes Cursor Agent subscription CLI (`cursor-agent --print --model <model> <prompt>`)
@@ -245,7 +281,10 @@ impl SubscriptionExecutor {
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            error!("agy subscription process returned status: {}", output.status);
+            error!(
+                "agy subscription process returned status: {}",
+                output.status
+            );
             warn!("agy stderr: {}", stderr_str);
             if stdout_str.trim().is_empty() {
                 bail!("agy failed with code {}: {}", output.status, stderr_str);
@@ -263,7 +302,8 @@ impl SubscriptionExecutor {
         config: &ModelExecutionConfig,
     ) -> Result<String> {
         info!("Executing prompt via Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)...");
-        self.run_claude_subscription(prompt, working_dir, config).await
+        self.run_claude_subscription(prompt, working_dir, config)
+            .await
     }
 }
 
@@ -273,9 +313,18 @@ mod tests {
 
     #[test]
     fn test_frontier_defaults() {
-        assert_eq!(ModelProvider::AnthropicClaudeCode.default_frontier_model(), "opus5");
-        assert_eq!(ModelProvider::OpenAiCodex.default_frontier_model(), "gpt-5.6-sol");
+        assert_eq!(
+            ModelProvider::AnthropicClaudeCode.default_frontier_model(),
+            "opus5"
+        );
+        assert_eq!(
+            ModelProvider::OpenAiCodex.default_frontier_model(),
+            "gpt-5.6-sol"
+        );
         assert_eq!(ModelProvider::XAiGrok.default_frontier_model(), "grok-4.6");
-        assert_eq!(ModelProvider::Antigravity.default_frontier_model(), "gemini-3.7-flash");
+        assert_eq!(
+            ModelProvider::Antigravity.default_frontier_model(),
+            "gemini-3.7-flash"
+        );
     }
 }

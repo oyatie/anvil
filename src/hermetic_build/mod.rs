@@ -27,7 +27,9 @@ impl HermeticBuildValidator {
         build_b_hash: &str,
         diff_content: &str,
     ) -> HermeticBuildReport {
-        let result = self.checker.check_build_artifacts(build_a_hash, build_b_hash, diff_content);
+        let result = self
+            .checker
+            .check_build_artifacts(build_a_hash, build_b_hash, diff_content);
         let passed = matches!(result, ReproducibilityResult::DeterministicBitForBit);
 
         HermeticBuildReport { passed, result }

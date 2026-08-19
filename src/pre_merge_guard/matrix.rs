@@ -54,6 +54,16 @@ impl MatrixRenderer {
         chaos_injection_status: &GateStatus,
         stacked_diffs_status: &GateStatus,
         microbench_status: &GateStatus,
+        jittered_backoff_status: &GateStatus,
+        schema_evolution_status: &GateStatus,
+        auto_rollback_status: &GateStatus,
+        wasm_sandbox_status: &GateStatus,
+        consistency_status: &GateStatus,
+        flake_quarantine_status: &GateStatus,
+        zero_trust_workload_status: &GateStatus,
+        carbon_compute_status: &GateStatus,
+        replay_harness_status: &GateStatus,
+        upgrade_train_status: &GateStatus,
         mutation_status: &GateStatus,
         feature_flag_status: &GateStatus,
         bench_status: &GateStatus,
@@ -71,7 +81,7 @@ impl MatrixRenderer {
         };
 
         format!(
-            r###"### 🛡️ Oyatie Hyperscale Full-Lifecycle Quality & GitOps Matrix (60 Gates)
+            r###"### 🛡️ Oyatie Hyperscale Full-Lifecycle Quality & GitOps Matrix (70 Gates)
 
 | Quality Gate | Status | Details |
 |---|---|---|
@@ -125,6 +135,16 @@ impl MatrixRenderer {
 | **💥 Pre-Merge Simulated Chaos Injection** | {} | Synthetic packet loss, DNS jitter & DB failover certification |
 | **🌲 Stacked Diffs & PR DAG Orchestration** | {} | Atomic parent-child branch cascade & merge train sync |
 | **⚡ Nanosecond Hotpath Microbench Ratchet** | {} | Criterion P99 CPU cycle & latency regression enforcement |
+| **🎲 Jittered Exponential Backoff Gate** | {} | Full Jitter & deadline propagation on all network retries |
+| **📐 Wire Schema Evolution Ratchet** | {} | Strict backward/forward wire compatibility (Protobuf/OpenAPI) |
+| **🔄 Auto-Rollback & Postmortem Engine** | {} | Autonomous canary rollback on degradation & blameless postmortem |
+| **📦 Dynamic WebAssembly Policy Sandbox** | {} | Sub-millisecond sandboxed bytecode linting & policy evaluation |
+| **🌐 Active-Active Consistency Guard** | {} | Multi-region vector clock ordering & CRDT conflict resolution |
+| **🧪 Flaky-Test Quarantine Lifecycle** | {} | Isolated quarantine lane & autonomous 100x stress rehabilitation |
+| **🔐 Zero-Trust SPIFFE Workload Identity** | {} | Cryptographic SPIFFE ID workload attestation & mTLS encryption |
+| **🌱 GreenOps Carbon-Aware Compute** | {} | Energy-efficient CI compilation & green compute window routing |
+| **📼 Deterministic Record-and-Replay** | {} | Hermetic production trace replayer & offline bug reproduction |
+| **🚂 Proactive Dependency Upgrade Train** | {} | Autonomous upstream semver & CVE patch PR scheduling |
 | **💥 AST Chaos Mutation Test Adequacy** | {} | Critical branches verified against surviving mutants |
 | **🚩 Feature Flag & Dead Branch Lifecycle** | {} | Zero stale or dead toggle fallback branches |
 | **⚡ Micro-Benchmark & Latency Ratchet** | {} | Hot paths within +3% latency & zero-leak budget |
@@ -188,6 +208,16 @@ impl MatrixRenderer {
             chaos_injection_status.badge(),
             stacked_diffs_status.badge(),
             microbench_status.badge(),
+            jittered_backoff_status.badge(),
+            schema_evolution_status.badge(),
+            auto_rollback_status.badge(),
+            wasm_sandbox_status.badge(),
+            consistency_status.badge(),
+            flake_quarantine_status.badge(),
+            zero_trust_workload_status.badge(),
+            carbon_compute_status.badge(),
+            replay_harness_status.badge(),
+            upgrade_train_status.badge(),
             mutation_status.badge(),
             feature_flag_status.badge(),
             bench_status.badge(),

@@ -19,7 +19,9 @@ impl UpstreamRegulatorySync {
         let snapshot = DynamicRegistrySnapshot {
             schema_version: "2026.4.0".to_string(),
             last_synced_timestamp: "2026-08-19T04:53:00Z".to_string(),
-            upstream_source: "Live Multi-Jurisdiction & Corporate Policy Registry (it-legal + global feeds)".to_string(),
+            upstream_source:
+                "Live Multi-Jurisdiction & Corporate Policy Registry (it-legal + global feeds)"
+                    .to_string(),
             active_jurisdictions: vec![
                 "KR".to_string(),
                 "US_FED".to_string(),
@@ -78,7 +80,10 @@ impl UpstreamRegulatorySync {
         }
 
         if loaded > 0 {
-            info!("UpstreamRegulatorySync: Hot-reloaded {} regulatory rule(s) from {:?}", loaded, dir);
+            info!(
+                "UpstreamRegulatorySync: Hot-reloaded {} regulatory rule(s) from {:?}",
+                loaded, dir
+            );
         }
         Ok(loaded)
     }

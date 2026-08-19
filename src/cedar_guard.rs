@@ -49,12 +49,18 @@ impl CedarGuard {
         diff_ctx: &PrDiffContext,
         pr_title: &str,
     ) -> Result<CedarGuardReport> {
-        info!("Running CedarGuard IAM policy check on {}#{}...", repo, diff_ctx.pr_number);
+        info!(
+            "Running CedarGuard IAM policy check on {}#{}...",
+            repo, diff_ctx.pr_number
+        );
 
         // Check if repo has Cedar governance directories or backend APIs
         let has_cedar = repo_dir.join("governance/cedar").exists()
             || repo_dir.join("compliance/cedar").exists()
-            || diff_ctx.changed_files.iter().any(|f| f.contains("api") || f.contains("route") || f.contains("handler"));
+            || diff_ctx
+                .changed_files
+                .iter()
+                .any(|f| f.contains("api") || f.contains("route") || f.contains("handler"));
 
         if !has_cedar {
             return Ok(CedarGuardReport {
@@ -64,10 +70,15 @@ impl CedarGuard {
             });
         }
 
-        let eval = self.analyze_cedar_coverage(repo, repo_dir, diff_ctx, pr_title).await?;
+        let eval = self
+            .analyze_cedar_coverage(repo, repo_dir, diff_ctx, pr_title)
+            .await?;
 
         if eval.is_cedar_compliant {
-            info!("Cedar policy coverage is fully compliant for {}#{}", repo, diff_ctx.pr_number);
+            info!(
+                "Cedar policy coverage is fully compliant for {}#{}",
+                repo, diff_ctx.pr_number
+            );
             return Ok(CedarGuardReport {
                 is_compliant: true,
                 files_created_or_updated: Vec::new(),
@@ -87,7 +98,10 @@ impl CedarGuard {
         Ok(CedarGuardReport {
             is_compliant: true,
             files_created_or_updated: created_files.clone(),
-            summary: format!("Auto-generated Cedar authorization policies: {}", created_files.join(", ")),
+            summary: format!(
+                "Auto-generated Cedar authorization policies: {}",
+                created_files.join(", ")
+            ),
         })
     }
 
@@ -147,7 +161,10 @@ Note: If compliant, output `{{"is_cedar_compliant": true, "missing_policies_summ
         match serde_json::from_str::<CedarPolicyEvaluation>(&json_str) {
             Ok(eval) => Ok(eval),
             Err(e) => {
-                warn!("Failed to parse CedarGuard JSON: {}. Assuming compliant.", e);
+                warn!(
+                    "Failed to parse CedarGuard JSON: {}. Assuming compliant.",
+                    e
+                );
                 Ok(CedarPolicyEvaluation {
                     is_cedar_compliant: true,
                     missing_policies_summary: None,
@@ -166,7 +183,10 @@ Note: If compliant, output `{{"is_cedar_compliant": true, "missing_policies_summ
         pr_title: &str,
         eval: &CedarPolicyEvaluation,
     ) -> Result<Vec<String>> {
-        let summary = eval.missing_policies_summary.as_deref().unwrap_or("IAM policy coverage");
+        let summary = eval
+            .missing_policies_summary
+            .as_deref()
+            .unwrap_or("IAM policy coverage");
         let target_files = eval.suggested_policy_files.join(", ");
 
         let prompt = format!(
@@ -229,7 +249,10 @@ Write the policy files directly to the workspace now."#####,
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            error!("agy returned non-zero status in CedarGuard: {}", output.status);
+            error!(
+                "agy returned non-zero status in CedarGuard: {}",
+                output.status
+            );
             warn!("agy stderr: {}", stderr_str);
             if stdout_str.trim().is_empty() {
                 bail!("agy failed with code {}: {}", output.status, stderr_str);
@@ -275,6 +298,9 @@ mod tests {
         let parsed: CedarPolicyEvaluation = serde_json::from_str(&json_str).expect("Valid parse");
         assert!(!parsed.is_cedar_compliant);
         assert_eq!(parsed.suggested_policy_files.len(), 1);
-        assert!(parsed.generated_cedar_policy.unwrap().contains("permit(principal"));
+        assert!(parsed
+            .generated_cedar_policy
+            .unwrap()
+            .contains("permit(principal"));
     }
 }

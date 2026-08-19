@@ -17,7 +17,11 @@ impl AllocationScanner {
     }
 
     /// Scans performance-critical files for avoidable heap allocations in hotpaths
-    pub fn scan_hotpath_allocations(&self, file_path: &str, content: &str) -> Vec<HeapAllocationFinding> {
+    pub fn scan_hotpath_allocations(
+        &self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<HeapAllocationFinding> {
         let mut findings = Vec::new();
 
         // Only enforce strict zero-copy on latency-critical modules
@@ -50,7 +54,9 @@ impl AllocationScanner {
                 file_path: file_path.to_string(),
                 line_number: 1,
                 snippet: "for .. in .. { ... .clone() ... }".to_string(),
-                suggestion: "Avoid deep `.clone()` heap allocations inside iterative loops in hotpaths.".to_string(),
+                suggestion:
+                    "Avoid deep `.clone()` heap allocations inside iterative loops in hotpaths."
+                        .to_string(),
             });
         }
 

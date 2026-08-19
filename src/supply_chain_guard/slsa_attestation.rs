@@ -62,10 +62,16 @@ mod tests {
     fn test_generate_slsa_provenance() {
         let attestor = SlsaAttestor::new();
         let bundle = attestor
-            .generate_slsa_l2_provenance("oyatie/oyatie", "572ebdce8f9fd80f704b88be2b92f97aaf3ec414")
+            .generate_slsa_l2_provenance(
+                "oyatie/oyatie",
+                "572ebdce8f9fd80f704b88be2b92f97aaf3ec414",
+            )
             .expect("Generates provenance");
 
         assert_eq!(bundle.predicate.slsa_level, "SLSA_LEVEL_2_PLUS");
-        assert_eq!(bundle.predicate.materials[0].digest_sha256, "572ebdce8f9fd80f704b88be2b92f97aaf3ec414");
+        assert_eq!(
+            bundle.predicate.materials[0].digest_sha256,
+            "572ebdce8f9fd80f704b88be2b92f97aaf3ec414"
+        );
     }
 }

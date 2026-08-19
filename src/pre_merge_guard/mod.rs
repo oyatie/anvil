@@ -1,15 +1,17 @@
+pub mod matrix;
+pub mod scanner;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-pub mod matrix;
-pub mod scanner;
-
 use crate::adr_drift_ratchet::AdrReport;
 use crate::api_contract_guard::ApiContractReport;
 use crate::attestation_guard::AttestationReport;
+use crate::auto_rollback::AutoRollbackReport;
 use crate::automated_canary::AutomatedCanaryReport;
 use crate::canary_rollout::CanaryRolloutReport;
+use crate::carbon_aware::CarbonComputeReport;
 use crate::cedar_guard::CedarGuardReport;
 use crate::cell_isolation_guard::CellIsolationReport;
 use crate::chaos_injector::ChaosInjectorReport;
@@ -20,6 +22,7 @@ use crate::clean_architecture_guard::CleanArchitectureReport;
 use crate::cluster_state_auditor::ClusterAuditReport;
 use crate::compile_time_profiler::CompileProfileReport;
 use crate::compliance_guard::ComplianceGuardReport;
+use crate::consistency_guard::ConsistencyReport;
 use crate::constant_work_guard::ConstantWorkReport;
 use crate::cosign_signer::CosignReport;
 use crate::coverage_guard::CoverageReport;
@@ -32,6 +35,7 @@ use crate::ephemeral_sandbox::SandboxReport;
 use crate::ephemeral_secrets::SecretPolicyReport;
 use crate::feature_flag_ratchet::FeatureFlagReport;
 use crate::finops_ratchet::FinOpsReport;
+use crate::flake_quarantine::FlakeQuarantineReport;
 use crate::formal_verification::FormalVerificationReport;
 use crate::ghost_migration_harness::GhostMigrationReport;
 use crate::git_manager::PrDiffContext;
@@ -39,6 +43,7 @@ use crate::gitops_drift_reconciler::GitOpsDriftReport;
 use crate::gitops_promotion::GitOpsPromotionReport;
 use crate::hermetic_build::HermeticBuildReport;
 use crate::idempotency_guard::IdempotencyReport;
+use crate::jittered_backoff::JitteredBackoffReport;
 use crate::kani_guard::KaniGuardReport;
 use crate::local_inner_loop::LocalProbeReport;
 use crate::microbenchmark_ratchet::MicrobenchmarkReport;
@@ -49,7 +54,9 @@ use crate::predictive_test_selector::PredictiveTestReport;
 use crate::progressive_rollout::ProgressiveRingReport;
 use crate::psa_admission_guard::PsaAdmissionReport;
 use crate::remote_cache_optimizer::CacheReport;
+use crate::replay_harness::ReplayHarnessReport;
 use crate::rust_skills_guard::RustSkillsReport;
+use crate::schema_evolution::SchemaEvolutionReport;
 use crate::semantic_abi_ratchet::SemanticAbiReport;
 use crate::shadow_traffic_harness::ShadowTrafficReport;
 use crate::shuffle_shard_simulator::ShuffleShardReport;
@@ -58,8 +65,11 @@ use crate::stacked_diffs::StackedDiffsReport;
 use crate::supply_chain_guard::SupplyChainReport;
 use crate::trace_context_guard::TraceContextReport;
 use crate::unresolved_review_guard::UnresolvedReviewReport;
+use crate::upgrade_train::UpgradeTrainReport;
 use crate::vex_scanner::OpenVexReport;
+use crate::wasm_sandbox::WasmSandboxReport;
 use crate::zero_day_patcher::ZeroDayReport;
+use crate::zero_trust_workload::ZeroTrustWorkloadReport;
 
 use matrix::MatrixRenderer;
 use scanner::PreMergeScanner;
@@ -117,6 +127,16 @@ pub struct PreMergeCertificationReport {
     pub chaos_injection_status: GateStatus,
     pub stacked_diffs_status: GateStatus,
     pub microbench_status: GateStatus,
+    pub jittered_backoff_status: GateStatus,
+    pub schema_evolution_status: GateStatus,
+    pub auto_rollback_status: GateStatus,
+    pub wasm_sandbox_status: GateStatus,
+    pub consistency_status: GateStatus,
+    pub flake_quarantine_status: GateStatus,
+    pub zero_trust_workload_status: GateStatus,
+    pub carbon_compute_status: GateStatus,
+    pub replay_harness_status: GateStatus,
+    pub upgrade_train_status: GateStatus,
     pub mutation_status: GateStatus,
     pub feature_flag_status: GateStatus,
     pub bench_status: GateStatus,
@@ -162,7 +182,7 @@ impl PreMergeGuard {
         Self
     }
 
-    /// Evaluates all 60 hyperscale full-lifecycle quality, architecture, GitOps, CI/CD velocity, and security gates
+    /// Evaluates all 70 hyperscale full-lifecycle quality, architecture, GitOps, CI/CD velocity, and security gates
     pub fn evaluate_pre_merge_gates(
         &self,
         diff_ctx: &PrDiffContext,
@@ -216,13 +236,26 @@ impl PreMergeGuard {
         chaos_inj_report: &ChaosInjectorReport,
         stacked_report: &StackedDiffsReport,
         microbench_report: &MicrobenchmarkReport,
+        jittered_report: &JitteredBackoffReport,
+        schema_evo_report: &SchemaEvolutionReport,
+        auto_rollback_report: &AutoRollbackReport,
+        wasm_report: &WasmSandboxReport,
+        consistency_report: &ConsistencyReport,
+        flake_quarantine_report: &FlakeQuarantineReport,
+        zero_trust_report: &ZeroTrustWorkloadReport,
+        carbon_report: &CarbonComputeReport,
+        replay_report: &ReplayHarnessReport,
+        upgrade_train_report: &UpgradeTrainReport,
         mutation_report: &MutationAdequacyReport,
         feature_flag_report: &FeatureFlagReport,
         bench_report: &BenchmarkReport,
         attestation_report: &AttestationReport,
         test_suite_passed: bool,
     ) -> Result<PreMergeCertificationReport> {
-        info!("Evaluating Hyperscale Full-Lifecycle Quality & GitOps Gates for {}#{} (60 gates)...", diff_ctx.repo, diff_ctx.pr_number);
+        info!(
+            "Evaluating Hyperscale Full-Lifecycle Quality & GitOps Gates for {}#{} (70 gates)...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         // 1. Doc Parity
         let doc_parity_status = if !doc_report.files_created_or_updated.is_empty() {
@@ -249,27 +282,25 @@ impl PreMergeGuard {
             GateStatus::Failed(compliance_report.summary.clone())
         };
 
-        // 4. OpenAPI & Wire Contract Integrity
-        let api_contract_status = if !api_contract_report.auto_synced_files.is_empty() {
-            GateStatus::AutoUpdated
-        } else if api_contract_report.is_intact {
+        // 4. OpenAPI Contract
+        let api_contract_status = if api_contract_report.is_intact {
             GateStatus::Passed
         } else {
             GateStatus::Failed(api_contract_report.summary.clone())
         };
 
-        // 5. Cell Boundary & Multi-Tenant Blast Radius
+        // 5. Cell Boundary
         let cell_isolation_status = if cell_report.is_isolated {
             GateStatus::Passed
         } else {
-            GateStatus::Warning(cell_report.summary.clone())
+            GateStatus::Failed(cell_report.summary.clone())
         };
 
-        // 6. Supply Chain & CVE Audit (SLSA L2+)
+        // 6. Supply Chain Security
         let supply_chain_status = if supply_chain_report.is_secure {
             GateStatus::Passed
         } else {
-            GateStatus::Warning(supply_chain_report.summary.clone())
+            GateStatus::Failed(supply_chain_report.summary.clone())
         };
 
         // 7. Clean Architecture
@@ -279,35 +310,38 @@ impl PreMergeGuard {
             GateStatus::Failed(clean_arch_report.summary.clone())
         };
 
-        // 8. Monorepo Patterns & Hermeticity
+        // 8. Monorepo Guard
         let monorepo_status = if monorepo_report.is_compliant {
             GateStatus::Passed
         } else {
-            GateStatus::Warning(monorepo_report.summary.clone())
+            GateStatus::Failed(monorepo_report.summary.clone())
         };
 
-        // 9. Deprecation & Reorg Drain Ratchet
+        // 9. Debt Shrink Guard
         let debt_shrink_status = if debt_report.is_acceptable {
             GateStatus::Passed
         } else {
             GateStatus::Failed(debt_report.summary.clone())
         };
 
-        // 10. Code Modularization (100-300 lines max)
+        // 10. Modularization Guard
         let modularization_status = if modular_report.is_modular {
             GateStatus::Passed
         } else {
-            GateStatus::Warning(modular_report.summary.clone())
+            GateStatus::Failed(modular_report.summary.clone())
         };
 
-        // 11. Differential Test Coverage (>= 85%)
+        // 11. Differential Coverage
         let coverage_status = if coverage_report.is_sufficient {
             GateStatus::Passed
         } else {
-            GateStatus::Failed(coverage_report.summary.clone())
+            GateStatus::Failed(format!(
+                "Coverage {:.1}% is below requirement",
+                coverage_report.estimated_diff_coverage_percent
+            ))
         };
 
-        // 12. Rust 2024 Edition Quality (rust-skills)
+        // 12. Rust Skills Guard (Upstream 380 Rust Rules)
         let rust_skills_status = if rust_skills_report.is_idiomatic {
             GateStatus::Passed
         } else {
@@ -321,81 +355,77 @@ impl PreMergeGuard {
             GateStatus::Failed(kani_report.summary.clone())
         };
 
-        // 14. OpenSLO & Error Budget Burn-Rate Gate
+        // 14. OpenSLO & Error Budget Burn Rate
         let slo_status = if slo_report.is_compliant {
             GateStatus::Passed
         } else {
-            GateStatus::Warning(slo_report.summary.clone())
+            GateStatus::Failed(slo_report.summary.clone())
         };
 
-        // 15. Living ADR Ratchet
+        // 15. Living ADR Drift Ratchet
         let adr_status = if adr_report.is_compliant {
-            if !adr_report.scaffolded_adrs.is_empty() {
-                GateStatus::AutoUpdated
-            } else {
-                GateStatus::Passed
-            }
+            GateStatus::Passed
         } else {
             GateStatus::Failed(adr_report.summary.clone())
         };
 
-        // 16. Shuffle Sharding Simulator
+        // 16. Cell Shuffle Sharding
         let shuffle_status = if shuffle_report.is_isolated {
             GateStatus::Passed
         } else {
-            GateStatus::Warning(shuffle_report.summary.clone())
+            GateStatus::Failed(shuffle_report.summary.clone())
         };
 
-        // 17. TraceContext Propagation Guard
+        // 17. W3C TraceContext Distributed Tracing
         let trace_status = if trace_report.is_propagated {
             GateStatus::Passed
         } else {
             GateStatus::Failed(trace_report.summary.clone())
         };
 
-        // 18. ConstantWorkGuard: Static Pool Guard
+        // 18. Constant-Work Static Bounded Allocations
         let constant_work_status = if constant_work_report.is_bounded {
             GateStatus::Passed
         } else {
             GateStatus::Failed(constant_work_report.summary.clone())
         };
 
-        // 19. Idempotency Key & Transactional Outbox
+        // 19. Stripe Idempotency Key & Outbox Gate
         let idempotency_status = if idempotency_report.is_idempotent {
             GateStatus::Passed
         } else {
             GateStatus::Warning(idempotency_report.summary.clone())
         };
 
-        // 20. FinOps Unit-Cost & Zero-Copy Ratchet
+        // 20. FinOps Unit-Cost Zero-Copy Ratchet
         let finops_status = if finops_report.is_cost_optimal {
             GateStatus::Passed
         } else {
-            GateStatus::Warning(finops_report.summary.clone())
+            GateStatus::Failed(finops_report.summary.clone())
         };
 
-        // 21. Ghost DB Migration & Zero-Lock Validator
+        // 21. Ghost DB Migration & Zero Exclusive Locks
         let ghost_migration_status = if ghost_migration_report.is_safe {
             GateStatus::Passed
         } else {
             GateStatus::Failed(ghost_migration_report.summary.clone())
         };
 
-        // 22. GitOps Promotion Digest Pinning
+        // 22. GitOps Immutable Digest Pinning
         let gitops_promo_status = if gitops_promo_report.is_pinned {
             GateStatus::Passed
         } else {
             GateStatus::Failed(gitops_promo_report.summary.clone())
         };
 
-        // 23. GitOps Drift & Orphan Reconciler
+        // 23. GitOps ArgoCD Manifest Parity
         let gitops_drift_status = if gitops_drift_report.is_safe {
             GateStatus::Passed
         } else {
             GateStatus::Warning(gitops_drift_report.summary.clone())
         };
 
-        // 24. Progressive Canary & Rollout Breaker
+        // 24. Progressive Canary Burn-Rate Circuit Breaker
         let canary_status = if canary_report.is_healthy {
             GateStatus::Passed
         } else {
@@ -518,42 +548,56 @@ impl PreMergeGuard {
         let formal_verification_status = if formal_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Failed("SMT constraint solver detected unsafe policy or reachability state.".to_string())
+            GateStatus::Failed(
+                "SMT constraint solver detected unsafe policy or reachability state.".to_string(),
+            )
         };
 
         // 42. Lock Graph & Deadlock Prevention
         let deadlock_status = if deadlock_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Failed("Lock graph analyzer detected circular lock order inversion.".to_string())
+            GateStatus::Failed(
+                "Lock graph analyzer detected circular lock order inversion.".to_string(),
+            )
         };
 
         // 43. Automated Canary Analysis (ACA)
         let automated_canary_status = if aca_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Failed("Statistical canary evaluation detected P99 latency or error divergence.".to_string())
+            GateStatus::Failed(
+                "Statistical canary evaluation detected P99 latency or error divergence."
+                    .to_string(),
+            )
         };
 
         // 44. Progressive Rollout Rings
         let progressive_ring_status = if ring_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Failed("Progressive ring deployment halted due to unverified canary signals.".to_string())
+            GateStatus::Failed(
+                "Progressive ring deployment halted due to unverified canary signals.".to_string(),
+            )
         };
 
         // 45. Hermetic Build Reproducibility
         let hermetic_build_status = if hermetic_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Failed("Hermetic build reproducibility check detected bitwise artifact non-determinism.".to_string())
+            GateStatus::Failed(
+                "Hermetic build reproducibility check detected bitwise artifact non-determinism."
+                    .to_string(),
+            )
         };
 
         // 46. OpenVEX Reachability Analysis
         let openvex_status = if openvex_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Warning("OpenVEX scanner identified reachable upstream CVE symbol in binary.".to_string())
+            GateStatus::Warning(
+                "OpenVEX scanner identified reachable upstream CVE symbol in binary.".to_string(),
+            )
         };
 
         // 47. Cosign & Sigstore Provenance Signing
@@ -574,54 +618,132 @@ impl PreMergeGuard {
         let stacked_diffs_status = if stacked_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Warning("Stacked PR DAG detected out-of-order rebase dependency.".to_string())
+            GateStatus::Warning(
+                "Stacked PR DAG detected out-of-order rebase dependency.".to_string(),
+            )
         };
 
         // 50. Microbenchmark Hotpath Ratchet
         let microbench_status = if microbench_report.passed {
             GateStatus::Passed
         } else {
-            GateStatus::Warning("Microbenchmark analyzer detected sub-microsecond hotpath regression.".to_string())
+            GateStatus::Warning(
+                "Microbenchmark analyzer detected sub-microsecond hotpath regression.".to_string(),
+            )
         };
 
-        // 51. AST Chaos Mutation Test Adequacy
+        // 51. Jittered Exponential Backoff Gate
+        let jittered_backoff_status = if jittered_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Failed(jittered_report.summary.clone())
+        };
+
+        // 52. Wire Schema Evolution Ratchet
+        let schema_evolution_status = if schema_evo_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Failed(schema_evo_report.summary.clone())
+        };
+
+        // 53. Auto-Rollback & Postmortem Engine
+        let auto_rollback_status = if auto_rollback_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Warning(auto_rollback_report.summary.clone())
+        };
+
+        // 54. Dynamic WebAssembly Policy Sandbox
+        let wasm_sandbox_status = if wasm_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Failed(wasm_report.summary.clone())
+        };
+
+        // 55. Active-Active Consistency Guard
+        let consistency_status = if consistency_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Failed(consistency_report.summary.clone())
+        };
+
+        // 56. Flaky-Test Quarantine Lifecycle
+        let flake_quarantine_status = if flake_quarantine_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Warning(flake_quarantine_report.summary.clone())
+        };
+
+        // 57. Zero-Trust SPIFFE Workload Identity
+        let zero_trust_workload_status = if zero_trust_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Failed(zero_trust_report.summary.clone())
+        };
+
+        // 58. GreenOps Carbon-Aware Compute
+        let carbon_compute_status = if carbon_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Warning(carbon_report.summary.clone())
+        };
+
+        // 59. Deterministic Record-and-Replay
+        let replay_harness_status = if replay_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Failed(replay_report.summary.clone())
+        };
+
+        // 60. Proactive Dependency Upgrade Train
+        let upgrade_train_status = if upgrade_train_report.passed {
+            GateStatus::Passed
+        } else {
+            GateStatus::Warning(upgrade_train_report.summary.clone())
+        };
+
+        // 61. AST Chaos Mutation Test Adequacy
         let mutation_status = if mutation_report.is_adequate {
             GateStatus::Passed
         } else {
             GateStatus::Warning(mutation_report.summary.clone())
         };
 
-        // 52. Feature Flag & Dead Branch Lifecycle
-        let feature_flag_status = if feature_flag_report.is_clean {
+        // 62. Feature Flag & Dead Branch Lifecycle
+        let feature_flag_report_status = if feature_flag_report.is_clean {
             GateStatus::Passed
         } else {
             GateStatus::Warning(feature_flag_report.summary.clone())
         };
 
-        // 53. Micro-Benchmark & Latency Ratchet
+        // 63. Micro-Benchmark & Latency Ratchet
         let bench_status = if bench_report.is_within_budget {
             GateStatus::Passed
         } else {
             GateStatus::Warning(bench_report.summary.clone())
         };
 
-        // 54. Cryptographic Provenance Attestation
+        // 64. Cryptographic Provenance Attestation
         let attestation_status = if attestation_report.is_attested {
             GateStatus::Passed
         } else {
             GateStatus::Failed(attestation_report.summary.clone())
         };
 
-        // 55. Secret & Sensitive Data Scan
+        // 65. Secret & Sensitive Data Scan
         let security_scan_status = PreMergeScanner::scan_for_secrets(&diff_ctx.diff_content);
 
-        // 56. Schema & Breaking Changes Scan
-        let schema_compat_status = PreMergeScanner::scan_for_breaking_changes(&diff_ctx.diff_content, &diff_ctx.changed_files);
+        // 66. Schema & Breaking Changes Scan
+        let schema_compat_status = PreMergeScanner::scan_for_breaking_changes(
+            &diff_ctx.diff_content,
+            &diff_ctx.changed_files,
+        );
 
-        // 57. Concurrency, Performance & Flake Scan
-        let performance_concurrency_status = PreMergeScanner::scan_for_concurrency_and_flakes(&diff_ctx.diff_content);
+        // 67. Concurrency, Performance & Flake Scan
+        let performance_concurrency_status =
+            PreMergeScanner::scan_for_concurrency_and_flakes(&diff_ctx.diff_content);
 
-        // 58. Test Suite Status
+        // 68. Test Suite Status
         let test_suite_status = if test_suite_passed {
             GateStatus::Passed
         } else {
@@ -678,8 +800,18 @@ impl PreMergeGuard {
             && chaos_injection_status.is_acceptable()
             && stacked_diffs_status.is_acceptable()
             && microbench_status.is_acceptable()
+            && jittered_backoff_status.is_acceptable()
+            && schema_evolution_status.is_acceptable()
+            && auto_rollback_status.is_acceptable()
+            && wasm_sandbox_status.is_acceptable()
+            && consistency_status.is_acceptable()
+            && flake_quarantine_status.is_acceptable()
+            && zero_trust_workload_status.is_acceptable()
+            && carbon_compute_status.is_acceptable()
+            && replay_harness_status.is_acceptable()
+            && upgrade_train_status.is_acceptable()
             && mutation_status.is_acceptable()
-            && feature_flag_status.is_acceptable()
+            && feature_flag_report_status.is_acceptable()
             && bench_status.is_acceptable()
             && attestation_status.is_acceptable()
             && security_scan_status.is_acceptable()
@@ -738,8 +870,18 @@ impl PreMergeGuard {
             &chaos_injection_status,
             &stacked_diffs_status,
             &microbench_status,
+            &jittered_backoff_status,
+            &schema_evolution_status,
+            &auto_rollback_status,
+            &wasm_sandbox_status,
+            &consistency_status,
+            &flake_quarantine_status,
+            &zero_trust_workload_status,
+            &carbon_compute_status,
+            &replay_harness_status,
+            &upgrade_train_status,
             &mutation_status,
-            &feature_flag_status,
+            &feature_flag_report_status,
             &bench_status,
             &attestation_status,
             &security_scan_status,
@@ -801,8 +943,18 @@ impl PreMergeGuard {
             chaos_injection_status,
             stacked_diffs_status,
             microbench_status,
+            jittered_backoff_status,
+            schema_evolution_status,
+            auto_rollback_status,
+            wasm_sandbox_status,
+            consistency_status,
+            flake_quarantine_status,
+            zero_trust_workload_status,
+            carbon_compute_status,
+            replay_harness_status,
+            upgrade_train_status,
             mutation_status,
-            feature_flag_status,
+            feature_flag_status: feature_flag_report_status,
             bench_status,
             attestation_status,
             security_scan_status,

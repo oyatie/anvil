@@ -32,7 +32,10 @@ impl KaniGuard {
         _repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<KaniGuardReport> {
-        info!("Running KaniGuard (Formal Model Checking & Unsafe Invariant Verifier) on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+        info!(
+            "Running KaniGuard (Formal Model Checking & Unsafe Invariant Verifier) on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let mut unsafe_blocks_found = 0;
         let mut safety_proofs_valid = 0;
@@ -108,14 +111,18 @@ mod tests {
             base_branch: "dev".to_string(),
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
-            diff_content: "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn add(a: i32, b: i32) -> i32 { a + b }".to_string(),
+            diff_content:
+                "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn add(a: i32, b: i32) -> i32 { a + b }"
+                    .to_string(),
             changed_files: vec!["src/lib.rs".to_string()],
             repo_working_dir: std::path::PathBuf::from("."),
             is_incremental: false,
             previous_head_sha: None,
         };
 
-        let rep = guard.evaluate_unsafe_invariants(Path::new("."), &diff_ctx).unwrap();
+        let rep = guard
+            .evaluate_unsafe_invariants(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_verified);
         assert_eq!(rep.unsafe_blocks_found, 0);
     }
@@ -136,7 +143,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = guard.evaluate_unsafe_invariants(Path::new("."), &diff_ctx).unwrap();
+        let rep = guard
+            .evaluate_unsafe_invariants(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(!rep.is_verified);
         assert_eq!(rep.violations.len(), 1);
     }
@@ -157,7 +166,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = guard.evaluate_unsafe_invariants(Path::new("."), &diff_ctx).unwrap();
+        let rep = guard
+            .evaluate_unsafe_invariants(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_verified);
         assert_eq!(rep.unsafe_blocks_found, 1);
         assert_eq!(rep.safety_proofs_valid, 1);

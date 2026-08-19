@@ -53,7 +53,8 @@ impl SemanticAbiRatchet {
 
         let is_abi_stable = breaking_findings.is_empty();
         let summary = if is_abi_stable {
-            "✅ PASSED (Public library API signatures & ABI layouts are backward-compatible)".to_string()
+            "✅ PASSED (Public library API signatures & ABI layouts are backward-compatible)"
+                .to_string()
         } else {
             format!(
                 "❌ FAILED ({} breaking public ABI change(s) detected without semver major bump)",
@@ -89,7 +90,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = ratchet.evaluate_abi_stability(Path::new("."), &diff_ctx).unwrap();
+        let rep = ratchet
+            .evaluate_abi_stability(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_abi_stable);
     }
 }

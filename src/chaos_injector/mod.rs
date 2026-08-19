@@ -21,10 +21,7 @@ impl ChaosFaultInjector {
         }
     }
 
-    pub fn inject_synthetic_chaos(
-        &self,
-        diff_content: &str,
-    ) -> ChaosInjectorReport {
+    pub fn inject_synthetic_chaos(&self, diff_content: &str) -> ChaosInjectorReport {
         let faults = vec![
             ChaosFaultType::NetworkPacketDrop { drop_pct: 5 },
             ChaosFaultType::DnsResolutionLatency { delay_ms: 250 },

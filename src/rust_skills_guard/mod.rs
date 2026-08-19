@@ -41,7 +41,10 @@ impl RustSkillsGuard {
     /// Returns matching upstream markdown rule descriptions for specific category prefixes
     pub async fn get_rule_guidance_for_diff(&self, diff_content: &str) -> Vec<(String, String)> {
         let mut prefixes = vec!["own", "err", "mem"];
-        if diff_content.contains("async") || diff_content.contains("await") || diff_content.contains("tokio") {
+        if diff_content.contains("async")
+            || diff_content.contains("await")
+            || diff_content.contains("tokio")
+        {
             prefixes.push("async");
             prefixes.push("conc");
         }
@@ -79,7 +82,8 @@ impl RustSkillsGuard {
                 findings: Vec::new(),
                 rules_evaluated_count: 380,
                 categories_evaluated: vec!["All 27 Categories (Zero Rust files in PR)".to_string()],
-                summary: "Zero Rust source files in PR diff; rust-skills quality check passed.".to_string(),
+                summary: "Zero Rust source files in PR diff; rust-skills quality check passed."
+                    .to_string(),
             });
         }
 
@@ -96,7 +100,9 @@ impl RustSkillsGuard {
             "Type Safety & Patterns (33 rules)".to_string(),
         ];
 
-        let critical_or_high = findings.iter().any(|f| f.severity == "CRITICAL");
+        let critical_or_high = findings
+            .iter()
+            .any(|f| f.severity == "CRITICAL" || f.severity == "HIGH");
         let is_idiomatic = !critical_or_high;
 
         let summary = if is_idiomatic {
@@ -146,12 +152,15 @@ mod tests {
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+++ b/src/handler.rs\n+ let token = parse_header().unwrap();".to_string(),
+            diff_content: "+++ b/src/handler.rs\n+ let token = parse_header().unwrap();"
+                .to_string(),
             changed_files: vec!["src/handler.rs".to_string()],
             is_incremental: false,
         };
 
-        let report = guard.evaluate_rust_quality(&temp_dir, &diff_ctx).expect("eval");
+        let report = guard
+            .evaluate_rust_quality(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].rule_id, "err-no-unwrap-prod");
     }
@@ -173,7 +182,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_rust_quality(&temp_dir, &diff_ctx).expect("eval");
+        let report = guard
+            .evaluate_rust_quality(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].rule_id, "own-slice-over-vec");
     }
@@ -195,7 +206,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_rust_quality(&temp_dir, &diff_ctx).expect("eval");
+        let report = guard
+            .evaluate_rust_quality(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(!report.is_idiomatic);
         assert_eq!(report.findings[0].rule_id, "unsafe-safety-comment");
     }

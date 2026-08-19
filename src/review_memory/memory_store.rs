@@ -16,10 +16,15 @@ impl ReviewMemoryStore {
     }
 
     /// 100% Deterministic recall of repository-specific architectural rules and past review decisions
-    pub fn lookup_architectural_patterns(&self, _repo: &str, diff_content: &str) -> Vec<ReviewMemoryEntry> {
+    pub fn lookup_architectural_patterns(
+        &self,
+        _repo: &str,
+        diff_content: &str,
+    ) -> Vec<ReviewMemoryEntry> {
         let mut memories = Vec::new();
 
-        if diff_content.contains("std::sync::Mutex") && !diff_content.contains("parking_lot::Mutex") {
+        if diff_content.contains("std::sync::Mutex") && !diff_content.contains("parking_lot::Mutex")
+        {
             memories.push(ReviewMemoryEntry {
                 repo: "oyatie/oyatie".to_string(),
                 pattern_key: "CONCURRENCY_MUTEX_PARKING_LOT".to_string(),

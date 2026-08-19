@@ -29,20 +29,36 @@ impl CleanArchitectureGuard {
     }
 
     /// Evaluates Clean Architecture layer boundaries (Core, Ports, Adapters, Facade) across PR diffs
-    pub fn evaluate_architecture(&self, diff_ctx: &PrDiffContext) -> Result<CleanArchitectureReport> {
-        info!("Running CleanArchitectureGuard (Core -> Ports -> Adapters -> Facade) on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+    pub fn evaluate_architecture(
+        &self,
+        diff_ctx: &PrDiffContext,
+    ) -> Result<CleanArchitectureReport> {
+        info!(
+            "Running CleanArchitectureGuard (Core -> Ports -> Adapters -> Facade) on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let mut violations = Vec::new();
         let mut current_file = String::new();
 
         let core_forbidden_imports = [
-            (r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:adapters?|adapter[-_]\w+|facade|rest)"#, "ADAPTERS/FACADE", "Core/Domain layer must never import from external Adapters or Facade layers"),
-            (r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:ports?|application)"#, "PORTS/APPLICATION", "Core/Domain layer must never import from Ports/Application layers"),
+            (
+                r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:adapters?|adapter[-_]\w+|facade|rest)"#,
+                "ADAPTERS/FACADE",
+                "Core/Domain layer must never import from external Adapters or Facade layers",
+            ),
+            (
+                r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:ports?|application)"#,
+                "PORTS/APPLICATION",
+                "Core/Domain layer must never import from Ports/Application layers",
+            ),
         ];
 
-        let ports_forbidden_imports = [
-            (r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:adapters?|adapter[-_]\w+|facade|rest)"#, "ADAPTERS/FACADE", "Ports/Application layer must never import from concrete Adapters or Facade layers"),
-        ];
+        let ports_forbidden_imports = [(
+            r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:adapters?|adapter[-_]\w+|facade|rest)"#,
+            "ADAPTERS/FACADE",
+            "Ports/Application layer must never import from concrete Adapters or Facade layers",
+        )];
 
         for line in diff_ctx.diff_content.lines() {
             if line.starts_with("+++ b/") {
@@ -52,8 +68,14 @@ impl CleanArchitectureGuard {
 
             if line.starts_with('+') && !line.starts_with("+++") {
                 let trimmed = line[1..].trim();
-                let is_core_file = current_file.contains("/core/") || current_file.contains("/domain/") || current_file.ends_with("/core.rs") || current_file.ends_with("/domain.rs");
-                let is_ports_file = current_file.contains("/ports/") || current_file.contains("/application/") || current_file.ends_with("/ports.rs") || current_file.ends_with("/application.rs");
+                let is_core_file = current_file.contains("/core/")
+                    || current_file.contains("/domain/")
+                    || current_file.ends_with("/core.rs")
+                    || current_file.ends_with("/domain.rs");
+                let is_ports_file = current_file.contains("/ports/")
+                    || current_file.contains("/application/")
+                    || current_file.ends_with("/ports.rs")
+                    || current_file.ends_with("/application.rs");
 
                 if is_core_file {
                     for (pattern, target_layer, desc) in &core_forbidden_imports {
@@ -94,7 +116,11 @@ impl CleanArchitectureGuard {
             format!(
                 "Clean Architecture layer boundary violations ({} items): {}",
                 violations.len(),
-                violations.iter().map(|v| format!("{}: {}", v.file_path, v.description)).collect::<Vec<_>>().join("; ")
+                violations
+                    .iter()
+                    .map(|v| format!("{}: {}", v.file_path, v.description))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             )
         };
 

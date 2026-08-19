@@ -34,7 +34,9 @@ impl DigestPinner {
             if let Some(caps) = image_line_re.captures(line) {
                 let image_str = caps.get(1).map(|m| m.as_str()).unwrap_or("");
 
-                if mutable_tag_re.is_match(image_str) || (!has_sha_re.is_match(image_str) && !image_str.contains("localhost")) {
+                if mutable_tag_re.is_match(image_str)
+                    || (!has_sha_re.is_match(image_str) && !image_str.contains("localhost"))
+                {
                     findings.push(DigestPinFinding {
                         file_path: file_path.to_string(),
                         line_number: idx + 1,

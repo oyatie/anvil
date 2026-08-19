@@ -7,8 +7,8 @@ use axum::{
 use serde::Deserialize;
 use tracing::{error, info};
 
-use super::{ApiResponse, AppState};
 use super::pipelines::execute_pr_review;
+use super::{ApiResponse, AppState};
 use crate::fixer::ReviewFeedbackItem;
 use crate::queue_healer::QueueHealer;
 
@@ -164,20 +164,28 @@ pub async fn webhook_handler(
                     StatusCode::OK,
                     Json(ApiResponse {
                         success: true,
-                        message: format!("Skipped review for automated PR {}#{}", repo_name, pr_number),
+                        message: format!(
+                            "Skipped review for automated PR {}#{}",
+                            repo_name, pr_number
+                        ),
                     }),
                 );
             }
 
             // Anti-Loop Filter 2: Check if already certified and in merge queue
             if let Some(prior) = state.state_mgr.get_pr_state(&repo_name, pr_number).await {
-                if prior.last_certified_head_sha.as_deref() == Some(&head_sha) && prior.is_enlisted_in_merge_queue {
+                if prior.last_certified_head_sha.as_deref() == Some(&head_sha)
+                    && prior.is_enlisted_in_merge_queue
+                {
                     info!("PR {}#{} head {} is already 100% certified and in merge queue. Dropping webhook loop.", repo_name, pr_number, head_sha);
                     return (
                         StatusCode::OK,
                         Json(ApiResponse {
                             success: true,
-                            message: format!("PR {}#{} is already certified and queued", repo_name, pr_number),
+                            message: format!(
+                                "PR {}#{} is already certified and queued",
+                                repo_name, pr_number
+                            ),
                         }),
                     );
                 }
@@ -204,7 +212,10 @@ pub async fn webhook_handler(
                 )
                 .await
                 {
-                    error!("Failed to execute PR review for {}#{}: {:?}", repo_clone, pr_number, e);
+                    error!(
+                        "Failed to execute PR review for {}#{}: {:?}",
+                        repo_clone, pr_number, e
+                    );
                 }
             });
 
@@ -254,7 +265,13 @@ pub async fn webhook_handler(
             tokio::spawn(async move {
                 let _ = state_clone
                     .fixer
-                    .resolve_and_fix(&repo_clone, pr_number, &head_branch, &head_sha, &[feedback_item])
+                    .resolve_and_fix(
+                        &repo_clone,
+                        pr_number,
+                        &head_branch,
+                        &head_sha,
+                        &[feedback_item],
+                    )
                     .await;
             });
 
@@ -262,7 +279,10 @@ pub async fn webhook_handler(
                 StatusCode::ACCEPTED,
                 Json(ApiResponse {
                     success: true,
-                    message: format!("Resolution queued for comment on {}#{}", repo_name, pr.number),
+                    message: format!(
+                        "Resolution queued for comment on {}#{}",
+                        repo_name, pr.number
+                    ),
                 }),
             );
         }
@@ -274,7 +294,9 @@ pub async fn webhook_handler(
             let conclusion = wf.conclusion.as_deref().unwrap_or("");
             let branch = wf.head_branch.as_deref().unwrap_or("");
 
-            if conclusion == "failure" && (branch == "main" || branch == "dev" || branch == "master") {
+            if conclusion == "failure"
+                && (branch == "main" || branch == "dev" || branch == "master")
+            {
                 let state_clone = state.clone();
                 let repo_clone = repo_name.clone();
                 let run_id = wf.id;
@@ -283,10 +305,18 @@ pub async fn webhook_handler(
                 let wf_name = wf.name.unwrap_or_else(|| "CI Workflow".to_string());
 
                 tokio::spawn(async move {
-                    if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
+                    if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await
+                    {
                         let _ = state_clone
                             .ci_triager
-                            .triage_workflow_run(&repo_clone, run_id, &branch_str, &commit_sha, &wf_name, &repo_dir)
+                            .triage_workflow_run(
+                                &repo_clone,
+                                run_id,
+                                &branch_str,
+                                &commit_sha,
+                                &wf_name,
+                                &repo_dir,
+                            )
                             .await;
                     }
                 });
@@ -295,7 +325,10 @@ pub async fn webhook_handler(
                     StatusCode::ACCEPTED,
                     Json(ApiResponse {
                         success: true,
-                        message: format!("Trunk CI triage queued for run #{} on {}", wf.id, repo_name),
+                        message: format!(
+                            "Trunk CI triage queued for run #{} on {}",
+                            wf.id, repo_name
+                        ),
                     }),
                 );
             }
@@ -310,14 +343,20 @@ pub async fn webhook_handler(
                 let repo_clone = repo_name.clone();
 
                 tokio::spawn(async move {
-                    let _ = state_clone.queue_healer.heal_ejected_pr(&repo_clone, pr_number).await;
+                    let _ = state_clone
+                        .queue_healer
+                        .heal_ejected_pr(&repo_clone, pr_number)
+                        .await;
                 });
 
                 return (
                     StatusCode::ACCEPTED,
                     Json(ApiResponse {
                         success: true,
-                        message: format!("Queue healing monitored for PR #{} on {}", pr_number, repo_name),
+                        message: format!(
+                            "Queue healing monitored for PR #{} on {}",
+                            pr_number, repo_name
+                        ),
                     }),
                 );
             }

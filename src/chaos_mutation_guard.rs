@@ -35,7 +35,10 @@ impl ChaosMutationGuard {
     }
 
     /// Evaluates AST mutation testing adequacy: ensures modified decision branches have test assertions
-    pub fn evaluate_mutation_adequacy(&self, diff_ctx: &PrDiffContext) -> Result<MutationAdequacyReport> {
+    pub fn evaluate_mutation_adequacy(
+        &self,
+        diff_ctx: &PrDiffContext,
+    ) -> Result<MutationAdequacyReport> {
         info!(
             "Running ChaosMutationGuard on {}#{}...",
             diff_ctx.repo, diff_ctx.pr_number
@@ -44,13 +47,16 @@ impl ChaosMutationGuard {
         let mut surviving_findings = Vec::new();
         let mut mutated_branches_count = 0;
 
-        let has_test_changes = diff_ctx
-            .changed_files
-            .iter()
-            .any(|f| f.contains("test") || f.contains("spec") || f.ends_with("_test.go") || f.ends_with(".test.ts"));
+        let has_test_changes = diff_ctx.changed_files.iter().any(|f| {
+            f.contains("test")
+                || f.contains("spec")
+                || f.ends_with("_test.go")
+                || f.ends_with(".test.ts")
+        });
 
         let branch_re = Regex::new(r"(?i)(if\s+[a-zA-Z0-9_.]+\s*(?:==|!=|<|>|<=|>=)\s*[a-zA-Z0-9_.]+|if\s+let|match\s+[a-zA-Z0-9_.]+)").unwrap();
-        let error_prop_re = Regex::new(r"(?i)\.context\(|\.map_err\(|\bResult<|throw\s+new\s+Error").unwrap();
+        let error_prop_re =
+            Regex::new(r"(?i)\.context\(|\.map_err\(|\bResult<|throw\s+new\s+Error").unwrap();
 
         let mut current_file = String::new();
 

@@ -56,11 +56,17 @@ impl CoverageGuard {
 
         for line in diff_ctx.diff_content.lines() {
             if line.starts_with("+++ b/") {
-                if !current_file.is_empty() && !current_file_untested_fns.is_empty() && !current_is_test_file {
+                if !current_file.is_empty()
+                    && !current_file_untested_fns.is_empty()
+                    && !current_is_test_file
+                {
                     findings.push(CoverageFinding {
                         file_path: current_file.clone(),
                         unasserted_functions: current_file_untested_fns.clone(),
-                        recommendation: format!("Add unit/integration tests for functions: {:?}", current_file_untested_fns),
+                        recommendation: format!(
+                            "Add unit/integration tests for functions: {:?}",
+                            current_file_untested_fns
+                        ),
                     });
                 }
 
@@ -84,11 +90,19 @@ impl CoverageGuard {
 
                 if current_is_test_file {
                     test_lines_added += 1;
-                } else if current_is_executable_code && !code_line.is_empty() && !code_line.starts_with("//") && !code_line.starts_with("/*") && !code_line.starts_with('*') {
+                } else if current_is_executable_code
+                    && !code_line.is_empty()
+                    && !code_line.starts_with("//")
+                    && !code_line.starts_with("/*")
+                    && !code_line.starts_with('*')
+                {
                     executable_lines_added += 1;
 
                     if let Some(caps) = fn_decl_re.captures(code_line) {
-                        let fn_name = caps.get(1).or_else(|| caps.get(2)).or_else(|| caps.get(3))
+                        let fn_name = caps
+                            .get(1)
+                            .or_else(|| caps.get(2))
+                            .or_else(|| caps.get(3))
                             .map(|m| m.as_str())
                             .unwrap_or("fn");
                         current_file_untested_fns.push(fn_name.to_string());
@@ -97,7 +111,10 @@ impl CoverageGuard {
             }
         }
 
-        if !current_file.is_empty() && !current_file_untested_fns.is_empty() && !current_is_test_file {
+        if !current_file.is_empty()
+            && !current_file_untested_fns.is_empty()
+            && !current_is_test_file
+        {
             findings.push(CoverageFinding {
                 file_path: current_file,
                 unasserted_functions: current_file_untested_fns,
@@ -165,7 +182,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_diff_coverage(&temp_dir, &diff_ctx).expect("eval");
+        let report = guard
+            .evaluate_diff_coverage(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(report.is_sufficient);
         assert_eq!(report.estimated_diff_coverage_percent, 100.0);
         assert_eq!(report.executable_lines_added, 0);
@@ -188,7 +207,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_diff_coverage(&temp_dir, &diff_ctx).expect("eval");
+        let report = guard
+            .evaluate_diff_coverage(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(report.is_sufficient);
         assert!(report.estimated_diff_coverage_percent >= 85.0);
     }
@@ -210,7 +231,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_diff_coverage(&temp_dir, &diff_ctx).expect("eval");
+        let report = guard
+            .evaluate_diff_coverage(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(!report.is_sufficient);
         assert_eq!(report.estimated_diff_coverage_percent, 0.0);
     }

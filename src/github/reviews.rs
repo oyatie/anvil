@@ -79,30 +79,33 @@ pub async fn submit_pr_review_impl(
         return submit_fallback_review(repo, pr_number, review).await;
     }
 
-    info!("Successfully published PR review for {}#{}", repo, pr_number);
+    info!(
+        "Successfully published PR review for {}#{}",
+        repo, pr_number
+    );
     Ok(())
 }
 
-async fn submit_fallback_review(
-    repo: &str,
-    pr_number: u64,
-    review: &ReviewResponse,
-) -> Result<()> {
+async fn submit_fallback_review(repo: &str, pr_number: u64, review: &ReviewResponse) -> Result<()> {
     let mut full_body = review.summary.clone();
 
     if !review.comments.is_empty() {
         full_body.push_str("\n\n### 📝 Detailed Inline Findings:\n");
         for c in &review.comments {
-            full_body.push_str(&format!(
-                "- **`{}:{}`**\n  {}\n",
-                c.path, c.line, c.body
-            ));
+            full_body.push_str(&format!("- **`{}:{}`**\n  {}\n", c.path, c.line, c.body));
         }
     }
 
     let endpoint = format!("repos/{}/issues/{}/comments", repo, pr_number);
     let mut cmd = Command::new("gh");
-    cmd.args(["api", "--method", "POST", &endpoint, "-f", &format!("body={}", full_body)]);
+    cmd.args([
+        "api",
+        "--method",
+        "POST",
+        &endpoint,
+        "-f",
+        &format!("body={}", full_body),
+    ]);
 
     let output = cmd.output().await?;
     if !output.status.success() {
@@ -110,6 +113,9 @@ async fn submit_fallback_review(
         bail!("Fallback review comment failed: {}", stderr);
     }
 
-    info!("Successfully submitted PR review fallback for {}#{}", repo, pr_number);
+    info!(
+        "Successfully submitted PR review fallback for {}#{}",
+        repo, pr_number
+    );
     Ok(())
 }

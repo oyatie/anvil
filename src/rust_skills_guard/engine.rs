@@ -27,8 +27,12 @@ impl RustQualityEngine {
         let mut findings = Vec::new();
 
         let unwrap_re = Regex::new(r#"\.unwrap\(\)"#).unwrap();
-        let ref_string_re = Regex::new(r#"(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z0-9_]+\s*\(.*?\s*:\s*&String"#).unwrap();
-        let ref_vec_re = Regex::new(r#"(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z0-9_]+\s*\(.*?\s*:\s*&Vec<"#).unwrap();
+        let ref_string_re =
+            Regex::new(r#"(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z0-9_]+\s*\(.*?\s*:\s*&String"#)
+                .unwrap();
+        let ref_vec_re =
+            Regex::new(r#"(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z0-9_]+\s*\(.*?\s*:\s*&Vec<"#)
+                .unwrap();
         let blocking_in_async_re = Regex::new(r#"(?i)std::fs::read|std::thread::sleep"#).unwrap();
         let format_literal_re = Regex::new(r#"format!\(\s*"[^"{}]*"\s*\)"#).unwrap();
         let unsafe_block_re = Regex::new(r#"\bunsafe\s*\{"#).unwrap();
@@ -42,7 +46,9 @@ impl RustQualityEngine {
         for line in diff_ctx.diff_content.lines() {
             if line.starts_with("+++ b/") {
                 current_file = line[6..].trim().to_string();
-                is_test_file = current_file.contains("test") || current_file.contains("bench") || current_file.contains("mock");
+                is_test_file = current_file.contains("test")
+                    || current_file.contains("bench")
+                    || current_file.contains("mock");
                 prev_line.clear();
                 continue;
             }
@@ -55,7 +61,11 @@ impl RustQualityEngine {
                 let code_line = &line[1..].trim();
 
                 // 1. [err-no-unwrap-prod] - Avoid .unwrap() in production code
-                if !is_test_file && unwrap_re.is_match(code_line) && !code_line.contains("// test") && !code_line.contains("#[cfg(test)]") {
+                if !is_test_file
+                    && unwrap_re.is_match(code_line)
+                    && !code_line.contains("// test")
+                    && !code_line.contains("#[cfg(test)]")
+                {
                     findings.push(RustQualityFinding {
                         rule_id: "err-no-unwrap-prod".to_string(),
                         category: "Error Handling (Priority 2)".to_string(),
@@ -75,8 +85,11 @@ impl RustQualityEngine {
                         severity: "MEDIUM".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
-                        description: "Accepting `&String` forces heap allocations for string slices.".to_string(),
-                        recommendation: "Change parameter type from `&String` to `&str`.".to_string(),
+                        description:
+                            "Accepting `&String` forces heap allocations for string slices."
+                                .to_string(),
+                        recommendation: "Change parameter type from `&String` to `&str`."
+                            .to_string(),
                     });
                 }
                 if ref_vec_re.is_match(code_line) {

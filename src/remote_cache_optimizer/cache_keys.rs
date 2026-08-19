@@ -14,7 +14,11 @@ impl CacheKeyGenerator {
         lockfile_content.hash(&mut hasher);
         toolchain_version.hash(&mut hasher);
         let hash = hasher.finish();
-        format!("sccache-v1-{}-{:016x}", toolchain_version.replace(' ', "-"), hash)
+        format!(
+            "sccache-v1-{}-{:016x}",
+            toolchain_version.replace(' ', "-"),
+            hash
+        )
     }
 }
 

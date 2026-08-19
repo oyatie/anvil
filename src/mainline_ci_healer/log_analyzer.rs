@@ -25,7 +25,9 @@ impl MainlineLogAnalyzer {
         job_name: &str,
         log_content: &str,
     ) -> Option<MainlineFailureFinding> {
-        if log_content.contains("linker_wrapper.bat") && log_content.contains("The system cannot find the path specified") {
+        if log_content.contains("linker_wrapper.bat")
+            && log_content.contains("The system cannot find the path specified")
+        {
             return Some(MainlineFailureFinding {
                 branch: branch.to_string(),
                 run_id,
@@ -43,7 +45,9 @@ impl MainlineLogAnalyzer {
                 workflow_name: "oya-ci-required".to_string(),
                 failed_job: job_name.to_string(),
                 root_cause_snippet: "Rust compilation error on trunk branch.".to_string(),
-                suggested_remediation: "Auto-synthesize code fix via Fixer and submit PR to mainline branch.".to_string(),
+                suggested_remediation:
+                    "Auto-synthesize code fix via Fixer and submit PR to mainline branch."
+                        .to_string(),
             });
         }
 

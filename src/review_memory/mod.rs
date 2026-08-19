@@ -36,11 +36,14 @@ impl ReviewMemoryEngine {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let recalled_rules = self.store.lookup_architectural_patterns(&diff_ctx.repo, &diff_ctx.diff_content);
+        let recalled_rules = self
+            .store
+            .lookup_architectural_patterns(&diff_ctx.repo, &diff_ctx.diff_content);
         let is_aligned = true;
 
         let summary = if recalled_rules.is_empty() {
-            "✅ PASSED (Code fully aligned with historical architectural memory & conventions)".to_string()
+            "✅ PASSED (Code fully aligned with historical architectural memory & conventions)"
+                .to_string()
         } else {
             format!(
                 "💡 NOTICE ({} repository memory rule(s) referenced for review alignment)",
@@ -76,7 +79,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = engine.evaluate_review_memory(Path::new("."), &diff_ctx).unwrap();
+        let rep = engine
+            .evaluate_review_memory(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_aligned);
     }
 }

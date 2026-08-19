@@ -36,7 +36,10 @@ impl DebtShrinkGuard {
         repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<DebtShrinkReport> {
-        info!("Running DebtShrinkGuard (Deprecation & Reorg Drain Ratchet) on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+        info!(
+            "Running DebtShrinkGuard (Deprecation & Reorg Drain Ratchet) on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let mut violations = Vec::new();
         let mut total_debt_shrunk: usize = 0;
@@ -95,7 +98,11 @@ impl DebtShrinkGuard {
                     });
                 } else if net_growth < 0 {
                     total_debt_shrunk += deleted - added;
-                    info!("Debt reduced on deprecating target `{}`: -{} lines", file, deleted - added);
+                    info!(
+                        "Debt reduced on deprecating target `{}`: -{} lines",
+                        file,
+                        deleted - added
+                    );
                 }
             }
         }
@@ -111,7 +118,11 @@ impl DebtShrinkGuard {
             format!(
                 "Debt ratchet violations ({} files): {}",
                 violations.len(),
-                violations.iter().map(|v| format!("{} (+{} lines net)", v.file_path, v.net_growth)).collect::<Vec<_>>().join("; ")
+                violations
+                    .iter()
+                    .map(|v| format!("{} (+{} lines net)", v.file_path, v.net_growth))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             )
         };
 
@@ -145,7 +156,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_debt_shrink(&temp_dir, &diff_ctx).expect("Evaluates");
+        let report = guard
+            .evaluate_debt_shrink(&temp_dir, &diff_ctx)
+            .expect("Evaluates");
         assert!(!report.is_acceptable);
         assert_eq!(report.violations.len(), 1);
         assert_eq!(report.violations[0].net_growth, 2);
@@ -168,7 +181,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_debt_shrink(&temp_dir, &diff_ctx).expect("Evaluates");
+        let report = guard
+            .evaluate_debt_shrink(&temp_dir, &diff_ctx)
+            .expect("Evaluates");
         assert!(report.is_acceptable);
         assert_eq!(report.total_debt_shrunk, 2);
     }

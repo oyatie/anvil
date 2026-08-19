@@ -2,9 +2,9 @@ name: anvil-ci
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, staging, canary, production]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, staging, canary, production]
   merge_group:
     types: [checks_requested]
 
@@ -19,6 +19,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Rust Cache

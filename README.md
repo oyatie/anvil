@@ -53,6 +53,22 @@ Anvil provides autonomous, end-to-end coverage across the entire PR and merge li
 
 ---
 
+## 🌐 HTTP API & Webhook Endpoints
+
+| Method | Route | Description | OpenAPI Specification |
+|---|---|---|---|
+| `GET` | `/healthz` | Liveness & health probe returning `200 OK` (`"ok"`) | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/webhook` | Ingests GitHub webhook events (`pull_request`, `issue_comment`, `workflow_run`) | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/api/review` | Triggers manual PR adversarial review pipeline | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/api/fix` | Triggers manual PR comment fix & auto-push pipeline | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/api/certify` | Triggers 60-gate pre-merge certification scorecard | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/api/triage` | Triggers CI failure root cause analysis | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/api/enlist` | Enlists certified PR into merge queue | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/api/heal-queue` | Triggers speculative queue bisection & auto-healing | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+| `POST` | `/api/reconcile` | Triggers lockfile & truth ledger reconciliation | [`openapi/openapi.yaml`](openapi/openapi.yaml) |
+
+---
+
 ## ⚙️ Configuration (`.env`)
 
 ```env

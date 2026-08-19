@@ -40,7 +40,8 @@ impl ReproducibilityChecker {
             ReproducibilityResult::NonDeterministic {
                 build_a_sha256: build_a_hash.to_string(),
                 build_b_sha256: build_b_hash.to_string(),
-                divergent_symbol_or_path: "Checksum mismatch between clean isolated sandboxes".to_string(),
+                divergent_symbol_or_path: "Checksum mismatch between clean isolated sandboxes"
+                    .to_string(),
             }
         }
     }
@@ -56,7 +57,10 @@ mod tests {
         let diff = r#"const BUILD_TIMESTAMP: &str = SystemTime::now();"#;
         let res = checker.check_build_artifacts("hash1", "hash1", diff);
         match res {
-            ReproducibilityResult::NonDeterministic { divergent_symbol_or_path, .. } => {
+            ReproducibilityResult::NonDeterministic {
+                divergent_symbol_or_path,
+                ..
+            } => {
                 assert!(divergent_symbol_or_path.contains("timestamp"));
             }
             _ => panic!("Expected non-deterministic failure"),

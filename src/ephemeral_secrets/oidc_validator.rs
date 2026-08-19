@@ -17,14 +17,19 @@ impl OidcPolicyValidator {
     }
 
     /// 100% Deterministic scan of GitHub Actions workflows to enforce zero static tokens and short-lived OIDC federated STS credentials
-    pub fn validate_workflow_secrets(&self, file_path: &str, content: &str) -> Vec<SecretPolicyFinding> {
+    pub fn validate_workflow_secrets(
+        &self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<SecretPolicyFinding> {
         let mut findings = Vec::new();
 
         if !file_path.contains(".github/workflows/") {
             return findings;
         }
 
-        let static_aws_secret_re = Regex::new(r#"AWS_SECRET_ACCESS_KEY:\s*\$\{\{\s*secrets\.\w+\s*\}\}"#).unwrap();
+        let static_aws_secret_re =
+            Regex::new(r#"AWS_SECRET_ACCESS_KEY:\s*\$\{\{\s*secrets\.\w+\s*\}\}"#).unwrap();
 
         for (idx, line) in content.lines().enumerate() {
             if static_aws_secret_re.is_match(line) {

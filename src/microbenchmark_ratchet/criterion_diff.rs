@@ -70,7 +70,9 @@ mod tests {
 
         let verdict = analyzer.evaluate_benchmark_diff(&sample);
         match verdict {
-            BenchmarkRegressionVerdict::Regression { ns_increase_pct, .. } => {
+            BenchmarkRegressionVerdict::Regression {
+                ns_increase_pct, ..
+            } => {
                 assert!(ns_increase_pct > 15.0);
             }
             _ => panic!("Expected regression verdict"),
@@ -87,6 +89,9 @@ mod tests {
             p99_cpu_cycles_base: 300,
             p99_cpu_cycles_head: 295,
         };
-        assert_eq!(analyzer.evaluate_benchmark_diff(&sample), BenchmarkRegressionVerdict::Optimal);
+        assert_eq!(
+            analyzer.evaluate_benchmark_diff(&sample),
+            BenchmarkRegressionVerdict::Optimal
+        );
     }
 }

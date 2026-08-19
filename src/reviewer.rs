@@ -105,7 +105,10 @@ impl Reviewer {
         };
 
         let rules_section = if !custom_rules.is_empty() {
-            format!("\n### Custom Repository Engineering Rules:\n{}\n", custom_rules)
+            format!(
+                "\n### Custom Repository Engineering Rules:\n{}\n",
+                custom_rules
+            )
         } else {
             String::new()
         };
@@ -135,7 +138,9 @@ impl Reviewer {
         prompt.push_str("16. Zero-trust / Defense-in-depth: Validate all inputs, enforce least privilege, and sanitize external data boundaries.\n\n");
 
         prompt.push_str("## Response Format Instructions:\n");
-        prompt.push_str("You MUST respond with a single valid JSON object enclosed in a ```json codeblock.\n");
+        prompt.push_str(
+            "You MUST respond with a single valid JSON object enclosed in a ```json codeblock.\n",
+        );
         prompt.push_str("Schema:\n");
         prompt.push_str("{\n  \"summary\": \"Markdown summary with 16-lens table, executive overview, and critical risks\",\n  \"verdict\": \"APPROVE | COMMENT | REQUEST_CHANGES\",\n  \"comments\": [{\"path\": \"file.ext\", \"line\": 42, \"side\": \"RIGHT\", \"body\": \"Finding description\"}]\n}\n\n");
 

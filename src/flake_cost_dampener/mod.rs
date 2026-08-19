@@ -36,7 +36,9 @@ impl FlakeCostDampener {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let quarantined_tests = self.log_mgr.check_quarantined_tests(&diff_ctx.changed_files);
+        let quarantined_tests = self
+            .log_mgr
+            .check_quarantined_tests(&diff_ctx.changed_files);
         let is_clean = quarantined_tests.is_empty();
 
         let summary = if is_clean {
@@ -76,7 +78,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = dampener.evaluate_flake_risks(Path::new("."), &diff_ctx).unwrap();
+        let rep = dampener
+            .evaluate_flake_risks(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_clean);
     }
 }

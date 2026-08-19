@@ -21,7 +21,11 @@ impl SmtConstraintEngine {
     /// Evaluates Cedar policies, Kubernetes NetworkPolicies, and cell boundaries using SMT logic
     pub fn verify_invariants(&self, policy_content: &str) -> SmtCheckResult {
         // Pattern 1: Catch wildcards in sensitive Cedar resource authorizations
-        if policy_content.contains("permit(") && policy_content.contains("principal == Principal::\"*\"") {
+        if policy_content.contains("permit(")
+            && (policy_content.contains("principal == Principal::\"*\"")
+                || policy_content.contains("permit(principal,")
+                || policy_content.contains("permit(principal ,"))
+        {
             return SmtCheckResult::CounterexampleFound {
                 rule_name: "CedarPrincipalWildcard".to_string(),
                 violating_tuple: "principal == *".to_string(),
@@ -63,6 +67,9 @@ mod tests {
     fn test_smt_passes_scoped_policy() {
         let engine = SmtConstraintEngine::new();
         let policy = r#"permit(principal == Principal::"User:123", action == Action::"Read", resource == Resource::"Doc:456");"#;
-        assert_eq!(engine.verify_invariants(policy), SmtCheckResult::ProvablySafe);
+        assert_eq!(
+            engine.verify_invariants(policy),
+            SmtCheckResult::ProvablySafe
+        );
     }
 }

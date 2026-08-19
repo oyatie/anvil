@@ -34,21 +34,36 @@ impl UpstreamRustSkillsSyncer {
     /// Clones or pulls the latest upstream rust-skills repository and re-indexes all rules
     pub async fn ensure_synced(&self) -> Result<usize> {
         if !self.cache_dir.exists() {
-            info!("Cloning upstream rust-skills from {} into {:?}...", self.repo_url, self.cache_dir);
+            info!(
+                "Cloning upstream rust-skills from {} into {:?}...",
+                self.repo_url, self.cache_dir
+            );
             if let Some(parent) = self.cache_dir.parent() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
             let output = Command::new("git")
-                .args(["clone", "--depth", "1", &self.repo_url, self.cache_dir.to_str().unwrap()])
+                .args([
+                    "clone",
+                    "--depth",
+                    "1",
+                    &self.repo_url,
+                    self.cache_dir.to_str().unwrap(),
+                ])
                 .output()
                 .await
                 .context("Failed to clone upstream rust-skills repo")?;
 
             if !output.status.success() {
-                warn!("git clone rust-skills failed: {}", String::from_utf8_lossy(&output.stderr));
+                warn!(
+                    "git clone rust-skills failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
         } else {
-            info!("Pulling latest upstream rust-skills updates in {:?}...", self.cache_dir);
+            info!(
+                "Pulling latest upstream rust-skills updates in {:?}...",
+                self.cache_dir
+            );
             let _ = Command::new("git")
                 .current_dir(&self.cache_dir)
                 .args(["pull", "--ff-only"])

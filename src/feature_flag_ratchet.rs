@@ -45,8 +45,10 @@ impl FeatureFlagRatchet {
         let mut flags_scanned_count = 0;
 
         let flag_usage_re = Regex::new(r#"(?i)(?:is_feature_enabled|feature_flag|useFeatureFlag|flags\.get)\s*\(\s*["']([^"']+)["']"#).unwrap();
-        let permanent_true_re = Regex::new(r#"(?i)if\s+(?:true|1)\s*&&.*is_feature_enabled"#).unwrap();
-        let stale_annotation_re = Regex::new(r#"(?i)@deprecated_flag|@stale_flag|EXPIRATION:\s*202[0-5]"#).unwrap();
+        let permanent_true_re =
+            Regex::new(r#"(?i)if\s+(?:true|1)\s*&&.*is_feature_enabled"#).unwrap();
+        let stale_annotation_re =
+            Regex::new(r#"(?i)@deprecated_flag|@stale_flag|EXPIRATION:\s*202[0-5]"#).unwrap();
 
         let mut current_file = String::new();
 
@@ -79,8 +81,10 @@ impl FeatureFlagRatchet {
                         file_path: current_file.clone(),
                         flag_name: "stale_annotation".to_string(),
                         issue_type: "EXPIRED_FLAG_PRESENT".to_string(),
-                        description: "Found reference to an expired or deprecated feature flag.".to_string(),
-                        recommendation: "Retire the flag and prune associated code paths.".to_string(),
+                        description: "Found reference to an expired or deprecated feature flag."
+                            .to_string(),
+                        recommendation: "Retire the flag and prune associated code paths."
+                            .to_string(),
                     });
                 }
             }
@@ -94,7 +98,8 @@ impl FeatureFlagRatchet {
                     flags_scanned_count
                 )
             } else {
-                "Feature flag ratchet verified: zero stale or permanent toggle bloat detected.".to_string()
+                "Feature flag ratchet verified: zero stale or permanent toggle bloat detected."
+                    .to_string()
             }
         } else {
             format!(
@@ -138,7 +143,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = ratchet.evaluate_feature_flags(&temp_dir, &diff_ctx).expect("eval");
+        let report = ratchet
+            .evaluate_feature_flags(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(report.is_clean);
         assert_eq!(report.flags_scanned_count, 1);
     }
@@ -155,12 +162,15 @@ mod tests {
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+++ b/src/features.ts\n+ // @deprecated_flag\n+ const stale = true;".to_string(),
+            diff_content: "+++ b/src/features.ts\n+ // @deprecated_flag\n+ const stale = true;"
+                .to_string(),
             changed_files: vec!["src/features.ts".to_string()],
             is_incremental: false,
         };
 
-        let report = ratchet.evaluate_feature_flags(&temp_dir, &diff_ctx).expect("eval");
+        let report = ratchet
+            .evaluate_feature_flags(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(!report.is_clean);
         assert_eq!(report.violations[0].issue_type, "EXPIRED_FLAG_PRESENT");
     }

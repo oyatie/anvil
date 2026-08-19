@@ -39,11 +39,14 @@ impl ClusterStateAuditor {
         let live_manifest = "replicas: 3";
         let git_manifest = "replicas: 3";
 
-        let drift_findings = self.evaluator.compare_cluster_state(live_manifest, git_manifest);
+        let drift_findings = self
+            .evaluator
+            .compare_cluster_state(live_manifest, git_manifest);
         let is_synchronized = drift_findings.is_empty();
 
         let summary = if is_synchronized {
-            "✅ PASSED (Live cluster state is 100% synchronized with Git declarative desired-state)".to_string()
+            "✅ PASSED (Live cluster state is 100% synchronized with Git declarative desired-state)"
+                .to_string()
         } else {
             format!(
                 "❌ FAILED ({} out-of-band live mutation(s) detected)",
@@ -79,7 +82,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = auditor.evaluate_cluster_parity(Path::new("."), &diff_ctx).unwrap();
+        let rep = auditor
+            .evaluate_cluster_parity(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_synchronized);
     }
 }

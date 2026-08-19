@@ -65,7 +65,8 @@ impl CiTriager {
             .await?;
 
         // Post triage diagnostic issue / comment
-        self.publish_triage_report(repo, run_id, branch, &diagnosis).await?;
+        self.publish_triage_report(repo, run_id, branch, &diagnosis)
+            .await?;
 
         Ok(diagnosis)
     }
@@ -154,7 +155,10 @@ Output strictly valid JSON matching this schema:
         match serde_json::from_str::<CiTriageDiagnosis>(&json_candidate) {
             Ok(diag) => Ok(diag),
             Err(e) => {
-                warn!("Failed to parse CI triage JSON: {}. Building fallback diagnosis.", e);
+                warn!(
+                    "Failed to parse CI triage JSON: {}. Building fallback diagnosis.",
+                    e
+                );
                 Ok(CiTriageDiagnosis {
                     failure_category: "UNSPECIFIED".to_string(),
                     root_cause: "Workflow run failed on trunk".to_string(),
@@ -176,9 +180,15 @@ Output strictly valid JSON matching this schema:
         branch: &str,
         diag: &CiTriageDiagnosis,
     ) -> Result<()> {
-        info!("Publishing trunk CI triage diagnostic for {} (Run #{})", repo, run_id);
+        info!(
+            "Publishing trunk CI triage diagnostic for {} (Run #{})",
+            repo, run_id
+        );
 
-        let title = format!("🚨 Trunk CI Failure on `{}`: Run #{} ({})", branch, run_id, diag.failure_category);
+        let title = format!(
+            "🚨 Trunk CI Failure on `{}`: Run #{} ({})",
+            branch, run_id, diag.failure_category
+        );
         let body = format!(
             "{}\n\n---\n*🤖 Automated Trunk Health Triage by **Oyatie Autonomous Engineering Pipeline***\n*Run URL: https://github.com/{}/actions/runs/{}*",
             diag.formatted_markdown, repo, run_id
@@ -187,14 +197,7 @@ Output strictly valid JSON matching this schema:
         // Open an issue on GitHub to alert maintainers
         let mut cmd = Command::new("gh");
         cmd.args([
-            "issue",
-            "create",
-            "--repo",
-            repo,
-            "--title",
-            &title,
-            "--body",
-            &body,
+            "issue", "create", "--repo", repo, "--title", &title, "--body", &body,
         ]);
 
         let out = cmd.output().await?;
@@ -228,7 +231,10 @@ Output strictly valid JSON matching this schema:
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            error!("agy returned non-zero status in CiTriager: {}", output.status);
+            error!(
+                "agy returned non-zero status in CiTriager: {}",
+                output.status
+            );
             warn!("agy stderr: {}", stderr_str);
             if stdout_str.trim().is_empty() {
                 bail!("agy failed with code {}: {}", output.status, stderr_str);
@@ -274,9 +280,10 @@ mod tests {
         let json_str = extract_json_block(raw);
         let parsed: CiTriageDiagnosis = serde_json::from_str(&json_str).expect("Valid parse");
         assert_eq!(parsed.failure_category, "COMPILATION");
-        assert_eq!(parsed.culprit_file_and_line.as_deref(), Some("src/models.rs:54"));
+        assert_eq!(
+            parsed.culprit_file_and_line.as_deref(),
+            Some("src/models.rs:54")
+        );
         assert!(parsed.root_cause.contains("Missing trait bound"));
     }
 }
-
-

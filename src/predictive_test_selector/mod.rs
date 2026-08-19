@@ -37,15 +37,15 @@ impl PredictiveTestSelector {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let workspace_packages = vec![
-            WorkspacePackage {
-                name: "anvil".to_string(),
-                path: "src/".to_string(),
-                dependencies: vec![],
-            },
-        ];
+        let workspace_packages = vec![WorkspacePackage {
+            name: "anvil".to_string(),
+            path: "src/".to_string(),
+            dependencies: vec![],
+        }];
 
-        let selected = self.dag_selector.select_affected_packages(&diff_ctx.changed_files, &workspace_packages);
+        let selected = self
+            .dag_selector
+            .select_affected_packages(&diff_ctx.changed_files, &workspace_packages);
         let is_optimized = true;
         let summary = format!(
             "✅ PASSED (Predictive selection targeted {} affected packages; spared full-monorepo rebuild)",
@@ -81,7 +81,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = sel.evaluate_test_selection(Path::new("."), &diff_ctx).unwrap();
+        let rep = sel
+            .evaluate_test_selection(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_optimized);
     }
 }

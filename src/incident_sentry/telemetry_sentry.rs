@@ -23,8 +23,13 @@ impl TelemetrySentry {
     }
 
     /// 100% Deterministic evaluation of live production golden signals to trigger autonomous emergency reverts
-    pub fn evaluate_production_health(&self, signals: &LiveGoldenSignals) -> IncidentSentryDecision {
-        let is_unhealthy = signals.error_rate_pct > 0.5 || signals.panic_count_last_5m > 0 || signals.p99_latency_ms > 500.0;
+    pub fn evaluate_production_health(
+        &self,
+        signals: &LiveGoldenSignals,
+    ) -> IncidentSentryDecision {
+        let is_unhealthy = signals.error_rate_pct > 0.5
+            || signals.panic_count_last_5m > 0
+            || signals.p99_latency_ms > 500.0;
 
         if is_unhealthy {
             IncidentSentryDecision {

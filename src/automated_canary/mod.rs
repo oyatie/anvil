@@ -21,10 +21,7 @@ impl AutomatedCanaryAnalysis {
         }
     }
 
-    pub fn evaluate_canary(
-        &self,
-        distribution: &MetricDistribution,
-    ) -> AutomatedCanaryReport {
+    pub fn evaluate_canary(&self, distribution: &MetricDistribution) -> AutomatedCanaryReport {
         let verdict = self.engine.evaluate_canary_distributions(distribution);
         let passed = matches!(verdict, CanaryVerdict::Pass | CanaryVerdict::Marginal);
 

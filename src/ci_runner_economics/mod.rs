@@ -47,7 +47,9 @@ impl CiRunnerEconomicsOptimizer {
                 }
             }
 
-            let file_findings = self.allocator.scan_workflow_runners(&current_file, file_diff);
+            let file_findings = self
+                .allocator
+                .scan_workflow_runners(&current_file, file_diff);
             findings.extend(file_findings);
         }
 
@@ -89,7 +91,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = opt.evaluate_runner_economics(Path::new("."), &diff_ctx).unwrap();
+        let rep = opt
+            .evaluate_runner_economics(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_cost_optimal);
     }
 }

@@ -76,7 +76,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = guard.evaluate_preflight_cascade(Path::new("."), &diff_ctx).unwrap();
+        let rep = guard
+            .evaluate_preflight_cascade(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_clean);
     }
 }

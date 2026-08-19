@@ -60,7 +60,10 @@ impl QueueHealer {
     pub async fn heal_ejected_pr(&self, repo: &str, pr_number: u64) -> Result<()> {
         info!("Starting Merge Queue Healer for {}#{}...", repo, pr_number);
 
-        let meta = self.github_client.fetch_pr_metadata(repo, pr_number).await?;
+        let meta = self
+            .github_client
+            .fetch_pr_metadata(repo, pr_number)
+            .await?;
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
         // 1. Fetch latest main and checkout PR branch
@@ -72,7 +75,12 @@ impl QueueHealer {
 
         let _ = Command::new("git")
             .current_dir(&repo_dir)
-            .args(["fetch", "origin", &format!("pull/{}/head", pr_number), "--force"])
+            .args([
+                "fetch",
+                "origin",
+                &format!("pull/{}/head", pr_number),
+                "--force",
+            ])
             .output()
             .await;
 
@@ -84,7 +92,10 @@ impl QueueHealer {
             .await;
 
         // 2. Speculatively merge origin/main into the PR branch
-        info!("Speculatively merging origin/main into {} for {}#{}...", branch_name, repo, pr_number);
+        info!(
+            "Speculatively merging origin/main into {} for {}#{}...",
+            branch_name, repo, pr_number
+        );
         let merge_out = Command::new("git")
             .current_dir(&repo_dir)
             .args(["merge", "origin/main", "--no-edit"])
@@ -99,7 +110,10 @@ impl QueueHealer {
         };
 
         // 3. Prompt Antigravity to repair the merge group failure / conflict
-        info!("Invoking Antigravity to repair merge train divergence in {:?}", repo_dir);
+        info!(
+            "Invoking Antigravity to repair merge train divergence in {:?}",
+            repo_dir
+        );
         let prompt = format!(
             r#####"You are Oyatie's Principal Merge Train Resilience Engineer. Pull Request #{pr_number} on `{repo}` failed or was ejected from the GitHub Merge Queue due to train divergence or semantic conflict against trunk.
 
@@ -118,7 +132,11 @@ Apply all necessary file edits directly in the repository workspace now."#####,
             pr_number = pr_number,
             repo = repo,
             pr_title = meta.title,
-            conflict_status = if has_merge_conflict { format!("Merge Conflicts Present:\n{}", conflict_details) } else { "No textual conflict; Semantic / Test divergence".to_string() }
+            conflict_status = if has_merge_conflict {
+                format!("Merge Conflicts Present:\n{}", conflict_details)
+            } else {
+                "No textual conflict; Semantic / Test divergence".to_string()
+            }
         );
 
         let _ = self.run_agy_prompt(&prompt, &repo_dir).await?;
@@ -146,7 +164,10 @@ Apply all necessary file edits directly in the repository workspace now."#####,
                 .output()
                 .await;
 
-            let commit_msg = format!("fix(merge-train): auto-heal merge queue divergence for PR #{}", pr_number);
+            let commit_msg = format!(
+                "fix(merge-train): auto-heal merge queue divergence for PR #{}",
+                pr_number
+            );
             let commit_out = Command::new("git")
                 .current_dir(&repo_dir)
                 .args(["commit", "-m", &commit_msg])
@@ -162,16 +183,25 @@ Apply all necessary file edits directly in the repository workspace now."#####,
                     .await?;
 
                 if push_out.status.success() {
-                    info!("Successfully pushed healed commit to origin/{}", meta.head_ref_name);
+                    info!(
+                        "Successfully pushed healed commit to origin/{}",
+                        meta.head_ref_name
+                    );
 
                     // Post comment to PR
                     let heal_note = format!(
                         "🛠️ **Merge Queue Self-Healing Applied:**\n\n- Re-synchronized against latest trunk `main`\n- Resolved semantic merge train conflicts\n- Passed local test verification gate\n\n*Re-enlisting into GitHub Merge Queue...*"
                     );
-                    let _ = self.github_client.post_pr_comment(repo, pr_number, &heal_note).await;
+                    let _ = self
+                        .github_client
+                        .post_pr_comment(repo, pr_number, &heal_note)
+                        .await;
 
                     // Re-enlist in merge queue
-                    let _ = self.merge_enlister.enlist_into_merge_queue(repo, pr_number).await;
+                    let _ = self
+                        .merge_enlister
+                        .enlist_into_merge_queue(repo, pr_number)
+                        .await;
                 }
             }
         }
@@ -213,7 +243,10 @@ Apply all necessary file edits directly in the repository workspace now."#####,
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            error!("agy returned non-zero status in QueueHealer: {}", output.status);
+            error!(
+                "agy returned non-zero status in QueueHealer: {}",
+                output.status
+            );
             warn!("agy stderr: {}", stderr_str);
             if stdout_str.trim().is_empty() {
                 bail!("agy failed with code {}: {}", output.status, stderr_str);

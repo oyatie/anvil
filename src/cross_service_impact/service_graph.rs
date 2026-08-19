@@ -16,11 +16,17 @@ impl ServiceGraphValidator {
     }
 
     /// 100% Deterministic validation of cross-service OpenAPI/gRPC schema changes across monorepo boundaries
-    pub fn evaluate_service_contracts(&self, file_path: &str, diff_content: &str) -> Vec<CrossServiceFinding> {
+    pub fn evaluate_service_contracts(
+        &self,
+        file_path: &str,
+        diff_content: &str,
+    ) -> Vec<CrossServiceFinding> {
         let mut findings = Vec::new();
 
         // Check if a shared OpenAPI/protobuf definition changed without backward compatibility
-        if (file_path.contains("api/") || file_path.contains("proto/")) && diff_content.contains("-   required:") {
+        if (file_path.contains("api/") || file_path.contains("proto/"))
+            && diff_content.contains("-   required:")
+        {
             findings.push(CrossServiceFinding {
                 service_name: "oyatie-backend".to_string(),
                 impacted_consumer: "oyatie-console".to_string(),

@@ -28,11 +28,15 @@ impl CellIsolationGuard {
 
     /// Evaluates multi-tenant isolation and cell blast-radius boundaries on the PR diff
     pub fn evaluate_cell_isolation(&self, diff_ctx: &PrDiffContext) -> Result<CellIsolationReport> {
-        info!("Running CellIsolationGuard multi-tenancy & cell boundary check on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+        info!(
+            "Running CellIsolationGuard multi-tenancy & cell boundary check on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let mut violations = Vec::new();
         let sql_re = Regex::new(r"(?i)\b(SELECT|DELETE|UPDATE)\b.*?\bWHERE\b").unwrap();
-        let raw_socket_re = Regex::new(r#"(?i)TcpStream::connect\(["']\d+\.\d+\.\d+\.\d+:\d+["']\)"#).unwrap();
+        let raw_socket_re =
+            Regex::new(r#"(?i)TcpStream::connect\(["']\d+\.\d+\.\d+\.\d+:\d+["']\)"#).unwrap();
 
         for line in diff_ctx.diff_content.lines() {
             if line.starts_with('+') && !line.starts_with("+++") {
@@ -65,7 +69,11 @@ impl CellIsolationGuard {
             format!(
                 "Cell isolation warnings ({} items): {}",
                 violations.len(),
-                violations.iter().map(|v| v.description.as_str()).collect::<Vec<_>>().join("; ")
+                violations
+                    .iter()
+                    .map(|v| v.description.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
             )
         };
 

@@ -87,7 +87,10 @@ impl GitHubClient {
                 .context("Failed to install gh-webhook")?;
 
             if !install_out.status.success() {
-                warn!("Could not install gh-webhook: {}", String::from_utf8_lossy(&install_out.stderr));
+                warn!(
+                    "Could not install gh-webhook: {}",
+                    String::from_utf8_lossy(&install_out.stderr)
+                );
             }
         }
         Ok(())
@@ -108,7 +111,12 @@ impl GitHubClient {
                             if url.contains("forwarder") || url.contains("webhook.github.com") {
                                 if let Some(id) = hook.get("id").and_then(|i| i.as_u64()) {
                                     let _ = Command::new("gh")
-                                        .args(["api", "--method", "DELETE", &format!("repos/{}/hooks/{}", repo, id)])
+                                        .args([
+                                            "api",
+                                            "--method",
+                                            "DELETE",
+                                            &format!("repos/{}/hooks/{}", repo, id),
+                                        ])
                                         .output()
                                         .await;
                                 }
@@ -166,7 +174,15 @@ impl GitHubClient {
 
     pub async fn post_pr_comment(&self, repo: &str, pr_number: u64, body: &str) -> Result<()> {
         let output = Command::new("gh")
-            .args(["pr", "comment", &pr_number.to_string(), "--repo", repo, "--body", body])
+            .args([
+                "pr",
+                "comment",
+                &pr_number.to_string(),
+                "--repo",
+                repo,
+                "--body",
+                body,
+            ])
             .output()
             .await
             .context("Failed to post comment via `gh pr comment`")?;
@@ -176,11 +192,18 @@ impl GitHubClient {
             bail!("`gh pr comment` failed: {}", stderr);
         }
 
-        info!("Successfully posted review comment on {}#{}", repo, pr_number);
+        info!(
+            "Successfully posted review comment on {}#{}",
+            repo, pr_number
+        );
         Ok(())
     }
 
-    pub async fn fetch_review_comments(&self, repo: &str, pr_number: u64) -> Result<Vec<GitHubReviewComment>> {
+    pub async fn fetch_review_comments(
+        &self,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<Vec<GitHubReviewComment>> {
         let endpoint = format!("repos/{}/pulls/{}/comments", repo, pr_number);
         let output = Command::new("gh")
             .args(["api", &endpoint])
@@ -204,9 +227,19 @@ impl GitHubClient {
         comment_id: u64,
         body: &str,
     ) -> Result<()> {
-        let endpoint = format!("repos/{}/pulls/{}/comments/{}/replies", repo, pr_number, comment_id);
+        let endpoint = format!(
+            "repos/{}/pulls/{}/comments/{}/replies",
+            repo, pr_number, comment_id
+        );
         let output = Command::new("gh")
-            .args(["api", "--method", "POST", &endpoint, "-f", &format!("body={}", body)])
+            .args([
+                "api",
+                "--method",
+                "POST",
+                &endpoint,
+                "-f",
+                &format!("body={}", body),
+            ])
             .output()
             .await
             .context("Failed to reply to review comment")?;
@@ -216,7 +249,10 @@ impl GitHubClient {
             bail!("`gh api` reply failed: {}", stderr);
         }
 
-        info!("Successfully replied to review comment #{} on {}#{}", comment_id, repo, pr_number);
+        info!(
+            "Successfully replied to review comment #{} on {}#{}",
+            comment_id, repo, pr_number
+        );
         Ok(())
     }
 }

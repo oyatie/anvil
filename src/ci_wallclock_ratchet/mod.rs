@@ -9,7 +9,9 @@ pub mod cadence_classifier;
 pub mod regression_budget;
 
 pub use cadence_classifier::{CadenceRoutingFinding, CiCadenceClassifier, WorkflowCadence};
-pub use regression_budget::{CiDurationSnapshot, OptimizationSuggestion, RegressionBudgetEvaluator, RegressionDecision};
+pub use regression_budget::{
+    CiDurationSnapshot, OptimizationSuggestion, RegressionBudgetEvaluator, RegressionDecision,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CiWallclockReport {
@@ -48,7 +50,10 @@ impl CiWallclockEconomicsRatchet {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let has_adr = diff_ctx.changed_files.iter().any(|f| f.contains("docs/decisions") || f.contains("adr-"));
+        let has_adr = diff_ctx
+            .changed_files
+            .iter()
+            .any(|f| f.contains("docs/decisions") || f.contains("adr-"));
         let baseline = CiDurationSnapshot {
             pr_wallclock_seconds: 142, // Under 5 min ceiling!
             trunk_baseline_seconds: 150,
@@ -56,12 +61,19 @@ impl CiWallclockEconomicsRatchet {
             trunk_baseline_cost_usd: 0.050,
         };
 
-        let decision = self.evaluator.evaluate_regression(&baseline, has_adr, &diff_ctx.diff_content);
+        let decision =
+            self.evaluator
+                .evaluate_regression(&baseline, has_adr, &diff_ctx.diff_content);
 
         // Check if any heavy workflow added exceeds 5 min (300s)
         let mut cadence_findings = Vec::new();
-        if diff_ctx.diff_content.contains("heavy_benchmark") || diff_ctx.diff_content.contains("exhaustive_soak") {
-            if let Some(f) = self.classifier.classify_job_cadence("heavy_benchmark", 600, true) {
+        if diff_ctx.diff_content.contains("heavy_benchmark")
+            || diff_ctx.diff_content.contains("exhaustive_soak")
+        {
+            if let Some(f) = self
+                .classifier
+                .classify_job_cadence("heavy_benchmark", 600, true)
+            {
                 cadence_findings.push(f);
             }
         }
@@ -103,7 +115,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = ratchet.evaluate_ci_efficiency(Path::new("."), &diff_ctx).unwrap();
+        let rep = ratchet
+            .evaluate_ci_efficiency(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_acceptable);
         assert!(rep.wallclock_seconds <= 300);
     }

@@ -45,7 +45,9 @@ impl RemoteCacheOptimizer {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let cache_key = self.key_gen.compute_cache_key("Cargo.lock.mock", "rustc-1.85.0-nightly");
+        let cache_key = self
+            .key_gen
+            .compute_cache_key("Cargo.lock.mock", "rustc-1.85.0-nightly");
         let sample_metrics = CacheHitMetrics {
             total_compilation_units: 120,
             cache_hits: 114,
@@ -54,10 +56,7 @@ impl RemoteCacheOptimizer {
         };
 
         let decision = self.hit_ratchet.evaluate_cache_efficiency(&sample_metrics);
-        let summary = format!(
-            "{} [Cache Key: `{}`]",
-            decision.notice, cache_key
-        );
+        let summary = format!("{} [Cache Key: `{}`]", decision.notice, cache_key);
 
         Ok(CacheReport {
             is_cache_aligned: decision.is_optimal,
@@ -88,7 +87,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = opt.evaluate_cache_alignment(Path::new("."), &diff_ctx).unwrap();
+        let rep = opt
+            .evaluate_cache_alignment(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_cache_aligned);
         assert!(rep.hit_rate_pct >= 90.0);
     }

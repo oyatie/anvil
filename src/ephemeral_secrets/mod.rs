@@ -47,7 +47,9 @@ impl EphemeralSecretInjector {
                 }
             }
 
-            let file_findings = self.validator.validate_workflow_secrets(&current_file, file_diff);
+            let file_findings = self
+                .validator
+                .validate_workflow_secrets(&current_file, file_diff);
             findings.extend(file_findings);
         }
 
@@ -89,7 +91,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = injector.evaluate_secret_policies(Path::new("."), &diff_ctx).unwrap();
+        let rep = injector
+            .evaluate_secret_policies(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_zero_trust);
     }
 }

@@ -51,7 +51,9 @@ impl ConstantWorkGuard {
                 }
             }
 
-            let findings = self.checker.scan_unbounded_structures(&current_file, file_diff);
+            let findings = self
+                .checker
+                .scan_unbounded_structures(&current_file, file_diff);
             unbounded_findings.extend(findings);
         }
 
@@ -93,7 +95,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = guard.evaluate_constant_work(Path::new("."), &diff_ctx).unwrap();
+        let rep = guard
+            .evaluate_constant_work(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_bounded);
     }
 }

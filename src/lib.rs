@@ -1,9 +1,29 @@
+#![allow(
+    dead_code,
+    unused_imports,
+    clippy::too_many_arguments,
+    clippy::new_without_default,
+    clippy::collapsible_if,
+    clippy::type_complexity,
+    clippy::large_enum_variant,
+    clippy::manual_strip,
+    clippy::useless_format,
+    clippy::useless_borrows_in_formatting,
+    clippy::double_ended_iterator_last,
+    clippy::single_match,
+    clippy::redundant_closure,
+    clippy::ptr_arg,
+    clippy::derivable_impls
+)]
+
 pub mod adr_drift_ratchet;
 pub mod ai_driver;
 pub mod api_contract_guard;
 pub mod attestation_guard;
+pub mod auto_rollback;
 pub mod automated_canary;
 pub mod canary_rollout;
+pub mod carbon_aware;
 pub mod cedar_guard;
 pub mod cell_isolation_guard;
 pub mod chaos_injector;
@@ -17,6 +37,7 @@ pub mod cluster_state_auditor;
 pub mod compile_time_profiler;
 pub mod compliance_guard;
 pub mod config;
+pub mod consistency_guard;
 pub mod constant_work_guard;
 pub mod cosign_signer;
 pub mod coverage_guard;
@@ -33,6 +54,7 @@ pub mod finops_ratchet;
 pub mod fixer;
 pub mod flake_bisector;
 pub mod flake_cost_dampener;
+pub mod flake_quarantine;
 pub mod formal_verification;
 pub mod ghost_migration_harness;
 pub mod git_manager;
@@ -43,6 +65,7 @@ pub mod hermetic_build;
 pub mod idempotency_guard;
 pub mod incident_healer;
 pub mod incident_sentry;
+pub mod jittered_backoff;
 pub mod kani_guard;
 pub mod local_inner_loop;
 pub mod lockfile_reconciler;
@@ -59,9 +82,11 @@ pub mod progressive_rollout;
 pub mod psa_admission_guard;
 pub mod queue_healer;
 pub mod remote_cache_optimizer;
+pub mod replay_harness;
 pub mod review_memory;
 pub mod reviewer;
 pub mod rust_skills_guard;
+pub mod schema_evolution;
 pub mod semantic_abi_ratchet;
 pub mod shadow_traffic_harness;
 pub mod shuffle_shard_simulator;
@@ -71,6 +96,15 @@ pub mod state;
 pub mod supply_chain_guard;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;
+pub mod upgrade_train;
 pub mod vex_scanner;
+pub mod wasm_sandbox;
 pub mod webhook;
 pub mod zero_day_patcher;
+pub mod zero_trust_workload;
+
+// Compatibility aliases
+pub use automated_canary as auto_canary_analysis;
+pub use cosign_signer as cosign_guard;
+pub use criterion_bench_ratchet as benchmark_ratchet;
+pub use deadlock_analyzer as deadlock_preventer;

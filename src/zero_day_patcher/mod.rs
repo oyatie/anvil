@@ -37,11 +37,14 @@ impl ZeroDayAutoPatcher {
         );
 
         let active_advisories = vec![];
-        let detected = self.listener.reconcile_advisories(&diff_ctx.diff_content, &active_advisories);
+        let detected = self
+            .listener
+            .reconcile_advisories(&diff_ctx.diff_content, &active_advisories);
         let is_clean = detected.is_empty();
 
         let summary = if is_clean {
-            "✅ PASSED (Zero un-patched zero-day CVE advisories across workspace lockfiles)".to_string()
+            "✅ PASSED (Zero un-patched zero-day CVE advisories across workspace lockfiles)"
+                .to_string()
         } else {
             format!(
                 "⚠️ CAUTION ({} zero-day security advisory(ies) queued for auto-patching)",
@@ -77,7 +80,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = patcher.evaluate_zero_day_patches(Path::new("."), &diff_ctx).unwrap();
+        let rep = patcher
+            .evaluate_zero_day_patches(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_clean);
     }
 }

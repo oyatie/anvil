@@ -34,7 +34,10 @@ impl MonorepoGuard {
         repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<MonorepoGuardReport> {
-        info!("Running MonorepoGuard hyperscaler patterns on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+        info!(
+            "Running MonorepoGuard hyperscaler patterns on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let mut violations = Vec::new();
 
@@ -88,8 +91,13 @@ impl MonorepoGuard {
                     warn!("check-undeclared-imports.mjs reported issues: {}", err);
                     violations.push(MonorepoViolation {
                         category: "UNDECLARED_IMPORT".to_string(),
-                        description: "Undeclared monorepo package import detected by linter script".to_string(),
-                        snippet: err.lines().next().unwrap_or("undeclared import").to_string(),
+                        description: "Undeclared monorepo package import detected by linter script"
+                            .to_string(),
+                        snippet: err
+                            .lines()
+                            .next()
+                            .unwrap_or("undeclared import")
+                            .to_string(),
                     });
                 }
             }
@@ -102,7 +110,11 @@ impl MonorepoGuard {
             format!(
                 "Monorepo pattern warnings ({} items): {}",
                 violations.len(),
-                violations.iter().map(|v| v.description.as_str()).collect::<Vec<_>>().join("; ")
+                violations
+                    .iter()
+                    .map(|v| v.description.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
             )
         };
 
@@ -130,12 +142,16 @@ mod tests {
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+ const configPath = \"/Users/jasonlee/Documents/config.json\";".to_string(),
+            diff_content: "+ const configPath = \"/Users/jasonlee/Documents/config.json\";"
+                .to_string(),
             changed_files: vec!["src/config.ts".to_string()],
             is_incremental: false,
         };
 
-        let report = guard.evaluate_monorepo_hygiene(&temp_dir, &diff_ctx).await.expect("Evaluates");
+        let report = guard
+            .evaluate_monorepo_hygiene(&temp_dir, &diff_ctx)
+            .await
+            .expect("Evaluates");
         assert!(!report.is_compliant);
         assert_eq!(report.violations.len(), 1);
         assert_eq!(report.violations[0].category, "HARDCODED_ABSOLUTE_PATH");
@@ -158,7 +174,10 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.evaluate_monorepo_hygiene(&temp_dir, &diff_ctx).await.expect("Evaluates");
+        let report = guard
+            .evaluate_monorepo_hygiene(&temp_dir, &diff_ctx)
+            .await
+            .expect("Evaluates");
         assert!(report.is_compliant);
     }
 }

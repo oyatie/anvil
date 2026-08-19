@@ -26,7 +26,9 @@ impl ProgressiveRingOrchestrator {
         current_ring: &DeploymentRing,
         canary_healthy: bool,
     ) -> ProgressiveRingReport {
-        let state = self.scheduler.compute_next_ring(current_ring, canary_healthy);
+        let state = self
+            .scheduler
+            .compute_next_ring(current_ring, canary_healthy);
         ProgressiveRingReport {
             passed: state.is_healthy,
             state,

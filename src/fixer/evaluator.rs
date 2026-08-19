@@ -83,7 +83,10 @@ Return strictly valid JSON matching this schema:
     match serde_json::from_str::<EvaluationResult>(&json_candidate) {
         Ok(res) => Ok(res),
         Err(e) => {
-            warn!("Failed to parse evaluation JSON: {}. Defaulting all items to valid.", e);
+            warn!(
+                "Failed to parse evaluation JSON: {}. Defaulting all items to valid.",
+                e
+            );
             let default_evals = feedback_items
                 .iter()
                 .enumerate()

@@ -27,7 +27,9 @@ impl LockGraphAnalyzer {
             if line.contains(".session_lock.lock()") || line.contains(".user_mutex.lock()") {
                 acquired_lock_b = true;
             }
-            if acquired_lock_b && (line.contains(".global_state.lock()") || line.contains(".cluster_mutex.lock()")) {
+            if acquired_lock_b
+                && (line.contains(".global_state.lock()") || line.contains(".cluster_mutex.lock()"))
+            {
                 findings.push(LockCycleFinding {
                     lock_sequence: vec!["session_lock".to_string(), "global_state".to_string()],
                     file_path: file_path.to_string(),

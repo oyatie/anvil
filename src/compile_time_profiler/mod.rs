@@ -47,7 +47,9 @@ impl CompileTimeProfiler {
                 }
             }
 
-            let file_findings = self.scanner.scan_heavy_dependencies(&current_file, file_diff);
+            let file_findings = self
+                .scanner
+                .scan_heavy_dependencies(&current_file, file_diff);
             findings.extend(file_findings);
         }
 
@@ -89,7 +91,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = profiler.evaluate_compile_profile(Path::new("."), &diff_ctx).unwrap();
+        let rep = profiler
+            .evaluate_compile_profile(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_lean);
     }
 }

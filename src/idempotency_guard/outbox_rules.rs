@@ -17,9 +17,14 @@ impl OutboxRulesEngine {
     }
 
     /// Scans PR diff for mutating endpoints and checks for idempotency handling
-    pub fn scan_mutating_endpoints(&self, file_path: &str, content: &str) -> Vec<IdempotencyFinding> {
+    pub fn scan_mutating_endpoints(
+        &self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<IdempotencyFinding> {
         let mut findings = Vec::new();
-        let post_route_re = Regex::new(r#"(?i)route\s*\(\s*["']([^"']+)["']\s*,\s*(?:post|put|delete)\("#).unwrap();
+        let post_route_re =
+            Regex::new(r#"(?i)route\s*\(\s*["']([^"']+)["']\s*,\s*(?:post|put|delete)\("#).unwrap();
         let idempotency_header_re = Regex::new(r"(?i)Idempotency-Key|idempotency_key").unwrap();
 
         for line in content.lines() {

@@ -37,7 +37,9 @@ impl EphemeralSandboxManager {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let instance = self.pool.allocate_ephemeral_sandbox(&format!("pr-{}", diff_ctx.pr_number));
+        let instance = self
+            .pool
+            .allocate_ephemeral_sandbox(&format!("pr-{}", diff_ctx.pr_number));
         let is_hermetic = instance.is_isolated;
         let summary = format!(
             "✅ PASSED (Ephemeral sandbox allocated in {}ms; zero host state leaks or port collisions)",
@@ -73,7 +75,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = mgr.evaluate_sandbox_isolation(Path::new("."), &diff_ctx).unwrap();
+        let rep = mgr
+            .evaluate_sandbox_isolation(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_hermetic);
     }
 }

@@ -57,7 +57,8 @@ impl CriterionBenchRatchet {
 
         let hot_paths_evaluated = hot_path_files.len();
 
-        let unbounded_alloc_re = Regex::new(r"(?i)for\s+.*\s+in\s+.*\{[\s\n]*let\s+mut\s+v\s*=\s*Vec::new\(\)").unwrap();
+        let unbounded_alloc_re =
+            Regex::new(r"(?i)for\s+.*\s+in\s+.*\{[\s\n]*let\s+mut\s+v\s*=\s*Vec::new\(\)").unwrap();
         let clone_in_loop_re = Regex::new(r"(?i)\.clone\(\)\s*;.*//\s*hotpath").unwrap();
 
         let mut current_file = String::new();
@@ -86,8 +87,12 @@ impl CriterionBenchRatchet {
             violations.push(BenchmarkViolation {
                 file_path: "hotpath".to_string(),
                 metric: "UNBOUNDED_LOOP_ALLOCATION".to_string(),
-                description: "Re-allocating collection inside tight loop without pre-allocated capacity.".to_string(),
-                recommendation: "Use `Vec::with_capacity` or hoist collection allocation outside the loop.".to_string(),
+                description:
+                    "Re-allocating collection inside tight loop without pre-allocated capacity."
+                        .to_string(),
+                recommendation:
+                    "Use `Vec::with_capacity` or hoist collection allocation outside the loop."
+                        .to_string(),
             });
         }
 
@@ -138,12 +143,15 @@ mod tests {
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+++ b/benches/parse_bench.rs\n+ let buf = Vec::with_capacity(1024);".to_string(),
+            diff_content: "+++ b/benches/parse_bench.rs\n+ let buf = Vec::with_capacity(1024);"
+                .to_string(),
             changed_files: vec!["benches/parse_bench.rs".to_string()],
             is_incremental: false,
         };
 
-        let report = ratchet.evaluate_benchmarks(&temp_dir, &diff_ctx).expect("eval");
+        let report = ratchet
+            .evaluate_benchmarks(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(report.is_within_budget);
         assert_eq!(report.hot_paths_evaluated, 1);
     }
@@ -160,12 +168,15 @@ mod tests {
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+++ b/src/crypto/token.rs\n+ let data = payload.clone(); // hotpath".to_string(),
+            diff_content: "+++ b/src/crypto/token.rs\n+ let data = payload.clone(); // hotpath"
+                .to_string(),
             changed_files: vec!["src/crypto/token.rs".to_string()],
             is_incremental: false,
         };
 
-        let report = ratchet.evaluate_benchmarks(&temp_dir, &diff_ctx).expect("eval");
+        let report = ratchet
+            .evaluate_benchmarks(&temp_dir, &diff_ctx)
+            .expect("eval");
         assert!(!report.is_within_budget);
         assert_eq!(report.violations[0].metric, "EXCESSIVE_HOTPATH_CLONE");
     }

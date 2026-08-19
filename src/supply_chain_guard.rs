@@ -34,7 +34,10 @@ impl SupplyChainGuard {
         _repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<SupplyChainReport> {
-        info!("Running SupplyChainGuard dependency security audit on {}#{}...", diff_ctx.repo, diff_ctx.pr_number);
+        info!(
+            "Running SupplyChainGuard dependency security audit on {}#{}...",
+            diff_ctx.repo, diff_ctx.pr_number
+        );
 
         let touches_deps = diff_ctx.changed_files.iter().any(|f| {
             f.contains("Cargo.toml")
@@ -48,8 +51,14 @@ impl SupplyChainGuard {
         if touches_deps {
             // Banned or high-risk deprecated packages
             let banned_patterns = [
-                (r#"(?i)["']?(?:node-ipc|event-stream|flatmap-stream)["']?\s*:"#, "Compromised / Malicious npm package"),
-                (r#"(?i)["']?(?:net2|ws2_32|winapi)["']?\s*="#, "Deprecated unmaintained Rust crate (use modern standard equivalents)"),
+                (
+                    r#"(?i)["']?(?:node-ipc|event-stream|flatmap-stream)["']?\s*:"#,
+                    "Compromised / Malicious npm package",
+                ),
+                (
+                    r#"(?i)["']?(?:net2|ws2_32|winapi)["']?\s*="#,
+                    "Deprecated unmaintained Rust crate (use modern standard equivalents)",
+                ),
             ];
 
             for (pattern, desc) in banned_patterns {
@@ -69,7 +78,10 @@ impl SupplyChainGuard {
         let summary = if is_secure {
             "Dependency manifests audited; 100% compliant with deny.toml policies, SLSA Level 2+ provenance, and CVE security baselines.".to_string()
         } else {
-            format!("Supply chain security warnings: {}", banned_detected.join("; "))
+            format!(
+                "Supply chain security warnings: {}",
+                banned_detected.join("; ")
+            )
         };
 
         Ok(SupplyChainReport {
@@ -81,7 +93,11 @@ impl SupplyChainGuard {
         })
     }
 
-    pub fn generate_slsa_provenance(&self, repo: &str, commit_sha: &str) -> Result<SlsaProvenanceBundle> {
+    pub fn generate_slsa_provenance(
+        &self,
+        repo: &str,
+        commit_sha: &str,
+    ) -> Result<SlsaProvenanceBundle> {
         self.attestor.generate_slsa_l2_provenance(repo, commit_sha)
     }
 }
@@ -107,7 +123,9 @@ mod tests {
             is_incremental: false,
         };
 
-        let report = guard.audit_supply_chain(&temp_dir, &diff_ctx).expect("Audits");
+        let report = guard
+            .audit_supply_chain(&temp_dir, &diff_ctx)
+            .expect("Audits");
         assert!(!report.is_secure);
     }
 }

@@ -23,7 +23,10 @@ impl WorkspaceDagSelector {
         let mut directly_affected = Vec::new();
 
         for pkg in packages {
-            if changed_files.iter().any(|f| f.starts_with(&pkg.path) || f.contains(&pkg.name)) {
+            if changed_files
+                .iter()
+                .any(|f| f.starts_with(&pkg.path) || f.contains(&pkg.name))
+            {
                 directly_affected.push(pkg.name.clone());
             }
         }
@@ -35,7 +38,11 @@ impl WorkspaceDagSelector {
             changed = false;
             for pkg in packages {
                 if !all_affected.contains(&pkg.name) {
-                    if pkg.dependencies.iter().any(|dep| all_affected.contains(dep)) {
+                    if pkg
+                        .dependencies
+                        .iter()
+                        .any(|dep| all_affected.contains(dep))
+                    {
                         all_affected.push(pkg.name.clone());
                         changed = true;
                     }

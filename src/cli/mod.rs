@@ -8,7 +8,9 @@ use crate::webhook::{execute_pr_certify, execute_pr_fix, execute_pr_review, AppS
 
 #[derive(Parser, Debug)]
 #[command(name = "pr-watch")]
-#[command(about = "Oyatie Autonomous Engineering Pipeline: Reviewer, Auto-Fixer, CI Triager, Queue Healer & Domain Guards")]
+#[command(
+    about = "Oyatie Autonomous Engineering Pipeline: Reviewer, Auto-Fixer, CI Triager, Queue Healer & Domain Guards"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -229,7 +231,8 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
         }
         Commands::Review { repo, pr, force } => {
             info!("Running on-demand review for {}#{}", repo, pr);
-            let meta = state.github_client
+            let meta = state
+                .github_client
                 .fetch_pr_metadata(&repo, pr)
                 .await
                 .context("Failed to fetch PR metadata")?;
@@ -252,130 +255,375 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             execute_pr_fix(&state, &repo, pr).await?;
         }
         Commands::Certify { repo, pr } => {
-            info!("Running on-demand pre-merge certification for {}#{}", repo, pr);
+            info!(
+                "Running on-demand pre-merge certification for {}#{}",
+                repo, pr
+            );
             execute_pr_certify(&state, &repo, pr).await?;
         }
         Commands::RustSkillsCheck { repo, pr } => {
             info!("Running Rust Skills Guard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.rust_skills_guard.evaluate_rust_quality(&repo_dir, &diff_ctx)?;
-            println!("\n🦀 RustSkillsGuard Result: {}\nFindings: {}\n", res.summary, res.findings.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .rust_skills_guard
+                .evaluate_rust_quality(&repo_dir, &diff_ctx)?;
+            println!(
+                "\n🦀 RustSkillsGuard Result: {}\nFindings: {}\n",
+                res.summary,
+                res.findings.len()
+            );
         }
         Commands::ArchCheck { repo, pr } => {
             info!("Running Clean Architecture Guard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
             let res = state.clean_arch_guard.evaluate_architecture(&diff_ctx)?;
-            println!("\n🏛️ CleanArchitectureGuard Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            println!(
+                "\n🏛️ CleanArchitectureGuard Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::MonorepoCheck { repo, pr } => {
             info!("Running Monorepo Guard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.monorepo_guard.evaluate_monorepo_hygiene(&repo_dir, &diff_ctx).await?;
-            println!("\n🏢 MonorepoGuard Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .monorepo_guard
+                .evaluate_monorepo_hygiene(&repo_dir, &diff_ctx)
+                .await?;
+            println!(
+                "\n🏢 MonorepoGuard Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::DebtCheck { repo, pr } => {
             info!("Running Debt Shrink Guard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.debt_shrink_guard.evaluate_debt_shrink(&repo_dir, &diff_ctx)?;
-            println!("\n📉 DebtShrinkGuard Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .debt_shrink_guard
+                .evaluate_debt_shrink(&repo_dir, &diff_ctx)?;
+            println!(
+                "\n📉 DebtShrinkGuard Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::ModularCheck { repo, pr } => {
             info!("Running Modularization Guard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.modularization_guard.evaluate_modularization(&diff_ctx)?;
-            println!("\n🧩 ModularizationGuard Result: {}\nOversized: {}\n", res.summary, res.oversized_files.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .modularization_guard
+                .evaluate_modularization(&diff_ctx)?;
+            println!(
+                "\n🧩 ModularizationGuard Result: {}\nOversized: {}\n",
+                res.summary,
+                res.oversized_files.len()
+            );
         }
         Commands::CoverageCheck { repo, pr } => {
             info!("Running CoverageGuard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.coverage_guard.evaluate_diff_coverage(&repo_dir, &diff_ctx)?;
-            println!("\n🎯 CoverageGuard Result: {}\nFindings: {}\n", res.summary, res.findings.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .coverage_guard
+                .evaluate_diff_coverage(&repo_dir, &diff_ctx)?;
+            println!(
+                "\n🎯 CoverageGuard Result: {}\nFindings: {}\n",
+                res.summary,
+                res.findings.len()
+            );
         }
         Commands::GhostMigrationCheck { repo, pr } => {
             info!("Running GhostMigrationHarness on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.ghost_migration_harness.evaluate_migrations(&repo_dir, &diff_ctx)?;
-            println!("\n🐘 GhostMigrationHarness Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .ghost_migration_harness
+                .evaluate_migrations(&repo_dir, &diff_ctx)?;
+            println!(
+                "\n🐘 GhostMigrationHarness Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::ChaosMutationCheck { repo, pr } => {
             info!("Running ChaosMutationGuard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.chaos_mutation_guard.evaluate_mutation_adequacy(&diff_ctx)?;
-            println!("\n💥 ChaosMutationGuard Result: {}\nFindings: {}\n", res.summary, res.surviving_findings.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .chaos_mutation_guard
+                .evaluate_mutation_adequacy(&diff_ctx)?;
+            println!(
+                "\n💥 ChaosMutationGuard Result: {}\nFindings: {}\n",
+                res.summary,
+                res.surviving_findings.len()
+            );
         }
         Commands::FeatureFlagCheck { repo, pr } => {
             info!("Running FeatureFlagRatchet on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.feature_flag_ratchet.evaluate_feature_flags(&repo_dir, &diff_ctx)?;
-            println!("\n🚩 FeatureFlagRatchet Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .feature_flag_ratchet
+                .evaluate_feature_flags(&repo_dir, &diff_ctx)?;
+            println!(
+                "\n🚩 FeatureFlagRatchet Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::BenchCheck { repo, pr } => {
             info!("Running CriterionBenchRatchet on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.criterion_bench_ratchet.evaluate_benchmarks(&repo_dir, &diff_ctx)?;
-            println!("\n⚡ CriterionBenchRatchet Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .criterion_bench_ratchet
+                .evaluate_benchmarks(&repo_dir, &diff_ctx)?;
+            println!(
+                "\n⚡ CriterionBenchRatchet Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::CedarCheck { repo, pr } => {
             info!("Running Cedar IAM Policy Guard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.cedar_guard.evaluate_cedar_policies(&repo, &repo_dir, &diff_ctx, &meta.title).await?;
-            println!("\n🛡️ CedarGuard Result: {}\nFiles: {:?}\n", res.summary, res.files_created_or_updated);
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .cedar_guard
+                .evaluate_cedar_policies(&repo, &repo_dir, &diff_ctx, &meta.title)
+                .await?;
+            println!(
+                "\n🛡️ CedarGuard Result: {}\nFiles: {:?}\n",
+                res.summary, res.files_created_or_updated
+            );
         }
         Commands::ComplianceCheck { repo, pr } => {
             info!("Running Dynamic Compliance Guard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
             let res = state.compliance_guard.evaluate_compliance(&diff_ctx)?;
-            println!("\n🏛️ ComplianceGuard Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            println!(
+                "\n🏛️ ComplianceGuard Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::ApiCheck { repo, pr } => {
             info!("Running ApiContractGuard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.api_contract_guard.ensure_contract_integrity(&repo, &repo_dir, &diff_ctx).await?;
-            println!("\n📐 ApiContractGuard Result: {}\nSynced Files: {:?}\n", res.summary, res.auto_synced_files);
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .api_contract_guard
+                .ensure_contract_integrity(&repo, &repo_dir, &diff_ctx)
+                .await?;
+            println!(
+                "\n📐 ApiContractGuard Result: {}\nSynced Files: {:?}\n",
+                res.summary, res.auto_synced_files
+            );
         }
         Commands::CellCheck { repo, pr } => {
             info!("Running CellIsolationGuard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.cell_isolation_guard.evaluate_cell_isolation(&diff_ctx)?;
-            println!("\n🌐 CellIsolationGuard Result: {}\nViolations: {}\n", res.summary, res.violations.len());
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .cell_isolation_guard
+                .evaluate_cell_isolation(&diff_ctx)?;
+            println!(
+                "\n🌐 CellIsolationGuard Result: {}\nViolations: {}\n",
+                res.summary,
+                res.violations.len()
+            );
         }
         Commands::SupplyChainCheck { repo, pr } => {
             info!("Running SupplyChainGuard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let diff_ctx = state.git_mgr.prepare_pr_diff(&repo, pr, &meta.base_ref_name, &meta.base_ref_oid, &meta.head_ref_oid, None).await?;
-            let res = state.supply_chain_guard.audit_supply_chain(&repo_dir, &diff_ctx)?;
-            println!("\n📦 SupplyChainGuard Result: {}\nAudited: {}\n", res.summary, res.audited_packages);
+            let diff_ctx = state
+                .git_mgr
+                .prepare_pr_diff(
+                    &repo,
+                    pr,
+                    &meta.base_ref_name,
+                    &meta.base_ref_oid,
+                    &meta.head_ref_oid,
+                    None,
+                )
+                .await?;
+            let res = state
+                .supply_chain_guard
+                .audit_supply_chain(&repo_dir, &diff_ctx)?;
+            println!(
+                "\n📦 SupplyChainGuard Result: {}\nAudited: {}\n",
+                res.summary, res.audited_packages
+            );
         }
         Commands::Attest { repo, pr } => {
             info!("Running AttestationGuard on {}#{}", repo, pr);
             let meta = state.github_client.fetch_pr_metadata(&repo, pr).await?;
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let res = state.attestation_guard.stamp_lane_receipt(&repo_dir, &repo, pr, &meta.head_ref_oid).await?;
-            println!("\n🔏 AttestationGuard Result: {}\nPath: {:?}\n", res.summary, res.stamped_receipt_path);
+            let res = state
+                .attestation_guard
+                .stamp_lane_receipt(&repo_dir, &repo, pr, &meta.head_ref_oid)
+                .await?;
+            println!(
+                "\n🔏 AttestationGuard Result: {}\nPath: {:?}\n",
+                res.summary, res.stamped_receipt_path
+            );
         }
         Commands::Triage {
             repo,
@@ -384,30 +632,46 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             commit_sha,
             workflow_name,
         } => {
-            info!("Running on-demand trunk CI triage for run #{} on {}", run_id, repo);
+            info!(
+                "Running on-demand trunk CI triage for run #{} on {}",
+                run_id, repo
+            );
             let branch_str = branch.unwrap_or_else(|| "main".to_string());
             let sha_str = commit_sha.unwrap_or_default();
             let wf_str = workflow_name.unwrap_or_else(|| "CI".to_string());
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
 
-            state.ci_triager
+            state
+                .ci_triager
                 .triage_workflow_run(&repo, run_id, &branch_str, &sha_str, &wf_str, &repo_dir)
                 .await?;
         }
         Commands::Enlist { repo, pr } => {
-            info!("Running on-demand merge queue enlistment for {}#{}", repo, pr);
-            state.merge_enlister.enlist_into_merge_queue(&repo, pr).await?;
+            info!(
+                "Running on-demand merge queue enlistment for {}#{}",
+                repo, pr
+            );
+            state
+                .merge_enlister
+                .enlist_into_merge_queue(&repo, pr)
+                .await?;
         }
         Commands::HealQueue { repo, pr } => {
             info!("Running on-demand merge queue healer for {}#{}", repo, pr);
             state.queue_healer.heal_ejected_pr(&repo, pr).await?;
         }
         Commands::Reconcile { repo, pr } => {
-            info!("Running on-demand lockfile/ledger reconciler for {}#{}", repo, pr);
+            info!(
+                "Running on-demand lockfile/ledger reconciler for {}#{}",
+                repo, pr
+            );
             state.lockfile_reconciler.reconcile_pr(&repo, pr).await?;
         }
         Commands::Forward => {
-            info!("Starting webhook forwarders for {:?}", state.config.watched_repos);
+            info!(
+                "Starting webhook forwarders for {:?}",
+                state.config.watched_repos
+            );
             server::start_forwarders(&state.config).await?;
         }
         Commands::Check => {

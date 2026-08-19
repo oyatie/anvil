@@ -53,7 +53,8 @@ impl ShuffleShardSimulator {
             },
         ];
 
-        let metrics = ShuffleShardMath::compute_metrics(total_cells, cells_per_tenant, &allocations);
+        let metrics =
+            ShuffleShardMath::compute_metrics(total_cells, cells_per_tenant, &allocations);
 
         // Enforce maximum overlap threshold <= 2 cells for 4-cell assignments
         if metrics.max_tenant_overlap > 2 {
@@ -108,7 +109,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = sim.evaluate_shuffle_sharding(Path::new("."), &diff_ctx).unwrap();
+        let rep = sim
+            .evaluate_shuffle_sharding(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_isolated);
         assert_eq!(rep.total_cells, 8);
     }

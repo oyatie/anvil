@@ -25,9 +25,15 @@ impl FaultSimulator {
     }
 
     /// Evaluates resilience of code changes to synthetic chaos injection
-    pub fn simulate_chaos_fault(&self, fault: &ChaosFaultType, code_diff: &str) -> ChaosTrialResult {
+    pub fn simulate_chaos_fault(
+        &self,
+        fault: &ChaosFaultType,
+        code_diff: &str,
+    ) -> ChaosTrialResult {
         // If code introduces naked `.unwrap()` without circuit breaker / retry on network call:
-        if code_diff.contains(".send().await.unwrap()") || code_diff.contains(".query().await.unwrap()") {
+        if code_diff.contains(".send().await.unwrap()")
+            || code_diff.contains(".query().await.unwrap()")
+        {
             return ChaosTrialResult {
                 fault: fault.clone(),
                 gracefully_handled: false,
@@ -53,7 +59,10 @@ mod tests {
     fn test_chaos_catches_unhandled_network_unwrap() {
         let sim = FaultSimulator::new();
         let bad_code = r#"let resp = client.send().await.unwrap();"#;
-        let res = sim.simulate_chaos_fault(&ChaosFaultType::NetworkPacketDrop { drop_pct: 10 }, bad_code);
+        let res = sim.simulate_chaos_fault(
+            &ChaosFaultType::NetworkPacketDrop { drop_pct: 10 },
+            bad_code,
+        );
         assert!(!res.gracefully_handled);
         assert!(res.error_leaked_to_client);
     }
@@ -62,7 +71,10 @@ mod tests {
     fn test_chaos_passes_resilient_code() {
         let sim = FaultSimulator::new();
         let good_code = r#"let resp = client.send().await.map_err(AppError::from)?;"#;
-        let res = sim.simulate_chaos_fault(&ChaosFaultType::NetworkPacketDrop { drop_pct: 10 }, good_code);
+        let res = sim.simulate_chaos_fault(
+            &ChaosFaultType::NetworkPacketDrop { drop_pct: 10 },
+            good_code,
+        );
         assert!(res.gracefully_handled);
     }
 }

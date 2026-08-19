@@ -1,16 +1,19 @@
-use axum::{routing::post, Router};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
 pub mod manual_handlers;
 pub mod pipelines;
 pub mod webhook_handlers;
 
+use std::sync::Arc;
+
+use axum::{routing::post, Router};
+use serde::{Deserialize, Serialize};
+
 use crate::adr_drift_ratchet::AdrDriftRatchet;
 use crate::api_contract_guard::ApiContractGuard;
 use crate::attestation_guard::AttestationGuard;
+use crate::auto_rollback::AutoRollbackPostmortemEngine;
 use crate::automated_canary::AutomatedCanaryAnalysis;
 use crate::canary_rollout::CanaryRolloutGuard;
+use crate::carbon_aware::CarbonAwareComputeRatchet;
 use crate::cedar_guard::CedarGuard;
 use crate::cell_isolation_guard::CellIsolationGuard;
 use crate::chaos_injector::ChaosFaultInjector;
@@ -23,6 +26,7 @@ use crate::cluster_state_auditor::ClusterStateAuditor;
 use crate::compile_time_profiler::CompileTimeProfiler;
 use crate::compliance_guard::ComplianceGuard;
 use crate::config::Config;
+use crate::consistency_guard::ActiveActiveConsistencyGuard;
 use crate::constant_work_guard::ConstantWorkGuard;
 use crate::cosign_signer::CosignProvenanceSigner;
 use crate::coverage_guard::CoverageGuard;
@@ -39,6 +43,7 @@ use crate::finops_ratchet::FinOpsUnitCostRatchet;
 use crate::fixer::Fixer;
 use crate::flake_bisector::FlakeBisectorEngine;
 use crate::flake_cost_dampener::FlakeCostDampener;
+use crate::flake_quarantine::FlakeQuarantineLifecycle;
 use crate::formal_verification::FormalVerificationGuard;
 use crate::ghost_migration_harness::GhostMigrationHarness;
 use crate::git_manager::GitManager;
@@ -49,6 +54,7 @@ use crate::hermetic_build::HermeticBuildValidator;
 use crate::idempotency_guard::IdempotencyGuard;
 use crate::incident_healer::IncidentHealer;
 use crate::incident_sentry::IncidentSentryCircuitBreaker;
+use crate::jittered_backoff::JitteredBackoffGuard;
 use crate::kani_guard::KaniGuard;
 use crate::local_inner_loop::LocalInnerLoopProbe;
 use crate::lockfile_reconciler::LockfileReconciler;
@@ -65,9 +71,11 @@ use crate::progressive_rollout::ProgressiveRingOrchestrator;
 use crate::psa_admission_guard::PsaAdmissionGuard;
 use crate::queue_healer::QueueHealer;
 use crate::remote_cache_optimizer::RemoteCacheOptimizer;
+use crate::replay_harness::DeterministicReplayHarness;
 use crate::review_memory::ReviewMemoryEngine;
 use crate::reviewer::Reviewer;
 use crate::rust_skills_guard::RustSkillsGuard;
+use crate::schema_evolution::SchemaEvolutionRatchet;
 use crate::semantic_abi_ratchet::SemanticAbiRatchet;
 use crate::shadow_traffic_harness::ShadowTrafficHarness;
 use crate::shuffle_shard_simulator::ShuffleShardSimulator;
@@ -77,8 +85,11 @@ use crate::state::StateManager;
 use crate::supply_chain_guard::SupplyChainGuard;
 use crate::trace_context_guard::TraceContextGuard;
 use crate::unresolved_review_guard::UnresolvedReviewGuard;
+use crate::upgrade_train::ProactiveUpgradeTrain;
 use crate::vex_scanner::OpenVexReachabilityScanner;
+use crate::wasm_sandbox::WasmPolicySandbox;
 use crate::zero_day_patcher::ZeroDayAutoPatcher;
+use crate::zero_trust_workload::ZeroTrustWorkloadGate;
 
 pub use manual_handlers::*;
 pub use pipelines::{execute_pr_certify, execute_pr_fix, execute_pr_review};
@@ -148,6 +159,16 @@ pub struct AppState {
     pub chaos_injector: Arc<ChaosFaultInjector>,
     pub stacked_diffs: Arc<StackedDiffsOrchestrator>,
     pub microbenchmark_ratchet: Arc<MicroBenchmarkRatchet>,
+    pub jittered_backoff: Arc<JitteredBackoffGuard>,
+    pub schema_evolution: Arc<SchemaEvolutionRatchet>,
+    pub auto_rollback: Arc<AutoRollbackPostmortemEngine>,
+    pub wasm_sandbox: Arc<WasmPolicySandbox>,
+    pub consistency_guard: Arc<ActiveActiveConsistencyGuard>,
+    pub flake_quarantine: Arc<FlakeQuarantineLifecycle>,
+    pub zero_trust_workload: Arc<ZeroTrustWorkloadGate>,
+    pub carbon_aware: Arc<CarbonAwareComputeRatchet>,
+    pub replay_harness: Arc<DeterministicReplayHarness>,
+    pub upgrade_train: Arc<ProactiveUpgradeTrain>,
     pub chaos_mutation_guard: Arc<ChaosMutationGuard>,
     pub feature_flag_ratchet: Arc<FeatureFlagRatchet>,
     pub criterion_bench_ratchet: Arc<CriterionBenchRatchet>,
@@ -167,8 +188,15 @@ pub struct ApiResponse {
     pub message: String,
 }
 
+/// Liveness probe handler returning HTTP 200 OK ("ok") for Kubernetes and container orchestration health checks.
+pub async fn healthz_handler() -> &'static str {
+    "ok"
+}
+
+/// Constructs the Axum HTTP router with webhook ingress, healthz probes, and on-demand API endpoints.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        .route("/healthz", axum::routing::get(healthz_handler))
         .route("/webhook", post(webhook_handler))
         .route("/api/review", post(manual_review_handler))
         .route("/api/fix", post(manual_fix_handler))
@@ -178,4 +206,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/heal-queue", post(manual_heal_queue_handler))
         .route("/api/reconcile", post(manual_reconcile_handler))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_healthz_handler() {
+        let resp = healthz_handler().await;
+        assert_eq!(resp, "ok");
+    }
 }

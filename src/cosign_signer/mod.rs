@@ -21,10 +21,7 @@ impl CosignProvenanceSigner {
         }
     }
 
-    pub fn generate_cosign_attestation(
-        &self,
-        artifact_digest: &str,
-    ) -> CosignReport {
+    pub fn generate_cosign_attestation(&self, artifact_digest: &str) -> CosignReport {
         let bundle = self.attestor.sign_artifact_digest(artifact_digest);
         let passed = bundle.is_valid;
 

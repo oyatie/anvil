@@ -25,7 +25,11 @@ impl RingScheduler {
     }
 
     /// Determines next deployment ring progression step
-    pub fn compute_next_ring(&self, current: &DeploymentRing, aca_passed: bool) -> RingRolloutState {
+    pub fn compute_next_ring(
+        &self,
+        current: &DeploymentRing,
+        aca_passed: bool,
+    ) -> RingRolloutState {
         if !aca_passed {
             return RingRolloutState {
                 current_ring: current.clone(),

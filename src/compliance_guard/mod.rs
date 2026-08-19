@@ -8,7 +8,10 @@ pub mod registry;
 pub mod upstream_sync;
 
 pub use engine::{RegulatoryEngine, StatutoryViolation};
-pub use registry::{DynamicRegistrySnapshot, DynamicRegulatoryRule, GeographicScope, RegulatoryLevel, TemporalValidity};
+pub use registry::{
+    DynamicRegistrySnapshot, DynamicRegulatoryRule, GeographicScope, RegulatoryLevel,
+    TemporalValidity,
+};
 pub use upstream_sync::UpstreamRegulatorySync;
 
 use crate::git_manager::PrDiffContext;
@@ -61,7 +64,9 @@ impl ComplianceGuard {
             "Internal Corporate Doctrine (Oyatie Architecture Decision Records)".to_string(),
         ];
 
-        let has_blocking_violations = violations.iter().any(|v| v.severity == "CRITICAL" || v.severity == "HIGH");
+        let has_blocking_violations = violations
+            .iter()
+            .any(|v| v.severity == "CRITICAL" || v.severity == "HIGH");
         let is_compliant = !has_blocking_violations;
 
         let summary = if is_compliant {
@@ -130,14 +135,18 @@ mod tests {
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+ <input type=\"checkbox\" defaultChecked={true} name=\"marketing\" />".to_string(),
+            diff_content: "+ <input type=\"checkbox\" defaultChecked={true} name=\"marketing\" />"
+                .to_string(),
             changed_files: vec!["src/Checkout.tsx".to_string()],
             is_incremental: false,
         };
 
         let report = guard.evaluate_compliance(&diff_ctx).expect("Evaluates");
         assert!(!report.is_compliant);
-        assert_eq!(report.violations[0].rule_id, "KR_ECOM_ANTI_DARK_PATTERN_PRECHECK");
+        assert_eq!(
+            report.violations[0].rule_id,
+            "KR_ECOM_ANTI_DARK_PATTERN_PRECHECK"
+        );
         assert!(report.violations[0].citation.contains("전상법 §21의2"));
     }
 

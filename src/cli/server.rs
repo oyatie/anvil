@@ -15,7 +15,10 @@ pub async fn run_server(state: AppState) -> Result<()> {
         .context("Invalid host/port configuration")?;
 
     info!("==========================================================");
-    info!("🚀 Oyatie Autonomous Engineering Pipeline starting on http://{}", addr);
+    info!(
+        "🚀 Oyatie Autonomous Engineering Pipeline starting on http://{}",
+        addr
+    );
     info!("👀 Watched Repositories: {:?}", state.config.watched_repos);
     info!("🧠 Antigravity Review Effort: {}", state.config.agy_effort);
     info!("📁 Local Repos Directory: {:?}", state.config.repos_dir);
@@ -28,12 +31,39 @@ pub async fn run_server(state: AppState) -> Result<()> {
 
     let _ = state.github_client.ensure_webhook_extension().await;
 
+    // Spawn background upstream sync for rust-skills repository
+    let rsg_clone = state.rust_skills_guard.clone();
+    tokio::spawn(async move {
+        if let Err(e) = rsg_clone.sync_upstream().await {
+            tracing::warn!("RustSkillsGuard upstream background sync noticed: {}", e);
+        }
+    });
+
+    // Spawn background GC heartbeat for abandoned git worktrees (crash recovery & leak prevention)
+    let git_mgr_gc = state.git_mgr.clone();
+    tokio::spawn(async move {
+        let _ = git_mgr_gc.clean_abandoned_worktrees().await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(600)); // Every 10 min
+        loop {
+            interval.tick().await;
+            if let Err(e) = git_mgr_gc.clean_abandoned_worktrees().await {
+                tracing::warn!("GitManager worktree GC noticed: {}", e);
+            }
+        }
+    });
+
     let mut forward_children: Vec<Child> = Vec::new();
     if state.config.auto_forward_webhooks {
         for repo in &state.config.watched_repos {
-            let _ = state.github_client.cleanup_stale_forward_webhooks(repo).await;
+            let _ = state
+                .github_client
+                .cleanup_stale_forward_webhooks(repo)
+                .await;
 
-            info!("Starting gh webhook forward for {} -> http://{}:{}/webhook", repo, host, port);
+            info!(
+                "Starting gh webhook forward for {} -> http://{}:{}/webhook",
+                repo, host, port
+            );
             let target_url = format!("http://{}:{}/webhook", host, port);
             let child = Command::new("gh")
                 .args([
@@ -108,7 +138,11 @@ pub async fn check_environment(github_client: &GitHubClient, config: &Config) ->
     print!("1. GitHub CLI (`gh`): ");
     match Command::new("gh").arg("--version").output().await {
         Ok(out) if out.status.success() => {
-            let version = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").to_string();
+            let version = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
             println!("✅ Found ({})", version);
         }
         _ => println!("❌ Not installed or not in PATH"),

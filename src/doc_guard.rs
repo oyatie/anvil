@@ -42,13 +42,21 @@ impl DocGuard {
         pr_title: &str,
         pr_body: &str,
     ) -> Result<DocGuardReport> {
-        info!("Running DocGuard documentation parity check on {}#{}...", repo, diff_ctx.pr_number);
+        info!(
+            "Running DocGuard documentation parity check on {}#{}...",
+            repo, diff_ctx.pr_number
+        );
 
         // Step 1: Analyze documentation parity
-        let eval = self.evaluate_doc_parity(repo, repo_dir, diff_ctx, pr_title, pr_body).await?;
+        let eval = self
+            .evaluate_doc_parity(repo, repo_dir, diff_ctx, pr_title, pr_body)
+            .await?;
 
         if eval.is_doc_sufficient {
-            info!("Documentation parity is satisfied for {}#{}", repo, diff_ctx.pr_number);
+            info!(
+                "Documentation parity is satisfied for {}#{}",
+                repo, diff_ctx.pr_number
+            );
             return Ok(DocGuardReport {
                 is_sufficient: true,
                 files_created_or_updated: Vec::new(),
@@ -58,9 +66,7 @@ impl DocGuard {
 
         info!(
             "Missing documentation identified for {}#{}: {:?}. Auto-generating documentation...",
-            repo,
-            diff_ctx.pr_number,
-            eval.doc_files_to_update
+            repo, diff_ctx.pr_number, eval.doc_files_to_update
         );
 
         // Step 2: Auto-generate missing documentation / ADRs in the workspace
@@ -126,7 +132,11 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             repo = repo,
             pr_number = diff_ctx.pr_number,
             pr_title = pr_title,
-            pr_body = if pr_body.is_empty() { "No description" } else { pr_body },
+            pr_body = if pr_body.is_empty() {
+                "No description"
+            } else {
+                pr_body
+            },
             changed_files = diff_ctx.changed_files.join("\n- "),
             diff_content = diff_ctx.diff_content
         );
@@ -137,7 +147,10 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         match serde_json::from_str::<DocParityEvaluation>(&json_str) {
             Ok(eval) => Ok(eval),
             Err(e) => {
-                warn!("Failed to parse DocGuard JSON: {}. Assuming doc is sufficient.", e);
+                warn!(
+                    "Failed to parse DocGuard JSON: {}. Assuming doc is sufficient.",
+                    e
+                );
                 Ok(DocParityEvaluation {
                     is_doc_sufficient: true,
                     missing_doc_summary: None,
@@ -157,7 +170,10 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         pr_body: &str,
         eval: &DocParityEvaluation,
     ) -> Result<Vec<String>> {
-        let missing_summary = eval.missing_doc_summary.as_deref().unwrap_or("General doc sync");
+        let missing_summary = eval
+            .missing_doc_summary
+            .as_deref()
+            .unwrap_or("General doc sync");
         let target_files = eval.doc_files_to_update.join(", ");
 
         let prompt = format!(
@@ -224,7 +240,10 @@ Write all documentation file changes directly into the repository workspace now.
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            error!("agy returned non-zero status in DocGuard: {}", output.status);
+            error!(
+                "agy returned non-zero status in DocGuard: {}",
+                output.status
+            );
             warn!("agy stderr: {}", stderr_str);
             if stdout_str.trim().is_empty() {
                 bail!("agy failed with code {}: {}", output.status, stderr_str);
@@ -270,7 +289,9 @@ mod tests {
         let parsed: DocParityEvaluation = serde_json::from_str(&json_str).expect("Valid parse");
         assert!(!parsed.is_doc_sufficient);
         assert_eq!(parsed.doc_files_to_update.len(), 2);
-        assert_eq!(parsed.suggested_adr_title.as_deref(), Some("ADR-0706: AGPL Plane Split"));
+        assert_eq!(
+            parsed.suggested_adr_title.as_deref(),
+            Some("ADR-0706: AGPL Plane Split")
+        );
     }
 }
-

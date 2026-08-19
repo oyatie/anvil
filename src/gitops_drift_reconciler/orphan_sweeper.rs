@@ -15,13 +15,19 @@ impl OrphanSweeper {
     }
 
     /// 100% Deterministic scan for deleted desired-state resources to ensure safe cascade deletion
-    pub fn scan_orphan_risk(&self, changed_files: &[String], diff_content: &str) -> Vec<OrphanManifestFinding> {
+    pub fn scan_orphan_risk(
+        &self,
+        changed_files: &[String],
+        diff_content: &str,
+    ) -> Vec<OrphanManifestFinding> {
         let mut findings = Vec::new();
 
         for file in changed_files {
             if file.contains("applicationset") || file.contains("application.yaml") {
                 // If ApplicationSet is modified/deleted without specifying finalizers or cascade protection
-                if diff_content.contains("deleted file") && !diff_content.contains("resources-finalizer") {
+                if diff_content.contains("deleted file")
+                    && !diff_content.contains("resources-finalizer")
+                {
                     findings.push(OrphanManifestFinding {
                         file_path: file.clone(),
                         manifest_kind: "ApplicationSet".to_string(),

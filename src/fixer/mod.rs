@@ -6,10 +6,10 @@ use tracing::{info, warn};
 pub mod engine;
 pub mod evaluator;
 
-pub use evaluator::ReviewFeedbackItem;
-use engine::FixEngine;
 use crate::git_manager::GitManager;
 use crate::github::GitHubClient;
+use engine::FixEngine;
+pub use evaluator::ReviewFeedbackItem;
 
 pub struct Fixer {
     git_mgr: Arc<GitManager>,
@@ -44,7 +44,10 @@ impl Fixer {
         feedback_items: &[ReviewFeedbackItem],
     ) -> Result<Option<String>> {
         if feedback_items.is_empty() {
-            info!("No review feedback items to resolve for {}#{}", repo, pr_number);
+            info!(
+                "No review feedback items to resolve for {}#{}",
+                repo, pr_number
+            );
             return Ok(None);
         }
 
@@ -53,7 +56,12 @@ impl Fixer {
         // Ensure PR branch is checked out
         let _ = Command::new("git")
             .current_dir(&repo_dir)
-            .args(["fetch", "origin", &format!("pull/{}/head", pr_number), "--force"])
+            .args([
+                "fetch",
+                "origin",
+                &format!("pull/{}/head", pr_number),
+                "--force",
+            ])
             .output()
             .await;
 
@@ -72,7 +80,9 @@ impl Fixer {
         );
 
         // Step 1: Evaluate signals (Valid Issue vs. False Signal)
-        let eval_result = evaluator::evaluate_feedback_items(repo, &repo_dir, feedback_items, &self.agy_effort).await?;
+        let eval_result =
+            evaluator::evaluate_feedback_items(repo, &repo_dir, feedback_items, &self.agy_effort)
+                .await?;
 
         let mut valid_items = Vec::new();
         let mut false_signal_items = Vec::new();
@@ -112,12 +122,17 @@ impl Fixer {
 
         // If no valid items require code changes, we're done
         if valid_items.is_empty() {
-            info!("No valid code modifications needed for {}#{}", repo, pr_number);
+            info!(
+                "No valid code modifications needed for {}#{}",
+                repo, pr_number
+            );
             return Ok(None);
         }
 
         // Step 3: Apply code fixes using Antigravity
-        self.engine.apply_code_fixes(repo, &repo_dir, &valid_items).await?;
+        self.engine
+            .apply_code_fixes(repo, &repo_dir, &valid_items)
+            .await?;
 
         // Step 4: Run local verification gate (tests/typecheck)
         let test_ok = self.engine.run_test_verification_gate(&repo_dir).await?;
@@ -140,7 +155,10 @@ impl Fixer {
 
         let changes = String::from_utf8_lossy(&status_out.stdout);
         if changes.trim().is_empty() {
-            info!("No file changes produced after fix attempt on {}#{}", repo, pr_number);
+            info!(
+                "No file changes produced after fix attempt on {}#{}",
+                repo, pr_number
+            );
             return Ok(None);
         }
 
@@ -175,7 +193,10 @@ impl Fixer {
             .await?;
         let new_commit_sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
 
-        info!("Created fix commit {} on {}#{}", new_commit_sha, repo, pr_number);
+        info!(
+            "Created fix commit {} on {}#{}",
+            new_commit_sha, repo, pr_number
+        );
 
         info!("Pushing fix to origin branch {}...", head_branch);
         let push_target = format!("HEAD:{}", head_branch);
@@ -188,9 +209,15 @@ impl Fixer {
 
         if !push_out.status.success() {
             let err = String::from_utf8_lossy(&push_out.stderr);
-            warn!("git push failed to {}: {}. Trying force-with-lease or checking permissions.", head_branch, err);
+            warn!(
+                "git push failed to {}: {}. Trying force-with-lease or checking permissions.",
+                head_branch, err
+            );
         } else {
-            info!("Successfully pushed fix commit {} to origin/{}", new_commit_sha, head_branch);
+            info!(
+                "Successfully pushed fix commit {} to origin/{}",
+                new_commit_sha, head_branch
+            );
         }
 
         let short_sha = if new_commit_sha.len() >= 7 {

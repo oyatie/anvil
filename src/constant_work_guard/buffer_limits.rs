@@ -17,9 +17,14 @@ impl BufferLimitsChecker {
     }
 
     /// Scans diff for unbounded channels or unbounded dynamic buffers in hotpaths
-    pub fn scan_unbounded_structures(&self, file_path: &str, content: &str) -> Vec<UnboundedCapacityFinding> {
+    pub fn scan_unbounded_structures(
+        &self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<UnboundedCapacityFinding> {
         let mut findings = Vec::new();
-        let unbounded_chan_re = Regex::new(r"(?i)mpsc::unbounded_channel\s*\(").unwrap();
+        let unbounded_chan_re =
+            Regex::new(r#"(?i)mpsc::unbounded_channel(?:::<[^>]+>)?\s*\("#).unwrap();
 
         for (idx, line) in content.lines().enumerate() {
             if unbounded_chan_re.is_match(line) {

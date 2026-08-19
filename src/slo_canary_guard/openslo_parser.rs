@@ -45,7 +45,8 @@ pub struct OpenSloTimeWindow {
 }
 
 pub fn parse_openslo_yaml(content: &str) -> Result<OpenSloSpec> {
-    serde_yaml::from_str::<OpenSloSpec>(content).context("Failed to parse OpenSLO YAML specification")
+    serde_yaml::from_str::<OpenSloSpec>(content)
+        .context("Failed to parse OpenSLO YAML specification")
 }
 
 #[cfg(test)]

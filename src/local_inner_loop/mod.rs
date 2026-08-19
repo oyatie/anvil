@@ -37,7 +37,9 @@ impl LocalInnerLoopProbe {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let findings = self.validator.validate_pre_commit("feat: update codebase", &diff_ctx.diff_content);
+        let findings = self
+            .validator
+            .validate_pre_commit("feat: update codebase", &diff_ctx.diff_content);
         let is_valid = findings.iter().all(|f| f.is_valid);
         let summary = if is_valid {
             "✅ PASSED (Sub-100ms local inner-loop pre-commit probe green; 0 lint/convention regressions)".to_string()
@@ -77,7 +79,9 @@ mod tests {
             previous_head_sha: None,
         };
 
-        let rep = probe.evaluate_local_probe(Path::new("."), &diff_ctx).unwrap();
+        let rep = probe
+            .evaluate_local_probe(Path::new("."), &diff_ctx)
+            .unwrap();
         assert!(rep.is_valid);
         assert!(rep.latency_ms < 100);
     }

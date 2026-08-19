@@ -37,7 +37,10 @@ impl AttestationGuard {
         pr_number: u64,
         head_sha: &str,
     ) -> Result<AttestationReport> {
-        info!("Running AttestationGuard receipt generator for {}#{} (SHA: {})...", repo, pr_number, head_sha);
+        info!(
+            "Running AttestationGuard receipt generator for {}#{} (SHA: {})...",
+            repo, pr_number, head_sha
+        );
 
         let receipts_dir = repo_dir.join(".cursor/receipts");
         if !receipts_dir.exists() {
@@ -96,7 +99,9 @@ mod tests {
         assert!(res.is_attested);
         assert!(res.stamped_receipt_path.is_some());
 
-        let receipt_file = temp_dir.path().join(".cursor/receipts/pr-106-attestation.json");
+        let receipt_file = temp_dir
+            .path()
+            .join(".cursor/receipts/pr-106-attestation.json");
         assert!(receipt_file.exists());
     }
 }

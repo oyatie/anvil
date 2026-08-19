@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MigrationPhase {
-    Expand,     // Add column / table / shadow structure
-    DualWrite,  // Application writes to old & new
-    Cutover,    // Application reads from new
-    Contract,   // Drop old column / table after bake period
+    Expand,    // Add column / table / shadow structure
+    DualWrite, // Application writes to old & new
+    Cutover,   // Application reads from new
+    Contract,  // Drop old column / table after bake period
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,9 +23,14 @@ impl MigrationPhaseValidator {
     }
 
     /// 100% Deterministic validation of Expand-Contract database migration phase invariants
-    pub fn validate_migration_sql(&self, file_path: &str, sql_content: &str) -> Vec<MigrationPhaseFinding> {
+    pub fn validate_migration_sql(
+        &self,
+        file_path: &str,
+        sql_content: &str,
+    ) -> Vec<MigrationPhaseFinding> {
         let mut findings = Vec::new();
-        let drop_column_re = Regex::new(r"(?i)ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN\s+(\w+)").unwrap();
+        let drop_column_re =
+            Regex::new(r"(?i)ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN\s+(\w+)").unwrap();
         let drop_table_re = Regex::new(r"(?i)DROP\s+TABLE\s+(\w+)").unwrap();
 
         for line in sql_content.lines() {

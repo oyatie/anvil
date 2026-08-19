@@ -19,11 +19,7 @@ impl MergeTrainBisector {
 
     /// Performs binary search bisection across a batch of speculative merge PRs
     /// given a test evaluator closure `test_batch(slice) -> bool`
-    pub fn bisect_batch<F>(
-        &self,
-        pr_batch: &[u64],
-        mut test_batch: F,
-    ) -> Result<BisectionResult>
+    pub fn bisect_batch<F>(&self, pr_batch: &[u64], mut test_batch: F) -> Result<BisectionResult>
     where
         F: FnMut(&[u64]) -> bool,
     {

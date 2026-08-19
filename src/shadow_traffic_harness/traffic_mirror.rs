@@ -23,7 +23,8 @@ impl TrafficMirrorComparator {
 
     /// 100% Deterministic evaluation of dark-traffic shadow replay parity
     pub fn evaluate_shadow_parity(&self, metrics: &ShadowTrafficMetrics) -> ShadowComparisonResult {
-        let is_parity_satisfied = metrics.payload_parity_pct >= 99.5 && metrics.status_code_parity_pct >= 99.9;
+        let is_parity_satisfied =
+            metrics.payload_parity_pct >= 99.5 && metrics.status_code_parity_pct >= 99.9;
 
         let details = if is_parity_satisfied {
             format!(

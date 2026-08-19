@@ -24,6 +24,12 @@ pub struct StatutoryViolation {
 
 pub struct RegulatoryEngine;
 
+impl Default for RegulatoryEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegulatoryEngine {
     pub fn new() -> Self {
         Self
@@ -40,8 +46,8 @@ impl RegulatoryEngine {
         let mut current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
                 continue;
             }

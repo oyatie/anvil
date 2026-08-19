@@ -1,4 +1,7 @@
-#![allow(dead_code)]
+//! Oyatie Anvil: Autonomous Engineering & Hyperscale Delivery Fabric
+//!
+//! Provides the 70-gate PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
+//! deterministic PR & issue self-healing loops, zero-trust workload validation, and fail-closed merge train orchestration.
 
 pub mod adr_drift_ratchet;
 pub mod ai_driver;
@@ -17,19 +20,23 @@ pub mod ci_triager;
 pub mod ci_wallclock_ratchet;
 pub mod clean_architecture_guard;
 pub mod cli;
+pub mod cloud_native_guard;
 pub mod cluster_state_auditor;
 pub mod compile_time_profiler;
 pub mod compliance_guard;
 pub mod config;
 pub mod consistency_guard;
 pub mod constant_work_guard;
+pub mod corpus_auditor;
 pub mod cosign_signer;
 pub mod coverage_guard;
 pub mod criterion_bench_ratchet;
 pub mod cross_service_impact;
 pub mod deadlock_analyzer;
 pub mod debt_shrink_guard;
+pub mod doc_archival_sweeper;
 pub mod doc_guard;
+pub mod dual_track_build_guard;
 pub mod early_exit_cascade;
 pub mod ephemeral_sandbox;
 pub mod ephemeral_secrets;
@@ -46,19 +53,23 @@ pub mod github;
 pub mod gitops_drift_reconciler;
 pub mod gitops_promotion;
 pub mod hermetic_build;
+pub mod hyperscaler_consensus_guard;
 pub mod idempotency_guard;
 pub mod incident_healer;
 pub mod incident_sentry;
+pub mod issue_reconciler;
 pub mod jittered_backoff;
 pub mod kani_guard;
 pub mod local_inner_loop;
 pub mod lockfile_reconciler;
 pub mod mainline_ci_healer;
 pub mod merge_enlister;
+pub mod metrics;
 pub mod microbenchmark_ratchet;
 pub mod migration_orchestrator;
 pub mod modularization_guard;
 pub mod monorepo_guard;
+pub mod pr_self_healer;
 pub mod pre_merge_guard;
 pub mod predictive_test_selector;
 pub mod preview_env_reaper;
@@ -69,12 +80,14 @@ pub mod remote_cache_optimizer;
 pub mod replay_harness;
 pub mod review_memory;
 pub mod reviewer;
+pub mod roadmap_guard;
 pub mod rust_skills_guard;
 pub mod schema_evolution;
 pub mod semantic_abi_ratchet;
 pub mod shadow_traffic_harness;
 pub mod shuffle_shard_simulator;
 pub mod slo_canary_guard;
+pub mod stack_whitelist_guard;
 pub mod stacked_diffs;
 pub mod state;
 pub mod supply_chain_guard;

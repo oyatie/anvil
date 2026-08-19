@@ -19,6 +19,12 @@ pub struct IdempotencyGuard {
     engine: OutboxRulesEngine,
 }
 
+impl Default for IdempotencyGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IdempotencyGuard {
     pub fn new() -> Self {
         let engine = OutboxRulesEngine::new();

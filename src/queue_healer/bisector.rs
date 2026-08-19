@@ -12,6 +12,12 @@ pub struct BisectionResult {
 
 pub struct MergeTrainBisector;
 
+impl Default for MergeTrainBisector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MergeTrainBisector {
     pub fn new() -> Self {
         Self

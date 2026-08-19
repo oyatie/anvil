@@ -19,6 +19,12 @@ pub struct CrossServiceImpactEngine {
     validator: ServiceGraphValidator,
 }
 
+impl Default for CrossServiceImpactEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CrossServiceImpactEngine {
     pub fn new() -> Self {
         let validator = ServiceGraphValidator::new();

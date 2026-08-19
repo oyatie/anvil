@@ -5,11 +5,20 @@ use std::path::Path;
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod disposition;
+pub mod harness_quarantine;
+pub mod whole_file_expansion;
+pub use disposition::{
+    ComponentDisposition, ComponentDispositionClassifier, ComponentEvaluationReport,
+};
+pub use harness_quarantine::HarnessQuarantine;
+pub use whole_file_expansion::WholeFileExpansion;
+
 use crate::git_manager::PrDiffContext;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MonorepoViolation {
-    pub category: String, // "NON_HERMETIC_PATH_ESCAPE", "HARDCODED_ABSOLUTE_PATH", "PROTOTYPE_POLLUTION_RISK"
+    pub category: String, // "AI_HARNESS_COMMIT_LEAK", "UNAUTHORIZED_AUTHORITY_CLAIM", "NON_HERMETIC_PATH_ESCAPE", "HARDCODED_ABSOLUTE_PATH"
     pub description: String,
     pub snippet: String,
 }
@@ -22,6 +31,12 @@ pub struct MonorepoGuardReport {
 }
 
 pub struct MonorepoGuard;
+
+impl Default for MonorepoGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl MonorepoGuard {
     pub fn new() -> Self {
@@ -41,6 +56,27 @@ impl MonorepoGuard {
 
         let mut violations = Vec::new();
 
+        // 1. Check for AI / LLM Agent Scratch Harness Commit Leaks
+        let harness_violations =
+            HarnessQuarantine::check_harness_quarantine(&diff_ctx.changed_files);
+        violations.extend(harness_violations);
+
+        // 2. Check for Unauthorized SSOT Authority Claims
+        for file in &diff_ctx.changed_files {
+            if let Some(v) =
+                HarnessQuarantine::check_ssot_authority_location(file, &diff_ctx.diff_content)
+            {
+                violations.push(v);
+            }
+        }
+
+        // 3. Whole-File Context Expansion: Evaluate entire touched files on disk
+        for file in &diff_ctx.changed_files {
+            let whole_file_violations = WholeFileExpansion::evaluate_whole_file(repo_dir, file);
+            violations.extend(whole_file_violations);
+        }
+
+        // 4. Check for Non-Hermetic Path Escapes & Hardcoded Absolute Paths
         let monorepo_rules = [
             (
                 r#"(?i)(?:include!|include_str!|include_bytes!|require|import).*?['"](?:\.\./){3,}"#,
@@ -105,14 +141,14 @@ impl MonorepoGuard {
 
         let is_compliant = violations.is_empty();
         let summary = if is_compliant {
-            "Hyperscaler monorepo patterns verified: hermetic boundaries, CAS cache compatibility, and clean package exports 100% compliant.".to_string()
+            "Hyperscaler monorepo patterns verified: hermetic boundaries, harness quarantine, and SSOT authority rules 100% compliant.".to_string()
         } else {
             format!(
                 "Monorepo pattern warnings ({} items): {}",
                 violations.len(),
                 violations
                     .iter()
-                    .map(|v| v.description.as_str())
+                    .map(|v| format!("{}: {}", v.category, v.snippet))
                     .collect::<Vec<_>>()
                     .join("; ")
             )
@@ -131,53 +167,52 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_detects_hardcoded_absolute_path() {
+    async fn test_clean_monorepo_diff_passes() {
         let guard = MonorepoGuard::new();
-        let temp_dir = std::env::temp_dir();
         let diff_ctx = PrDiffContext {
-            repo: "oyatie/console".to_string(),
-            pr_number: 203,
-            base_branch: "main".to_string(),
+            repo: "oyatie/oyatie".to_string(),
+            pr_number: 101,
+            base_branch: "dev".to_string(),
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
-            previous_head_sha: None,
+            diff_content: "+ use crate::types::Model;".to_string(),
+            changed_files: vec!["crates/core/src/lib.rs".to_string()],
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+ const configPath = \"/Users/jasonlee/Documents/config.json\";"
-                .to_string(),
-            changed_files: vec!["src/config.ts".to_string()],
             is_incremental: false,
+            previous_head_sha: None,
         };
 
         let report = guard
-            .evaluate_monorepo_hygiene(&temp_dir, &diff_ctx)
+            .evaluate_monorepo_hygiene(Path::new("/tmp"), &diff_ctx)
             .await
-            .expect("Evaluates");
-        assert!(!report.is_compliant);
-        assert_eq!(report.violations.len(), 1);
-        assert_eq!(report.violations[0].category, "HARDCODED_ABSOLUTE_PATH");
+            .unwrap();
+        assert!(report.is_compliant);
     }
 
     #[tokio::test]
-    async fn test_clean_monorepo_diff_passes() {
+    async fn test_detects_hardcoded_absolute_path() {
         let guard = MonorepoGuard::new();
-        let temp_dir = std::env::temp_dir();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
-            pr_number: 204,
-            base_branch: "main".to_string(),
+            pr_number: 102,
+            base_branch: "dev".to_string(),
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
-            previous_head_sha: None,
+            diff_content: r#"+ let config_path = "/Users/developer/app.json";"#.to_string(),
+            changed_files: vec!["crates/core/src/lib.rs".to_string()],
             repo_working_dir: std::path::PathBuf::from("/tmp"),
-            diff_content: "+ let config_path = PathBuf::from(std::env::var(\"CONFIG_PATH\").unwrap_or_default());".to_string(),
-            changed_files: vec!["src/config.rs".to_string()],
             is_incremental: false,
+            previous_head_sha: None,
         };
 
         let report = guard
-            .evaluate_monorepo_hygiene(&temp_dir, &diff_ctx)
+            .evaluate_monorepo_hygiene(Path::new("/tmp"), &diff_ctx)
             .await
-            .expect("Evaluates");
-        assert!(report.is_compliant);
+            .unwrap();
+        assert!(!report.is_compliant);
+        assert!(report
+            .violations
+            .iter()
+            .any(|v| v.category == "HARDCODED_ABSOLUTE_PATH"));
     }
 }

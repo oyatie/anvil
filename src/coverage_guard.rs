@@ -27,6 +27,12 @@ pub struct CoverageReport {
 
 pub struct CoverageGuard;
 
+impl Default for CoverageGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoverageGuard {
     pub fn new() -> Self {
         Self
@@ -55,7 +61,7 @@ impl CoverageGuard {
         let mut current_is_executable_code = false;
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
                 if !current_file.is_empty()
                     && !current_file_untested_fns.is_empty()
                     && !current_is_test_file
@@ -70,7 +76,7 @@ impl CoverageGuard {
                     });
                 }
 
-                current_file = line[6..].trim().to_string();
+                current_file = stripped.trim().to_string();
                 current_file_untested_fns.clear();
                 current_is_test_file = current_file.contains("test")
                     || current_file.contains("spec")

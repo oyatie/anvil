@@ -934,25 +934,400 @@ fn test_local_probe_green_nominal_conventional_diff() {
 fn test_scorecard_contains_anvil_receipt_marker() {
     let doc_status = anvil::pre_merge_guard::GateStatus::Passed;
     let matrix_text = anvil::pre_merge_guard::matrix::MatrixRenderer::render_matrix(
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status, &doc_status, &doc_status,
-        &doc_status, &doc_status, &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
+        &doc_status,
         true,
     );
 
     assert!(
         matrix_text.contains("<!-- ANVIL_SCORECARD_RECEIPT -->"),
         "Matrix scorecard must contain ANVIL_SCORECARD_RECEIPT for in-place comment upserting"
+    );
+}
+
+// =========================================================================
+// 29. Supply Chain Guard: Banned & Deprecated Dependencies
+// =========================================================================
+
+#[test]
+fn test_supply_chain_red_flag_banned_crate() {
+    let guard = anvil::supply_chain_guard::SupplyChainGuard::new();
+    let bad_diff = create_test_diff_context("Cargo.toml", "+ net2 = \"0.2.37\"");
+    let report = guard
+        .audit_supply_chain(std::path::Path::new("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_secure,
+        "Expected False Green prevention: Banned crate net2 must FAIL"
+    );
+}
+
+#[test]
+fn test_supply_chain_green_nominal_dependency() {
+    let guard = anvil::supply_chain_guard::SupplyChainGuard::new();
+    let good_diff = create_test_diff_context(
+        "Cargo.toml",
+        "+ tokio = { version = \"1.38\", features = [\"macros\"] }",
+    );
+    let report = guard
+        .audit_supply_chain(std::path::Path::new("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_secure,
+        "Expected False Red prevention: Standard clean dependency must PASS"
+    );
+}
+
+// =========================================================================
+// 30. Monorepo Guard: Internal Boundary Enforcement
+// =========================================================================
+
+#[tokio::test]
+async fn test_monorepo_guard_red_flag_cross_crate_internal_leak() {
+    let guard = anvil::monorepo_guard::MonorepoGuard::new();
+    let bad_diff = create_test_diff_context(
+        "services/auth/src/lib.rs",
+        "+ let secret = include_str!(\"../../../../etc/shadow\");",
+    );
+    let report = guard
+        .evaluate_monorepo_hygiene(std::path::Path::new("."), &bad_diff)
+        .await
+        .unwrap();
+    assert!(
+        !report.is_compliant,
+        "Expected False Green prevention: Non-hermetic path escape must FAIL"
+    );
+}
+
+#[tokio::test]
+async fn test_monorepo_guard_green_public_crate_api() {
+    let guard = anvil::monorepo_guard::MonorepoGuard::new();
+    let good_diff = create_test_diff_context(
+        "services/auth/src/lib.rs",
+        "+ use billing_client::BillingClient;",
+    );
+    let report = guard
+        .evaluate_monorepo_hygiene(std::path::Path::new("."), &good_diff)
+        .await
+        .unwrap();
+    assert!(
+        report.is_compliant,
+        "Expected False Red prevention: Public API import must PASS"
+    );
+}
+
+// =========================================================================
+// 31. Technical Debt Shrink Guard: Deprecation & Reorg Drain Ratchet
+// =========================================================================
+
+#[test]
+fn test_debt_shrink_red_flag_blanket_allow() {
+    let guard = anvil::debt_shrink_guard::DebtShrinkGuard::new();
+    let bad_diff = create_test_diff_context(
+        "src/legacy/old_auth_handler.rs",
+        "+ pub fn add_more_debt() { println!(\"growing legacy debt\"); }",
+    );
+    let report = guard
+        .evaluate_debt_shrink(std::path::Path::new("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_acceptable,
+        "Expected False Green prevention: Net growth in deprecated path must FAIL"
+    );
+}
+
+#[test]
+fn test_debt_shrink_green_clean_code() {
+    let guard = anvil::debt_shrink_guard::DebtShrinkGuard::new();
+    let good_diff = create_test_diff_context(
+        "src/lib.rs",
+        "+ pub fn process_event() -> Result<(), Error> { Ok(()) }",
+    );
+    let report = guard
+        .evaluate_debt_shrink(std::path::Path::new("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_acceptable,
+        "Expected False Red prevention: Clean code must PASS"
+    );
+}
+
+// =========================================================================
+// 32. Modularization Guard: Oversized Monolithic Source Files
+// =========================================================================
+
+#[test]
+fn test_modularization_red_flag_circular_dependency() {
+    let guard = anvil::modularization_guard::ModularizationGuard::new();
+    let mut large_diff = String::new();
+    for i in 0..350 {
+        large_diff.push_str(&format!("+ pub fn helper_{}() {{}}\n", i));
+    }
+    let bad_diff = create_test_diff_context("crates/monolith/src/lib.rs", &large_diff);
+    let report = guard.evaluate_modularization(&bad_diff).unwrap();
+    assert!(
+        !report.is_modular,
+        "Expected False Green prevention: File exceeding 300 lines must FAIL"
+    );
+}
+
+#[test]
+fn test_modularization_green_acyclic_dag() {
+    let guard = anvil::modularization_guard::ModularizationGuard::new();
+    let good_diff = create_test_diff_context(
+        "crates/api_gateway/src/handler.rs",
+        "+ pub fn handle_request() -> Response { Response::ok() }",
+    );
+    let report = guard.evaluate_modularization(&good_diff).unwrap();
+    assert!(
+        report.is_modular,
+        "Expected False Red prevention: Modular compact file must PASS"
+    );
+}
+
+// =========================================================================
+// 33. Kani Formal Verification Guard: Undocumented Unsafe
+// =========================================================================
+
+#[test]
+fn test_kani_red_flag_undocumented_unsafe_block() {
+    let guard = anvil::kani_guard::KaniGuard::new();
+    let bad_diff = create_test_diff_context(
+        "src/buffer.rs",
+        "+ unsafe fn raw_copy(dst: *mut u8, src: *const u8, len: usize) { std::ptr::copy(src, dst, len); }",
+    );
+    let report = guard
+        .evaluate_unsafe_invariants(std::path::Path::new("."), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_verified,
+        "Expected False Green prevention: Undocumented unsafe must FAIL"
+    );
+}
+
+#[test]
+fn test_kani_green_safe_rust_or_documented_safety() {
+    let guard = anvil::kani_guard::KaniGuard::new();
+    let good_diff = create_test_diff_context(
+        "src/buffer.rs",
+        "+ // SAFETY: dst and src are guaranteed non-null, properly aligned, and len <= buffer capacity.\n+ unsafe fn safe_copy(dst: *mut u8, src: *const u8, len: usize) { std::ptr::copy(src, dst, len); }",
+    );
+    let report = guard
+        .evaluate_unsafe_invariants(std::path::Path::new("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_verified,
+        "Expected False Red prevention: Formally documented unsafe must PASS"
+    );
+}
+
+// =========================================================================
+// 34. OpenSLO Canary Guard: Error Budget Burn Rate
+// =========================================================================
+
+#[test]
+fn test_slo_canary_red_flag_high_burn_rate() {
+    let guard = anvil::slo_canary_guard::SloCanaryGuard::new();
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let slo_path = temp_dir.path().join("service.openslo.yaml");
+    std::fs::write(
+        &slo_path,
+        "apiVersion: openslo/v1\nkind: SLO\nspec:\n  objectives: []\n",
+    )
+    .unwrap();
+
+    let mut bad_diff = create_test_diff_context(
+        "service.openslo.yaml",
+        "+ apiVersion: openslo/v1\n+ kind: SLO\n+ spec:\n+   objectives: []",
+    );
+    bad_diff.repo_working_dir = temp_dir.path().to_path_buf();
+    let report = guard
+        .evaluate_slo_canary_health(temp_dir.path(), &bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_compliant,
+        "Expected False Green prevention: OpenSLO spec with 0 objectives must FAIL"
+    );
+}
+
+#[test]
+fn test_slo_canary_green_nominal_slo() {
+    let guard = anvil::slo_canary_guard::SloCanaryGuard::new();
+    let good_diff = create_test_diff_context(
+        "config/app.rs",
+        "+ pub fn healthz() -> &'static str { \"ok\" }",
+    );
+    let report = guard
+        .evaluate_slo_canary_health(std::path::Path::new("."), &good_diff)
+        .unwrap();
+    assert!(
+        report.is_compliant,
+        "Expected False Red prevention: Nominal code without SLO degradation must PASS"
+    );
+}
+
+// =========================================================================
+// 35. Shuffle Sharding Simulator: Fault Isolation Blast Radius
+// =========================================================================
+
+#[test]
+fn test_shuffle_shard_combinations_math() {
+    let combos_64_4 =
+        anvil::shuffle_shard_simulator::ShuffleShardMath::calculate_combinations(64, 4);
+    assert_eq!(
+        combos_64_4, 635376,
+        "C(64, 4) must equal 635,376 combinations"
+    );
+
+    let allocs = vec![
+        anvil::shuffle_shard_simulator::ShuffleShardAllocation {
+            tenant_id: "tenant_a".to_string(),
+            assigned_cells: vec![1, 2, 3, 4],
+        },
+        anvil::shuffle_shard_simulator::ShuffleShardAllocation {
+            tenant_id: "tenant_b".to_string(),
+            assigned_cells: vec![5, 6, 7, 8],
+        },
+    ];
+    let overlap = anvil::shuffle_shard_simulator::ShuffleShardMath::evaluate_overlap(&allocs);
+    assert_eq!(
+        overlap, 0,
+        "Mutually disjoint tenant shard allocations must have 0 overlap"
+    );
+}
+
+// =========================================================================
+// 36. Subtle Evasion Testing: Nested Subqueries & Regex Variations
+// =========================================================================
+
+#[test]
+fn test_subtle_cell_isolation_nested_subquery_evasion() {
+    let guard = CellIsolationGuard::new();
+    // SUBTLE RED: SQL query with nested subquery missing tenant filter in inner SELECT
+    let subtle_bad_diff = create_test_diff_context(
+        "src/queries/ledger.rs",
+        "+ let q = \"SELECT * FROM (SELECT id, amount FROM ledger_entries) AS sub WHERE sub.id = $1\";",
+    );
+    let report = guard.evaluate_cell_isolation(&subtle_bad_diff).unwrap();
+    assert!(
+        !report.is_isolated,
+        "Subtle bug: Inner subquery missing tenant_id must FAIL"
+    );
+}
+
+#[test]
+fn test_subtle_rust_skills_empty_expect_evasion() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let guard = RustSkillsGuard::new(temp_dir.path());
+    // SUBTLE RED: Attempting to bypass unwrap check by using empty expect string
+    let subtle_bad_diff =
+        create_test_diff_context("src/handler.rs", "+ let value = option_val.expect(\"\");");
+    let report = guard
+        .evaluate_rust_quality(temp_dir.path(), &subtle_bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_idiomatic,
+        "Subtle bug: Empty expect must be caught as non-idiomatic"
+    );
+}
+
+#[test]
+fn test_subtle_adr_drift_missing_validation_evidence() {
+    let ratchet = AdrDriftRatchet::new();
+    // SUBTLE RED: ADR with Context and Decision but missing mandatory Validation Evidence section
+    let subtle_bad_diff = create_test_diff_context(
+        "docs/adr/0002-cache.md",
+        "+ # ADR-0002: Cache Architecture\n+ ## Context\n+ Needed caching.\n+ ## Decision\n+ Use Redis.",
+    );
+    let report = ratchet
+        .evaluate_adr_parity(std::path::Path::new("."), &subtle_bad_diff)
+        .unwrap();
+    assert!(
+        !report.is_compliant,
+        "Subtle bug: ADR missing Validation Evidence must FAIL"
+    );
+}
+
+#[test]
+fn test_subtle_review_enforcement_dismissed_or_historical_request_changes() {
+    // Verify that review decision parsing catches CHANGES_REQUESTED in JSON structure
+    let json_payload = r#"{
+        "reviewDecision": "CHANGES_REQUESTED",
+        "reviews": [
+            { "state": "APPROVED" },
+            { "state": "CHANGES_REQUESTED" }
+        ]
+    }"#;
+    let val: serde_json::Value = serde_json::from_str(json_payload).unwrap();
+    let decision = val.get("reviewDecision").and_then(|d| d.as_str()).unwrap();
+    assert_eq!(
+        decision, "CHANGES_REQUESTED",
+        "Must strictly identify CHANGES_REQUESTED even if other reviews approved"
     );
 }

@@ -19,6 +19,12 @@ pub struct GitOpsPromotionEngine {
     pinner: DigestPinner,
 }
 
+impl Default for GitOpsPromotionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitOpsPromotionEngine {
     pub fn new() -> Self {
         let pinner = DigestPinner::new();

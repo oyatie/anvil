@@ -19,6 +19,12 @@ pub struct CompileTimeProfiler {
     scanner: HeavyDependencyScanner,
 }
 
+impl Default for CompileTimeProfiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompileTimeProfiler {
     pub fn new() -> Self {
         let scanner = HeavyDependencyScanner::new();

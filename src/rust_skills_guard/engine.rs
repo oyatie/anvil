@@ -17,6 +17,12 @@ pub struct RustQualityFinding {
 
 pub struct RustQualityEngine;
 
+impl Default for RustQualityEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RustQualityEngine {
     pub fn new() -> Self {
         Self
@@ -44,8 +50,8 @@ impl RustQualityEngine {
         let mut prev_line = String::new();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 is_test_file = current_file.contains("test")
                     || current_file.contains("bench")
                     || current_file.contains("mock");
@@ -60,9 +66,12 @@ impl RustQualityEngine {
             if line.starts_with('+') && !line.starts_with("+++") {
                 let code_line = &line[1..].trim();
 
-                // 1. [err-no-unwrap-prod] - Avoid .unwrap() in production code
+                // 1. [err-no-unwrap-prod] - Avoid .unwrap() or empty .expect("") in production code
+                let has_unwrap = unwrap_re.is_match(code_line);
+                let has_empty_expect =
+                    code_line.contains(".expect(\"\")") || code_line.contains(".expect(\"TODO\")");
                 if !is_test_file
-                    && unwrap_re.is_match(code_line)
+                    && (has_unwrap || has_empty_expect)
                     && !code_line.contains("// test")
                     && !code_line.contains("#[cfg(test)]")
                 {
@@ -72,7 +81,7 @@ impl RustQualityEngine {
                         severity: "HIGH".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
-                        description: "Use of `.unwrap()` in production code can cause unrecoverable panics.".to_string(),
+                        description: "Use of `.unwrap()` or empty `.expect(\"\")` in production code can cause unrecoverable panics.".to_string(),
                         recommendation: "Use the `?` operator, `.context()`, or handle the error explicitly with `match`/`if let`.".to_string(),
                     });
                 }

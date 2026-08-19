@@ -19,6 +19,12 @@ pub struct SemanticAbiRatchet {
     scanner: SignatureScanner,
 }
 
+impl Default for SemanticAbiRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SemanticAbiRatchet {
     pub fn new() -> Self {
         let scanner = SignatureScanner::new();

@@ -16,6 +16,12 @@ pub struct ShadowComparisonResult {
 
 pub struct TrafficMirrorComparator;
 
+impl Default for TrafficMirrorComparator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrafficMirrorComparator {
     pub fn new() -> Self {
         Self

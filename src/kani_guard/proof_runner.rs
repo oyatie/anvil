@@ -13,6 +13,12 @@ pub struct KaniProofReport {
 
 pub struct KaniProofRunner;
 
+impl Default for KaniProofRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KaniProofRunner {
     pub fn new() -> Self {
         Self

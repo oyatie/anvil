@@ -24,6 +24,12 @@ pub struct DebtShrinkReport {
 
 pub struct DebtShrinkGuard;
 
+impl Default for DebtShrinkGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DebtShrinkGuard {
     pub fn new() -> Self {
         Self
@@ -60,11 +66,11 @@ impl DebtShrinkGuard {
         let mut file_diffs: Vec<(String, usize, usize)> = Vec::new();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
                 if !current_file.is_empty() {
                     file_diffs.push((current_file.clone(), file_added, file_deleted));
                 }
-                current_file = line[6..].trim().to_string();
+                current_file = stripped.trim().to_string();
                 file_added = 0;
                 file_deleted = 0;
                 continue;

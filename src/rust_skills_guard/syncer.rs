@@ -87,8 +87,8 @@ impl UpstreamRustSkillsSyncer {
 
                 for line in content.lines() {
                     let trimmed = line.trim();
-                    if trimmed.starts_with("### ") {
-                        current_category = trimmed[4..].trim().to_string();
+                    if let Some(stripped) = trimmed.strip_prefix("### ") {
+                        current_category = stripped.trim().to_string();
                         continue;
                     }
 

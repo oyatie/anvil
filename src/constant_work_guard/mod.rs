@@ -19,6 +19,12 @@ pub struct ConstantWorkGuard {
     checker: BufferLimitsChecker,
 }
 
+impl Default for ConstantWorkGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConstantWorkGuard {
     pub fn new() -> Self {
         let checker = BufferLimitsChecker::new();

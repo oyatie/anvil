@@ -2,93 +2,18 @@ use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tokio::process::Command;
-use tracing::{info, warn};
+use tracing::info;
+
+pub mod diff_context;
+pub mod worktree;
+
+pub use diff_context::PrDiffContext;
+pub use worktree::EphemeralWorktree;
 
 #[derive(Clone, Debug)]
 pub struct GitManager {
     repos_base_dir: PathBuf,
     worktrees_base_dir: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub struct PrDiffContext {
-    pub repo: String,
-    pub pr_number: u64,
-    pub base_branch: String,
-    pub base_sha: String,
-    pub head_sha: String,
-    pub is_incremental: bool,
-    pub previous_head_sha: Option<String>,
-    pub diff_content: String,
-    pub changed_files: Vec<String>,
-    pub repo_working_dir: PathBuf,
-}
-
-/// RAII Guard for an Ephemeral Git Worktree.
-/// Guarantees that the worktree is cleanly pruned and removed when dropped.
-#[derive(Debug)]
-pub struct EphemeralWorktree {
-    pub repo: String,
-    pub pr_number: u64,
-    pub worktree_path: PathBuf,
-    pub repo_dir: PathBuf,
-}
-
-impl EphemeralWorktree {
-    /// Explicit asynchronous cleanup of the ephemeral worktree
-    pub async fn cleanup(&self) -> Result<()> {
-        info!(
-            "EphemeralWorktree: Cleaning up worktree at {:?} for {}#{}",
-            self.worktree_path, self.repo, self.pr_number
-        );
-
-        let _ = Command::new("git")
-            .current_dir(&self.repo_dir)
-            .args([
-                "worktree",
-                "remove",
-                "--force",
-                self.worktree_path.to_str().unwrap(),
-            ])
-            .output()
-            .await;
-
-        if self.worktree_path.exists() {
-            let _ = tokio::fs::remove_dir_all(&self.worktree_path).await;
-        }
-
-        let _ = Command::new("git")
-            .current_dir(&self.repo_dir)
-            .args(["worktree", "prune"])
-            .output()
-            .await;
-
-        Ok(())
-    }
-}
-
-impl Drop for EphemeralWorktree {
-    fn drop(&mut self) {
-        if self.worktree_path.exists() {
-            // Synchronous fallback cleanup in case async cleanup was not called
-            let _ = std::process::Command::new("git")
-                .current_dir(&self.repo_dir)
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    self.worktree_path.to_str().unwrap(),
-                ])
-                .output();
-
-            let _ = std::fs::remove_dir_all(&self.worktree_path);
-
-            let _ = std::process::Command::new("git")
-                .current_dir(&self.repo_dir)
-                .args(["worktree", "prune"])
-                .output();
-        }
-    }
 }
 
 impl GitManager {
@@ -102,7 +27,7 @@ impl GitManager {
 
     /// Gets the local bare/primary path for a given repository (e.g., "oyatie/oyatie" -> "repos/oyatie")
     pub fn get_repo_dir(&self, repo: &str) -> PathBuf {
-        let name = repo.split('/').last().unwrap_or(repo);
+        let name = repo.split('/').next_back().unwrap_or(repo);
         self.repos_base_dir.join(name)
     }
 

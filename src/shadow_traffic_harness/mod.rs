@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod traffic_mirror;
-pub use traffic_mirror::{ShadowComparisonResult, ShadowTrafficMetrics, TrafficMirrorComparator};
+pub use traffic_mirror::{ShadowTrafficMetrics, TrafficMirrorComparator};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShadowTrafficReport {
@@ -18,6 +18,12 @@ pub struct ShadowTrafficReport {
 
 pub struct ShadowTrafficHarness {
     comparator: TrafficMirrorComparator,
+}
+
+impl Default for ShadowTrafficHarness {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ShadowTrafficHarness {

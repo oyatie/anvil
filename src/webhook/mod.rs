@@ -180,6 +180,7 @@ pub struct AppState {
     pub ci_triager: Arc<CiTriager>,
     pub github_client: Arc<GitHubClient>,
     pub state_mgr: Arc<StateManager>,
+    pub metrics: Arc<crate::metrics::PrometheusRegistry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -193,10 +194,25 @@ pub async fn healthz_handler() -> &'static str {
     "ok"
 }
 
+/// Prometheus metrics exposition handler returning standard text format
+pub async fn metrics_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> impl axum::response::IntoResponse {
+    let text = state.metrics.export_prometheus_text();
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        text,
+    )
+}
+
 /// Constructs the Axum HTTP router with webhook ingress, healthz probes, and on-demand API endpoints.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", axum::routing::get(healthz_handler))
+        .route("/metrics", axum::routing::get(metrics_handler))
         .route("/webhook", post(webhook_handler))
         .route("/api/review", post(manual_review_handler))
         .route("/api/fix", post(manual_fix_handler))

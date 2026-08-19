@@ -17,6 +17,12 @@ pub struct CacheHitDecision {
 
 pub struct CacheHitRateRatchet;
 
+impl Default for CacheHitRateRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CacheHitRateRatchet {
     pub const MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT: f64 = 85.0; // Target: >= 90-95%
 

@@ -41,6 +41,20 @@ impl StatisticalCanaryEngine {
         let canary_avg: f64 = distribution.canary_samples.iter().sum::<f64>()
             / (distribution.canary_samples.len() as f64);
 
+        // 1. Zero Baseline Error Spike Detection (e.g. 0 baseline errors -> canary errors > 0)
+        if baseline_avg == 0.0 && canary_avg > 0.0 {
+            return CanaryVerdict::Fail {
+                degraded_metric: distribution.metric_name.clone(),
+                p_value: 0.0001,
+                relative_regression_pct: 100.0,
+                reason: format!(
+                    "Canary metric '{}' introduced errors where baseline had 0 errors (Baseline: 0.0, Canary: {:.2})",
+                    distribution.metric_name, canary_avg
+                ),
+            };
+        }
+
+        // 2. Relative Degradation Detection
         if baseline_avg > 0.0 {
             let pct_increase = ((canary_avg - baseline_avg) / baseline_avg) * 100.0;
             // Catch statistical latency or error rate degradation > 10%

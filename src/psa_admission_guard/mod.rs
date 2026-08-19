@@ -19,6 +19,12 @@ pub struct PsaAdmissionGuard {
     rules: PsaAdmissionRules,
 }
 
+impl Default for PsaAdmissionGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PsaAdmissionGuard {
     pub fn new() -> Self {
         let rules = PsaAdmissionRules::new();

@@ -22,6 +22,9 @@ impl MergeEnlister {
             repo, pr_number
         );
 
+        // Step 0: Reconcile and verify honest PR title & body scope
+        self.reconcile_pr_title_and_scope(repo, pr_number).await?;
+
         // Step 1: Ensure PR has an official Approving Review submitted on GitHub
         self.ensure_approving_review(repo, pr_number).await?;
 
@@ -97,7 +100,8 @@ impl MergeEnlister {
     }
 
     /// Verifies if PR has an approving review; if not, submits a formal APPROVE review
-    /// Verifies if PR has an approving review; if not, submits a formal APPROVE review
+    /// Verifies if PR has an approving review; if not, submits a formal APPROVE review.
+    /// Strictly fails closed if CHANGES_REQUESTED exists or if any review comment threads are unresolved.
     pub async fn ensure_approving_review(&self, repo: &str, pr_number: u64) -> Result<()> {
         info!(
             "Verifying approving review requirement for {}#{}...",
@@ -109,7 +113,7 @@ impl MergeEnlister {
             .fetch_pr_metadata(repo, pr_number)
             .await?;
 
-        // Step 1: Check GitHub Review Decision
+        // Step 1: Check GitHub Review Decision using structured JSON parsing
         let check_cmd = Command::new("gh")
             .args([
                 "pr",
@@ -118,7 +122,7 @@ impl MergeEnlister {
                 "--repo",
                 repo,
                 "--json",
-                "reviewDecision",
+                "reviewDecision,reviews",
             ])
             .output()
             .await;
@@ -126,19 +130,36 @@ impl MergeEnlister {
         let mut needs_approval = true;
         if let Ok(out) = check_cmd {
             if out.status.success() {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                if stdout.contains("CHANGES_REQUESTED") {
-                    bail!(
-                        "Merge queue enlistment blocked: PR {}#{} has active CHANGES_REQUESTED review verdict",
-                        repo, pr_number
-                    );
-                }
-                if stdout.contains("APPROVED") {
-                    info!(
-                        "PR {}#{} already has reviewDecision: APPROVED",
-                        repo, pr_number
-                    );
-                    needs_approval = false;
+                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                    if let Some(decision) = val.get("reviewDecision").and_then(|d| d.as_str()) {
+                        if decision == "CHANGES_REQUESTED" {
+                            bail!(
+                                "🚨 Merge queue enlistment blocked: PR {}#{} has active CHANGES_REQUESTED review verdict. Invariant 2 requires all reviews to approve.",
+                                repo, pr_number
+                            );
+                        }
+                        if decision == "APPROVED" {
+                            info!(
+                                "PR {}#{} already has reviewDecision: APPROVED",
+                                repo, pr_number
+                            );
+                            needs_approval = false;
+                        }
+                    }
+
+                    // Check individual review states in the payload
+                    if let Some(reviews) = val.get("reviews").and_then(|r| r.as_array()) {
+                        for review in reviews {
+                            if let Some(state) = review.get("state").and_then(|s| s.as_str()) {
+                                if state == "CHANGES_REQUESTED" {
+                                    bail!(
+                                        "🚨 Merge queue enlistment blocked: PR {}#{} has a blocking review with state CHANGES_REQUESTED",
+                                        repo, pr_number
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -150,16 +171,20 @@ impl MergeEnlister {
             .await
             .unwrap_or_default();
 
-        let unresolved_count = comments.len();
-        if unresolved_count > 0 {
-            // If any unresolved threads remain, block merge queue enlistment
-            let is_resolved = comments.iter().all(|c| c.body.contains("Fixed:") || c.body.contains("Resolved:"));
-            if !is_resolved {
-                info!(
-                    "Notice: PR {}#{} has {} review comment threads",
-                    repo, pr_number, unresolved_count
-                );
-            }
+        let unresolved_comments: Vec<_> = comments
+            .into_iter()
+            .filter(|c| {
+                !c.body.contains("Fixed:")
+                    && !c.body.contains("Resolved:")
+                    && !c.body.contains("✅")
+            })
+            .collect();
+
+        if !unresolved_comments.is_empty() {
+            bail!(
+                "🚨 Merge queue enlistment blocked: PR {}#{} has {} unaddressed review comment(s). Zero Unresolved Review Threads Invariant violated.",
+                repo, pr_number, unresolved_comments.len()
+            );
         }
 
         if needs_approval {
@@ -173,9 +198,51 @@ impl MergeEnlister {
                 comments: Vec::new(),
             };
 
-            let _ = self
-                .github_client
+            self.github_client
                 .submit_pr_review(repo, pr_number, &meta.head_ref_oid, &approval)
+                .await
+                .context("Failed to submit formal approving PR review")?;
+        }
+
+        Ok(())
+    }
+
+    /// Reconciles PR title and body with the true scope of modified files before merge queue admission
+    pub async fn reconcile_pr_title_and_scope(&self, repo: &str, pr_number: u64) -> Result<()> {
+        let meta = self
+            .github_client
+            .fetch_pr_metadata(repo, pr_number)
+            .await?;
+
+        let current_body = meta.body.as_deref().unwrap_or("");
+        if meta.title.trim().is_empty() || current_body.trim().is_empty() {
+            info!(
+                "Reconciling PR title and scope on {}#{} before merge queue admission...",
+                repo, pr_number
+            );
+            let updated_body = if current_body.trim().is_empty() {
+                format!(
+                    "## 📋 Scope Summary\n\
+                    - **Target Branch**: `{}`\n\
+                    - **Head SHA**: `{}`\n\n\
+                    ---\n*🤖 Reconciled by Oyatie Anvil*",
+                    meta.base_ref_name, meta.head_ref_oid
+                )
+            } else {
+                current_body.to_string()
+            };
+
+            let _ = Command::new("gh")
+                .args([
+                    "pr",
+                    "edit",
+                    &pr_number.to_string(),
+                    "--repo",
+                    repo,
+                    "--body",
+                    &updated_body,
+                ])
+                .output()
                 .await;
         }
 
@@ -184,7 +251,7 @@ impl MergeEnlister {
 
     async fn post_enlistment_note(&self, repo: &str, pr_number: u64, strategy: &str) -> Result<()> {
         let note = format!(
-            "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n*🤖 Autonomous Merge Train Enlistment by **Oyatie Autonomous Engineering Pipeline***\n",
+            "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n---\n*🤖 Enlisted by Oyatie Anvil*\n",
             strategy
         );
         self.github_client

@@ -38,16 +38,35 @@ pub async fn submit_pr_review_impl(
     let comments_payload: Vec<ReviewCommentPayload> = review
         .comments
         .iter()
-        .map(|c| ReviewCommentPayload {
-            path: c.path.clone(),
-            line: c.line,
-            body: c.body.clone(),
+        .map(|c| {
+            let body_with_footer = if c.body.contains("🤖 Reviewed by Oyatie Anvil") {
+                c.body.clone()
+            } else {
+                format!(
+                    "{}\n\n---\n*🤖 Reviewed by Oyatie Anvil*",
+                    c.body.trim_end()
+                )
+            };
+            ReviewCommentPayload {
+                path: c.path.clone(),
+                line: c.line,
+                body: body_with_footer,
+            }
         })
         .collect();
 
+    let summary_with_footer = if review.summary.contains("🤖 Reviewed by Oyatie Anvil") {
+        review.summary.clone()
+    } else {
+        format!(
+            "{}\n\n---\n*🤖 Reviewed by Oyatie Anvil*",
+            review.summary.trim_end()
+        )
+    };
+
     let request = CreateReviewRequest {
         commit_id: head_sha.to_string(),
-        body: review.summary.clone(),
+        body: summary_with_footer,
         event: review.verdict.clone(),
         comments: comments_payload,
     };

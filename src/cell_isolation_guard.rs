@@ -21,6 +21,12 @@ pub struct CellIsolationReport {
 
 pub struct CellIsolationGuard;
 
+impl Default for CellIsolationGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CellIsolationGuard {
     pub fn new() -> Self {
         Self

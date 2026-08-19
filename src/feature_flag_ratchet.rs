@@ -25,6 +25,12 @@ pub struct FeatureFlagReport {
 
 pub struct FeatureFlagRatchet;
 
+impl Default for FeatureFlagRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FeatureFlagRatchet {
     pub fn new() -> Self {
         Self
@@ -53,8 +59,8 @@ impl FeatureFlagRatchet {
         let mut current_file = String::new();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 continue;
             }
 

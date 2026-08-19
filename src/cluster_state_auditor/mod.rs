@@ -19,6 +19,12 @@ pub struct ClusterStateAuditor {
     evaluator: ClusterDiffEvaluator,
 }
 
+impl Default for ClusterStateAuditor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClusterStateAuditor {
     pub fn new() -> Self {
         let evaluator = ClusterDiffEvaluator::new();

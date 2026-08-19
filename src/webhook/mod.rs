@@ -181,6 +181,7 @@ pub struct AppState {
     pub github_client: Arc<GitHubClient>,
     pub state_mgr: Arc<StateManager>,
     pub metrics: Arc<crate::metrics::PrometheusRegistry>,
+    pub self_governor: Arc<crate::self_governance::SelfGovernor>,
 }
 
 #[derive(Serialize, Deserialize)]

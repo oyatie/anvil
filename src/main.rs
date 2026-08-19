@@ -290,6 +290,7 @@ async fn main() -> Result<()> {
         github_client: github_client.clone(),
         state_mgr: state_mgr.clone(),
         metrics: metrics.clone(),
+        self_governor: Arc::new(anvil::self_governance::SelfGovernor::new()),
     };
 
     let res = handle_cli(app_state).await;

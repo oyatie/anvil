@@ -21,7 +21,7 @@
 //!   7. Signature last, always.
 
 use crate::fidelity::{registry::AUDITED_GATES, Fidelity};
-use crate::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
+use crate::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport};
 use crate::publish::{body, AnvilAction};
 
 /// Remediation per gate id. Absent where no concrete action is known --

@@ -27,7 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod criterion_diff;
 pub use criterion_diff::{BenchmarkRegressionVerdict, CriterionDiffAnalyzer, MicrobenchmarkSample};

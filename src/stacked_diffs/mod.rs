@@ -22,7 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod dag_manager;
 pub use dag_manager::{StackSyncPlan, StackedBranchNode, StackedDagManager};

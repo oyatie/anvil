@@ -90,35 +90,28 @@ impl UnresolvedReviewGuard {
 
         {
             let out = output;
-            if out.status.success() {
-                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                    if let Some(nodes) = val["data"]["repository"]["pullRequest"]["reviewThreads"]
-                        ["nodes"]
-                        .as_array()
+            if out.status.success()
+                && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                && let Some(nodes) =
+                    val["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"].as_array()
+            {
+                for thread in nodes {
+                    let is_resolved = thread["isResolved"].as_bool().unwrap_or(true);
+                    if !is_resolved
+                        && let Some(comment) = thread["comments"]["nodes"]
+                            .as_array()
+                            .and_then(|a| a.first())
                     {
-                        for thread in nodes {
-                            let is_resolved = thread["isResolved"].as_bool().unwrap_or(true);
-                            if !is_resolved {
-                                if let Some(comment) = thread["comments"]["nodes"]
-                                    .as_array()
-                                    .and_then(|a| a.first())
-                                {
-                                    unresolved.push(UnresolvedReviewThread {
-                                        thread_id: thread["id"].as_str().unwrap_or("").to_string(),
-                                        path: comment["path"].as_str().unwrap_or("").to_string(),
-                                        line: comment["line"].as_u64(),
-                                        comment_body: comment["body"]
-                                            .as_str()
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        author: comment["author"]["login"]
-                                            .as_str()
-                                            .unwrap_or("")
-                                            .to_string(),
-                                    });
-                                }
-                            }
-                        }
+                        unresolved.push(UnresolvedReviewThread {
+                            thread_id: thread["id"].as_str().unwrap_or("").to_string(),
+                            path: comment["path"].as_str().unwrap_or("").to_string(),
+                            line: comment["line"].as_u64(),
+                            comment_body: comment["body"].as_str().unwrap_or("").to_string(),
+                            author: comment["author"]["login"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string(),
+                        });
                     }
                 }
             }

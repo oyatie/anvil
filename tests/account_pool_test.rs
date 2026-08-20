@@ -85,10 +85,11 @@ async fn test_multi_account_rate_limit_failover() {
         .await;
 
     // Both in cooldown -> leasing fails closed
-    assert!(pool
-        .lease_account(ModelProvider::AnthropicClaudeCode)
-        .await
-        .is_err());
+    assert!(
+        pool.lease_account(ModelProvider::AnthropicClaudeCode)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]

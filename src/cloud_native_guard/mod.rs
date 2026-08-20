@@ -168,9 +168,11 @@ mod tests {
             .evaluate_cloud_native(Path::new("/tmp"), &diff_ctx)
             .unwrap();
         assert!(!report.is_compliant);
-        assert!(report
-            .violations
-            .iter()
-            .any(|v| v.category == "PROPRIETARY_CLOUD_SDK_IN_CORE"));
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.category == "PROPRIETARY_CLOUD_SDK_IN_CORE")
+        );
     }
 }

@@ -34,8 +34,7 @@ pub mod diff_evaluator;
 pub use diff_evaluator::{ClusterDiffEvaluator, ClusterDriftFinding};
 
 /// The access that must exist before live state can be read back.
-const MISSING_CLUSTER_ACCESS: &str =
-    "no Kubernetes API or ArgoCD cluster access is configured, so no live state \
+const MISSING_CLUSTER_ACCESS: &str = "no Kubernetes API or ArgoCD cluster access is configured, so no live state \
      was read back and no comparison against Git was performed";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -13,7 +13,7 @@
 //! Policy (invariant I4): fork PRs are still reviewed and still receive a
 //! scorecard. Only the push is refused.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use tracing::warn;
 
 /// Returns an error when the PR head is in a fork, so the caller must not push.

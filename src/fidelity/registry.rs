@@ -211,7 +211,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               arithmetic means against a fixed relative bound \
               (automated_canary/statistical_engine.rs:43). With no baseline_samples and no canary_samples \
               the gate now reports NotMeasured instead of a pass.",
-        blocked_on: Some("a canary deployment with a queryable Prometheus or OpenTelemetry endpoint"),
+        blocked_on: Some(
+            "a canary deployment with a queryable Prometheus or OpenTelemetry endpoint",
+        ),
     },
     GateFidelity {
         gate_id: "stacked_diffs_status",

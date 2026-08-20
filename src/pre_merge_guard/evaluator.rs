@@ -652,148 +652,6 @@ impl PreMergeGuard {
             )),
         };
 
-        let is_certified_ready = doc_parity_status.is_acceptable()
-            && cedar_status.is_acceptable()
-            && compliance_status.is_acceptable()
-            && api_contract_status.is_acceptable()
-            && cell_isolation_status.is_acceptable()
-            && supply_chain_status.is_acceptable()
-            && clean_arch_status.is_acceptable()
-            && monorepo_status.is_acceptable()
-            && debt_shrink_status.is_acceptable()
-            && modularization_status.is_acceptable()
-            && coverage_status.is_acceptable()
-            && rust_skills_status.is_acceptable()
-            && kani_status.is_acceptable()
-            && slo_status.is_acceptable()
-            && adr_status.is_acceptable()
-            && shuffle_status.is_acceptable()
-            && trace_status.is_acceptable()
-            && constant_work_status.is_acceptable()
-            && idempotency_status.is_acceptable()
-            && finops_status.is_acceptable()
-            && ghost_migration_status.is_acceptable()
-            && gitops_promo_status.is_acceptable()
-            && gitops_drift_status.is_acceptable()
-            && canary_status.is_acceptable()
-            && cluster_audit_status.is_acceptable()
-            && migration_orch_status.is_acceptable()
-            && ci_wallclock_status.is_acceptable()
-            && predictive_test_status.is_acceptable()
-            && compile_profile_status.is_acceptable()
-            && remote_cache_status.is_acceptable()
-            && runner_economics_status.is_acceptable()
-            && sandbox_status.is_acceptable()
-            && cross_service_status.is_acceptable()
-            && ephemeral_secret_status.is_acceptable()
-            && psa_status.is_acceptable()
-            && shadow_traffic_status.is_acceptable()
-            && unresolved_review_status.is_acceptable()
-            && local_probe_status.is_acceptable()
-            && semantic_abi_status.is_acceptable()
-            && zero_day_status.is_acceptable()
-            && formal_verification_status.is_acceptable()
-            && deadlock_status.is_acceptable()
-            && automated_canary_status.is_acceptable()
-            && progressive_ring_status.is_acceptable()
-            && hermetic_build_status.is_acceptable()
-            && openvex_status.is_acceptable()
-            && cosign_status.is_acceptable()
-            && chaos_injection_status.is_acceptable()
-            && stacked_diffs_status.is_acceptable()
-            && microbench_status.is_acceptable()
-            && jittered_backoff_status.is_acceptable()
-            && schema_evolution_status.is_acceptable()
-            && auto_rollback_status.is_acceptable()
-            && wasm_sandbox_status.is_acceptable()
-            && consistency_status.is_acceptable()
-            && flake_quarantine_status.is_acceptable()
-            && zero_trust_workload_status.is_acceptable()
-            && carbon_compute_status.is_acceptable()
-            && replay_harness_status.is_acceptable()
-            && upgrade_train_status.is_acceptable()
-            && mutation_status.is_acceptable()
-            && feature_flag_report_status.is_acceptable()
-            && bench_status.is_acceptable()
-            && attestation_status.is_acceptable()
-            && security_scan_status.is_acceptable()
-            && schema_compat_status.is_acceptable()
-            && performance_concurrency_status.is_acceptable()
-            && test_suite_status.is_acceptable()
-            && review_verdict_status.is_acceptable();
-
-        let summary_markdown = MatrixRenderer::render_matrix(
-            &doc_parity_status,
-            &cedar_status,
-            &compliance_status,
-            &api_contract_status,
-            &cell_isolation_status,
-            &supply_chain_status,
-            &clean_arch_status,
-            &monorepo_status,
-            &debt_shrink_status,
-            &modularization_status,
-            &coverage_status,
-            &rust_skills_status,
-            &kani_status,
-            &slo_status,
-            &adr_status,
-            &shuffle_status,
-            &trace_status,
-            &constant_work_status,
-            &idempotency_status,
-            &finops_status,
-            &ghost_migration_status,
-            &gitops_promo_status,
-            &gitops_drift_status,
-            &canary_status,
-            &cluster_audit_status,
-            &migration_orch_status,
-            &ci_wallclock_status,
-            &predictive_test_status,
-            &compile_profile_status,
-            &remote_cache_status,
-            &runner_economics_status,
-            &sandbox_status,
-            &cross_service_status,
-            &ephemeral_secret_status,
-            &psa_status,
-            &shadow_traffic_status,
-            &unresolved_review_status,
-            &local_probe_status,
-            &semantic_abi_status,
-            &zero_day_status,
-            &formal_verification_status,
-            &deadlock_status,
-            &automated_canary_status,
-            &progressive_ring_status,
-            &hermetic_build_status,
-            &openvex_status,
-            &cosign_status,
-            &chaos_injection_status,
-            &stacked_diffs_status,
-            &microbench_status,
-            &jittered_backoff_status,
-            &schema_evolution_status,
-            &auto_rollback_status,
-            &wasm_sandbox_status,
-            &consistency_status,
-            &flake_quarantine_status,
-            &zero_trust_workload_status,
-            &carbon_compute_status,
-            &replay_harness_status,
-            &upgrade_train_status,
-            &mutation_status,
-            &feature_flag_report_status,
-            &bench_status,
-            &attestation_status,
-            &security_scan_status,
-            &schema_compat_status,
-            &performance_concurrency_status,
-            &test_suite_status,
-            is_certified_ready,
-        );
-
         // Anvil turns these two inward. Every other gate in this matrix runs
         // against the pull request's repository; these run against Anvil's own
         // tree, because a rule enforced only on other people's code is an
@@ -829,7 +687,8 @@ impl PreMergeGuard {
         };
 
         let mut report = PreMergeCertificationReport {
-            is_certified_ready,
+            // Derived by seal(); never a caller-supplied verdict.
+            is_certified_ready: false,
             doc_parity_status,
             cedar_status,
             compliance_status,
@@ -872,6 +731,7 @@ impl PreMergeGuard {
             zero_day_status,
             formal_verification_status,
             deadlock_status,
+            review_verdict_status,
             brand_absence_status,
             migration_boundary_status,
             automated_canary_status,
@@ -901,10 +761,83 @@ impl PreMergeGuard {
             performance_concurrency_status,
             test_suite_status,
             unmeasured_gates: Vec::new(),
-            summary_markdown,
+            summary_markdown: String::new(),
         };
-        // Populate from the statuses just assigned, so the field can never drift.
-        report.recompute_unmeasured();
+        // The verdict and the unmeasured list are derived from the statuses just
+        // assigned — every field, including the two self-directed gates — so
+        // neither can drift from the matrix it summarises.
+        report.seal();
+        report.summary_markdown = MatrixRenderer::render_matrix(
+            &report.doc_parity_status,
+            &report.cedar_status,
+            &report.compliance_status,
+            &report.api_contract_status,
+            &report.cell_isolation_status,
+            &report.supply_chain_status,
+            &report.clean_arch_status,
+            &report.monorepo_status,
+            &report.debt_shrink_status,
+            &report.modularization_status,
+            &report.coverage_status,
+            &report.rust_skills_status,
+            &report.kani_status,
+            &report.slo_status,
+            &report.adr_status,
+            &report.shuffle_status,
+            &report.trace_status,
+            &report.constant_work_status,
+            &report.idempotency_status,
+            &report.finops_status,
+            &report.ghost_migration_status,
+            &report.gitops_promo_status,
+            &report.gitops_drift_status,
+            &report.canary_status,
+            &report.cluster_audit_status,
+            &report.migration_orch_status,
+            &report.ci_wallclock_status,
+            &report.predictive_test_status,
+            &report.compile_profile_status,
+            &report.remote_cache_status,
+            &report.runner_economics_status,
+            &report.sandbox_status,
+            &report.cross_service_status,
+            &report.ephemeral_secret_status,
+            &report.psa_status,
+            &report.shadow_traffic_status,
+            &report.unresolved_review_status,
+            &report.local_probe_status,
+            &report.semantic_abi_status,
+            &report.zero_day_status,
+            &report.formal_verification_status,
+            &report.deadlock_status,
+            &report.automated_canary_status,
+            &report.progressive_ring_status,
+            &report.hermetic_build_status,
+            &report.openvex_status,
+            &report.cosign_status,
+            &report.chaos_injection_status,
+            &report.stacked_diffs_status,
+            &report.microbench_status,
+            &report.jittered_backoff_status,
+            &report.schema_evolution_status,
+            &report.auto_rollback_status,
+            &report.wasm_sandbox_status,
+            &report.consistency_status,
+            &report.flake_quarantine_status,
+            &report.zero_trust_workload_status,
+            &report.carbon_compute_status,
+            &report.replay_harness_status,
+            &report.upgrade_train_status,
+            &report.mutation_status,
+            &report.feature_flag_status,
+            &report.bench_status,
+            &report.attestation_status,
+            &report.security_scan_status,
+            &report.schema_compat_status,
+            &report.performance_concurrency_status,
+            &report.test_suite_status,
+            report.is_certified_ready,
+        );
         Ok(report)
     }
 }

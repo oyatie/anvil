@@ -22,10 +22,10 @@ fn sources_under(dir: &str) -> Vec<(String, String)> {
             let path = e.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|x| x == "rs") {
-                if let Ok(text) = fs::read_to_string(&path) {
-                    out.push((path.display().to_string(), text));
-                }
+            } else if path.extension().is_some_and(|x| x == "rs")
+                && let Ok(text) = fs::read_to_string(&path)
+            {
+                out.push((path.display().to_string(), text));
             }
         }
     }

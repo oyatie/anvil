@@ -184,7 +184,7 @@ impl AdaptiveRoutingBandit {
                     mean_cost_per_task_usd: 0.0,
                     dispute_rate: 0.0,
                     pipeline_health_status: "NO_DATA".to_string(),
-                }
+                };
             }
         };
 
@@ -223,7 +223,11 @@ impl AdaptiveRoutingBandit {
 
         info!(
             "📈 [Pipeline Evaluation Scorecard] Tasks: {} | Pass@1: {:.1}% | Avg Quality: {:.2} | Cost/Task: ${:.3} | Status: {}",
-            total, success_rate * 100.0, avg_quality, avg_cost, health_status
+            total,
+            success_rate * 100.0,
+            avg_quality,
+            avg_cost,
+            health_status
         );
 
         PipelineEvaluationScorecard {

@@ -116,7 +116,10 @@ impl DebtShrinkGuard {
         let is_acceptable = violations.is_empty();
         let summary = if is_acceptable {
             if total_debt_shrunk > 0 {
-                format!("Deprecation debt reduced by {} lines across reorg targets. Zero expansions permitted.", total_debt_shrunk)
+                format!(
+                    "Deprecation debt reduced by {} lines across reorg targets. Zero expansions permitted.",
+                    total_debt_shrunk
+                )
             } else {
                 "Deprecation & Reorg Drain Ratchet verified; zero prohibited expansions on deprecating targets.".to_string()
             }

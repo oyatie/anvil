@@ -302,16 +302,16 @@ Write the policy files directly to the workspace now."#####,
 
 fn extract_json_block(text: &str) -> String {
     let json_block_re = Regex::new(r"(?s)```(?:json)?\s*(\{.*?\})\s*```").unwrap();
-    if let Some(caps) = json_block_re.captures(text) {
-        if let Some(m) = caps.get(1) {
-            return m.as_str().to_string();
-        }
+    if let Some(caps) = json_block_re.captures(text)
+        && let Some(m) = caps.get(1)
+    {
+        return m.as_str().to_string();
     }
 
-    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}')) {
-        if first < last {
-            return text[first..=last].to_string();
-        }
+    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}'))
+        && first < last
+    {
+        return text[first..=last].to_string();
     }
 
     text.to_string()
@@ -335,9 +335,11 @@ mod tests {
         let parsed: CedarPolicyEvaluation = serde_json::from_str(&json_str).expect("Valid parse");
         assert!(!parsed.is_cedar_compliant);
         assert_eq!(parsed.suggested_policy_files.len(), 1);
-        assert!(parsed
-            .generated_cedar_policy
-            .unwrap()
-            .contains("permit(principal"));
+        assert!(
+            parsed
+                .generated_cedar_policy
+                .unwrap()
+                .contains("permit(principal")
+        );
     }
 }

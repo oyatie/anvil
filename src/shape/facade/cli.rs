@@ -2,7 +2,7 @@
 //! say what it declares. Exits non-zero on any problem.
 
 use crate::shape::core::spec::RuleMode;
-use crate::shape::core::{resolve, ResolvedSpec, ShapeSpec, SpecError};
+use crate::shape::core::{ResolvedSpec, ShapeSpec, SpecError, resolve};
 use std::path::Path;
 
 /// The one path literal Anvil carries for the Shape Program: its own config

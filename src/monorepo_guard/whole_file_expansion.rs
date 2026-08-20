@@ -108,11 +108,15 @@ mod tests {
 
         let violations =
             WholeFileExpansion::evaluate_whole_file(dir.path(), "billing/core/src/order.rs");
-        assert!(violations
-            .iter()
-            .any(|v| v.category == "OVERSIZED_WHOLE_FILE"));
-        assert!(violations
-            .iter()
-            .any(|v| v.category == "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION"));
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.category == "OVERSIZED_WHOLE_FILE")
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.category == "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION")
+        );
     }
 }

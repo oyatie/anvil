@@ -6,7 +6,7 @@
 //! honest as modules are added, split, and renamed.
 
 use anvil::migration::MIGRATION_LEDGER;
-use anvil::migration::{deletable_today, surviving_surface, verdict_counts, Confidence, Verdict};
+use anvil::migration::{Confidence, Verdict, deletable_today, surviving_surface, verdict_counts};
 use std::collections::HashSet;
 use std::fs;
 

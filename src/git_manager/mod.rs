@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tokio::process::Command;
@@ -321,16 +321,14 @@ fi
         if let Ok(mut entries) = tokio::fs::read_dir(&self.worktrees_base_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                if let Ok(metadata) = entry.metadata().await {
-                    if let Ok(modified) = metadata.modified() {
-                        if let Ok(age) = now.duration_since(modified) {
-                            if age > ttl {
-                                info!("Pruning abandoned ephemeral worktree directory: {:?}", path);
-                                let _ = tokio::fs::remove_dir_all(&path).await;
-                                cleaned += 1;
-                            }
-                        }
-                    }
+                if let Ok(metadata) = entry.metadata().await
+                    && let Ok(modified) = metadata.modified()
+                    && let Ok(age) = now.duration_since(modified)
+                    && age > ttl
+                {
+                    info!("Pruning abandoned ephemeral worktree directory: {:?}", path);
+                    let _ = tokio::fs::remove_dir_all(&path).await;
+                    cleaned += 1;
                 }
             }
         }

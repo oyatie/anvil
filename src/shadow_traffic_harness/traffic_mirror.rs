@@ -35,7 +35,9 @@ impl TrafficMirrorComparator {
         let details = if is_parity_satisfied {
             format!(
                 "✅ Dark-traffic shadow replay verified: {:.2}% payload parity, {:.2}% status code parity across {} sampled requests.",
-                metrics.payload_parity_pct, metrics.status_code_parity_pct, metrics.sampled_requests
+                metrics.payload_parity_pct,
+                metrics.status_code_parity_pct,
+                metrics.sampled_requests
             )
         } else {
             format!(

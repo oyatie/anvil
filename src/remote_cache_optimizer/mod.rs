@@ -39,8 +39,7 @@ pub use cache_hit_ratchet::{CacheHitMetrics, CacheHitRateRatchet};
 pub use cache_keys::CacheKeyGenerator;
 
 /// The data source that must exist before a hit rate can be reported.
-const MISSING_CAS_STATISTICS: &str =
-    "no sccache or Buck2 CAS statistics endpoint is configured, so no cache hit \
+const MISSING_CAS_STATISTICS: &str = "no sccache or Buck2 CAS statistics endpoint is configured, so no cache hit \
      rate was read and no lockfile was hashed";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

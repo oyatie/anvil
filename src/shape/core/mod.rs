@@ -10,6 +10,6 @@ pub mod validate;
 
 pub use profile::LanguageProfile;
 pub use report::{Finding, Fix, RuleId, ShapeDistance, ShapeReport, SpecSource, UnitConformance};
-pub use resolve::{resolve, DiscoveryRule, ResolvedSpec, ResolvedUnit};
-pub use spec::{RuleMode, ShapeSpec, SpecError, SCHEMA_V1};
+pub use resolve::{DiscoveryRule, ResolvedSpec, ResolvedUnit, resolve};
+pub use spec::{RuleMode, SCHEMA_V1, ShapeSpec, SpecError};
 pub use validate::validate;

@@ -17,9 +17,9 @@
 //!
 //! These tests pin the supervision behaviour, not the transport.
 
-use anvil::webhook::forwarder_supervisor::{next_restart_delay, supervise_bounded, RestartPolicy};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use anvil::webhook::forwarder_supervisor::{RestartPolicy, next_restart_delay, supervise_bounded};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 fn test_policy() -> RestartPolicy {

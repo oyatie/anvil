@@ -68,16 +68,17 @@ impl RegulatoryEngine {
                     }
 
                     // Regex Pattern check
-                    if let Some(ref pattern) = rule.pattern_regex {
-                        if let Ok(re) = Regex::new(pattern) {
-                            if re.is_match(added_code) {
-                                let severity = if *is_advisory_grace {
-                                    "ADVISORY".to_string()
-                                } else {
-                                    rule.severity.clone()
-                                };
+                    if let Some(ref pattern) = rule.pattern_regex
+                        && let Ok(re) = Regex::new(pattern)
+                        && re.is_match(added_code)
+                    {
+                        let severity = if *is_advisory_grace {
+                            "ADVISORY".to_string()
+                        } else {
+                            rule.severity.clone()
+                        };
 
-                                violations.push(StatutoryViolation {
+                        violations.push(StatutoryViolation {
                                     rule_id: rule.rule_id.clone(),
                                     scope: format!("{:?}", rule.scope),
                                     regulatory_level: format!("{:?}", rule.level),
@@ -95,8 +96,6 @@ impl RegulatoryEngine {
                                         rule.requirement_spec, rule.required_controls, rule.citation
                                     ),
                                 });
-                            }
-                        }
                     }
                 }
             }

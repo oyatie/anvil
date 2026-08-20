@@ -37,9 +37,9 @@ mod tests {
 
     #[test]
     fn test_computes_deterministic_cache_key() {
-        let gen = CacheKeyGenerator::new();
-        let key1 = gen.compute_cache_key("foo = 1.0", "rustc-1.80.0");
-        let key2 = gen.compute_cache_key("foo = 1.0", "rustc-1.80.0");
+        let r#gen = CacheKeyGenerator::new();
+        let key1 = r#gen.compute_cache_key("foo = 1.0", "rustc-1.80.0");
+        let key2 = r#gen.compute_cache_key("foo = 1.0", "rustc-1.80.0");
         assert_eq!(key1, key2);
         assert!(key1.starts_with("sccache-v2-rustc-1.80.0-"));
     }

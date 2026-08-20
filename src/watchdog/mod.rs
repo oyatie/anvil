@@ -1,8 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -158,20 +158,26 @@ impl PipelineWatchdog {
 
                     if idle_time > max_idle {
                         warn!(
-                        "⚠️ [Inactivity Threshold Breached] {} on {} emitted 0 vital signs for {:.1}s (max allowed idle: {:.0}s)",
-                        stage_name, entity_clone, idle_time.as_secs_f64(), max_idle.as_secs_f64()
-                    );
+                            "⚠️ [Inactivity Threshold Breached] {} on {} emitted 0 vital signs for {:.1}s (max allowed idle: {:.0}s)",
+                            stage_name,
+                            entity_clone,
+                            idle_time.as_secs_f64(),
+                            max_idle.as_secs_f64()
+                        );
                         return Err(format!(
-                        "Inactivity stall: 0 bytes/tokens/syscalls emitted in {:.1}s (idle SLA: {:.0}s)",
-                        idle_time.as_secs_f64(),
-                        max_idle.as_secs_f64()
-                    ));
+                            "Inactivity stall: 0 bytes/tokens/syscalls emitted in {:.1}s (idle SLA: {:.0}s)",
+                            idle_time.as_secs_f64(),
+                            max_idle.as_secs_f64()
+                        ));
                     }
 
                     info!(
-                    "⏳ [Heartbeat] {} is active on {} (total elapsed: {:.1}s, last active: {:.1}s ago)...",
-                    stage_name, entity_clone, total_elapsed.as_secs_f64(), idle_time.as_secs_f64()
-                );
+                        "⏳ [Heartbeat] {} is active on {} (total elapsed: {:.1}s, last active: {:.1}s ago)...",
+                        stage_name,
+                        entity_clone,
+                        total_elapsed.as_secs_f64(),
+                        idle_time.as_secs_f64()
+                    );
                 }
             },
         );
@@ -307,8 +313,10 @@ mod tests {
         )
         .await;
 
-        assert!(result
-            .unwrap()
-            .starts_with("REMEDIATED: Remediated from stall: Inactivity stall"));
+        assert!(
+            result
+                .unwrap()
+                .starts_with("REMEDIATED: Remediated from stall: Inactivity stall")
+        );
     }
 }

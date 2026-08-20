@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -111,41 +111,40 @@ impl AccountPoolManager {
         // 1. Check prompt-cache affinity table
         if let Some(key) = context_affinity_key {
             let mut cache_guard = self.affinity_cache.write().await;
-            if let Some((acc_id, expires_at)) = cache_guard.get(key) {
-                if now < *expires_at {
-                    let pool_guard = self.pools.read().await;
-                    if let Some(accounts) = pool_guard.get(&provider) {
-                        for acc_arc in accounts {
-                            let mut acc = acc_arc.write().await;
-                            if acc.account_id == *acc_id
-                                && !acc.is_draining
-                                && (acc.cooldown_until.is_none()
-                                    || now >= acc.cooldown_until.unwrap())
-                            {
-                                let used_5hr: usize = acc
-                                    .usage_history
-                                    .iter()
-                                    .filter(|r| r.timestamp >= five_hours_ago)
-                                    .map(|r| r.tokens_consumed)
-                                    .sum();
+            if let Some((acc_id, expires_at)) = cache_guard.get(key)
+                && now < *expires_at
+            {
+                let pool_guard = self.pools.read().await;
+                if let Some(accounts) = pool_guard.get(&provider) {
+                    for acc_arc in accounts {
+                        let mut acc = acc_arc.write().await;
+                        if acc.account_id == *acc_id
+                            && !acc.is_draining
+                            && (acc.cooldown_until.is_none() || now >= acc.cooldown_until.unwrap())
+                        {
+                            let used_5hr: usize = acc
+                                .usage_history
+                                .iter()
+                                .filter(|r| r.timestamp >= five_hours_ago)
+                                .map(|r| r.tokens_consumed)
+                                .sum();
 
-                                let has_headroom = match acc.max_5hr_tokens {
-                                    Some(max) => used_5hr < max,
-                                    None => true,
-                                };
+                            let has_headroom = match acc.max_5hr_tokens {
+                                Some(max) => used_5hr < max,
+                                None => true,
+                            };
 
-                                if has_headroom {
-                                    acc.last_leased_at = now;
-                                    cache_guard.insert(
-                                        key.to_string(),
-                                        (acc.account_id.clone(), now + Duration::from_secs(300)),
-                                    );
-                                    info!(
-                                        "⚡ [Prompt Cache Hit] Routed to warm affinity '{}' for '{}'",
-                                        acc.account_id, key
-                                    );
-                                    return Ok(Arc::clone(acc_arc));
-                                }
+                            if has_headroom {
+                                acc.last_leased_at = now;
+                                cache_guard.insert(
+                                    key.to_string(),
+                                    (acc.account_id.clone(), now + Duration::from_secs(300)),
+                                );
+                                info!(
+                                    "⚡ [Prompt Cache Hit] Routed to warm affinity '{}' for '{}'",
+                                    acc.account_id, key
+                                );
+                                return Ok(Arc::clone(acc_arc));
                             }
                         }
                     }
@@ -212,14 +211,14 @@ impl AccountPoolManager {
                 .map(|r| r.tokens_consumed)
                 .sum();
 
-            if let Some(max) = acc.max_5hr_tokens {
-                if tokens_5hr >= max {
-                    warn!(
-                        "Account {} reached 5hr ceiling ({}/{}). Skipping.",
-                        acc.account_id, tokens_5hr, max
-                    );
-                    continue;
-                }
+            if let Some(max) = acc.max_5hr_tokens
+                && tokens_5hr >= max
+            {
+                warn!(
+                    "Account {} reached 5hr ceiling ({}/{}). Skipping.",
+                    acc.account_id, tokens_5hr, max
+                );
+                continue;
             }
 
             let is_better = match &best_account {

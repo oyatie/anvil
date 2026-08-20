@@ -13,7 +13,7 @@
 //! known seams are cut would block ordinary work for a problem already
 //! recorded.
 
-use anvil::migration::{check_edge, edge_is_allowed, verdict_for, Verdict};
+use anvil::migration::{Verdict, check_edge, edge_is_allowed, verdict_for};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;

@@ -35,7 +35,7 @@
 //! no upstream equivalent at all. The gate did not report noise; it located a
 //! seam nobody had drawn.
 
-use crate::migration::{Verdict, MIGRATION_LEDGER};
+use crate::migration::{MIGRATION_LEDGER, Verdict};
 
 /// One forbidden edge.
 #[derive(Debug, Clone, PartialEq, Eq)]

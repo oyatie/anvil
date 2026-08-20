@@ -1,7 +1,7 @@
 //! Semantic validation of a parsed spec: every problem is reported, none is
 //! fatal on its own, so a tenant fixes a spec in one round.
 
-use super::spec::{RuleMode, ShapeSpec, SCHEMA_V1};
+use super::spec::{RuleMode, SCHEMA_V1, ShapeSpec};
 use std::collections::BTreeSet;
 
 pub fn validate(spec: &ShapeSpec) -> Vec<String> {

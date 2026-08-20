@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
@@ -360,7 +360,9 @@ pub async fn manual_reconcile_handler(
 }
 
 pub async fn drain_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    info!("👋 [Blue/Green Handover] Graceful drain requested via /api/drain. Initiating zero-loss retirement...");
+    info!(
+        "👋 [Blue/Green Handover] Graceful drain requested via /api/drain. Initiating zero-loss retirement..."
+    );
 
     tokio::spawn(async move {
         // Allow in-flight requests to complete within 3 seconds

@@ -41,6 +41,7 @@ pub mod dual_track_build_guard;
 pub mod early_exit_cascade;
 pub mod ephemeral_sandbox;
 pub mod ephemeral_secrets;
+pub mod exec;
 pub mod feature_flag_ratchet;
 pub mod finops_ratchet;
 pub mod fixer;

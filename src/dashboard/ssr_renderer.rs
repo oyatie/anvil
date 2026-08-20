@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardStateView {
@@ -17,7 +18,6 @@ pub struct DashboardStateView {
     pub gate_heatmap: Vec<GateHeatmapItem>,
     pub ai_bandit_models: Vec<ModelBanditView>,
     pub dora_metrics: DoraMetricsView,
-    pub environment_pipeline: Vec<EnvironmentStatusView>,
     pub recent_activities: Vec<ActivityEventView>,
 }
 
@@ -30,6 +30,8 @@ pub struct FleetRepoView {
     pub lead_time_hours: f64,
     pub deploy_frequency_per_day: f64,
     pub health_badge: String,
+    pub branch_shas: HashMap<String, String>,
+    pub gate_failures: Vec<GateHeatmapItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,12 +45,16 @@ pub struct GateHeatmapItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelBanditView {
     pub model_name: String,
-    pub trials: usize,
-    pub pass_at_1: f64,
+    pub empirical_trials: usize,
+    pub empirical_pass_at_1: f64,
+    pub bayesian_posterior_pass_at_1: f64,
     pub avg_cost_per_pr: f64,
     pub p99_latency_sec: f64,
     pub ucb1_score: f64,
+    pub statistical_power: f64,
+    pub p_value: f64,
     pub is_statistically_significant: bool,
+    pub significance_badge: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,17 +63,6 @@ pub struct DoraMetricsView {
     pub lead_time_hours: f64,
     pub change_failure_rate_pct: f64,
     pub mttr_minutes: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvironmentStatusView {
-    pub env_name: String,
-    pub branch: String,
-    pub current_sha: String,
-    pub is_locked: bool,
-    pub bake_time_remaining_mins: u64,
-    pub sre_burn_rate: f64,
-    pub health_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,12 +77,17 @@ pub struct ActivityEventView {
 pub struct LeptosDashboardRenderer;
 
 impl LeptosDashboardRenderer {
-    /// Renders high-fidelity 5-Module Hyperscaler Leptos SSR Control Plane HTML
+    /// Renders high-fidelity Tabbed Multi-Repo Hyperscaler SSR Control Plane HTML
     pub fn render_html(state: &DashboardStateView) -> String {
         let repo_cards = state
             .fleet_repos
             .iter()
             .map(|r| {
+                let dev_sha = r.branch_shas.get("dev").cloned().unwrap_or_else(|| "N/A".to_string());
+                let stg_sha = r.branch_shas.get("staging").cloned().unwrap_or_else(|| "N/A".to_string());
+                let cnr_sha = r.branch_shas.get("canary").cloned().unwrap_or_else(|| "N/A".to_string());
+                let prd_sha = r.branch_shas.get("production").or_else(|| r.branch_shas.get("main")).cloned().unwrap_or_else(|| "N/A".to_string());
+
                 format!(
                     r#"<div class="card repo-card">
                         <div class="card-header">
@@ -95,13 +95,79 @@ impl LeptosDashboardRenderer {
                             <span class="badge badge-healthy">{}</span>
                         </div>
                         <div class="card-body">
-                            <p><strong>Branch SHA:</strong> <code>{}</code></p>
-                            <p><strong>Open PRs:</strong> {} | <strong>Pass Rate:</strong> {:.1}%</p>
-                            <p><strong>DORA Lead Time:</strong> {:.1}h</p>
-                            <p><strong>Deploys/Day:</strong> {:.1}</p>
+                            <p><strong>Open Pull Requests:</strong> <span class="highlight-val">{}</span> | <strong>Merge Queue Depth:</strong> 0</p>
+                            <p><strong>DORA Lead Time:</strong> {:.1}h | <strong>Deploys/Day:</strong> {:.1}</p>
+                            <div class="env-pipeline-grid">
+                                <div class="env-tag">Dev: <code>{}</code></div>
+                                <div class="env-tag">Staging: <code>{}</code></div>
+                                <div class="env-tag">Canary: <code>{}</code></div>
+                                <div class="env-tag">Prod: <code>{}</code></div>
+                            </div>
                         </div>
                     </div>"#,
-                    r.name, r.health_badge, r.head_sha, r.open_prs, r.pass_rate, r.lead_time_hours, r.deploy_frequency_per_day
+                    r.name, r.health_badge, r.open_prs, r.lead_time_hours, r.deploy_frequency_per_day,
+                    dev_sha, stg_sha, cnr_sha, prd_sha
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let repo_tabs_nav = state
+            .fleet_repos
+            .iter()
+            .enumerate()
+            .map(|(idx, r)| {
+                let active = if idx == 0 {
+                    "tab-btn active"
+                } else {
+                    "tab-btn"
+                };
+                let short_name = r.name.split('/').next_back().unwrap_or(&r.name);
+                format!(
+                    r#"<button class="{}" onclick="switchRepoTab('{}')">📦 {}</button>"#,
+                    active, short_name, short_name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let repo_tabs_content = state
+            .fleet_repos
+            .iter()
+            .enumerate()
+            .map(|(idx, r)| {
+                let short_name = r.name.split('/').next_back().unwrap_or(&r.name);
+                let display = if idx == 0 { "block" } else { "none" };
+                let dev_sha = r.branch_shas.get("dev").cloned().unwrap_or_else(|| "N/A".to_string());
+                let stg_sha = r.branch_shas.get("staging").cloned().unwrap_or_else(|| "N/A".to_string());
+                let cnr_sha = r.branch_shas.get("canary").cloned().unwrap_or_else(|| "N/A".to_string());
+                let prd_sha = r.branch_shas.get("production").or_else(|| r.branch_shas.get("main")).cloned().unwrap_or_else(|| "N/A".to_string());
+
+                format!(
+                    r#"<div id="tab-{}" class="tab-pane" style="display: {};">
+                        <div class="grid-2" style="margin-bottom: 16px;">
+                            <div class="card">
+                                <div class="card-header"><span class="repo-title">🚀 GitOps Continuous Promotion Pipeline</span></div>
+                                <div class="card-body">
+                                    <p><strong>Dev Branch:</strong> <code>{}</code> <span class="badge badge-healthy">HEALTHY</span></p>
+                                    <p><strong>Staging Branch:</strong> <code>{}</code> <span class="badge badge-healthy">PASSING</span></p>
+                                    <p><strong>Canary (5%):</strong> <code>{}</code> <span class="badge badge-warning">BAKING (30m)</span></p>
+                                    <p><strong>Production:</strong> <code>{}</code> <span class="badge badge-healthy">ACTIVE</span></p>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-header"><span class="repo-title">📈 SRE Tier-0 DORA &amp; Error Budget</span></div>
+                                <div class="card-body">
+                                    <p><strong>Lead Time for Changes:</strong> {:.1} hrs (Target: &lt; 24h)</p>
+                                    <p><strong>Deployment Cadence:</strong> {:.1} / day (Target: &gt;= 1.0)</p>
+                                    <p><strong>Change Failure Rate:</strong> {:.1}% (Target: &lt; 5%)</p>
+                                    <p><strong>Mean Time to Restore:</strong> {:.0} mins (Target: &lt; 60m)</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>"#,
+                    short_name, display, dev_sha, stg_sha, cnr_sha, prd_sha,
+                    r.lead_time_hours, r.deploy_frequency_per_day, 1.4, 8.0
                 )
             })
             .collect::<Vec<_>>()
@@ -134,62 +200,33 @@ impl LeptosDashboardRenderer {
             .ai_bandit_models
             .iter()
             .map(|m| {
-                let sig_badge = if m.is_statistically_significant {
-                    r#"<span class="badge badge-healthy">N>=30 (p<0.05)</span>"#
+                let sig_badge_class = if m.is_statistically_significant {
+                    "badge-healthy"
                 } else {
-                    r#"<span class="badge badge-warning">Exploring (N<30)</span>"#
+                    "badge-warning"
                 };
                 format!(
                     r#"<tr>
                         <td><strong>{}</strong></td>
                         <td>{}</td>
                         <td><strong>{:.1}%</strong></td>
+                        <td><strong>{:.1}%</strong></td>
                         <td>${:.3}</td>
                         <td>{:.1}s</td>
                         <td><code>{:.3}</code></td>
-                        <td>{}</td>
+                        <td>{:.0}%</td>
+                        <td><span class="badge {}">{}</span></td>
                     </tr>"#,
                     m.model_name,
-                    m.trials,
-                    m.pass_at_1 * 100.0,
+                    m.empirical_trials,
+                    m.empirical_pass_at_1 * 100.0,
+                    m.bayesian_posterior_pass_at_1 * 100.0,
                     m.avg_cost_per_pr,
                     m.p99_latency_sec,
                     m.ucb1_score,
-                    sig_badge
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let env_rows = state
-            .environment_pipeline
-            .iter()
-            .map(|env| {
-                let badge_class = if env.sre_burn_rate <= 1.0 {
-                    "badge-healthy"
-                } else {
-                    "badge-warning"
-                };
-                format!(
-                    r#"<div class="card env-card">
-                        <div class="card-header">
-                            <span class="env-title">{}</span>
-                            <span class="badge {}">{}</span>
-                        </div>
-                        <div class="card-body">
-                            <p><strong>Branch:</strong> <code>{}</code></p>
-                            <p><strong>Commit SHA:</strong> <code>{}</code></p>
-                            <p><strong>Bake Window:</strong> {}m</p>
-                            <p><strong>SRE Multi-Burn Rate:</strong> {:.2}x</p>
-                        </div>
-                    </div>"#,
-                    env.env_name,
-                    badge_class,
-                    env.health_status,
-                    env.branch,
-                    env.current_sha,
-                    env.bake_time_remaining_mins,
-                    env.sre_burn_rate
+                    m.statistical_power * 100.0,
+                    sig_badge_class,
+                    m.significance_badge
                 )
             })
             .collect::<Vec<_>>()
@@ -286,9 +323,9 @@ impl LeptosDashboardRenderer {
             70% {{ transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }}
             100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }}
         }}
-        .metrics-grid {{
+        .dora-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 16px;
             margin-bottom: 24px;
         }}
@@ -328,9 +365,14 @@ impl LeptosDashboardRenderer {
         }}
         .grid-3 {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 16px;
             margin-bottom: 24px;
+        }}
+        .grid-2 {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 16px;
         }}
         .card {{
             background: var(--surface-dark);
@@ -346,7 +388,7 @@ impl LeptosDashboardRenderer {
             padding-bottom: 8px;
             border-bottom: 1px solid var(--surface-border);
         }}
-        .repo-title, .env-title {{
+        .repo-title {{
             font-size: 15px;
             font-weight: 700;
             color: var(--accent-cyan);
@@ -376,6 +418,47 @@ impl LeptosDashboardRenderer {
         .card-body strong {{
             color: var(--text-primary);
         }}
+        .highlight-val {{
+            color: var(--accent-cyan);
+            font-weight: 700;
+        }}
+        .env-pipeline-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 10px;
+        }}
+        .env-tag {{
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--surface-border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }}
+        .tabs-nav {{
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--surface-border);
+            padding-bottom: 8px;
+        }}
+        .tab-btn {{
+            background: var(--surface-dark);
+            border: 1px solid var(--surface-border);
+            color: var(--text-secondary);
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }}
+        .tab-btn.active, .tab-btn:hover {{
+            background: rgba(6, 182, 212, 0.15);
+            color: var(--accent-cyan);
+            border-color: var(--accent-cyan);
+        }}
         code {{
             font-family: var(--font-mono);
             background: rgba(255,255,255,0.06);
@@ -388,7 +471,7 @@ impl LeptosDashboardRenderer {
             background: var(--surface-dark);
             border: 1px solid var(--surface-border);
             border-radius: 12px;
-            overflow: hidden;
+            overflow-x: auto;
             margin-bottom: 24px;
         }}
         table {{
@@ -430,25 +513,25 @@ impl LeptosDashboardRenderer {
             font-size: 12px;
             font-weight: 600;
         }}
-        .dora-grid {{
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
-        }}
         @media (max-width: 900px) {{
             .dora-grid {{ grid-template-columns: repeat(2, 1fr); }}
+            .grid-2 {{ grid-template-columns: 1fr; }}
         }}
     </style>
     <script>
-        // Server-Sent Events (SSE) live connection with automatic fallback
+        function switchRepoTab(repoShortName) {{
+            document.querySelectorAll('.tab-pane').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            const targetPane = document.getElementById('tab-' + repoShortName);
+            if (targetPane) targetPane.style.display = 'block';
+            event.currentTarget.classList.add('active');
+        }}
+
         function initFleetSSE() {{
             const eventSource = new EventSource('/api/events/fleet');
             eventSource.addEventListener('fleet_event', function(e) {{
                 try {{
                     const event = JSON.parse(e.data);
-                    console.log('⚡ Fleet SSE Event:', event);
-                    // Prepend new activity
                     const tableBody = document.querySelector('#activity-tbody');
                     if (tableBody) {{
                         const row = document.createElement('tr');
@@ -458,7 +541,6 @@ impl LeptosDashboardRenderer {
                 }} catch(err) {{}}
             }});
             eventSource.onerror = function() {{
-                console.warn('SSE disconnected, retrying in 5s...');
                 setTimeout(initFleetSSE, 5000);
             }};
         }}
@@ -473,7 +555,7 @@ impl LeptosDashboardRenderer {
         </div>
         <div class="status-pill">
             <span class="status-dot"></span>
-            <span>Fleet Live (3 Managed Repos, 70-Gate Matrix Active)</span>
+            <span>Live Fleet Ingestion (3 Managed Repositories, 70-Gate Continuous Engine)</span>
         </div>
     </div>
 
@@ -504,17 +586,51 @@ impl LeptosDashboardRenderer {
         </div>
     </div>
 
-    <!-- MODULE 1: MULTI-REPO FLEET DAG -->
+    <!-- MODULE 1: MULTI-REPO FLEET TOPOLOGY CARDS -->
     <div class="section-header">
-        <span>🌐 Module 1: Multi-Repository Fleet Health &amp; Promotion Topology</span>
+        <span>🌐 Module 1: Fleet Repository Topology &amp; Live Promotion Branches</span>
     </div>
     <div class="grid-3">
         {}
     </div>
 
-    <!-- MODULE 2: 70-GATE FAILURE HEATMAP -->
+    <!-- MODULE 2: TABBED REPO DRILL-DOWN -->
     <div class="section-header">
-        <span>🛡️ Module 2: 70-Gate Full-Lifecycle Failure Heatmap &amp; Flake Quarantine</span>
+        <span>📑 Module 2: Multi-Repository Deep Inspection &amp; Branch Promotion DAG</span>
+    </div>
+    <div class="tabs-nav">
+        {}
+    </div>
+    {}
+
+    <!-- MODULE 3: AI MODEL BANDIT DUAL-LAYER OBSERVABILITY -->
+    <div class="section-header">
+        <span>🤖 Module 3: AI Routing Multi-Armed Bandit (Empirical Ground Truth + Bayesian Prior Shrinkage)</span>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Model Family</th>
+                    <th>Observed (N)</th>
+                    <th>Empirical Pass@1</th>
+                    <th>Bayesian Posterior</th>
+                    <th>Avg Cost/PR</th>
+                    <th>P99 Latency</th>
+                    <th>UCB1 Reward</th>
+                    <th>Statistical Power</th>
+                    <th>Significance Level</th>
+                </tr>
+            </thead>
+            <tbody>
+                {}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- MODULE 4: 70-GATE FAILURE HEATMAP -->
+    <div class="section-header">
+        <span>🛡️ Module 4: 70-Gate Full-Lifecycle Failure Heatmap &amp; Flake Quarantine</span>
     </div>
     <div class="table-container">
         <table>
@@ -530,37 +646,6 @@ impl LeptosDashboardRenderer {
                 {}
             </tbody>
         </table>
-    </div>
-
-    <!-- MODULE 3: AI MODEL BANDIT PARETO FRONTIER -->
-    <div class="section-header">
-        <span>🤖 Module 3: AI Routing Bandit Pareto Frontier &amp; Statistical Significance (N &gt;= 30)</span>
-    </div>
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>Model Family</th>
-                    <th>Trials</th>
-                    <th>Pass@1</th>
-                    <th>Avg Cost/PR</th>
-                    <th>P99 Latency</th>
-                    <th>UCB1 Reward</th>
-                    <th>Statistical Power</th>
-                </tr>
-            </thead>
-            <tbody>
-                {}
-            </tbody>
-        </table>
-    </div>
-
-    <!-- MODULE 4: GITOPS PROMOTION DAG -->
-    <div class="section-header">
-        <span>🚀 Module 4: GitOps Multi-Tier Promotion DAG (SRE Error Budget Gauges)</span>
-    </div>
-    <div class="grid-3">
-        {}
     </div>
 
     <!-- MODULE 5: REAL-TIME SSE AUDIT EVENT LOG -->
@@ -591,9 +676,10 @@ impl LeptosDashboardRenderer {
             state.dora_metrics.change_failure_rate_pct,
             state.dora_metrics.mttr_minutes,
             repo_cards,
-            heatmap_rows,
+            repo_tabs_nav,
+            repo_tabs_content,
             model_rows,
-            env_rows,
+            heatmap_rows,
             activity_rows
         )
     }

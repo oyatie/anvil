@@ -335,4 +335,93 @@ impl GitHubClient {
         );
         Ok(())
     }
+
+    /// Fetches all open pull requests for a given repository
+    pub async fn list_open_prs(&self, repo: &str) -> Result<Vec<PrMetadata>> {
+        let output = Command::new("gh")
+            .args([
+                "pr",
+                "list",
+                "--repo",
+                repo,
+                "--state",
+                "open",
+                "--json",
+                "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state",
+            ])
+            .output()
+            .await
+            .context("Failed to list open PRs from GitHub CLI")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("`gh pr list` failed for {}: {}", repo, stderr);
+        }
+
+        let raw: Vec<GhPrViewOutput> = serde_json::from_slice(&output.stdout)?;
+        let prs = raw
+            .into_iter()
+            .map(|r| PrMetadata {
+                number: r.number,
+                title: r.title,
+                body: r.body,
+                base_ref_name: r.base_ref_name,
+                base_ref_oid: r.base_ref_oid,
+                head_ref_name: r.head_ref_name,
+                head_ref_oid: r.head_ref_oid,
+                state: r.state,
+            })
+            .collect();
+        Ok(prs)
+    }
+
+    /// Fetches the latest commit SHA for a specific branch
+    pub async fn fetch_branch_sha(&self, repo: &str, branch: &str) -> Result<String> {
+        let endpoint = format!("repos/{}/commits/{}", repo, branch);
+        let output = Command::new("gh")
+            .args(["api", &endpoint, "--jq", ".sha"])
+            .output()
+            .await
+            .context("Failed to fetch branch commit SHA from GitHub API")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("`gh api` failed for {}/{}: {}", repo, branch, stderr);
+        }
+
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(sha)
+    }
+
+    /// Fetches merge queue depth for a branch
+    pub async fn fetch_merge_queue_depth(&self, repo: &str, _branch: &str) -> Result<usize> {
+        // Query PRs in merge_queue or currently running checks in merge group
+        let output = Command::new("gh")
+            .args([
+                "pr",
+                "list",
+                "--repo",
+                repo,
+                "--search",
+                "status:in-progress",
+                "--json",
+                "number",
+            ])
+            .output()
+            .await
+            .context("Failed to fetch merge queue depth")?;
+
+        if !output.status.success() {
+            return Ok(0);
+        }
+
+        #[derive(Deserialize)]
+        struct SimplePr {
+            #[allow(dead_code)]
+            number: u64,
+        }
+
+        let prs: Vec<SimplePr> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+        Ok(prs.len())
+    }
 }

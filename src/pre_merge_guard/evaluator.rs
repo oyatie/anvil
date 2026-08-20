@@ -805,7 +805,7 @@ impl PreMergeGuard {
             is_certified_ready,
         );
 
-        Ok(PreMergeCertificationReport {
+        let mut report = PreMergeCertificationReport {
             is_certified_ready,
             doc_parity_status,
             cedar_status,
@@ -875,7 +875,11 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
+            unmeasured_gates: Vec::new(),
             summary_markdown,
-        })
+        };
+        // Populate from the statuses just assigned, so the field can never drift.
+        report.recompute_unmeasured();
+        Ok(report)
     }
 }

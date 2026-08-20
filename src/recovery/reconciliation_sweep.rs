@@ -22,6 +22,7 @@ pub struct OutageRecoveryReport {
     pub total_prs_inspected: usize,
     pub prs_requiring_certification: Vec<u64>,
     pub prs_requiring_review: Vec<u64>,
+    pub uncertified_prs_details: Vec<(String, OpenPrSummary)>,
     pub issues_reconciled: usize,
     pub duration_secs: f64,
     pub status: String,
@@ -54,6 +55,7 @@ impl OutageRecoveryReconciler {
         let mut total_prs = 0;
         let mut prs_cert = Vec::new();
         let prs_rev = Vec::new();
+        let mut uncertified_prs_details = Vec::new();
         let mut total_issues_reconciled = 0;
 
         for repo in watched_repos {
@@ -82,6 +84,7 @@ impl OutageRecoveryReconciler {
                                 repo, pr.number, pr.head_sha
                             );
                             prs_cert.push(pr.number);
+                            uncertified_prs_details.push((repo.clone(), pr.clone()));
                         }
                     }
                 }
@@ -124,6 +127,7 @@ impl OutageRecoveryReconciler {
             total_prs_inspected: total_prs,
             prs_requiring_certification: prs_cert,
             prs_requiring_review: prs_rev,
+            uncertified_prs_details,
             issues_reconciled: total_issues_reconciled,
             duration_secs: elapsed.as_secs_f64(),
             status: "COMPLETED".to_string(),
@@ -196,6 +200,7 @@ mod tests {
             total_prs_inspected: 5,
             prs_requiring_certification: vec![5, 6],
             prs_requiring_review: vec![5],
+            uncertified_prs_details: Vec::new(),
             issues_reconciled: 12,
             duration_secs: 1.45,
             status: "COMPLETED".to_string(),

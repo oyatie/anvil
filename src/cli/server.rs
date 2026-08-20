@@ -39,11 +39,41 @@ pub async fn run_server(state: AppState) -> Result<()> {
     let recovery_client = state.github_client.clone();
     let recovery_state_mgr = state.state_mgr.clone();
     let recovery_repos = state.config.watched_repos.clone();
+    let recovery_app_state = state.clone();
     tokio::spawn(async move {
         let reconciler =
             crate::recovery::OutageRecoveryReconciler::new(recovery_client, recovery_state_mgr);
-        if let Err(e) = reconciler.run_full_sweep(&recovery_repos).await {
-            tracing::warn!("Outage recovery reconciliation sweep noticed: {}", e);
+        match reconciler.run_full_sweep(&recovery_repos).await {
+            Ok(report) => {
+                info!(
+                    "⚡ [Outage Recovery] Auto-dispatching {} uncertified PRs into Anvil pipeline...",
+                    report.uncertified_prs_details.len()
+                );
+                for (repo, pr) in report.uncertified_prs_details {
+                    let task_state = recovery_app_state.clone();
+                    tokio::spawn(async move {
+                        info!(
+                            "🚀 [Outage Recovery Pipeline] Dispatched review & 70-gate certification for {}#{}",
+                            repo, pr.number
+                        );
+                        let _ = crate::webhook::pipelines::review::execute_pr_review(
+                            &task_state,
+                            &repo,
+                            pr.number,
+                            &pr.title,
+                            "",
+                            "main",
+                            "HEAD",
+                            &pr.head_sha,
+                            false,
+                        )
+                        .await;
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Outage recovery reconciliation sweep noticed: {}", e);
+            }
         }
     });
 
@@ -115,6 +145,11 @@ pub async fn run_server(state: AppState) -> Result<()> {
             let _ = reaper_state.git_mgr.clean_abandoned_worktrees().await;
         }
     });
+
+    // Spawn background continuous Fleet Observer Telemetry Poller (30s cadence)
+    state
+        .fleet_observer
+        .spawn_continuous_poller(state.config.watched_repos.clone());
 
     let mut forward_children: Vec<Child> = Vec::new();
     if state.config.auto_forward_webhooks {

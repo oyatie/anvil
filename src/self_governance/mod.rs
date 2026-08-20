@@ -1,4 +1,5 @@
 pub mod account_pool;
+pub mod deathloop_detector;
 pub mod process_registry;
 pub mod quota_enforcer;
 pub mod resource_reaper;
@@ -7,6 +8,7 @@ pub use account_pool::{
     AccountPoolManager, AccountQuotaView, AddAccountPayload, DrainAccountPayload, ManagedAccount,
     UsageRecord,
 };
+pub use deathloop_detector::{DeathloopDetector, DeathloopVerdict};
 pub use process_registry::{ProcessRecord, ProcessRegistry};
 pub use quota_enforcer::{QuotaBudgetReport, QuotaEnforcer};
 pub use resource_reaper::{AutonomousResourceReaper, GarbageCollectionReport};
@@ -20,6 +22,7 @@ pub struct SelfGovernor {
     pub registry: Arc<ProcessRegistry>,
     pub quota: Arc<QuotaEnforcer>,
     pub reaper: Arc<AutonomousResourceReaper>,
+    pub deathloop: Arc<DeathloopDetector>,
 }
 
 impl Default for SelfGovernor {
@@ -34,6 +37,7 @@ impl SelfGovernor {
             registry: Arc::new(ProcessRegistry::new()),
             quota: Arc::new(QuotaEnforcer::default()),
             reaper: Arc::new(AutonomousResourceReaper::default()),
+            deathloop: Arc::new(DeathloopDetector::default()),
         }
     }
 

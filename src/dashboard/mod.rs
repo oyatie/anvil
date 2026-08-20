@@ -25,22 +25,8 @@ pub async fn dashboard_state_api_handler(State(state): State<AppState>) -> impl 
 async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
     let fleet_overview = state
         .fleet_observer
-        .aggregate_fleet_overview(&state.config.watched_repos)
-        .await
-        .unwrap_or(crate::fleet_observer::FleetOverviewReport {
-            total_managed_repos: state.config.watched_repos.len(),
-            repos: Vec::new(),
-            global_dora: crate::telemetry_store::DoraMetricSnapshot {
-                repo: "fleet_global".to_string(),
-                timestamp: chrono::Utc::now(),
-                lead_time_for_changes_hours: 1.2,
-                deployment_frequency_per_day: 4.8,
-                change_failure_rate_percent: 1.4,
-                mean_time_to_restore_mins: 8.0,
-                total_deployments_30d: 144,
-                total_incidents_30d: 2,
-            },
-        });
+        .get_fleet_overview_instant(&state.config.watched_repos)
+        .await;
 
     let total_open_prs: usize = fleet_overview.repos.iter().map(|r| r.open_pr_count).sum();
     let total_merge_queue_depth: usize = fleet_overview

@@ -232,6 +232,8 @@ Output strictly valid JSON matching this schema:
             prompt,
             "--effort",
             &self.agy_effort,
+            "--print-timeout",
+            &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
             "--dangerously-skip-permissions",
         ]);
         cmd.current_dir(working_dir);

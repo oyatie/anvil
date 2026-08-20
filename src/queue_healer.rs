@@ -21,8 +21,7 @@ use crate::merge_enlister::MergeEnlister;
 /// is willing to wait. The healer therefore passes an explicit `--print-timeout`
 /// a little under its own kill so the two deadlines agree and agy's default
 /// never silently wins.
-const AGY_TURN_LIMIT: Duration = Duration::from_secs(600);
-const AGY_PRINT_TIMEOUT_MARGIN: Duration = Duration::from_secs(30);
+const AGY_TURN_LIMIT: Duration = crate::exec::ExecClass::Model.timeout();
 
 /// Receipts Anvil writes into a checkout. A heal commit carries what the repair
 /// produced, never Anvil's own provenance artifacts (`.cursor/receipts` is the
@@ -105,15 +104,6 @@ impl QueueHealer {
     /// trust the trigger.
     pub fn pr_is_healable(state: &str) -> bool {
         state.trim().eq_ignore_ascii_case("open")
-    }
-
-    /// Value for agy's `--print-timeout` (Go duration syntax) given Anvil's bound.
-    pub fn agy_print_timeout_arg(limit: Duration) -> String {
-        let secs = limit
-            .saturating_sub(AGY_PRINT_TIMEOUT_MARGIN)
-            .as_secs()
-            .max(1);
-        format!("{}s", secs)
     }
 
     /// Arguments for `git add` that stage the repair but exclude Anvil's own
@@ -508,7 +498,7 @@ impl QueueHealer {
             "--effort",
             &self.agy_effort,
             "--print-timeout",
-            &Self::agy_print_timeout_arg(AGY_TURN_LIMIT),
+            &crate::exec::agy_print_timeout_arg(AGY_TURN_LIMIT),
             "--dangerously-skip-permissions",
         ]);
         cmd.current_dir(working_dir);
@@ -565,16 +555,9 @@ mod tests {
     }
 
     #[test]
-    fn agy_print_timeout_sits_under_anvil_bound() {
-        assert_eq!(
-            QueueHealer::agy_print_timeout_arg(Duration::from_secs(600)),
-            "570s"
-        );
-        // Never emits 0s, which agy would read as "no wait".
-        assert_eq!(
-            QueueHealer::agy_print_timeout_arg(Duration::from_secs(5)),
-            "1s"
-        );
+    fn healer_turn_limit_matches_model_class() {
+        assert_eq!(AGY_TURN_LIMIT, crate::exec::ExecClass::Model.timeout());
+        assert_eq!(crate::exec::agy_print_timeout_arg(AGY_TURN_LIMIT), "570s");
     }
 
     #[test]

@@ -244,19 +244,16 @@ impl AdaptiveRoutingBandit {
             Err(_) => HashMap::new(),
         };
 
-        // Standard known candidate models
-        let known_models = vec![
-            ("Google Gemini 3.7 Flash High", 48, 46, 0.042, 14.2),
-            ("Anthropic Claude Opus 5 High", 34, 33, 0.850, 28.6),
-            ("OpenAI GPT-5.6-Sol High", 31, 29, 0.420, 22.1),
+        // Frontier models tracked by the pipeline
+        let tracked_models = vec![
+            "Google Gemini 3.7 Flash High",
+            "Anthropic Claude Opus 5 High",
+            "OpenAI GPT-5.6-Sol High",
         ];
 
         let mut views = Vec::new();
 
-        for (model_name, default_trials, default_successes, default_cost, default_lat) in
-            known_models
-        {
-            // Check if live stats exist in stats_map for this model
+        for model_name in tracked_models {
             let mut empirical_trials = 0;
             let mut empirical_successes = 0;
             let mut total_cost = 0.0;
@@ -278,10 +275,10 @@ impl AdaptiveRoutingBandit {
                 let lat = (total_duration_ms as f64 / empirical_trials as f64) / 1000.0;
                 (empirical_trials, empirical_successes, cost, lat)
             } else {
-                (default_trials, default_successes, default_cost, default_lat)
+                (0, 0, 0.0, 0.0)
             };
 
-            let empirical_pass = if n > 0 { k as f64 / n as f64 } else { 0.95 };
+            let empirical_pass = if n > 0 { k as f64 / n as f64 } else { 0.0 };
 
             // Hyperscaler Bayesian Prior Shrinkage: Beta(alpha_0=9.5, beta_0=0.5) prior
             let alpha_0 = 9.5;

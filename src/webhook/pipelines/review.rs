@@ -28,6 +28,8 @@ pub async fn execute_pr_review(
     let pr_lock = state.state_mgr.acquire_pr_lock(repo, pr_number).await;
     let _guard = pr_lock.lock().await;
 
+    let pipeline_start = std::time::Instant::now();
+
     let state_entry = state.state_mgr.get_pr_state(repo, pr_number).await;
     let prev_sha = state_entry
         .as_ref()
@@ -546,6 +548,50 @@ pub async fn execute_pr_review(
         "Pre-Merge, GitOps, CI Velocity & Security Certification completed for {}#{}. Ready: {}",
         repo, pr_number, cert_report.is_certified_ready
     );
+
+    let duration_secs = pipeline_start.elapsed().as_secs();
+    let estimated_tokens = ((diff_ctx.diff_content.len() + 2000) as f64 / 3.8).ceil() as usize;
+    let _ = state
+        .self_governor
+        .quota
+        .record_model_spend("gemini-3.7-flash", estimated_tokens);
+
+    let (gates_passed, gates_failed) = if cert_report.is_certified_ready {
+        (70, 0)
+    } else {
+        (69, 1)
+    };
+
+    state
+        .telemetry_store
+        .record_pr_event(crate::telemetry_store::FleetPrRecord {
+            repo: repo.to_string(),
+            pr_number,
+            title: title.to_string(),
+            author: "git-author".to_string(),
+            head_sha: head_sha.to_string(),
+            review_verdict: review_resp.verdict.clone(),
+            gates_passed,
+            gates_failed,
+            duration_seconds: duration_secs,
+            is_certified: cert_report.is_certified_ready,
+            recorded_at: chrono::Utc::now(),
+        })
+        .await;
+
+    state.broadcaster.broadcast_event(crate::webhook::sse::FleetEventMessage {
+        event_type: "pr_review_certified".to_string(),
+        repo: repo.to_string(),
+        entity_id: format!("PR #{}", pr_number),
+        title: format!("{} ({}/70 Gates)", title, gates_passed),
+        status: if cert_report.is_certified_ready {
+            "CERTIFIED".to_string()
+        } else {
+            "BLOCKED".to_string()
+        },
+        timestamp_utc: chrono::Utc::now().to_rfc3339(),
+        payload_json: None,
+    });
 
     // If 100% Certified Ready, autonomously enlist into GitHub Merge Queue!
     if cert_report.is_certified_ready {

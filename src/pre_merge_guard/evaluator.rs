@@ -217,7 +217,7 @@ impl PreMergeGuard {
         // and reporting it as Failed would be a fabricated accusation.
         let clean_arch_status = match clean_arch_report.measurement.not_measured_reason() {
             Some(reason) => GateStatus::NotMeasured {
-                gate_id: "clean_arch".to_string(),
+                gate_id: "clean_arch_status".to_string(),
                 reason: reason.to_string(),
             },
             None if clean_arch_report.is_clean => GateStatus::Passed,
@@ -456,14 +456,11 @@ impl PreMergeGuard {
         };
 
         // 43. Automated Canary Analysis (ACA)
-        let automated_canary_status = if aca_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(
-                "Statistical canary evaluation detected P99 latency or error divergence."
-                    .to_string(),
-            )
-        };
+        // Read the gate's own verdict. Rebuilding it from `passed` discarded
+        // `NotMeasured` and republished an unqueried canary as `Passed`, while a
+        // `false` produced the accusation "detected P99 latency divergence" over
+        // samples nobody had read.
+        let automated_canary_status = aca_report.status.clone();
 
         // 44. Progressive Rollout Rings
         let progressive_ring_status = if ring_report.passed {
@@ -508,22 +505,14 @@ impl PreMergeGuard {
         };
 
         // 49. Stacked Diffs & PR DAG Synchronization
-        let stacked_diffs_status = if stacked_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(
-                "Stacked PR DAG detected out-of-order rebase dependency.".to_string(),
-            )
-        };
+        // As above: `passed` is `plan.atomic_merge_ready`, which is true for a
+        // stack that was never read.
+        let stacked_diffs_status = stacked_report.status.clone();
 
         // 50. Microbenchmark Hotpath Ratchet
-        let microbench_status = if microbench_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(
-                "Microbenchmark analyzer detected sub-microsecond hotpath regression.".to_string(),
-            )
-        };
+        // As above: `passed` is arithmetic over a caller-supplied sample, and no
+        // benchmark produced one.
+        let microbench_status = microbench_report.status.clone();
 
         // 51. Jittered Exponential Backoff Gate
         let jittered_backoff_status = if jittered_report.passed {

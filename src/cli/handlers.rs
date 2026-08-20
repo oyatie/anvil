@@ -25,6 +25,34 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     crate::shape::facade::cli::validate_spec_file(&path, registry.as_deref())?;
                 println!("{}", summary.render());
             }
+            crate::cli::args::ShapeAction::Measure {
+                repo_dir,
+                rev,
+                repo,
+                spec_override,
+                registry,
+                json,
+            } => {
+                let label = repo.unwrap_or_else(|| {
+                    repo_dir
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| repo_dir.display().to_string())
+                });
+                let req = crate::shape::facade::measure::MeasureRequest {
+                    repo_dir,
+                    rev,
+                    repo: label,
+                    spec_override,
+                    registry_override: registry,
+                };
+                let report = crate::shape::facade::measure::measure_repo(&req).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", crate::shape::facade::measure::render(&report));
+                }
+            }
         },
         Commands::Review { repo, pr, force } => {
             info!("Running on-demand review for {}#{}", repo, pr);

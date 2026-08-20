@@ -22,7 +22,7 @@
         "facade": ["ports"],
         "adapters": ["ports", "core"],
         "core": [],
-        "ports": []
+        "ports": ["core"]
       },
       "cross_unit_edges": "facade-only",
       "satellites": {
@@ -112,6 +112,7 @@
     "cross_unit_non_facade": { "mode": "baseline-block-on-new" },
     "port_defined_in_adapter": { "mode": "baseline-block-on-new" },
     "root_file_unallowlisted": { "mode": "baseline-block-on-new", "frozen_empty": true },
+    "unit_root_file_unallowlisted": { "mode": "baseline-block-on-new" },
     "legacy_root_growth": { "mode": "baseline-block-on-new" },
     "crate_name_prefix": { "mode": "baseline-block-on-new" },
     "crate_layer_suffix": { "mode": "baseline-block-on-new" },

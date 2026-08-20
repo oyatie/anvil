@@ -2,3 +2,4 @@
 //! the fleet sweep as they land.
 
 pub mod cli;
+pub mod measure;

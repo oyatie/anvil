@@ -357,4 +357,31 @@ pub enum ShapeAction {
         #[arg(long, help = "Path to the unit registry the spec references")]
         registry: Option<PathBuf>,
     },
+    /// Measure a repository at a revision against its shape spec (read by git
+    /// plumbing; nothing is checked out)
+    Measure {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value = "HEAD", help = "Commit to measure")]
+        rev: String,
+
+        #[arg(
+            long,
+            help = "Report label (e.g. oyatie/oyatie); defaults to the directory name"
+        )]
+        repo: Option<String>,
+
+        #[arg(
+            long,
+            help = "Measure against a spec outside the tree (stamped PROPOSED)"
+        )]
+        spec_override: Option<PathBuf>,
+
+        #[arg(long, help = "Unit registry document outside the tree")]
+        registry: Option<PathBuf>,
+
+        #[arg(long, help = "Print the full report as JSON")]
+        json: bool,
+    },
 }

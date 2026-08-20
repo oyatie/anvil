@@ -11,5 +11,7 @@
 //! Faces: `core` is pure (no IO, no clocks); `facade` is the surface the CLI,
 //! the certification gate and the fleet sweep call.
 
+pub mod adapters;
 pub mod core;
 pub mod facade;
+pub mod ports;

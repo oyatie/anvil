@@ -1,18 +1,26 @@
 # 🔨 Anvil: Hyperscale Autonomous Engineering Delivery Fabric
 
-> **Autonomous Hyperscale PR Reviewer, Triager, 23-Gate Domain Quality Fabric & Merge Queue Engine powered by Antigravity, Rust, and GitHub CLI.**
+> **Autonomous Hyperscale PR Reviewer, Triager, 68-Gate Domain Quality Fabric & Merge Queue Engine powered by Antigravity, Rust, and GitHub CLI.**
 
 Anvil provides autonomous, end-to-end coverage across the entire PR and merge lifecycle on:
 - [`https://github.com/oyatie/oyatie`](https://github.com/oyatie/oyatie)
 - [`https://github.com/oyatie/console`](https://github.com/oyatie/console)
+- [`https://github.com/oyatie/anvil`](https://github.com/oyatie/anvil) — Anvil reviews its own pull requests
 
 ---
 
-## 🏛️ Comprehensive 23-Gate Pre-Merge Certification Matrix
+## 🏛️ Pre-Merge Certification Matrix
+
+Certification evaluates **68 gates** (the exact count is `PreMergeCertificationReport::all_statuses().len()`,
+asserted by a test so this number cannot drift from the code). A pull request is admitted to the merge queue
+only when every gate is acceptable **and** every gate actually produced a measurement — see
+`is_admissible()`.
+
+The table below is a representative selection, not the full 68.
 
 | Quality Gate | Description |
 |---|---|
-| **📚 Documentation & ADR Parity** | Verifies public APIs, platform doctrine & auto-syncs docs/ADRs (`DocGuard`) |
+| **📚 Documentation & ADR Parity** | Verifies public APIs and platform doctrine, and creates missing ADRs (`DocGuard`). Note: it does **not** yet amend existing documents such as `README.md` or `CHANGELOG.md` — see the roadmap. |
 | **🛡️ Cedar Policy & IAM Boundaries** | Verifies AWS Cedar authorization policy coverage & tenant bounds (`CedarGuard`) |
 | **🏛️ Systematic Regulatory & Statutory Compliance** | Dynamic temporal multi-jurisdiction regulatory engine (`ComplianceGuard`) |
 | **📐 OpenAPI & Wire Contract Integrity** | Validates OpenAPI schemas & auto-syncs route definitions (`ApiContractGuard`) |

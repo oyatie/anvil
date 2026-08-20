@@ -651,7 +651,6 @@ const PORT_EXECUTION_TIMEOUT_SECS: u64 = 420;
 /// crate's one resolution rule, [`ModelProvider::from_str_name`] — including its
 /// fallback for a name it does not recognise. Nothing about this executor changed
 /// to satisfy the port; the port is a second door onto `execute_prompt`.
-#[async_trait::async_trait]
 impl PromptExecutor for SubscriptionExecutor {
     async fn execute(&self, model: &str, prompt: &str, working_dir: &Path) -> Result<String> {
         let provider = ModelProvider::from_str_name(model);

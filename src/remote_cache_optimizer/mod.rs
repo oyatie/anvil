@@ -28,7 +28,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod bitrot_scrubber;
 pub mod cache_hit_ratchet;

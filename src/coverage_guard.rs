@@ -37,7 +37,7 @@ use tracing::info;
 
 use crate::exec::{run_bounded, ExecClass};
 use crate::git_manager::PrDiffContext;
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MIN_COVERAGE_THRESHOLD_PERCENT: f64 = 85.0;

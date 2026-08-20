@@ -1,7 +1,9 @@
 //! Migration destiny per component. See [`registry`] for the ledger itself.
 
+pub mod boundary;
 pub mod registry;
 
+pub use boundary::{check_edge, edge_is_allowed, verdict_for, BoundaryViolation};
 pub use registry::{Confidence, MigrationEntry, Verdict, MIGRATION_LEDGER};
 
 /// Counts by verdict. Returns (migrating, rewired, superseded, scaffolding).

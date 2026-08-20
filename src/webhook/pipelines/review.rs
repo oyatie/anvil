@@ -613,7 +613,7 @@ pub async fn execute_pr_review(
     let verified_gates: Vec<String> = cert_report
         .all_statuses()
         .iter()
-        .filter(|s| matches!(s, crate::pre_merge_guard::GateStatus::Passed))
+        .filter(|s| matches!(s, crate::pre_merge_guard::report::GateStatus::Passed))
         .enumerate()
         .map(|(i, _)| format!("gate-{}", i))
         .collect();
@@ -671,9 +671,11 @@ pub async fn execute_pr_review(
     // no failure taxonomy to act on.
     for (gate_name, status) in cert_report.named_statuses() {
         let reason = match status {
-            crate::pre_merge_guard::GateStatus::Failed(r) => Some(r.clone()),
-            crate::pre_merge_guard::GateStatus::Errored(r) => Some(format!("ERRORED: {}", r)),
-            crate::pre_merge_guard::GateStatus::NotMeasured { reason, .. } => {
+            crate::pre_merge_guard::report::GateStatus::Failed(r) => Some(r.clone()),
+            crate::pre_merge_guard::report::GateStatus::Errored(r) => {
+                Some(format!("ERRORED: {}", r))
+            }
+            crate::pre_merge_guard::report::GateStatus::NotMeasured { reason, .. } => {
                 Some(format!("NOT_MEASURED: {}", reason))
             }
             _ => None,
@@ -770,6 +772,8 @@ pub async fn execute_pr_review(
 /// Kept as a named function rather than an inline call so the upsert call site
 /// names the renderer at the argument position, which is what the wiring test
 /// asserts against (I22: enforced by mechanism, not by convention).
-pub fn scorecard_comment(report: &crate::pre_merge_guard::PreMergeCertificationReport) -> String {
+pub fn scorecard_comment(
+    report: &crate::pre_merge_guard::report::PreMergeCertificationReport,
+) -> String {
     crate::publish::scorecard::render(report)
 }

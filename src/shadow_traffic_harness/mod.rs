@@ -27,7 +27,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod traffic_mirror;
 pub use traffic_mirror::{ShadowTrafficMetrics, TrafficMirrorComparator};

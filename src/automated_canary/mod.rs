@@ -30,7 +30,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod statistical_engine;
 pub use statistical_engine::{CanaryVerdict, MetricDistribution, StatisticalCanaryEngine};

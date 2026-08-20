@@ -884,17 +884,27 @@ async fn test_git_hook_provisioning_and_permissions() {
         .unwrap();
 
     let pre_commit = repo_path.join(".git").join("hooks").join("pre-commit");
+    let commit_msg = repo_path.join(".git").join("hooks").join("commit-msg");
     let pre_push = repo_path.join(".git").join("hooks").join("pre-push");
+    let post_merge = repo_path.join(".git").join("hooks").join("post-merge");
 
     assert!(pre_commit.exists(), "pre-commit hook must be created");
+    assert!(commit_msg.exists(), "commit-msg hook must be created");
     assert!(pre_push.exists(), "pre-push hook must be created");
+    assert!(post_merge.exists(), "post-merge hook must be created");
 
     let pre_commit_content = tokio::fs::read_to_string(&pre_commit).await.unwrap();
     assert!(pre_commit_content.contains("cargo fmt"));
     assert!(pre_commit_content.contains("cargo clippy"));
 
+    let commit_msg_content = tokio::fs::read_to_string(&commit_msg).await.unwrap();
+    assert!(commit_msg_content.contains("CONVENTIONAL_REGEX"));
+
     let pre_push_content = tokio::fs::read_to_string(&pre_push).await.unwrap();
     assert!(pre_push_content.contains("red_green_gates_test"));
+
+    let post_merge_content = tokio::fs::read_to_string(&post_merge).await.unwrap();
+    assert!(post_merge_content.contains("Cargo.lock"));
 }
 
 // =========================================================================

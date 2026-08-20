@@ -93,9 +93,12 @@ pub struct ActivityEventView {
     pub status: String,
 }
 
-pub struct LeptosDashboardRenderer;
+pub struct HyperscalerDashboardRenderer;
 
-impl LeptosDashboardRenderer {
+/// Backward-compatibility alias
+pub type LeptosDashboardRenderer = HyperscalerDashboardRenderer;
+
+impl HyperscalerDashboardRenderer {
     /// Renders Tier-0 Hyperscaler DevOps Cockpit with Real-Time Reactive Hydration & Account Pool Controls
     pub fn render_html(state: &DashboardStateView) -> String {
         let repo_cards = state

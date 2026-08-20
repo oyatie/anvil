@@ -1,0 +1,124 @@
+# Dependency admission policy.
+#
+# Adopted from oyatie's deny.toml rather than written fresh: this repository is
+# being absorbed into that one, and two policies that drift are worse than one
+# that is occasionally inconvenient. Changes here should be made there first.
+#
+# The rule this encodes: a crate enters only if it earns its place. Anvil's
+# lockfile is 162 crates against oyatie's 1438, and that leanness is a property
+# worth defending, not an accident. Prefer std where std suffices; prefer one
+# well-maintained crate over three convenient ones.
+#
+# Run: cargo deny check advisories bans licenses sources
+
+# cargo-deny policy (M01-P14-IP-004).
+#
+# Hyperscaler-grade dependency policy: licenses, advisories, bans, and
+# registry sources are all governed here. `cargo deny check` is wired
+# into `scripts/check.sh` and CI; any change to this file is a policy
+# change and must be reviewed under that lens (security + licensing).
+
+[licenses]
+version = 2
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+# SQLx Postgres adapter review, 2026-05-23:
+# - foldhash@0.1.5 is Zlib-licensed and enters only through sqlx-core's
+#   hashlink/hashbrown cache path.
+# - webpki-roots is CDLA-Permissive-2.0-licensed trust-anchor data used by the
+#   rustls TLS path selected to avoid OpenSSL.
+# Keep these as exact per-crate exceptions, not global allows, so future version
+# bumps or broader license use re-open policy review.
+exceptions = [
+  { allow = ["Zlib"], crate = "foldhash@0.1.5" },
+  # 2026-05-28 hyperscaler review: additional exact transitive
+  # exceptions discovered outside the SQLx-specific review above. Keep
+  # these per-crate instead of broad global allows so new uses re-open
+  # review.
+  { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "ar_archive_writer@0.5.1" },
+  { allow = ["CC0-1.0"], crate = "base16@0.2.1" },
+  { allow = ["Zlib"], crate = "const_format@0.2.36" },
+  { allow = ["Zlib"], crate = "const_format_proc_macros@0.2.34" },
+  { allow = ["Zlib"], crate = "foldhash@0.2.0" },
+  { allow = ["Zlib"], crate = "konst@0.2.20" },
+  { allow = ["Zlib"], crate = "konst_macro_rules@0.2.19" },
+  { allow = ["Zlib"], crate = "slotmap@1.1.1" },
+  { allow = ["BSL-1.0"], crate = "xxhash-rust@0.8.15" },
+  # 2026-08-19: refreshed when `cargo deny check licenses` was FIRST actually executed
+  # (see .github/workflows/license-weekly-advisory.yml). These rows had drifted because
+  # nothing ran them: the pinned 1.0.7 row named a version no longer in the lock, and
+  # rustls split its trust-anchor data into a SECOND crate, webpki-root-certs, which no
+  # row covered at all. Same CDLA-Permissive-2.0 trust-anchor data, same rationale as the
+  # 2026-05-23 review above; only the crate names and versions move.
+  { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots@0.26.11" },
+  { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots@1.0.9" },
+  { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs@1.0.9" },
+]
+
+[advisories]
+version = 2
+# RustSec database advisories: fail on any unfixed vulnerability that
+# does not have an explicit ignore. Unmaintained advisories block
+# workspace crates; transitive unmaintained debt is reviewed through
+# direct dependency upgrade lanes instead of blanket ignores.
+yanked = "deny"
+unmaintained = "workspace"
+ignore = [
+    # serde_yaml 0.9.34+deprecated -- the version string says it. dtolnay
+    # archived the repository in 2024. It parses OpenSLO specs
+    # (slo_canary_guard/openslo_parser.rs) and doc frontmatter
+    # (doc_guard/frontmatter.rs), both small well-defined subsets.
+    #
+    # Recorded as debt rather than swapped in haste: the maintained forks
+    # (serde_yaml_ng, serde_norway) do not yet carry the reputation that would
+    # make them an obvious upgrade, and trading a known-deprecated crate for a
+    # less-proven one is not a improvement. The honest options are to migrate
+    # to a fork once one is clearly dominant, or to drop YAML support.
+    #
+    # This entry exists so the decision is visible and dated rather than silent.
+    # RUSTSEC-0000-0000 is a placeholder: replace with the real advisory id if
+    # one is ever filed.
+]
+
+[bans]
+# Hyperscaler discipline: forbid duplicate crate versions (transitive
+# diamond dependencies waste binary size + lengthen the supply-chain
+# attack surface). Skip-tree the workspace itself so unavoidable
+# upstream duplicates can be allowlisted explicitly here.
+multiple-versions = "warn"
+# Wildcard deps from third-party crates are forbidden; in-workspace
+# path-dep declarations parse as wildcards under cargo-deny but are
+# safe (the workspace pins their versions), so this stays `warn` not
+# `deny`. CI surfaces the warning for review without blocking.
+wildcards = "warn"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+  # OpenSSL footguns: prefer rustls everywhere. Adding either of
+  # these requires an ADR-tracked exception.
+  { name = "openssl" },
+  { name = "openssl-sys" },
+  # Unmaintained crates known to be unsafe.
+  { name = "old-time" },
+]
+allow = []
+skip = []
+skip-tree = []
+
+[sources]
+# Only crates.io as a registry source. Adding a git or local registry
+# requires an ADR-tracked exception.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

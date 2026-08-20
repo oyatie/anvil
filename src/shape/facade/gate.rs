@@ -29,7 +29,9 @@ pub struct ShapeMeasurement {
 pub enum ShapeGateOutcome {
     /// The tree carries no `.anvil/shape.json` at the head commit.
     NoSpec { reason: String },
-    /// Git or the spec could not be read.
+    /// A spec exists at the head but does not parse or is invalid.
+    SpecUnreadable { reason: String },
+    /// Git could not be read.
     Errored { reason: String },
     /// Measured, but no baseline exists at the merge-base: this change
     /// introduces one, so regressions cannot be judged yet.
@@ -93,8 +95,13 @@ pub async fn judge_pr(
     match judge(repo_dir, &base_ref, head, None).await {
         Err(e) => {
             let msg = e.to_string();
-            if msg.contains("no .anvil/") || msg.contains("pass --spec-override") {
+            if msg.contains("pass --spec-override") {
                 ShapeGateOutcome::NoSpec { reason: msg }
+            } else if msg.contains("shape spec does not parse")
+                || msg.contains("shape spec is invalid")
+                || msg.contains("spec is not UTF-8")
+            {
+                ShapeGateOutcome::SpecUnreadable { reason: msg }
             } else {
                 ShapeGateOutcome::Errored { reason: msg }
             }
@@ -129,16 +136,18 @@ impl ShapeGateOutcome {
         match self {
             ShapeGateOutcome::Bootstrap { measurement }
             | ShapeGateOutcome::Judged { measurement, .. } => Some(measurement),
-            _ => None,
+            ShapeGateOutcome::NoSpec { .. }
+            | ShapeGateOutcome::SpecUnreadable { .. }
+            | ShapeGateOutcome::Errored { .. } => None,
         }
     }
 
     /// One line: `distance N (units M/K conformant, B new on blocking rules, A advisory)`.
     pub fn summary(&self) -> String {
         match self {
-            ShapeGateOutcome::NoSpec { reason } | ShapeGateOutcome::Errored { reason } => {
-                reason.clone()
-            }
+            ShapeGateOutcome::NoSpec { reason }
+            | ShapeGateOutcome::SpecUnreadable { reason }
+            | ShapeGateOutcome::Errored { reason } => reason.clone(),
             ShapeGateOutcome::Bootstrap { measurement: m } => format!(
                 "distance {} (units {}/{} conformant); no baseline at merge-base — this change bootstraps it",
                 m.distance.findings_total, m.distance.units_conformant, m.distance.units_total

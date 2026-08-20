@@ -1426,4 +1426,15 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   Counterpart loc deliberately 0: the four oyatie gates were not summed because the \
                   engine is a generalisation, not a transcription of any one of them.",
     },
+    MigrationEntry {
+        component: "ratchet (dir)",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "ci/facade/baseline-ratchet",
+        counterpart_loc: 0,
+        evidence: "Generic shrink-only ratchet (plan breezy-purring-crayon G15): frozen reference at \
+                  merge-base, per-rule mode as data, frozen_empty rules, one-way sign-off door with \
+                  inert-entry failure. Transcribes oyatie's baseline-ratchet semantics over string keys \
+                  so any gate can consume it. Counterpart loc 0: not summed, transcription not copy.",
+    },
 ];

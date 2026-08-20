@@ -43,6 +43,7 @@ const EXEMPTIONS: &[(&str, &[&str])] = &[
         &["BUCK", "Cargo.toml", "package.json", "mod.rs"],
     ),
     ("src/shape/facade/cli.rs", &[".anvil/shape.json"]),
+    ("src/shape/facade/baseline.rs", &[".anvil/baselines/"]),
 ];
 
 fn repo_root() -> PathBuf {

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -116,7 +116,14 @@ impl SubscriptionExecutor {
             }
         };
 
-        match cmd.output().await {
+        match crate::exec::run_bounded_for(
+            cmd,
+            std::time::Duration::from_secs(config.print_timeout_secs),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty()
@@ -209,7 +216,14 @@ impl SubscriptionExecutor {
             Err(_) => "codex-default".to_string(),
         };
 
-        match cmd.output().await {
+        match crate::exec::run_bounded_for(
+            cmd,
+            std::time::Duration::from_secs(config.print_timeout_secs),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty() {
@@ -283,7 +297,14 @@ impl SubscriptionExecutor {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        match cmd.output().await {
+        match crate::exec::run_bounded_for(
+            cmd,
+            crate::exec::ExecClass::Model.timeout(),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty() {
@@ -350,7 +371,14 @@ impl SubscriptionExecutor {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        match cmd.output().await {
+        match crate::exec::run_bounded_for(
+            cmd,
+            std::time::Duration::from_secs(config.print_timeout_secs),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty() {
@@ -429,10 +457,14 @@ impl SubscriptionExecutor {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to run agy subscription CLI")?;
+        // print_timeout_secs was set in 23 places and read nowhere; it now
+        // actually bounds the call (invariant I5).
+        let output = crate::exec::run_bounded_for(
+            cmd,
+            std::time::Duration::from_secs(config.print_timeout_secs),
+            "agy subscription CLI",
+        )
+        .await?;
 
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();

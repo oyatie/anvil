@@ -91,12 +91,15 @@ impl CiTriager {
             String::from_utf8_lossy(&output.stderr).to_string()
         };
 
-        // Cap log snippet to last 20,000 characters to stay within efficient model context
-        if logs.len() > 20000 {
-            Ok(logs[logs.len() - 20000..].to_string())
-        } else {
-            Ok(logs)
-        }
+        // Cap the log snippet to stay within efficient model context.
+        //
+        // This previously sliced `logs[logs.len() - 20000..]`, a BYTE offset into
+        // a UTF-8 string. `logs` comes from String::from_utf8_lossy over CI
+        // output, which routinely contains multibyte characters -- cargo and
+        // clippy emit checkmarks, arrows and box-drawing glyphs. Whenever that
+        // offset landed mid-character, the slice panicked and killed the spawned
+        // triage task. Reachable from any trunk CI failure with a log over 20 KB.
+        Ok(tail_chars(&logs, 20_000))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -263,6 +266,23 @@ fn extract_json_block(text: &str) -> String {
     text.to_string()
 }
 
+/// Returns the last `max_chars` characters, never splitting a UTF-8 character.
+///
+/// Operates on character boundaries rather than byte offsets.
+fn tail_chars(s: &str, max_chars: usize) -> String {
+    let total = s.chars().count();
+    if total <= max_chars {
+        return s.to_string();
+    }
+    // Byte index of the character that starts the tail.
+    let start = s
+        .char_indices()
+        .nth(total - max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    s[start..].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +306,38 @@ mod tests {
             Some("src/models.rs:54")
         );
         assert!(parsed.root_cause.contains("Missing trait bound"));
+    }
+}
+
+#[cfg(test)]
+mod tail_tests {
+    use super::tail_chars;
+
+    #[test]
+    fn does_not_panic_on_multibyte_boundaries() {
+        // Byte-slicing this at an arbitrary offset panics; char-slicing must not.
+        let logs = "✓ ok → next ─────".repeat(3000);
+        assert!(logs.len() > 20_000, "fixture must exceed the cap in BYTES");
+        let out = tail_chars(&logs, 20_000);
+        assert_eq!(out.chars().count(), 20_000);
+        assert!(logs.ends_with(&out));
+    }
+
+    #[test]
+    fn returns_input_unchanged_when_short() {
+        assert_eq!(tail_chars("short", 20_000), "short");
+        assert_eq!(tail_chars("", 10), "");
+    }
+
+    #[test]
+    fn keeps_the_tail_not_the_head() {
+        assert_eq!(tail_chars("abcdef", 3), "def");
+    }
+
+    #[test]
+    fn handles_a_cap_landing_exactly_on_a_multibyte_char() {
+        let s = "aaa日本語";
+        assert_eq!(tail_chars(s, 3), "日本語");
+        assert_eq!(tail_chars(s, 4), "a日本語");
     }
 }

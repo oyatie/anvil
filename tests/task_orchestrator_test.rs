@@ -1,6 +1,4 @@
-use anvil::task_orchestrator::{
-    ScopedTaskDefinition, SourceDocVerifier, TaskDagSequencer,
-};
+use anvil::task_orchestrator::{ScopedTaskDefinition, SourceDocVerifier, TaskDagSequencer};
 use tempfile::tempdir;
 
 #[test]
@@ -62,7 +60,9 @@ fn test_source_doc_verifier_validates_truth_and_catches_contradictions() {
         is_verified_ssot: false,
     };
 
-    let res_deprecated = verifier.verify_scoped_task(&task_deprecated, repo_root).unwrap();
+    let res_deprecated = verifier
+        .verify_scoped_task(&task_deprecated, repo_root)
+        .unwrap();
     assert!(!res_deprecated.is_valid);
     assert!(res_deprecated.contradiction_reason.is_some());
     assert!(res_deprecated

@@ -179,7 +179,8 @@ impl FleetObserver {
                     .await
                     .unwrap_or(0);
 
-                let pass_rate_percent = (100.0 - dora.change_failure_rate_percent).clamp(0.0, 100.0);
+                let pass_rate_percent =
+                    (100.0 - dora.change_failure_rate_percent).clamp(0.0, 100.0);
 
                 RepoFleetSummary {
                     repo_name: repo_str,

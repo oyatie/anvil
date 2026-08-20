@@ -104,7 +104,8 @@ impl HyperscalerDashboardRenderer {
         let repo_cards = crate::dashboard::panel_formatters::build_repo_cards(state);
         let merge_train_rows = crate::dashboard::panel_formatters::build_merge_train_rows(state);
         let gate_cells = crate::dashboard::panel_formatters::build_gate_cells(state);
-        let account_quota_rows = crate::dashboard::panel_formatters::build_account_quota_rows(state);
+        let account_quota_rows =
+            crate::dashboard::panel_formatters::build_account_quota_rows(state);
         let model_rows = crate::dashboard::panel_formatters::build_model_rows(state);
         let activity_rows = crate::dashboard::panel_formatters::build_activity_rows(state);
 
@@ -126,8 +127,7 @@ impl HyperscalerDashboardRenderer {
     </script>
 </head>
 <body>"#,
-            css_styles,
-            client_scripts
+            css_styles, client_scripts
         ) + &format!(
             r#"
     <!-- TOP STATUS HERO BAR -->

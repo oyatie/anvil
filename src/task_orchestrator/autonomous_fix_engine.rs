@@ -58,7 +58,10 @@ impl AutonomousFixEngine {
             task.task_id, repo
         );
 
-        let branch_name = format!("feat/auto-task-{}", task.task_id.to_lowercase().replace(' ', "-"));
+        let branch_name = format!(
+            "feat/auto-task-{}",
+            task.task_id.to_lowercase().replace(' ', "-")
+        );
         let worktree_res = self
             .git_mgr
             .create_ephemeral_worktree(repo, 999_000 + (rand_u32() % 1000) as u64, &branch_name)
@@ -115,17 +118,18 @@ impl AutonomousFixEngine {
                     let patch_hash = format!("{:x}", md5_hash(&raw_output));
                     let verdict = self
                         .deathloop_detector
-                        .record_and_evaluate(
-                            &task.task_id,
-                            &patch_hash,
-                            "nominal",
-                            tokens,
-                            0,
-                        )
+                        .record_and_evaluate(&task.task_id, &patch_hash, "nominal", tokens, 0)
                         .await;
 
-                    if let crate::self_governance::DeathloopVerdict::TrippedCircuitBreaker { reason, .. } = verdict {
-                        warn!("🚨 [Autonomous Fix Engine] Tripped deathloop circuit breaker: {}", reason);
+                    if let crate::self_governance::DeathloopVerdict::TrippedCircuitBreaker {
+                        reason,
+                        ..
+                    } = verdict
+                    {
+                        warn!(
+                            "🚨 [Autonomous Fix Engine] Tripped deathloop circuit breaker: {}",
+                            reason
+                        );
                         break;
                     }
 

@@ -429,7 +429,10 @@ pub async fn task_sweep_handler(
     State(state): State<AppState>,
     Json(payload): Json<TaskSweepRequest>,
 ) -> impl IntoResponse {
-    info!("Autonomous task sweep requested for '{}' via REST API...", payload.repo);
+    info!(
+        "Autonomous task sweep requested for '{}' via REST API...",
+        payload.repo
+    );
 
     let repo_dir = state.git_mgr.get_repo_dir(&payload.repo);
     let state_clone = state.clone();

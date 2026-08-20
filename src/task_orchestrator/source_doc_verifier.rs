@@ -53,7 +53,10 @@ impl SourceDocVerifier {
             // If file doesn't exist, its parent directory must exist or be an expected module root
             if !full_path.exists() {
                 if let Some(p) = parent {
-                    if !p.exists() && !target_rel.starts_with("src/") && !target_rel.starts_with("tests/") {
+                    if !p.exists()
+                        && !target_rel.starts_with("src/")
+                        && !target_rel.starts_with("tests/")
+                    {
                         stale_references.push(format!(
                             "Target path '{}' points to nonexistent parent directory {:?}",
                             target_rel, p
@@ -142,7 +145,11 @@ impl SourceDocVerifier {
         repo_root: &Path,
     ) -> Option<ScopedTaskDefinition> {
         let file_stem = path.file_stem()?.to_str()?;
-        let rel_path = path.strip_prefix(repo_root).unwrap_or(path).to_string_lossy().to_string();
+        let rel_path = path
+            .strip_prefix(repo_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
 
         let title_line = content
             .lines()
@@ -151,7 +158,8 @@ impl SourceDocVerifier {
         let title = title_line.trim_start_matches("# ").trim().to_string();
 
         // Extract priority and dependencies from frontmatter or content
-        let priority = if content.contains("Priority: P0") || content.contains("Priority: Critical") {
+        let priority = if content.contains("Priority: P0") || content.contains("Priority: Critical")
+        {
             0
         } else if content.contains("Priority: P1") || content.contains("Priority: High") {
             1

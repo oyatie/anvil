@@ -314,6 +314,95 @@ impl PreMergeCertificationReport {
         self.is_certified_ready && self.unmeasured_gates.is_empty()
     }
 
+    /// A report in which nothing has been measured: every gate is
+    /// `NotMeasured` with `reason`, nothing is certified, nothing is
+    /// admissible. The honest starting point for a fixture or a preview —
+    /// there is deliberately no "all passed" constructor (I2).
+    pub fn unmeasured(reason: &str) -> Self {
+        let nm = |gate_id: &str| GateStatus::NotMeasured {
+            gate_id: gate_id.to_string(),
+            reason: reason.to_string(),
+        };
+        let mut r = PreMergeCertificationReport {
+            is_certified_ready: false,
+            doc_parity_status: nm("doc_parity_status"),
+            cedar_status: nm("cedar_status"),
+            compliance_status: nm("compliance_status"),
+            api_contract_status: nm("api_contract_status"),
+            cell_isolation_status: nm("cell_isolation_status"),
+            supply_chain_status: nm("supply_chain_status"),
+            clean_arch_status: nm("clean_arch_status"),
+            monorepo_status: nm("monorepo_status"),
+            debt_shrink_status: nm("debt_shrink_status"),
+            modularization_status: nm("modularization_status"),
+            coverage_status: nm("coverage_status"),
+            rust_skills_status: nm("rust_skills_status"),
+            kani_status: nm("kani_status"),
+            slo_status: nm("slo_status"),
+            adr_status: nm("adr_status"),
+            shuffle_status: nm("shuffle_status"),
+            trace_status: nm("trace_status"),
+            constant_work_status: nm("constant_work_status"),
+            idempotency_status: nm("idempotency_status"),
+            finops_status: nm("finops_status"),
+            ghost_migration_status: nm("ghost_migration_status"),
+            gitops_promo_status: nm("gitops_promo_status"),
+            gitops_drift_status: nm("gitops_drift_status"),
+            canary_status: nm("canary_status"),
+            cluster_audit_status: nm("cluster_audit_status"),
+            migration_orch_status: nm("migration_orch_status"),
+            ci_wallclock_status: nm("ci_wallclock_status"),
+            predictive_test_status: nm("predictive_test_status"),
+            compile_profile_status: nm("compile_profile_status"),
+            remote_cache_status: nm("remote_cache_status"),
+            runner_economics_status: nm("runner_economics_status"),
+            sandbox_status: nm("sandbox_status"),
+            cross_service_status: nm("cross_service_status"),
+            ephemeral_secret_status: nm("ephemeral_secret_status"),
+            psa_status: nm("psa_status"),
+            shadow_traffic_status: nm("shadow_traffic_status"),
+            unresolved_review_status: nm("unresolved_review_status"),
+            local_probe_status: nm("local_probe_status"),
+            semantic_abi_status: nm("semantic_abi_status"),
+            zero_day_status: nm("zero_day_status"),
+            formal_verification_status: nm("formal_verification_status"),
+            deadlock_status: nm("deadlock_status"),
+            review_verdict_status: nm("review_verdict_status"),
+            brand_absence_status: nm("brand_absence_status"),
+            migration_boundary_status: nm("migration_boundary_status"),
+            automated_canary_status: nm("automated_canary_status"),
+            progressive_ring_status: nm("progressive_ring_status"),
+            hermetic_build_status: nm("hermetic_build_status"),
+            openvex_status: nm("openvex_status"),
+            cosign_status: nm("cosign_status"),
+            chaos_injection_status: nm("chaos_injection_status"),
+            stacked_diffs_status: nm("stacked_diffs_status"),
+            microbench_status: nm("microbench_status"),
+            jittered_backoff_status: nm("jittered_backoff_status"),
+            schema_evolution_status: nm("schema_evolution_status"),
+            auto_rollback_status: nm("auto_rollback_status"),
+            wasm_sandbox_status: nm("wasm_sandbox_status"),
+            consistency_status: nm("consistency_status"),
+            flake_quarantine_status: nm("flake_quarantine_status"),
+            zero_trust_workload_status: nm("zero_trust_workload_status"),
+            carbon_compute_status: nm("carbon_compute_status"),
+            replay_harness_status: nm("replay_harness_status"),
+            upgrade_train_status: nm("upgrade_train_status"),
+            mutation_status: nm("mutation_status"),
+            feature_flag_status: nm("feature_flag_status"),
+            bench_status: nm("bench_status"),
+            attestation_status: nm("attestation_status"),
+            security_scan_status: nm("security_scan_status"),
+            schema_compat_status: nm("schema_compat_status"),
+            performance_concurrency_status: nm("performance_concurrency_status"),
+            test_suite_status: nm("test_suite_status"),
+            unmeasured_gates: Vec::new(),
+            summary_markdown: String::new(),
+        };
+        r.seal();
+        r
+    }
+
     /// Derives every summary field from the gate statuses.
     ///
     /// `is_certified_ready` is the conjunction of `all_statuses()`, so a gate

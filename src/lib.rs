@@ -14,6 +14,7 @@ pub mod canary_rollout;
 pub mod carbon_aware;
 pub mod cedar_guard;
 pub mod cell_isolation_guard;
+pub mod change_delivery;
 pub mod chaos_injector;
 pub mod chaos_mutation_guard;
 pub mod ci_runner_economics;

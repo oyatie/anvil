@@ -83,6 +83,54 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     None => println!("{json}"),
                 }
             }
+            crate::cli::args::ShapeAction::Plan {
+                repo_dir,
+                rev,
+                spec_override,
+                policy,
+                plan_out,
+            } => {
+                let req = crate::shape::facade::measure::MeasureRequest {
+                    repo_dir: repo_dir.clone(),
+                    rev,
+                    repo: repo_dir
+                        .canonicalize()
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_default(),
+                    spec_override,
+                    registry_override: None,
+                };
+                let report = crate::shape::facade::measure::measure_repo(&req).await?;
+                let spec_version = format!("{:?}", report.spec_source);
+                let plan =
+                    crate::change_delivery::facade::plan::plan_from_report(&report, &spec_version);
+                let owners =
+                    crate::change_delivery::facade::plan::owners_from_tree(&repo_dir, &report.rev)
+                        .await;
+                let manifests = crate::change_delivery::facade::plan::manifests_from_tree(
+                    &repo_dir,
+                    &report.rev,
+                )
+                .await;
+                let policy_bytes = policy.map(std::fs::read).transpose()?;
+                let (policy, problem) =
+                    crate::change_delivery::core::LandingPolicy::load(policy_bytes.as_deref());
+                if let Some(p) = problem {
+                    println!("warning: {p}");
+                }
+                let d = crate::change_delivery::facade::plan::dry_run(
+                    &plan, &owners, &manifests, policy,
+                );
+                print!(
+                    "{}",
+                    crate::change_delivery::facade::plan::render(&d, &plan)
+                );
+                if let Some(p) = plan_out {
+                    std::fs::write(&p, format!("{}\n", plan.to_json()))?;
+                    println!("move plan written to {}", p.display());
+                }
+            }
             crate::cli::args::ShapeAction::Ratchet {
                 repo_dir,
                 base_ref,

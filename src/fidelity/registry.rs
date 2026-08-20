@@ -20,9 +20,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      instrumentation, and block below a threshold.",
         reference: "cargo-llvm-cov; Google TAP coverage instrumentation",
         fidelity: Fidelity::Aspirational,
-        gap: "Runs no coverage tool. Derives a figure from added test lines over added code lines times a \
-              0.4 factor, then applies .max(85.0) against a >= 85.0 threshold -- so it is unfailable by \
-              arithmetic (coverage_guard.rs:135-141).",
+        gap: "Runs no compiler coverage instrumentation tool. When no executable lines are added it reports \
+              `NothingToMeasure`, and with no llvm-cov tool it reports `NotMeasured` (coverage_guard.rs:85-88,135-138).",
         blocked_on: None,
     },
     GateFidelity {
@@ -31,9 +30,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      checker.",
         reference: "Kani / CBMC; AWS Automated Reasoning Group",
         fidelity: Fidelity::Heuristic,
-        gap: "Checks whether a `// SAFETY:` comment appears near `unsafe`. When the kani binary is absent it \
-              returns status VERIFIED_STATIC -- a missing verifier reporting success \
-              (kani_guard/proof_runner.rs:38-45).",
+        gap: "Checks whether a `SAFETY:` documentation comment appears near `unsafe` (kani_guard/mod.rs:49-50). \
+              When the kani binary is absent it returns status `VERIFIED_STATIC` -- a missing verifier \
+              reporting success (kani_guard/proof_runner.rs:40-44).",
         blocked_on: None,
     },
     GateFidelity {
@@ -42,8 +41,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      telemetry (14.4x/1h, 6x/6h).",
         reference: "Google SRE Workbook, multiwindow multi-burn-rate alerting",
         fidelity: Fidelity::Aspirational,
-        gap: "Queries no telemetry. Assigns simulated_burn_rate_1h = 1.02 and compares it against a 14.4 \
-              threshold it can never reach (slo_canary_guard/mod.rs:83-86).",
+        gap: "Queries no telemetry. With no Prometheus or `OpenTelemetry` endpoint configured, the gate \
+              structurally validates touched OpenSLO specs and reports `NotMeasured` \
+              (slo_canary_guard/mod.rs:45-47,154-157).",
         blocked_on: Some("a reachable Prometheus or OpenTelemetry endpoint"),
     },
     GateFidelity {
@@ -51,9 +51,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Report the real distributed build-cache hit rate and ratchet it upward.",
         reference: "Bazel/Buck2 remote execution CAS statistics",
         fidelity: Fidelity::Aspirational,
-        gap: "Hardcodes hit_rate_pct: 95.0 against an 85.0 threshold, so it cannot fail. Cache keys use \
-              non-cryptographic FNV-1a, which is collision-attackable when PR content influences the key \
-              (remote_cache_optimizer/mod.rs:63, cache_keys.rs:24).",
+        gap: "With no sccache or Buck2 CAS statistics endpoint configured, reports `NotMeasured` \
+              (remote_cache_optimizer/mod.rs:82-85). Cache keys use non-cryptographic FNV-1a hashing via \
+              `compute_cache_key` (remote_cache_optimizer/cache_keys.rs:16).",
         blocked_on: Some("sccache or Buck2 CAS statistics"),
     },
     GateFidelity {
@@ -120,8 +120,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Measure this PR's actual CI wallclock and ratchet against a trunk baseline.",
         reference: "internal CI wallclock budgets; ADR-0718",
         fidelity: Fidelity::Aspirational,
-        gap: "Hardcodes pr_wallclock_seconds: 142 with the source comment \"Under 5 min ceiling!\" \
-              (ci_wallclock_ratchet/mod.rs:64).",
+        gap: "Without GitHub Actions timing API access, reports `NotMeasured` rather than measuring real \
+              build duration or cost (ci_wallclock_ratchet/mod.rs:83-86).",
         blocked_on: Some("GitHub Actions timing API"),
     },
     GateFidelity {
@@ -129,9 +129,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Compare live cluster state against the declared manifests and report drift.",
         reference: "ArgoCD drift detection; kube-rs",
         fidelity: Fidelity::Aspirational,
-        gap: "Compares two identical hardcoded literals (\"replicas: 3\" against \"replicas: 3\"), and the \
-              detector requires \"replicas: 10\" on the live side, which those literals can never satisfy. \
-              No cluster is contacted (cluster_state_auditor/mod.rs:45-46).",
+        gap: "With no Kubernetes API or ArgoCD access configured, reports `NotMeasured` and performs no \
+              Git comparison (cluster_state_auditor/mod.rs:79-82).",
         blocked_on: Some("Kubernetes API or ArgoCD access"),
     },
     GateFidelity {
@@ -139,8 +138,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Mirror production traffic to a shadow deployment and diff the responses.",
         reference: "Envoy request mirroring; Diffy",
         fidelity: Fidelity::Aspirational,
-        gap: "Returns a hardcoded struct: sampled_requests: 5000, payload_parity_pct: 99.98 \
-              (shadow_traffic_harness/mod.rs:47).",
+        gap: "Without traffic mirror infrastructure or a replay target configured, reports `NotMeasured` \
+              (shadow_traffic_harness/mod.rs:76-79).",
         blocked_on: Some("traffic mirroring infrastructure and a replay target"),
     },
     GateFidelity {
@@ -177,8 +176,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         reference: "docs-as-code; Google g3doc",
         fidelity: Fidelity::Partial,
         gap: "Now fails closed after the Phase 0a fix, and creates missing ADRs. It cannot AMEND an existing \
-              document: generate_and_write_docs writes only when !path.exists(), so README.md and \
-              CHANGELOG.md are never updated (doc_guard/mod.rs:300).",
+              document: generate_and_write_docs writes only when a file does not exist \
+              (doc_guard/mod.rs:306-328).",
         blocked_on: None,
     },
     GateFidelity {
@@ -187,10 +186,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      report the pruning ratio actually achieved.",
         reference: "Google TAP affected-targets analysis; Meta Predictive Test Selection (arXiv:1810.05286)",
         fidelity: Fidelity::Heuristic,
-        gap: "Computes a package DAG from `cargo metadata`, which is a real dependency closure, but then \
-              hardcodes `let is_optimized = true` (predictive_test_selector/mod.rs:64) so the guard reports \
-              PASSED regardless of the subprocess outcome. Closure-only selection is also ~99% waste at \
-              scale per the TAP paper; a risk model is the actual target.",
+        gap: "Computes a package DAG, but then sets is_optimized to true (predictive_test_selector/mod.rs:64) \
+              so the guard reports PASSED regardless of the subprocess outcome. run_sync_bounded handles \
+              metadata subprocesses (predictive_test_selector/workspace_dag.rs:17).",
         blocked_on: None,
     },
     GateFidelity {
@@ -201,6 +199,45 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         gap: "Infers resolution from comment text rather than querying isResolved, so informational comments \
               can hold a PR at 'unresolved' indefinitely.",
         blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "automated_canary_status",
+        aspiration: "Compare canary and baseline metric distributions from a live canary deployment with a \
+                     Mann-Whitney U-test, and halt the rollout on a statistically significant regression.",
+        reference: "Spinnaker/Kayenta Automated Canary Analysis; Mann-Whitney U-test",
+        fidelity: Fidelity::Aspirational,
+        gap: "Deploys no canary and queries no telemetry. The review pipeline used to write the samples it \
+              then judged. Mann-Whitney is not implemented: evaluate_canary_distributions compares two \
+              arithmetic means against a fixed relative bound \
+              (automated_canary/statistical_engine.rs:43). With no baseline_samples and no canary_samples \
+              the gate now reports NotMeasured instead of a pass.",
+        blocked_on: Some("a canary deployment with a queryable Prometheus or OpenTelemetry endpoint"),
+    },
+    GateFidelity {
+        gate_id: "stacked_diffs_status",
+        aspiration: "Read the pull request DAG from the forge, order the stack topologically, and verify \
+                     every child is rebased on its parent before an atomic merge.",
+        reference: "Phabricator/Graphite stacked diffs; Meta Sapling",
+        fidelity: Fidelity::Aspirational,
+        gap: "Reads no pull request DAG; the review pipeline passed an empty slice on every PR. Given a \
+              real stack, compute_stack_plan still returns atomic_merge_ready unconditionally and orders \
+              by input order rather than by parent links, so stack_depth is the only thing it derives \
+              (stacked_diffs/dag_manager.rs:27-36). With no stack supplied the gate reports NotMeasured.",
+        blocked_on: Some("a forge query for the pull requests stacked on this one"),
+    },
+    GateFidelity {
+        gate_id: "microbench_status",
+        aspiration: "Run criterion benchmarks on the base and head revisions and ratchet hotpath ns/op \
+                     against a published trunk baseline.",
+        reference: "criterion.rs; Google Fleetbench",
+        fidelity: Fidelity::Aspirational,
+        gap: "Executes no benchmark: this repository declares no criterion dependency and has no benches \
+              directory, so there is no baseline to ratchet against and the review pipeline used to write \
+              a base_ns_per_op equal to its own head_ns_per_op. evaluate_benchmark_diff is honest \
+              arithmetic over a caller-supplied sample and is retained as the seam, but it reads neither \
+              p99_cpu_cycles_base nor p99_cpu_cycles_head \
+              (microbenchmark_ratchet/criterion_diff.rs:35-44).",
+        blocked_on: Some("a criterion benchmark harness and a published trunk baseline"),
     },
 ];
 

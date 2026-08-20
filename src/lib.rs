@@ -9,6 +9,7 @@ pub mod api_contract_guard;
 pub mod attestation_guard;
 pub mod auto_rollback;
 pub mod automated_canary;
+pub mod brand_absence;
 pub mod canary_rollout;
 pub mod carbon_aware;
 pub mod cedar_guard;

@@ -139,13 +139,6 @@ async fn main() -> Result<()> {
             warn!("Clean Architecture self-conformance could not run: {e}");
         }
     }
-    if let Ok(report) = clean_arch_guard.evaluate_self(&std::env::current_dir().unwrap_or_default())
-    {
-        tracing::debug!(
-            "Clean architecture self_conformance report: {}",
-            report.summary
-        );
-    }
     let monorepo_guard = Arc::new(MonorepoGuard::new());
     let debt_shrink_guard = Arc::new(DebtShrinkGuard::new());
     let modularization_guard = Arc::new(ModularizationGuard::new());

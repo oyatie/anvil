@@ -116,9 +116,11 @@ impl QueueHealer {
             base_branch, branch_name, repo, pr_number
         );
         let mut merge_cmd = Command::new("git");
-        merge_cmd
-            .current_dir(&repo_dir)
-            .args(["merge", &format!("origin/{}", base_branch), "--no-edit"]);
+        merge_cmd.current_dir(&repo_dir).args([
+            "merge",
+            &format!("origin/{}", base_branch),
+            "--no-edit",
+        ]);
         let merge_out = crate::exec::run_bounded(
             merge_cmd,
             crate::exec::ExecClass::Vcs,

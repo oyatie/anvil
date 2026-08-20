@@ -161,7 +161,12 @@ impl PreMergeGuard {
         );
 
         // 1. Doc Parity
-        let doc_parity_status = if !doc_report.files_created_or_updated.is_empty() {
+        // A probe that could not run is Errored, not Failed: we have no evidence
+        // the documentation is deficient, only that we could not judge it.
+        // Both block (invariant I1).
+        let doc_parity_status = if let Some(err) = &doc_report.errored {
+            GateStatus::Errored(err.clone())
+        } else if !doc_report.files_created_or_updated.is_empty() {
             GateStatus::AutoUpdated
         } else if doc_report.is_sufficient {
             GateStatus::Passed
@@ -654,13 +659,21 @@ impl PreMergeGuard {
         };
 
         // 69. AI Code Review & 16-Lens Invariant Gate
-        let review_verdict_status = if review_verdict == "APPROVE" || review_verdict == "COMMENT" {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(format!(
+        //
+        // Only an explicit APPROVE or COMMENT from a successfully parsed response
+        // may pass. VERDICT_ERRORED means the harness obtained no review at all —
+        // that is Errored, not Failed, because the model did not judge the code
+        // adversely; the review simply did not happen. Both block (invariant I1).
+        let review_verdict_status = match review_verdict {
+            "APPROVE" | "COMMENT" => GateStatus::Passed,
+            crate::reviewer::VERDICT_ERRORED => GateStatus::Errored(
+                "AI Code Review produced no parseable verdict; the review did not complete"
+                    .to_string(),
+            ),
+            other => GateStatus::Failed(format!(
                 "AI Code Review & 16-Lens Matrix issued blocking verdict: {}",
-                review_verdict
-            ))
+                other
+            )),
         };
 
         let is_certified_ready = doc_parity_status.is_acceptable()

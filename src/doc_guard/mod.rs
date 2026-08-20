@@ -213,7 +213,22 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                 // Match the invocation form used by every other agy call site
                 // (`--print <prompt> --effort <e>`); the previous
                 // `prompt --raw` form was unique to this guard.
-                cmd.args(["--print", &prompt_clone, "--effort", &agy_effort]);
+                cmd.args([
+                    "--print",
+                    &prompt_clone,
+                    "--effort",
+                    &agy_effort,
+                    // Required for agy to read the repository at all. Omitting it
+                    // in the Phase 0a rewrite made every doc-parity probe fail
+                    // with "permission check failed for command", which the
+                    // fail-closed change then surfaced as a blocked gate --
+                    // correctly, but for a reason this code introduced.
+                    //
+                    // This probe only READS, so a scoped read-only agy mode would
+                    // be the right long-term fix; passing the blanket flag here
+                    // widens the S5 surface by one more call site.
+                    "--dangerously-skip-permissions",
+                ]);
                 // Run inside the repository under review. Previously unset, so
                 // this probe executed in anvil's own working directory and
                 // judged the wrong tree.

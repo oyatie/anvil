@@ -46,8 +46,9 @@ pub async fn submit_pr_review_impl(
                 c.body.clone()
             } else {
                 format!(
-                    "{}\n\n---\n*🤖 Reviewed by Oyatie Anvil*",
-                    c.body.trim_end()
+                    "{}\n\n---\n{}",
+                    c.body.trim_end(),
+                    crate::publish::signature(crate::publish::AnvilAction::Reviewed)
                 )
             };
             ReviewCommentPayload {
@@ -64,8 +65,9 @@ pub async fn submit_pr_review_impl(
         review.summary.clone()
     } else {
         format!(
-            "{}\n\n---\n*🤖 Reviewed by Oyatie Anvil*",
-            review.summary.trim_end()
+            "{}\n\n---\n{}",
+            review.summary.trim_end(),
+            crate::publish::signature(crate::publish::AnvilAction::Reviewed)
         )
     };
 

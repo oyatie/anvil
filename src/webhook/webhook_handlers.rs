@@ -130,31 +130,25 @@ pub async fn webhook_handler(
 ) -> impl IntoResponse {
     // 1. Constant-time HMAC-SHA256 verification (Zero-Trust Ingress Security).
     //
-    // ============================ OBSERVE MODE ============================
-    // Verification runs and its outcome is logged, but a failure does NOT
-    // reject the request yet.
+    // ENFORCING. This ran in observe mode until the relay question was settled
+    // empirically: it was not established that the original X-Hub-Signature-256
+    // survives `gh webhook forward`'s relay through webhook-forwarder.github.com,
+    // and enforcing on an assumption would have produced a daemon that boots,
+    // reports healthy, and silently rejects every delivery.
     //
-    // Why: deliveries reach this daemon through `gh webhook forward`, a
-    // development tool that relays through webhook-forwarder.github.com. It is
-    // not established that the original X-Hub-Signature-256 survives that relay.
-    // Enforcing before confirming that would produce a daemon that boots, looks
-    // healthy, and silently rejects every delivery — /healthz is a static "ok"
-    // and would not reveal it.
+    // Evidence for promotion, measured on live traffic rather than assumed:
+    // `gh api repos/{r}/hooks` showed secret_set flip false -> true on all three
+    // watched repositories once `--secret` was passed to the forwarder, and six
+    // consecutive real deliveries logged signature_present=true
+    // signature_valid=true. The signature does survive the relay.
     //
-    // TO PROMOTE TO ENFORCING: confirm the logs below show
-    // `signature_valid=true` on real deliveries, then replace this block with a
-    // 401 return on `!valid`, and make `webhook_secret` mandatory at startup.
-    // Tracked as Phase 0 step 4; see plan section 14 for the ingress rework
-    // (GitHub App + accept-and-enqueue) that supersedes this path entirely.
-    // ======================================================================
+    // A delivery signed with GITHUB_WEBHOOK_SECRET_PREVIOUS is still accepted so
+    // a secret rotation does not drop in-flight deliveries; see config.rs.
     match &state.config.webhook_secret {
         Some(secret) => {
             let sig = headers
                 .get("x-hub-signature-256")
                 .and_then(|v| v.to_str().ok());
-            let signature_present = sig.is_some();
-            // Accept the previous secret too, so a rotation does not drop
-            // deliveries that were signed before the hook was updated.
             let matched_primary = verify_github_hmac(secret, &body_bytes, sig);
             let matched_previous = !matched_primary
                 && state
@@ -162,31 +156,44 @@ pub async fn webhook_handler(
                     .webhook_secret_previous
                     .as_deref()
                     .is_some_and(|prev| verify_github_hmac(prev, &body_bytes, sig));
+
             if matched_previous {
                 warn!(
                     "[Webhook Ingress] delivery verified against GITHUB_WEBHOOK_SECRET_PREVIOUS; \
-                     rotation is in progress. Clear the previous secret once deliveries \
-                     stop matching it."
+                     rotation is in progress. Clear the previous secret once deliveries stop matching it."
                 );
             }
-            let signature_valid = matched_primary || matched_previous;
-            if signature_valid {
-                info!(
-                    "[Webhook Ingress] signature_present={} signature_valid=true — ready to enforce",
-                    signature_present
-                );
-            } else {
+
+            if !(matched_primary || matched_previous) {
                 warn!(
-                    "🚨 [Webhook Ingress OBSERVE MODE] signature_present={} signature_valid=false \
-                     — this delivery WOULD BE REJECTED once enforcement is enabled. Accepting for now.",
-                    signature_present
+                    "🚨 [Webhook Ingress] rejecting delivery: signature_present={} signature_valid=false",
+                    sig.is_some()
+                );
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ApiResponse {
+                        success: false,
+                        message: "Invalid or missing X-Hub-Signature-256 signature".to_string(),
+                    }),
                 );
             }
         }
-        None => warn!(
-            "🚨 [Webhook Ingress] GITHUB_WEBHOOK_SECRET is not configured; \
-             deliveries are unauthenticated and unverifiable."
-        ),
+        None => {
+            // Unauthenticated ingress drives clone -> AI -> commit -> push with
+            // attacker-chosen fields. Refusing is the only safe response; the
+            // daemon also refuses to boot without the secret (config.rs).
+            warn!(
+                "🚨 [Webhook Ingress] rejecting delivery: GITHUB_WEBHOOK_SECRET is not configured, \
+                 so no delivery can be authenticated."
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ApiResponse {
+                    success: false,
+                    message: "Webhook signature verification is not configured".to_string(),
+                }),
+            );
+        }
     }
 
     let event_type = headers

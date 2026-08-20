@@ -34,7 +34,15 @@ use super::provider::ModelExecutionConfig;
 pub trait PromptExecutor: Send + Sync {
     /// Runs `prompt` against the model named `model`, with `working_dir` as the
     /// working directory, and returns the model's response text.
-    async fn execute(&self, model: &str, prompt: &str, working_dir: &Path) -> Result<String>;
+    /// Returns `impl Future + Send` rather than using `async fn` directly:
+    /// a bare `async fn` in a public trait cannot express the `Send` bound, so
+    /// callers cannot hold the future across an await in a spawned task.
+    fn execute(
+        &self,
+        model: &str,
+        prompt: &str,
+        working_dir: &Path,
+    ) -> impl std::future::Future<Output = Result<String>> + Send;
 }
 
 /// Runs a prompt against an already-resolved execution configuration.

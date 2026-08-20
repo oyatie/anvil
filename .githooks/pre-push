@@ -19,4 +19,24 @@ if ! cargo check --all-targets --locked --quiet 2>&1 | tail -20; then
     echo "           Pushing a non-compiling branch wastes every downstream reader's time."
     exit 1
 fi
+
+# Clippy too, not just rustc.
+#
+# This hook checked only `cargo check` and let a `-D warnings` failure reach the
+# remote -- an `async_fn_in_trait` lint that CI treats as fatal. A gate that
+# passes what the next gate will fail is worse than no gate: it teaches the
+# reader that green means safe.
+#
+# Exit status is captured explicitly rather than relying on a pipeline: piping
+# through `tail` is exactly how the first version of this check would have
+# swallowed the failure.
+echo "[pre-push] checking clippy -D warnings..."
+clippy_out=$(cargo clippy --all-targets --quiet -- -D warnings 2>&1)
+clippy_rc=$?
+if [ "$clippy_rc" -ne 0 ]; then
+    echo "$clippy_out" | tail -20
+    echo "[pre-push] REFUSED: clippy -D warnings failed."
+    echo "           CI treats these as fatal; catching them here costs seconds, not a round trip."
+    exit 1
+fi
 exit 0

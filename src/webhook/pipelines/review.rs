@@ -595,8 +595,19 @@ pub async fn execute_pr_review(
             payload_json: None,
         });
 
-    // If 100% Certified Ready, autonomously enlist into GitHub Merge Queue!
-    if cert_report.is_certified_ready {
+    // Enlist only when certified AND every gate actually produced a measurement.
+    // `is_admissible()` is deliberately stricter than `is_certified_ready`:
+    // invariant I1 — absent evidence must never merge.
+    if !cert_report.unmeasured_gates.is_empty() {
+        warn!(
+            "PR {}#{} withheld from merge queue: {} gate(s) produced no measurement: {}",
+            repo,
+            pr_number,
+            cert_report.unmeasured_gates.len(),
+            cert_report.unmeasured_gates.join(", ")
+        );
+    }
+    if cert_report.is_admissible() {
         info!(
             "PR {}#{} is 100% Certified. Autonomously enlisting in Merge Queue...",
             repo, pr_number

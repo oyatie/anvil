@@ -159,7 +159,7 @@ impl MatrixRenderer {
 ---
 **Verdict**: {}
 
-*🤖 Certified by Oyatie Anvil*"###,
+*🤖 [Certified] by Oyatie Anvil*"###,
             doc_status.badge(),
             cedar_status.badge(),
             compliance_status.badge(),

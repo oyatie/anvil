@@ -125,7 +125,7 @@ impl Fixer {
         for (item, eval) in &false_signal_items {
             if let Some(comment_id) = item.comment_id {
                 let reply_text = format!(
-                    "🔍 **Feedback Evaluation:**\n\n{}\n\n*Determined as intended behavior / false signal under current architectural invariants.*\n\n---\n*🤖 Evaluated by Oyatie Anvil*",
+                    "🔍 **Feedback Evaluation:**\n\n{}\n\n*Determined as intended behavior / false signal under current architectural invariants.*\n\n---\n*🤖 [Evaluated] by Oyatie Anvil*",
                     eval.rationale
                 );
                 let _ = self
@@ -198,7 +198,7 @@ impl Fixer {
             Resolved {} review finding(s).\n\n\
             X-Anvil-Action: auto-fix\n\
             X-Anvil-Version: 0.1.0\n\n\
-            *🤖 Fixed by Oyatie Anvil*",
+            *🤖 [Fixed] by Oyatie Anvil*",
             pr_number,
             valid_items.len()
         );
@@ -262,7 +262,7 @@ impl Fixer {
         for (item, eval) in &valid_items {
             if let Some(comment_id) = item.comment_id {
                 let reply_text = format!(
-                    "✅ **Addressed in commit [`{}`](https://github.com/{}/commit/{}):**\n\n{}\n\n*Verified against local test suites.*\n\n---\n*🤖 Fixed by Oyatie Anvil*",
+                    "✅ **Addressed in commit [`{}`](https://github.com/{}/commit/{}):**\n\n{}\n\n*Verified against local test suites.*\n\n---\n*🤖 [Fixed] by Oyatie Anvil*",
                     short_sha, repo, new_commit_sha, eval.rationale
                 );
                 let _ = self

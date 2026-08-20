@@ -40,7 +40,9 @@ pub async fn submit_pr_review_impl(
         .comments
         .iter()
         .map(|c| {
-            let body_with_footer = if c.body.contains("🤖 Reviewed by Oyatie Anvil") {
+            let body_with_footer = if c.body.contains(&crate::publish::signature(
+                crate::publish::AnvilAction::Reviewed,
+            )) {
                 c.body.clone()
             } else {
                 format!(
@@ -56,7 +58,9 @@ pub async fn submit_pr_review_impl(
         })
         .collect();
 
-    let summary_with_footer = if review.summary.contains("🤖 Reviewed by Oyatie Anvil") {
+    let summary_with_footer = if review.summary.contains(&crate::publish::signature(
+        crate::publish::AnvilAction::Reviewed,
+    )) {
         review.summary.clone()
     } else {
         format!(

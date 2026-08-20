@@ -256,7 +256,7 @@ impl MergeEnlister {
                     "## 📋 Scope Summary\n\
                     - **Target Branch**: `{}`\n\
                     - **Head SHA**: `{}`\n\n\
-                    ---\n*🤖 Reconciled by Oyatie Anvil*",
+                    ---\n*🤖 [Reconciled] by Oyatie Anvil*",
                     meta.base_ref_name, meta.head_ref_oid
                 )
             } else {
@@ -286,7 +286,7 @@ impl MergeEnlister {
 
     async fn post_enlistment_note(&self, repo: &str, pr_number: u64, strategy: &str) -> Result<()> {
         let note = format!(
-            "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n---\n*🤖 Enlisted by Oyatie Anvil*\n",
+            "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n---\n*🤖 [Enlisted] by Oyatie Anvil*\n",
             strategy
         );
         self.github_client

@@ -90,7 +90,7 @@ impl PrSelfHealer {
             - Reconciled missing OWNERS declarations\n\n\
             X-Anvil-Action: pr-self-heal\n\
             X-Anvil-Version: 0.1.0\n\n\
-            *🤖 Healed by Oyatie Anvil*",
+            *🤖 [Healed] by Oyatie Anvil*",
             pr_number
         );
 

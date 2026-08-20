@@ -133,17 +133,41 @@ impl AutonomousFixEngine {
                         break;
                     }
 
-                    // Check compilation in worktree
-                    let check_res = Command::new("cargo")
+                    // Check compilation in worktree. This gate is bounded and fails
+                    // CLOSED: only a cargo process that actually ran to completion and
+                    // exited 0 may set `is_successful`. A timeout, a spawn failure or a
+                    // non-zero exit all leave the attempt unsuccessful, so a stuck
+                    // `cargo check` can never be mistaken for "the AI code compiles".
+                    let mut check_cmd = Command::new("cargo");
+                    check_cmd
                         .arg("check")
-                        .current_dir(&worktree_dir.worktree_path)
-                        .output()
-                        .await;
+                        .current_dir(&worktree_dir.worktree_path);
+                    let check_res = crate::exec::run_bounded(
+                        check_cmd,
+                        crate::exec::ExecClass::Build,
+                        "cargo check for autonomous fix verification",
+                    )
+                    .await;
 
-                    if let Ok(out) = check_res {
-                        if out.status.success() {
+                    match check_res {
+                        Ok(out) if out.status.success() => {
                             is_successful = true;
                             break;
+                        }
+                        Ok(out) => {
+                            warn!(
+                                "🚧 [Autonomous Fix Engine] Attempt {} for task '{}' does not compile (cargo check exited {}).",
+                                attempts,
+                                task.task_id,
+                                out.status
+                            );
+                        }
+                        Err(e) => {
+                            // Unverifiable is treated exactly like "does not compile".
+                            warn!(
+                                "🚧 [Autonomous Fix Engine] Attempt {} for task '{}' could not be verified: {}. Treating as NOT compiling.",
+                                attempts, task.task_id, e
+                            );
                         }
                     }
                 }

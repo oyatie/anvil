@@ -87,7 +87,7 @@ impl IssueReconciler {
                     repo,
                     "--comment",
                     &format!(
-                        "🤖 **Autonomous Anvil Issue Reconciliation**\n\n**Status:** Auto-closed\n**Reason:** {}\n**Verification Receipt:** `{}`\n\n---\n*🤖 Reconciled by Oyatie Anvil*",
+                        "🤖 **Autonomous Anvil Issue Reconciliation**\n\n**Status:** Auto-closed\n**Reason:** {}\n**Verification Receipt:** `{}`\n\n---\n*🤖 [Reconciled] by Oyatie Anvil*",
                         finding.resolution_reason,
                         finding.resolution_receipt.as_deref().unwrap_or("N/A")
                     ),

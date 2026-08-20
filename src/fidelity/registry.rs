@@ -182,6 +182,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: None,
     },
     GateFidelity {
+        gate_id: "predictive_test_status",
+        aspiration: "Select the minimal set of affected test targets from a real dependency graph, and \
+                     report the pruning ratio actually achieved.",
+        reference: "Google TAP affected-targets analysis; Meta Predictive Test Selection (arXiv:1810.05286)",
+        fidelity: Fidelity::Heuristic,
+        gap: "Computes a package DAG from `cargo metadata`, which is a real dependency closure, but then \
+              hardcodes `let is_optimized = true` (predictive_test_selector/mod.rs:64) so the guard reports \
+              PASSED regardless of the subprocess outcome. Closure-only selection is also ~99% waste at \
+              scale per the TAP paper; a risk model is the actual target.",
+        blocked_on: None,
+    },
+    GateFidelity {
         gate_id: "unresolved_review_status",
         aspiration: "Block on unresolved review threads using authoritative thread state.",
         reference: "GitHub GraphQL pullRequest.reviewThreads.nodes { isResolved }",

@@ -4,8 +4,8 @@
 
 use anvil::shape::adapters::InMemoryTree;
 use anvil::shape::core::{
-    DepFacts, PathFacts, Placement, ResolvedSpec, RoleFacts, ShapeSpec, SpecSource, measure, place,
-    resolve,
+    DepFacts, DepGraph, PathFacts, Placement, ResolvedSpec, RoleFacts, ShapeSpec, SpecSource,
+    measure, place, resolve,
 };
 use std::path::PathBuf;
 
@@ -41,10 +41,28 @@ fn the_same_tree_in_any_order_yields_an_identical_report() {
     let mut rev: Vec<&str> = PATHS.to_vec();
     rev.reverse();
     let backward = InMemoryTree::from_paths("r1", &rev);
-    let a = measure(&spec, &forward, "fx", SpecSource::Adopted);
-    let b = measure(&spec, &backward, "fx", SpecSource::Adopted);
+    let a = measure(
+        &spec,
+        &forward,
+        "fx",
+        SpecSource::Adopted,
+        &DepGraph::default(),
+    );
+    let b = measure(
+        &spec,
+        &backward,
+        "fx",
+        SpecSource::Adopted,
+        &DepGraph::default(),
+    );
     assert_eq!(a, b);
-    let c = measure(&spec, &forward, "fx", SpecSource::Adopted);
+    let c = measure(
+        &spec,
+        &forward,
+        "fx",
+        SpecSource::Adopted,
+        &DepGraph::default(),
+    );
     assert_eq!(a, c, "repeated runs are identical");
 }
 

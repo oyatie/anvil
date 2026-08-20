@@ -10,7 +10,7 @@
       "required_faces": ["core", "ports", "facade"],
       "unit_marker": "mod.rs",
       "face_dependency_matrix": {
-        "facade": ["ports", "core"],
+        "facade": ["ports", "adapters"],
         "adapters": ["ports", "core"],
         "core": [],
         "ports": ["core"]

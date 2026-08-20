@@ -2,6 +2,7 @@
 //! profiles, and the report vocabulary. Nothing here touches the filesystem,
 //! git, a clock or a subprocess.
 
+pub mod dependency;
 pub mod glob;
 pub mod measure;
 pub mod naming;
@@ -15,6 +16,7 @@ pub mod spec;
 pub mod tree;
 pub mod validate;
 
+pub use dependency::{DepEdge, DepGraph, classify};
 pub use measure::measure;
 pub use placement::{DepFacts, PathFacts, Placement, RoleFacts, place};
 pub use profile::LanguageProfile;

@@ -3,7 +3,7 @@
 //! cannot fail is an assertion, not a measurement.
 
 use anvil::shape::adapters::InMemoryTree;
-use anvil::shape::core::{Fix, RuleId, ShapeSpec, SpecSource, measure, resolve};
+use anvil::shape::core::{DepGraph, Fix, RuleId, ShapeSpec, SpecSource, measure, resolve};
 use std::path::PathBuf;
 
 fn spec(name: &str) -> ShapeSpec {
@@ -28,6 +28,7 @@ fn findings_for(tree: &InMemoryTree, rule: &str) -> Vec<anvil::shape::core::Find
         tree,
         "fixture",
         SpecSource::Proposed("fixture".into()),
+        &DepGraph::default(),
     );
     report
         .findings
@@ -190,6 +191,7 @@ fn an_app_is_discovered_by_marker_and_held_to_the_same_skeleton() {
         &tree,
         "fixture",
         SpecSource::Proposed("fixture".into()),
+        &DepGraph::default(),
     );
     let cal = report
         .units
@@ -212,6 +214,7 @@ fn an_undeclared_rule_produces_no_findings() {
         &tree,
         "fixture",
         SpecSource::Proposed("fixture".into()),
+        &DepGraph::default(),
     );
     assert!(
         report

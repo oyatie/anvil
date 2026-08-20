@@ -1,8 +1,7 @@
 //! `anvil shape validate-spec`: parse, validate and resolve a spec file and
 //! say what it declares. Exits non-zero on any problem.
 
-use crate::shape::core::spec::RuleMode;
-use crate::shape::core::{ResolvedSpec, ShapeSpec, SpecError, resolve};
+use crate::shape::ports::{ResolvedSpec, RuleMode, ShapeSpec, SpecError, resolve};
 use std::path::Path;
 
 /// The one path literal Anvil carries for the Shape Program: its own config

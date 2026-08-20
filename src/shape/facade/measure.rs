@@ -1,11 +1,15 @@
 //! Measure one repository at one revision: locate the spec (in the tree, or
 //! supplied as a proposal), load only the files the spec implies, resolve the
-//! unit registry, and run the engine.
+//! unit registry, read dependency edges, and run the engine.
 
 use super::cli::SPEC_PATH;
-use crate::shape::adapters::GitTreeAtRev;
-use crate::shape::core::{LanguageProfile, ShapeReport, ShapeSpec, SpecSource, measure, resolve};
-use crate::shape::ports::TreeSource;
+use crate::shape::adapters::{
+    BuckLabelDeps, CargoManifestDeps, GitTreeAtRev, RustUseDeps, TsImportDeps,
+};
+use crate::shape::ports::{
+    DepGraph, DependencySource, LanguageProfile, ResolvedSpec, ShapeReport, ShapeSpec, SpecSource,
+    TreeSource, discover_units, measure, resolve,
+};
 use anyhow::{Context, Result, anyhow};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -21,9 +25,11 @@ pub struct MeasureRequest {
     pub registry_override: Option<PathBuf>,
 }
 
-pub async fn measure_repo(req: &MeasureRequest) -> Result<ShapeReport> {
-    let (spec, source) = load_spec(req).await?;
-
+/// Which tree paths the engine needs loaded for `spec`: its own config, the
+/// registry, every profile's manifests and markers, and the source files the
+/// dependency and port rules read (every `.rs` under an adapters face; every
+/// `.rs` under a module-tree root).
+pub fn selector(spec: &ShapeSpec) -> impl Fn(&str) -> bool {
     let mut basenames: BTreeSet<String> = spec
         .profiles
         .iter()
@@ -41,15 +47,37 @@ pub async fn measure_repo(req: &MeasureRequest) -> Result<ShapeReport> {
         }
     }
     let registry_path = spec.unit_registry.as_ref().map(|r| r.path.clone());
-    let select = |p: &str| {
+    let adapters_dirs: Vec<String> = spec
+        .skeletons
+        .values()
+        .filter_map(|s| s.faces.get("adapters"))
+        .map(|d| format!("/{}/", d.trim_end_matches('/')))
+        .collect();
+    let module_roots: Vec<String> = if spec.profiles.contains(&LanguageProfile::RustModuleTree) {
+        spec.unit_kinds
+            .values()
+            .filter_map(|k| k.root.split_once("<name>").map(|(p, _)| p.to_string()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    move |p: &str| {
         p == SPEC_PATH
             || registry_path.as_deref() == Some(p)
             || p.rsplit('/').next().is_some_and(|b| basenames.contains(b))
-    };
-    let tree = GitTreeAtRev::load(&req.repo_dir, &req.rev, select)
+            || (p.ends_with(".rs")
+                && (adapters_dirs.iter().any(|d| p.contains(d.as_str()))
+                    || module_roots.iter().any(|r| p.starts_with(r.as_str()))))
+    }
+}
+
+pub async fn measure_repo(req: &MeasureRequest) -> Result<ShapeReport> {
+    let (spec, source) = load_spec(req).await?;
+    let tree = GitTreeAtRev::load(&req.repo_dir, &req.rev, selector(&spec))
         .await
         .map_err(|e| anyhow!("{e}"))?;
 
+    let registry_path = spec.unit_registry.as_ref().map(|r| r.path.clone());
     let registry = match (&req.registry_override, &registry_path) {
         (Some(p), _) => Some(read_json(p)?),
         (None, Some(path)) => match tree.read(path) {
@@ -62,7 +90,30 @@ pub async fn measure_repo(req: &MeasureRequest) -> Result<ShapeReport> {
         (None, None) => None,
     };
     let resolved = resolve(&spec, registry.as_ref()).map_err(|e| anyhow!("{e}"))?;
-    Ok(measure(&resolved, &tree, &req.repo, source))
+    let deps = dependency_graph(&resolved, &tree);
+    Ok(measure(&resolved, &tree, &req.repo, source, &deps))
+}
+
+/// Edges from every adapter the spec's profiles name; a profile whose
+/// adapter cannot read the tree is recorded as unavailable.
+pub fn dependency_graph(resolved: &ResolvedSpec, tree: &dyn TreeSource) -> DepGraph {
+    let units = discover_units(resolved, tree);
+    let mut graph = DepGraph::default();
+    for profile in &resolved.spec.profiles {
+        let source: Box<dyn DependencySource> = match profile {
+            LanguageProfile::RustCargo => Box::new(CargoManifestDeps),
+            LanguageProfile::RustBuck2 => Box::new(BuckLabelDeps),
+            LanguageProfile::RustModuleTree => Box::new(RustUseDeps),
+            LanguageProfile::TsWorkspace => Box::new(TsImportDeps),
+        };
+        match source.edges(tree, resolved, &units) {
+            Ok(edges) => graph.edges.extend(edges),
+            Err(e) => graph.unavailable.push((*profile, e.to_string())),
+        }
+    }
+    graph.edges.sort();
+    graph.edges.dedup();
+    graph
 }
 
 async fn load_spec(req: &MeasureRequest) -> Result<(ShapeSpec, SpecSource)> {

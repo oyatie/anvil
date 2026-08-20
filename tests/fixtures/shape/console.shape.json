@@ -10,7 +10,7 @@
       "required_faces": ["core", "ports", "facade"],
       "unit_marker": "manifest.json",
       "face_dependency_matrix": {
-        "facade": ["ports"],
+        "facade": ["ports", "adapters"],
         "adapters": ["ports", "core"],
         "core": [],
         "ports": ["core"]

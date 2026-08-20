@@ -241,6 +241,8 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                     &prompt_clone,
                     "--effort",
                     &agy_effort,
+                    "--print-timeout",
+                    &crate::exec::agy_print_timeout_arg(DOC_PARITY_PROBE_TIMEOUT),
                     // Required for agy to read the repository at all. Omitting it
                     // in the Phase 0a rewrite made every doc-parity probe fail
                     // with "permission check failed for command", which the

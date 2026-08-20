@@ -59,6 +59,28 @@ impl ExecClass {
     }
 }
 
+/// Margin between agy's own `--print-timeout` and Anvil's kill for the same
+/// turn, so agy ends the turn itself (exit 1, stderr says why) before Anvil
+/// drops it with no output at all.
+pub const AGY_PRINT_TIMEOUT_MARGIN: Duration = Duration::from_secs(30);
+
+/// agy's `--print-timeout` value (Go duration syntax) for a turn Anvil bounds
+/// at `limit`.
+///
+/// agy's default is 5m0s and fires as `Error: timeout waiting for response`
+/// (exit 1) no matter how long Anvil is willing to wait; seventeen stage
+/// configs and every `ExecClass::Model` spawn allowed more than that and were
+/// cut off by the default anyway. Every agy spawn passes this explicitly so
+/// the two deadlines agree and the default never silently wins. Never yields
+/// `0s`, which agy reads as "do not wait".
+pub fn agy_print_timeout_arg(limit: Duration) -> String {
+    let secs = limit
+        .saturating_sub(AGY_PRINT_TIMEOUT_MARGIN)
+        .as_secs()
+        .max(1);
+    format!("{}s", secs)
+}
+
 /// Runs a command to completion under a class-appropriate timeout.
 ///
 /// Sets `kill_on_drop(true)` so cancelling the surrounding task reaps the child
@@ -182,6 +204,21 @@ pub async fn run_bounded_with_stdin(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agy_print_timeout_sits_a_margin_under_anvils_bound() {
+        use super::{agy_print_timeout_arg, ExecClass};
+        use std::time::Duration;
+        assert_eq!(
+            agy_print_timeout_arg(ExecClass::Model.timeout()),
+            "570s",
+            "600s Model bound minus the 30s margin"
+        );
+        assert_eq!(agy_print_timeout_arg(Duration::from_secs(420)), "390s");
+        // Never 0s: agy reads that as "do not wait" and the turn dies at once.
+        assert_eq!(agy_print_timeout_arg(Duration::from_secs(5)), "1s");
+        assert_eq!(agy_print_timeout_arg(Duration::ZERO), "1s");
+    }
+
     use super::*;
 
     #[tokio::test]

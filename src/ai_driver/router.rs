@@ -511,6 +511,7 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::Antigravity)
             .await;
 
+        let turn_limit = std::time::Duration::from_secs(config.print_timeout_secs);
         let mut cmd = Command::new("agy");
         // `--print ""` keeps the flag parser happy while the real prompt
         // arrives on STDIN as a stream-json message; see `agy_stream_input`.
@@ -523,6 +524,8 @@ impl SubscriptionExecutor {
             "stream-json",
             "--effort",
             &config.reasoning_effort,
+            "--print-timeout",
+            &crate::exec::agy_print_timeout_arg(turn_limit),
             "--dangerously-skip-permissions",
         ]);
 
@@ -560,7 +563,7 @@ impl SubscriptionExecutor {
         let output = run_with_prompt_on_stdin(
             cmd,
             &agy_stream_input(prompt),
-            std::time::Duration::from_secs(config.print_timeout_secs),
+            turn_limit,
             "agy subscription CLI",
         )
         .await?;

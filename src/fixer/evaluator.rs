@@ -129,6 +129,8 @@ async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<Strin
         prompt,
         "--effort",
         effort,
+        "--print-timeout",
+        &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
         "--dangerously-skip-permissions",
     ]);
     cmd.current_dir(working_dir);

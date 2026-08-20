@@ -61,10 +61,10 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 )
                 .await?;
             let res = state
-                .rust_skills_guard
+                .rust_language_policy
                 .evaluate_rust_quality(&repo_dir, &diff_ctx)?;
             println!(
-                "\n🦀 RustSkillsGuard Result: {}\nFindings: {}\n",
+                "\n🦀 RustLanguagePolicy Result: {}\nFindings: {}\n",
                 res.summary,
                 res.findings.len()
             );

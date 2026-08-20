@@ -13,7 +13,7 @@
 //!     `PROPRIETARY_CLOUD_SDK_IN_CORE`, `HARDCODED_CLOUD_ENDPOINT`,
 //!     `NON_RUST_SCRIPT_TOOLING`; the name states a category, and the category
 //!     label is what let two unrelated checks be bundled under one module.
-//!   - `src/ai_driver/stage_router.rs:60` — `EnterpriseAgenticPipelineRouter`
+//!   - `src/ai_driver/stage_router.rs:60` — `StageModelRouter`
 //!     actually returns a per-stage model fallback chain.
 //!   - `src/hyperscaler_consensus_guard/mod.rs:195` —
 //!     `"✅ UNANIMOUS APPROVAL (5/5 Hyperscalers Approved: AWS, GCP, Meta, Azure, OCI)"`
@@ -76,7 +76,7 @@ fn repo_root() -> &'static Path {
 /// Catches: a crate/module/type **name** that stamps an aspiration or a product
 /// category onto itself instead of naming the check it performs — the class
 /// that produced `hyperscaler_consensus_guard`, `cloud_native_guard`, and
-/// `EnterpriseAgenticPipelineRouter`.
+/// `StageModelRouter`.
 ///
 /// Prompting cannot prevent it: the aspiration arrives *through* the prompt.
 /// Told to build to hyperscaler standard, a model names the artifact

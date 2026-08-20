@@ -95,7 +95,7 @@ impl MatrixRenderer {
 
         format!(
             r###"<!-- ANVIL_SCORECARD_RECEIPT -->
-### 🛡️ Oyatie Hyperscale Full-Lifecycle Quality & GitOps Matrix (70 Gates)
+### Full-lifecycle quality and GitOps matrix
 
 | Quality Gate | Status | Details |
 |---|---|---|

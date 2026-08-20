@@ -80,6 +80,18 @@ pub struct PreMergeCertificationReport {
     pub summary_markdown: String,
 }
 
+/// Size of the gate corpus.
+///
+/// Anvil published "70 gates" in seven PR-visible strings while the matrix held
+/// 68. A count posted onto a pull request is a claim like any other, and this
+/// one was wrong in every place it appeared -- each string had been written by
+/// hand and none was rechecked when the corpus changed.
+///
+/// `all_statuses_matches_the_declared_total` pins this against the real field
+/// count, so the next corpus change fails a test instead of silently making
+/// seven strings lie.
+pub const TOTAL_GATES: usize = 68;
+
 impl PreMergeCertificationReport {
     /// Every gate status on this report, in declaration order.
     pub fn all_statuses(&self) -> Vec<&GateStatus> {
@@ -344,7 +356,7 @@ impl GateStatus {
 mod tests {
     use super::*;
 
-    fn sample_report() -> PreMergeCertificationReport {
+    pub(super) fn sample_report() -> PreMergeCertificationReport {
         PreMergeCertificationReport {
             is_certified_ready: false,
             doc_parity_status: GateStatus::Passed,
@@ -542,5 +554,24 @@ mod tests {
         assert!(GateStatus::AutoUpdated.is_acceptable());
         assert!(GateStatus::Warning("w".into()).is_acceptable());
         assert!(!GateStatus::Failed("f".into()).is_acceptable());
+    }
+}
+
+#[cfg(test)]
+mod total_gates_pin {
+    use super::*;
+
+    /// `TOTAL_GATES` is published onto pull requests. It must equal what the
+    /// report actually carries, or the next corpus change turns every one of
+    /// those strings into a false claim -- which is exactly how "70 gates"
+    /// survived in seven places against a corpus of 68.
+    #[test]
+    fn all_statuses_matches_the_declared_total() {
+        assert_eq!(
+            super::tests::sample_report().all_statuses().len(),
+            TOTAL_GATES,
+            "the gate corpus changed but TOTAL_GATES did not; every PR-visible count \
+             claim is now wrong"
+        );
     }
 }

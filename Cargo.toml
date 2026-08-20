@@ -34,3 +34,7 @@ tempfile = "3.10"
 
 [dev-dependencies]
 tempfile = "3.10"
+
+[[test]]
+name = "ai_driver_executor_port_test"
+path = "tests/ai_driver_executor_port_test.rs"

@@ -36,7 +36,7 @@ impl WholeFileExpansion {
             violations.push(MonorepoViolation {
                 category: "OVERSIZED_WHOLE_FILE".to_string(),
                 description: format!(
-                    "Modified file '{}' has {} total lines, exceeding the hyperscaler ceiling of {}. Decompose into cohesive submodules.",
+                    "Modified file '{}' has {} total lines, exceeding the module-size ceiling of {}. Decompose into cohesive submodules.",
                     file_path, line_count, Self::MAX_WHOLE_FILE_LINES
                 ),
                 snippet: format!("Total lines: {}", line_count),

@@ -39,7 +39,7 @@ impl CloudNativeGuard {
         diff_ctx: &PrDiffContext,
     ) -> Result<CloudNativeReport> {
         info!(
-            "Running CloudNativeGuard (CNCF & Multi-Cloud Neutrality) on {}#{}...",
+            "Running vendor-neutrality check (proprietary SDK in core, hardcoded endpoints, non-Rust tooling) on {}#{}...",
             diff_ctx.repo, diff_ctx.pr_number
         );
 
@@ -113,7 +113,7 @@ impl CloudNativeGuard {
                 violations.push(CloudNativeViolation {
                     category: "NON_RUST_SCRIPT_TOOLING".to_string(),
                     description: format!(
-                        "New non-Rust script '{}' added. Hyperscaler standard mandates compiled Rust workspace tools for hermeticity and zero cold-start latency.",
+                        "New non-Rust script '{}' added. Policy requires compiled Rust workspace tools for hermeticity and zero cold-start latency.",
                         file
                     ),
                     snippet: file.clone(),
@@ -126,7 +126,7 @@ impl CloudNativeGuard {
             "CNCF & Multi-Cloud Neutrality verified: 100% provider-agnostic, clean port/adapter abstraction, and pure Rust tooling.".to_string()
         } else {
             format!(
-                "Cloud-Native violations ({} items): {}",
+                "Vendor-neutrality violations ({} items): {}",
                 violations.len(),
                 violations
                     .iter()

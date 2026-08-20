@@ -53,7 +53,8 @@ pub async fn run_server(state: AppState) -> Result<()> {
                     let task_state = recovery_app_state.clone();
                     tokio::spawn(async move {
                         info!(
-                            "🚀 [Outage Recovery Pipeline] Dispatched review & 70-gate certification for {}#{}",
+                            "[Outage Recovery] Dispatched review and {}-gate certification for {}#{}",
+                            crate::pre_merge_guard::report::TOTAL_GATES,
                             repo, pr.number
                         );
                         let _ = crate::webhook::pipelines::review::execute_pr_review(
@@ -121,10 +122,10 @@ pub async fn run_server(state: AppState) -> Result<()> {
     });
 
     // Spawn background upstream sync for rust-skills repository
-    let rsg_clone = state.rust_skills_guard.clone();
+    let rsg_clone = state.rust_language_policy.clone();
     tokio::spawn(async move {
         if let Err(e) = rsg_clone.sync_upstream().await {
-            tracing::warn!("RustSkillsGuard upstream background sync noticed: {}", e);
+            tracing::warn!("RustLanguagePolicy upstream background sync noticed: {}", e);
         }
     });
 

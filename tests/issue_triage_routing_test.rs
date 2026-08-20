@@ -4,9 +4,7 @@
 //! model names -- a model can be swapped, but if the swap makes triage
 //! expensive, slow, or single-vendor, that is a regression these catch.
 
-use anvil::ai_driver::stage_router::{
-    AgenticStage, EnterpriseAgenticPipelineRouter as StageRouter,
-};
+use anvil::ai_driver::stage_router::{AgenticStage, StageModelRouter as StageRouter};
 
 #[test]
 fn issue_triage_has_a_routing_chain_at_all() {

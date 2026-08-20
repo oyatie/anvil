@@ -80,7 +80,7 @@ use crate::remote_cache_optimizer::RemoteCacheOptimizer;
 use crate::replay_harness::DeterministicReplayHarness;
 use crate::review_memory::ReviewMemoryEngine;
 use crate::reviewer::Reviewer;
-use crate::rust_skills_guard::RustSkillsGuard;
+use crate::rust_language_policy::RustLanguagePolicy;
 use crate::schema_evolution::SchemaEvolutionRatchet;
 use crate::semantic_abi_ratchet::SemanticAbiRatchet;
 use crate::shadow_traffic_harness::ShadowTrafficHarness;
@@ -118,7 +118,7 @@ pub struct AppState {
     pub debt_shrink_guard: Arc<DebtShrinkGuard>,
     pub modularization_guard: Arc<ModularizationGuard>,
     pub coverage_guard: Arc<CoverageGuard>,
-    pub rust_skills_guard: Arc<RustSkillsGuard>,
+    pub rust_language_policy: Arc<RustLanguagePolicy>,
     pub kani_guard: Arc<KaniGuard>,
     pub slo_canary_guard: Arc<SloCanaryGuard>,
     pub adr_drift_ratchet: Arc<AdrDriftRatchet>,

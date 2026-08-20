@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "pr-watch")]
@@ -14,6 +15,11 @@ pub struct Cli {
 pub enum Commands {
     /// Start the real-time webhook server and forwarders (default)
     Serve,
+    /// Shape Program: measure repositories against their tenant-carried shape spec
+    Shape {
+        #[command(subcommand)]
+        action: ShapeAction,
+    },
     /// Trigger an immediate manual review for a specific PR
     Review {
         #[arg(short, long, help = "Repository (e.g. oyatie/oyatie)")]
@@ -339,4 +345,16 @@ pub enum Commands {
     Forward,
     /// Verify GitHub CLI authentication and environment readiness
     Check,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ShapeAction {
+    /// Parse, validate and resolve a shape spec; exits non-zero on any problem
+    ValidateSpec {
+        #[arg(help = "Path to the shape spec (JSON)")]
+        path: PathBuf,
+
+        #[arg(long, help = "Path to the unit registry the spec references")]
+        registry: Option<PathBuf>,
+    },
 }

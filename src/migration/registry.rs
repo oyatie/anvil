@@ -1412,4 +1412,18 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   identity-workload-domain (1333), svid-trustd adapter (750), svid-operator-k8s (901), \
                   identity-workload-rest (5430),...",
     },
+    MigrationEntry {
+        component: "shape (dir)",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "ci/facade/module-membership + repo-root-hygiene + baseline-ratchet + \
+                            layer-dependency-acyclicity (the shape engine generalises these over a \
+                            tenant-carried spec)",
+        counterpart_loc: 0,
+        evidence: "Shape Program engine (plan breezy-purring-crayon, 2026-08-20): tenant-carried \
+                  .anvil/shape.json spec, pure placement/measurement core, ratchet consumer. Built in \
+                  core/ports/adapters/facade form from day one so it is the first conformant unit. \
+                  Counterpart loc deliberately 0: the four oyatie gates were not summed because the \
+                  engine is a generalisation, not a transcription of any one of them.",
+    },
 ];

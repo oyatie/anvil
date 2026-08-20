@@ -1,0 +1,47 @@
+{
+  "schema": "anvil/shape/v1",
+  "profiles": ["ts-workspace", "rust-buck2"],
+  "unit_kinds": {
+    "capability": { "root": "<name>/", "skeleton": "standard", "members": "discover:manifest.json" }
+  },
+  "skeletons": {
+    "standard": {
+      "faces": { "core": "core/", "ports": "ports/", "adapters": "adapters/", "facade": "facade/" },
+      "required_faces": ["core", "ports", "facade"],
+      "unit_marker": "manifest.json",
+      "face_dependency_matrix": {
+        "facade": ["ports"],
+        "adapters": ["ports", "core"],
+        "core": [],
+        "ports": []
+      },
+      "satellites": {
+        "slos": { "dir": "slos/", "form": "*.openslo.yaml", "aliases": ["observability/slos/"] },
+        "runbooks": { "dir": "runbooks/", "form": "*.md" },
+        "contracts": { "dir": "contracts/", "form": "{openapi,asyncapi,proto}/**" },
+        "decisions": { "dir": "decisions/", "form": "*.md" }
+      },
+      "allowed_unit_root_files": ["manifest.json", "BUCK", "OWNERS", "README.md", "package.json"]
+    }
+  },
+  "root_files": {
+    "mode": "allowlist",
+    "rules": [
+      { "id": "package", "kind": "exact", "value": "package.json" },
+      { "id": "package-lock", "kind": "exact", "value": "package-lock.json" },
+      { "id": "buck", "kind": "exact", "value": "BUCK" },
+      { "id": "readme", "kind": "prefix_dot", "value": "README" },
+      { "id": "changelog", "kind": "exact", "value": "CHANGELOG.md" },
+      { "id": "claude", "kind": "exact", "value": "CLAUDE.md" },
+      { "id": "agents", "kind": "exact", "value": "AGENTS.md" },
+      { "id": "release-please", "kind": "exact", "value": "release-please-config.json" },
+      { "id": "renovate", "kind": "exact", "value": "renovate.json5" }
+    ]
+  },
+  "rules": {
+    "unit_missing_face": { "mode": "advisory-until-infra" },
+    "satellite_alias_used": { "mode": "advisory-until-infra" },
+    "file_misplaced": { "mode": "advisory-until-infra" },
+    "root_file_unallowlisted": { "mode": "advisory-until-infra" }
+  }
+}

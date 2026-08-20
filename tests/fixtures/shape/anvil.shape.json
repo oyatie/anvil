@@ -1,0 +1,58 @@
+{
+  "schema": "anvil/shape/v1",
+  "profiles": ["rust-cargo", "rust-module-tree"],
+  "unit_kinds": {
+    "module": { "root": "src/<name>/", "skeleton": "standard", "members": "discover:mod.rs" }
+  },
+  "skeletons": {
+    "standard": {
+      "faces": { "core": "core/", "ports": "ports/", "adapters": "adapters/", "facade": "facade/" },
+      "required_faces": ["core", "ports", "facade"],
+      "unit_marker": "mod.rs",
+      "face_dependency_matrix": {
+        "facade": ["ports", "core"],
+        "adapters": ["ports", "core"],
+        "core": [],
+        "ports": []
+      },
+      "cross_unit_edges": "facade-only",
+      "satellites": {},
+      "allowed_unit_root_files": ["mod.rs"]
+    }
+  },
+  "placement": {
+    "steps": [
+      { "kind": "artifact_class", "class": "decision", "dest": "docs/decisions/", "patterns": ["ADR-*.md"] },
+      { "kind": "unit_by_face" }
+    ]
+  },
+  "root_files": {
+    "mode": "allowlist",
+    "rules": [
+      { "id": "cargo-manifest", "kind": "exact", "value": "Cargo.toml" },
+      { "id": "cargo-lock", "kind": "exact", "value": "Cargo.lock" },
+      { "id": "rust-toolchain", "kind": "exact", "value": "rust-toolchain.toml" },
+      { "id": "readme", "kind": "prefix_dot", "value": "README" },
+      { "id": "changelog", "kind": "exact", "value": "CHANGELOG.md" },
+      { "id": "rules", "kind": "exact", "value": "rules.md" },
+      { "id": "gitignore", "kind": "exact", "value": ".gitignore" },
+      { "id": "env-example", "kind": "exact", "value": ".env.example" }
+    ]
+  },
+  "naming": {
+    "crate_prefix": "",
+    "layer_suffixes": ["kernel", "domain", "usecase", "app", "adapter", "infrastructure", "cli", "rest", "grpc", "worker", "sdk", "api"],
+    "face_by_suffix": {
+      "kernel": "core", "domain": "core", "usecase": "facade",
+      "adapter": "adapters", "infrastructure": "adapters",
+      "app": "facade", "rest": "facade", "grpc": "facade", "cli": "facade", "worker": "facade", "sdk": "facade", "api": "ports"
+    },
+    "transient_adapter_suffixes": ["-inmemory-adapter", "-local-adapter"]
+  },
+  "rules": {
+    "unit_missing_face": { "mode": "advisory-until-infra" },
+    "face_edge_denied": { "mode": "baseline-block-on-new" },
+    "cross_unit_non_facade": { "mode": "advisory-until-infra" },
+    "root_file_unallowlisted": { "mode": "baseline-block-on-new", "frozen_empty": true }
+  }
+}

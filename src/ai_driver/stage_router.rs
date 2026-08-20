@@ -16,6 +16,7 @@ pub enum AgenticStage {
     Implementation,
     CodeReviewAudit,
     GitOps,
+    IssueTriage,
 }
 
 impl AgenticStage {
@@ -29,6 +30,7 @@ impl AgenticStage {
             AgenticStage::Implementation => "6. Pure Rust Code Synthesis & Implementation",
             AgenticStage::CodeReviewAudit => "7. 16-Lens Code Review & Hyperscaler Consensus",
             AgenticStage::GitOps => "8. GitOps & Speculative Merge Queue Enlistment",
+            AgenticStage::IssueTriage => "9. Issue Fate Classification",
         }
     }
 }
@@ -301,6 +303,45 @@ impl EnterpriseAgenticPipelineRouter {
 
             // Stage 7: GitOps -> Deterministic Engine
             AgenticStage::GitOps => vec![ModelExecutionConfig::default()],
+
+            // Stage 9: Issue fate classification -> high volume, shallow judgement.
+            //
+            // Deciding an issue's fate (keep / close / dedupe / relabel / escalate) is
+            // classification, not repair. The capability that predicts quality here is
+            // instruction-following and structured-output reliability, plus long-context
+            // recall when the decision is "is this a duplicate of one of the N open
+            // issues" -- NOT patch synthesis. SWE-bench-family scores rank patch
+            // synthesis, so they are deliberately not the ordering criterion for this
+            // chain; see PLAN.md 34.3.
+            //
+            // Tier 1: codex-spark at LOW effort -- cheapest per decision, and the
+            //         judgement is shallow by construction.
+            // Tier 2: gemini flash -- 1M context is the load-bearing property for
+            //         duplicate detection against a large open-issue corpus.
+            // Tier 3: claude sonnet -- different vendor, so a provider-wide outage or
+            //         quota exhaustion cannot take out the whole chain.
+            // Timeouts are short: a triage call that needs three minutes has already
+            // failed at being cheap, and should fall through rather than block a sweep.
+            AgenticStage::IssueTriage => vec![
+                ModelExecutionConfig {
+                    provider: ModelProvider::OpenAiCodex,
+                    specific_model: Some("gpt-5.3-codex-spark".to_string()),
+                    reasoning_effort: "low".to_string(),
+                    print_timeout_secs: 60,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::Antigravity,
+                    specific_model: Some("gemini-3.7-flash".to_string()),
+                    reasoning_effort: "low".to_string(),
+                    print_timeout_secs: 90,
+                },
+                ModelExecutionConfig {
+                    provider: ModelProvider::AnthropicClaudeCode,
+                    specific_model: Some("claude-3-7-sonnet".to_string()),
+                    reasoning_effort: "low".to_string(),
+                    print_timeout_secs: 90,
+                },
+            ],
         };
 
         StageFallbackChain { stage, tiers }

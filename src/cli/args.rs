@@ -399,6 +399,24 @@ pub enum ShapeAction {
         #[arg(long, help = "Write the baseline here instead of stdout")]
         out: Option<PathBuf>,
     },
+    /// Dry-run: measure, derive the move plan, shard it by owner and unit, and
+    /// print what would be opened. Touches no network.
+    Plan {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value = "HEAD", help = "Commit to plan from")]
+        rev: String,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+
+        #[arg(long, help = "Landing policy JSON outside the tree")]
+        policy: Option<PathBuf>,
+
+        #[arg(long, help = "Write the move plan JSON here")]
+        plan_out: Option<PathBuf>,
+    },
     /// Judge a head commit against the baseline frozen at merge-base(base-ref, head)
     Ratchet {
         #[arg(long, help = "Path to a local clone")]

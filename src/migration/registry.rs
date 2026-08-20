@@ -1437,4 +1437,14 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   inert-entry failure. Transcribes oyatie's baseline-ratchet semantics over string keys \
                   so any gate can consume it. Counterpart loc 0: not summed, transcription not copy.",
     },
+    MigrationEntry {
+        component: "change_delivery (dir)",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "ci/controller (landing) + tools/oya-reorg-codemod-app (rewrite)",
+        counterpart_loc: 0,
+        evidence: "Shape Program change delivery (plan breezy-purring-crayon B1): move plan, owner-disjoint \
+                  sharding, I8 purity check, landing policy and pure admission, ledger. Pure core and \
+                  dry-run facade; ports/adapters that open PRs follow. Counterpart loc 0: none measured.",
+    },
 ];

@@ -44,6 +44,11 @@ const EXEMPTIONS: &[(&str, &[&str])] = &[
     ),
     ("src/shape/facade/cli.rs", &[".anvil/shape.json"]),
     ("src/shape/facade/baseline.rs", &[".anvil/baselines/"]),
+    // Ownership files are a GitHub/Google convention, not a tenant layout.
+    (
+        "src/change_delivery/facade/plan.rs",
+        &["CODEOWNERS", "OWNERS", ".anvil/landing.json"],
+    ),
 ];
 
 fn repo_root() -> PathBuf {

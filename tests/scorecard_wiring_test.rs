@@ -126,82 +126,10 @@ fn all_passing() -> PreMergeCertificationReport {
     r
 }
 
-/// Exactly what `evaluator.rs` puts in `summary_markdown` today: the 68-row
-/// table. Built from the report so the fixture is the real published body and
-/// not a paraphrase of it.
+/// Exactly what `evaluator.rs` puts in `summary_markdown`: the full table,
+/// rendered from the report so the fixture is the real published body.
 fn matrix_for(r: &PreMergeCertificationReport) -> String {
-    let s = r.all_statuses();
-    MatrixRenderer::render_matrix(
-        s[0],
-        s[1],
-        s[2],
-        s[3],
-        s[4],
-        s[5],
-        s[6],
-        s[7],
-        s[8],
-        s[9],
-        s[10],
-        s[11],
-        s[12],
-        s[13],
-        s[14],
-        s[15],
-        s[16],
-        s[17],
-        s[18],
-        s[19],
-        s[20],
-        s[21],
-        s[22],
-        s[23],
-        s[24],
-        s[25],
-        s[26],
-        s[27],
-        s[28],
-        s[29],
-        s[30],
-        s[31],
-        s[32],
-        s[33],
-        s[34],
-        s[35],
-        s[36],
-        s[37],
-        s[38],
-        s[39],
-        s[40],
-        s[41],
-        s[42],
-        s[43],
-        s[44],
-        s[45],
-        s[46],
-        s[47],
-        s[48],
-        s[49],
-        s[50],
-        s[51],
-        s[52],
-        s[53],
-        s[54],
-        s[55],
-        s[56],
-        s[57],
-        s[58],
-        s[59],
-        s[60],
-        s[61],
-        s[62],
-        s[63],
-        s[64],
-        s[65],
-        s[66],
-        s[67],
-        r.is_certified_ready,
-    )
+    MatrixRenderer::render(r)
 }
 
 /// Rebuilds the derived fields after mutating gate statuses, so a fixture can
@@ -580,7 +508,7 @@ fn false_red_prevention_matrix_renderer_survives_for_its_remaining_callers() {
 
     let evaluator = include_str!("../src/pre_merge_guard/evaluator.rs");
     assert!(
-        evaluator.contains("MatrixRenderer::render_matrix"),
+        evaluator.contains("MatrixRenderer::render("),
         "Expected False Red prevention: evaluator.rs is a remaining caller and \
          must not be broken by this lane"
     );

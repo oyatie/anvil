@@ -89,6 +89,8 @@ fn all_passing() -> PreMergeCertificationReport {
         zero_day_status: GateStatus::Passed,
         formal_verification_status: GateStatus::Passed,
         deadlock_status: GateStatus::Passed,
+        brand_absence_status: GateStatus::Passed,
+        migration_boundary_status: GateStatus::Passed,
         automated_canary_status: GateStatus::Passed,
         progressive_ring_status: GateStatus::Passed,
         hermetic_build_status: GateStatus::Passed,
@@ -274,7 +276,10 @@ fn certified_scorecard_published_is_a_single_counted_line() {
     let published = review::scorecard_comment(&r);
 
     assert!(
-        published.contains("✅ Certified — 68/68 gates passed."),
+        published.contains(&format!(
+            "✅ Certified — {n}/{n} gates passed.",
+            n = anvil::pre_merge_guard::report::TOTAL_GATES
+        )),
         "certified body must state real counts on one line:\n{published}"
     );
     assert!(
@@ -355,7 +360,8 @@ fn false_green_prevention_an_errored_gate_is_published_and_blocks() {
 #[test]
 fn false_green_prevention_counts_track_reality_and_are_not_a_constant() {
     let clean = review::scorecard_comment(&all_passing());
-    assert!(clean.contains("68/68"), "{clean}");
+    let n = anvil::pre_merge_guard::report::TOTAL_GATES;
+    assert!(clean.contains(&format!("{n}/{n}")), "{clean}");
 
     let mut one = all_passing();
     one.cedar_status = GateStatus::Failed("policy gap".into());

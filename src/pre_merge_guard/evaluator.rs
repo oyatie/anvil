@@ -794,6 +794,40 @@ impl PreMergeGuard {
             is_certified_ready,
         );
 
+        // Anvil turns these two inward. Every other gate in this matrix runs
+        // against the pull request's repository; these run against Anvil's own
+        // tree, because a rule enforced only on other people's code is an
+        // assertion about them rather than a property of us.
+        let brand_absence_status = {
+            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            let rep = crate::brand_absence::BrandAbsenceGate::new().scan_tree(repo_root);
+            if rep.new_violations.is_empty() {
+                GateStatus::Passed
+            } else {
+                GateStatus::Failed(format!(
+                    "{} name(s) or PR-visible string(s) stamp an aspiration instead of naming \
+                     what the code verifies",
+                    rep.new_violations.len()
+                ))
+            }
+        };
+
+        let migration_boundary_status = match crate::migration::live_tree_violations() {
+            Ok(v) if v.is_empty() => GateStatus::Passed,
+            Ok(v) => GateStatus::Failed(format!(
+                "{} component(s) marked Migrating depend on code oyatie supersedes: {}",
+                v.len(),
+                v.iter()
+                    .map(|x| format!("{} -> {}", x.from, x.to))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            Err(reason) => GateStatus::NotMeasured {
+                gate_id: "migration_boundary_status".to_string(),
+                reason,
+            },
+        };
+
         let mut report = PreMergeCertificationReport {
             is_certified_ready,
             doc_parity_status,
@@ -838,6 +872,8 @@ impl PreMergeGuard {
             zero_day_status,
             formal_verification_status,
             deadlock_status,
+            brand_absence_status,
+            migration_boundary_status,
             automated_canary_status,
             progressive_ring_status,
             hermetic_build_status,

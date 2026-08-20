@@ -141,7 +141,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_telemetry_store_persistence() {
-        let tmp = std::env::temp_dir().join("anvil_telemetry_test");
+        let unique_dir = format!(
+            "anvil_telemetry_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let tmp = std::env::temp_dir().join(unique_dir);
         let store = TelemetryStore::new(&tmp).await;
 
         store
@@ -163,5 +171,6 @@ mod tests {
         let recent = store.get_recent_pr_history(10).await;
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].pr_number, 1);
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 }

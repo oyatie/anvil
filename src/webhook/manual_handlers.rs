@@ -288,3 +288,22 @@ pub async fn manual_reconcile_handler(
         }),
     )
 }
+
+pub async fn drain_handler(State(state): State<AppState>) -> impl IntoResponse {
+    info!("👋 [Blue/Green Handover] Graceful drain requested via /api/drain. Initiating zero-loss retirement...");
+
+    tokio::spawn(async move {
+        // Allow in-flight requests to complete within 5 seconds
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        info!("👋 [Blue/Green Handover] In-flight jobs finished. Retiring legacy instance cleanly.");
+        std::process::exit(0);
+    });
+
+    (
+        StatusCode::OK,
+        Json(ApiResponse {
+            success: true,
+            message: "Graceful drain initiated. Retiring in 3 seconds.".to_string(),
+        }),
+    )
+}

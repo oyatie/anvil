@@ -2,6 +2,7 @@
 //! assembles the report. Rules this build cannot evaluate are listed as
 //! not measured with the reason — they are never counted as clean (I1).
 
+use super::dependency::{DepGraph, dependency_findings, port_findings};
 use super::naming::naming_findings;
 use super::report::{RuleId, ShapeReport, SpecSource};
 use super::resolve::ResolvedSpec;
@@ -10,13 +11,8 @@ use super::skeleton::{discover_units, unit_conformance};
 use super::tree::TreeSource;
 use crate::shape::core::profile::LanguageProfile;
 
-/// Rules that need dependency edges; their adapters land in a later change.
-const DEPENDENCY_RULES: &[&str] = &[
-    "face_edge_denied",
-    "cross_unit_non_facade",
-    "port_defined_in_adapter",
-    "adapter_not_port_plus_technology",
-];
+/// Rules that need dependency edges.
+const DEPENDENCY_RULES: &[&str] = &["face_edge_denied", "cross_unit_non_facade"];
 
 const NAMING_RULES: &[&str] = &[
     "crate_name_prefix",
@@ -29,6 +25,7 @@ pub fn measure(
     tree: &dyn TreeSource,
     repo: &str,
     spec_source: SpecSource,
+    deps: &DepGraph,
 ) -> ShapeReport {
     let declared = |rule: &str| spec.spec.rules.contains_key(rule);
     let mut findings = Vec::new();
@@ -65,10 +62,34 @@ pub fn measure(
         }
     }
 
-    for rule in DEPENDENCY_RULES.iter().filter(|r| declared(r)) {
+    if deps.unavailable.is_empty() {
+        findings.extend(dependency_findings(spec, &units, deps, &declared));
+    } else {
+        let why = deps
+            .unavailable
+            .iter()
+            .map(|(p, e)| format!("{p}: {e}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        for rule in DEPENDENCY_RULES.iter().filter(|r| declared(r)) {
+            not_measured.push((RuleId::new(rule), why.clone()));
+        }
+    }
+    if declared("port_defined_in_adapter") {
+        let any_rs = tree.loaded().keys().any(|p| p.ends_with(".rs"));
+        if any_rs {
+            findings.extend(port_findings(spec, &units, tree, &declared));
+        } else {
+            not_measured.push((
+                RuleId::new("port_defined_in_adapter"),
+                "no source files loaded under an adapters face".to_string(),
+            ));
+        }
+    }
+    if declared("adapter_not_port_plus_technology") {
         not_measured.push((
-            RuleId::new(rule),
-            "dependency adapters are not available in this build".to_string(),
+            RuleId::new("adapter_not_port_plus_technology"),
+            "adapter naming check is not available in this build".to_string(),
         ));
     }
 

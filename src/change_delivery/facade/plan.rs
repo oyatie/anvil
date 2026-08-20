@@ -2,7 +2,7 @@
 //! Touches no network; reads the tenant's ownership files and landing
 //! policy from the measured tree when they exist.
 
-use crate::change_delivery::core::{
+use crate::change_delivery::ports::{
     LandingPolicy, MOVE_PLAN_SCHEMA_V1, Move, MoveKind, OwnerMap, ShapeMovePlan, Shard,
     conflict_pairs, select_independent, shard_plan,
 };

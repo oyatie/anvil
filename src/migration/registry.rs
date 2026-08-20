@@ -85,6 +85,18 @@ impl MigrationEntry {
 /// oyatie tree; see PLAN.md section 38 for method and honest limits.
 pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
     MigrationEntry {
+        component: "account_pool",
+        verdict: Verdict::Superseded,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "intelligence/core/provider-pool-kernel + provider-pool-app",
+        counterpart_loc: 1773,
+        evidence: "Recorded under its own module name as well as under the self_governance \
+                   subtree entry, because the exemption lists that cite it name it directly. \
+                   provider-pool-kernel implements pick_account_with_cooldown, in_cooldown, \
+                   window_for, populate_quarantine_from_changes and with_tos_ack; Anvil's pool \
+                   is in-memory only, is never persisted, and has no consecutive-failure count.",
+    },
+    MigrationEntry {
         component: "brand_absence",
         verdict: Verdict::Migrating,
         confidence: Confidence::Probable,
@@ -124,11 +136,18 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                             intelligence/core/model-routing-{kernel,usecase} + route-policy-kernel + \
                             provider-pool-app",
         counterpart_loc: 11741,
-        evidence: "2017 lines. Executor half IS superseded: intelligence/adapters/cli-session-driver spawns \
-                  vendor CLIs (same as run_claude/codex/gemini_subscription); model-routing-kernel/usecase \
-                  + route-policy-kernel + provider-pool-app do routing/failover. But 827 lines have NO \
-                  oyatie counterpart: task_classifier.rs (206), telemetry_ledger.rs AdaptiveRoutingBandit \
-                  (431), cross_model_validator.rs (190). Repo-wide grep -rilE 'bandi...",
+        evidence: "2017 lines. The executor half IS superseded: intelligence/adapters/cli-session-driver \
+                   spawns vendor CLIs and model-routing-{kernel,usecase} plus route-policy-kernel \
+                   and provider-pool-app do routing and failover. But 827 lines have no live \
+                   counterpart: task_classifier.rs (206), telemetry_ledger.rs AdaptiveRoutingBandit \
+                   (431), cross_model_validator.rs (190). CORRECTED 2026-08-20: the original \
+                   evidence claimed a repo-wide grep for bandit/thompson/epsilon-greedy returned \
+                   zero hits. That grep was scoped to *.rs and so was never repo-wide. \
+                   repos/oyatie/.grok/python/mm_ml/bandit.py is 90 lines of UCB1 bandit for \
+                   model-routing suggestions -- same algorithm, same domain. It is referenced by no \
+                   Rust, BUCK or toml file and nothing under intelligence/ mentions it, so it is an \
+                   unwired Python sidecar in an agent dot-directory rather than a live counterpart. \
+                   The classify_task half of the claim holds: zero hits anywhere in oyatie.",
     },
     MigrationEntry {
         component: "api_contract_guard.rs",
@@ -1092,7 +1111,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   'adr-planning-completeness', and 'planning-ssot-coverage' implemented in dev-cli.",
     },
     MigrationEntry {
-        component: "rust_skills_guard",
+        component: "rust_language_policy",
         verdict: Verdict::Rewired,
         confidence: Confidence::Probable,
         oyatie_counterpart: "libs/oya-governance-banned-primitives-kernel (partial)",

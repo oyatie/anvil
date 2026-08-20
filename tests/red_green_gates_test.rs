@@ -20,7 +20,7 @@ use anvil::kani_guard::KaniGuard;
 use anvil::microbenchmark_ratchet::{MicroBenchmarkRatchet, MicrobenchmarkSample};
 use anvil::psa_admission_guard::PsaAdmissionGuard;
 use anvil::replay_harness::{DeterministicReplayHarness, ReplayTraceRecord};
-use anvil::rust_skills_guard::RustSkillsGuard;
+use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::schema_evolution::SchemaEvolutionRatchet;
 use anvil::trace_context_guard::TraceContextGuard;
 use anvil::unresolved_review_guard::{ThreadScanner, UnresolvedReviewThread};
@@ -576,7 +576,7 @@ fn test_upgrade_train_green_compatible_patch_upgrade() {
 
 #[test]
 fn test_rust_skills_red_flag_unwrap_in_production() {
-    let guard = RustSkillsGuard::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
     // RED: Production unwrap without error handling
     let bad_diff = create_test_diff_context("src/handler.rs", "+ let value = opt_val.unwrap();");
     let report = guard
@@ -590,7 +590,7 @@ fn test_rust_skills_red_flag_unwrap_in_production() {
 
 #[test]
 fn test_rust_skills_green_question_mark_operator() {
-    let guard = RustSkillsGuard::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
     // GREEN: Idiomatic ? error propagation
     let good_diff = create_test_diff_context(
         "src/handler.rs",
@@ -1294,7 +1294,7 @@ fn test_subtle_cell_isolation_nested_subquery_evasion() {
 #[test]
 fn test_subtle_rust_skills_empty_expect_evasion() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let guard = RustSkillsGuard::new(temp_dir.path());
+    let guard = RustLanguagePolicy::new(temp_dir.path());
     // SUBTLE RED: Attempting to bypass unwrap check by using empty expect string
     let subtle_bad_diff =
         create_test_diff_context("src/handler.rs", "+ let value = option_val.expect(\"\");");

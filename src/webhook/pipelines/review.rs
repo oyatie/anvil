@@ -18,8 +18,10 @@ pub async fn execute_pr_review(
     force: bool,
 ) -> Result<()> {
     info!(
-        "Executing AI Code Review & 70-Gate Hyperscale Pipeline for {}#{}...",
-        repo, pr_number
+        "Executing AI code review and {}-gate certification for {}#{}...",
+        crate::pre_merge_guard::report::TOTAL_GATES,
+        repo,
+        pr_number
     );
 
     // Acquire exclusive per-PR lock to prevent TOCTOU race conditions from rapid webhook bursts
@@ -150,9 +152,9 @@ pub async fn execute_pr_review(
         .coverage_guard
         .evaluate_diff_coverage(&repo_dir, &diff_ctx)?;
 
-    // 13. RustSkillsGuard: 380 Upstream Rust 2024 Edition Rules
+    // 13. RustLanguagePolicy: 380 Upstream Rust 2024 Edition Rules
     let rust_skills_report = state
-        .rust_skills_guard
+        .rust_language_policy
         .evaluate_rust_quality(&repo_dir, &diff_ctx)?;
 
     // 14. KaniGuard: Mathematical Formal Model Checking & Unsafe Invariant Verification
@@ -525,7 +527,7 @@ pub async fn execute_pr_review(
         }
     }
 
-    // Evaluate full Pre-Merge, GitOps, CI Velocity & Security Certification Matrix (70 gates)
+    // Evaluate the full pre-merge, GitOps, CI-velocity and security certification matrix
     let cert_report = state.pre_merge_guard.evaluate_pre_merge_gates(
         &diff_ctx,
         &doc_report,
@@ -713,7 +715,12 @@ pub async fn execute_pr_review(
             event_type: "pr_review_certified".to_string(),
             repo: repo.to_string(),
             entity_id: format!("PR #{}", pr_number),
-            title: format!("{} ({}/70 Gates)", title, gates_passed),
+            title: format!(
+                "{} ({}/{} gates)",
+                title,
+                gates_passed,
+                crate::pre_merge_guard::report::TOTAL_GATES
+            ),
             status: if cert_report.is_certified_ready {
                 "CERTIFIED".to_string()
             } else {

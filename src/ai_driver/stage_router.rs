@@ -1,10 +1,11 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{info, warn};
 
+use super::executor_port::ConfiguredPromptExecutor;
 use super::provider::{ModelExecutionConfig, ModelProvider};
-use super::router::SubscriptionExecutor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AgenticStage {
@@ -28,7 +29,7 @@ impl AgenticStage {
             AgenticStage::ArchitectSpec => "4. Architecture & Typed Contract Specification",
             AgenticStage::SpecReview => "5. Specification & Threat Model Audit",
             AgenticStage::Implementation => "6. Pure Rust Code Synthesis & Implementation",
-            AgenticStage::CodeReviewAudit => "7. 16-Lens Code Review & Hyperscaler Consensus",
+            AgenticStage::CodeReviewAudit => "7. 16-Lens Code Review & Reviewer Consensus",
             AgenticStage::GitOps => "8. GitOps & Speculative Merge Queue Enlistment",
             AgenticStage::IssueTriage => "9. Issue Fate Classification",
         }
@@ -56,22 +57,23 @@ impl StageFallbackChain {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EnterpriseAgenticPipelineRouter {
-    executor: SubscriptionExecutor,
+/// Dispatches a prompt down a stage's fallback chain.
+///
+/// The executor arrives as a port rather than being constructed here. That is the
+/// `Rewired` shape the migration ledger records for `ai_driver`: the port survives
+/// absorption while today's subscription-CLI adapter is swapped for an
+/// oyatie-backed one. It also keeps `stage_router` free of any concrete dependency
+/// on the superseded executor, which is what lets `telemetry_ledger` — one of the
+/// three novel units — import `AgenticStage` from here without dragging a process
+/// spawner along behind it.
+#[derive(Clone)]
+pub struct StageModelRouter {
+    executor: Arc<dyn ConfiguredPromptExecutor>,
 }
 
-impl Default for EnterpriseAgenticPipelineRouter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EnterpriseAgenticPipelineRouter {
-    pub fn new() -> Self {
-        Self {
-            executor: SubscriptionExecutor::new(),
-        }
+impl StageModelRouter {
+    pub fn new(executor: Arc<dyn ConfiguredPromptExecutor>) -> Self {
+        Self { executor }
     }
 
     /// Returns the multi-tier model fallback chain optimized against DeepSWE benchmarks & cost economics
@@ -360,7 +362,7 @@ impl EnterpriseAgenticPipelineRouter {
         for (idx, tier) in chain.tiers.iter().enumerate() {
             let tier_num = idx + 1;
             info!(
-                "🚀 [Enterprise Pipeline] Stage: {} | Tier {}/{}: {} ({:?}, effort: {})",
+                "🚀 [Stage Pipeline] Stage: {} | Tier {}/{}: {} ({:?}, effort: {})",
                 stage.display_name(),
                 tier_num,
                 total_tiers,
@@ -371,12 +373,12 @@ impl EnterpriseAgenticPipelineRouter {
 
             match self
                 .executor
-                .execute_prompt(prompt, working_dir, tier)
+                .execute_configured(prompt, working_dir, tier)
                 .await
             {
                 Ok(result) if !result.trim().is_empty() => {
                     info!(
-                        "✅ [Enterprise Pipeline] Stage: {} succeeded on Tier {} ({})",
+                        "✅ [Stage Pipeline] Stage: {} succeeded on Tier {} ({})",
                         stage.display_name(),
                         tier_num,
                         tier.resolved_model()
@@ -385,14 +387,14 @@ impl EnterpriseAgenticPipelineRouter {
                 }
                 Ok(_) => {
                     warn!(
-                        "⚠️ [Enterprise Pipeline] Tier {} ({}) returned empty output. Progressing to next fallback tier...",
+                        "⚠️ [Stage Pipeline] Tier {} ({}) returned empty output. Progressing to next fallback tier...",
                         tier_num,
                         tier.resolved_model()
                     );
                 }
                 Err(e) => {
                     warn!(
-                        "⚠️ [Enterprise Pipeline] Tier {} ({}) failed: {}. Progressing to next fallback tier...",
+                        "⚠️ [Stage Pipeline] Tier {} ({}) failed: {}. Progressing to next fallback tier...",
                         tier_num,
                         tier.resolved_model(),
                         e
@@ -402,7 +404,7 @@ impl EnterpriseAgenticPipelineRouter {
         }
 
         anyhow::bail!(
-            "🚨 [Enterprise Pipeline] All {} fallback tiers exhausted and failed for stage: {}",
+            "🚨 [Stage Pipeline] All {} fallback tiers exhausted and failed for stage: {}",
             total_tiers,
             stage.display_name()
         );
@@ -416,7 +418,7 @@ mod tests {
     #[test]
     fn test_stage_fallback_chains_have_multiple_tiers() {
         // Recon has 4 tiers
-        let recon = EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::Recon);
+        let recon = StageModelRouter::get_stage_fallback_chain(AgenticStage::Recon);
         assert_eq!(recon.tiers.len(), 4);
         assert_eq!(
             recon.primary().unwrap().resolved_model(),
@@ -426,8 +428,7 @@ mod tests {
         assert_eq!(recon.fallbacks()[1].resolved_model(), "claude-3-7-sonnet");
 
         // Planning has 4 tiers
-        let plan =
-            EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::Planning);
+        let plan = StageModelRouter::get_stage_fallback_chain(AgenticStage::Planning);
         assert_eq!(plan.tiers.len(), 4);
         assert_eq!(plan.primary().unwrap().resolved_model(), "fable-5");
         assert_eq!(plan.primary().unwrap().reasoning_effort, "xhigh");
@@ -436,16 +437,14 @@ mod tests {
         assert_eq!(plan.fallbacks()[1].resolved_model(), "opus-5");
 
         // Plan Review has 4 tiers
-        let plan_rev =
-            EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::PlanReview);
+        let plan_rev = StageModelRouter::get_stage_fallback_chain(AgenticStage::PlanReview);
         assert_eq!(plan_rev.tiers.len(), 4);
         assert_eq!(plan_rev.primary().unwrap().resolved_model(), "opus-5");
         assert_eq!(plan_rev.primary().unwrap().reasoning_effort, "high");
         assert_eq!(plan_rev.fallbacks()[0].resolved_model(), "gpt-5.6-sol");
 
         // Implementation has 4 tiers
-        let impl_stage =
-            EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(AgenticStage::Implementation);
+        let impl_stage = StageModelRouter::get_stage_fallback_chain(AgenticStage::Implementation);
         assert_eq!(impl_stage.tiers.len(), 4);
         assert_eq!(impl_stage.primary().unwrap().resolved_model(), "grok-4.6");
         assert_eq!(impl_stage.primary().unwrap().reasoning_effort, "xhigh");
@@ -456,9 +455,7 @@ mod tests {
         assert_eq!(impl_stage.fallbacks()[1].resolved_model(), "gpt-5.6-sol");
 
         // Code Review & Audit has 4 tiers
-        let code_rev = EnterpriseAgenticPipelineRouter::get_stage_fallback_chain(
-            AgenticStage::CodeReviewAudit,
-        );
+        let code_rev = StageModelRouter::get_stage_fallback_chain(AgenticStage::CodeReviewAudit);
         assert_eq!(code_rev.tiers.len(), 4);
         assert_eq!(code_rev.primary().unwrap().resolved_model(), "opus-5");
         assert_eq!(code_rev.fallbacks()[0].resolved_model(), "gpt-5.6-sol");

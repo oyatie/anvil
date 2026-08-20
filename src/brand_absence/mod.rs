@@ -218,7 +218,7 @@ impl BrandAbsenceGate {
     /// instances are directory names, which a scanner that only read
     /// declarations would miss entirely.
     pub fn scan_source(&self, path: &str, source: &str) -> BrandAbsenceReport {
-        let hits = self.collect_hits(path, source);
+        let hits = self.collect_hits(path, &blank_cfg_test_modules(source));
         self.finish(hits)
     }
 
@@ -242,7 +242,7 @@ impl BrandAbsenceGate {
             let Ok(body) = std::fs::read_to_string(&file) else {
                 continue;
             };
-            hits.extend(self.collect_hits(&rel, &body));
+            hits.extend(self.collect_hits(&rel, &blank_cfg_test_modules(&body)));
         }
         self.finish(hits)
     }
@@ -754,14 +754,8 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 ///
 /// This is debt, not an exemption. Each entry's `occurrences` is a ceiling.
 pub static KNOWN_VIOLATIONS: &[AllowlistedDebt] = &[
-    AllowlistedDebt { path: "src/ai_driver/stage_router.rs", stamp: "enterprise", occurrences: 6, debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/ai_driver/stage_router.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/cli/server.rs", stamp: "70", occurrences: 1, debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/cloud_native_guard/mod.rs", stamp: "cloud_native", occurrences: 7, debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/cloud_native_guard/mod.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/compliance_guard/upstream_sync.rs", stamp: "enterprise", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/dashboard/ssr_renderer.rs", stamp: "70", occurrences: 2, debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/dashboard/ssr_renderer.rs", stamp: "hyperscaler", occurrences: 2, debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/doc_archival_sweeper/issue_doc_consolidator.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/doc_archival_sweeper/mod.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/doc_guard/frontmatter.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
@@ -770,20 +764,64 @@ pub static KNOWN_VIOLATIONS: &[AllowlistedDebt] = &[
     AllowlistedDebt { path: "src/hyperscaler_consensus_guard/mod.rs", stamp: "hyperscaler", occurrences: 11, debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/lib.rs", stamp: "cloud_native", occurrences: 1, debt_note: "pre-existing name; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/lib.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing name; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/merge_enlister.rs", stamp: "hyperscale", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/modularization_guard.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/monorepo_guard/disposition.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/monorepo_guard/mod.rs", stamp: "hyperscaler", occurrences: 2, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/monorepo_guard/whole_file_expansion.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/pre_merge_guard/evaluator.rs", stamp: "70", occurrences: 1, debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/pre_merge_guard/evaluator.rs", stamp: "hyperscale", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/pre_merge_guard/matrix.rs", stamp: "70", occurrences: 1, debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/pre_merge_guard/matrix.rs", stamp: "hyperscale", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/stack_whitelist_guard/mod.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/task_orchestrator/autonomous_fix_engine.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/webhook/pipelines/review.rs", stamp: "70", occurrences: 2, debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/webhook/pipelines/review.rs", stamp: "hyperscale", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
 ];
+
+/// Blanks out `#[cfg(test)]` modules, preserving line numbering.
+///
+/// Test text never reaches a pull request. Counting a stamp that lives only in
+/// a fixture does two kinds of damage: it inflates the debt ledger, and it lets
+/// a real production violation hide beneath a ceiling that test data paid for.
+///
+/// Lines are replaced rather than removed so every reported line number still
+/// points at the right line of the original file.
+fn blank_cfg_test_modules(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut depth: i32 = 0;
+    let mut in_test = false;
+    let mut pending = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+
+        if !in_test && trimmed.starts_with("#[cfg(test)]") {
+            pending = true;
+            out.push('\n');
+            continue;
+        }
+
+        if pending && trimmed.starts_with("mod ") {
+            in_test = true;
+            pending = false;
+            depth = line.matches('{').count() as i32 - line.matches('}').count() as i32;
+            out.push('\n');
+            continue;
+        }
+        // An attribute on something that is not a module: not a test module.
+        if pending && !trimmed.is_empty() {
+            pending = false;
+        }
+
+        if in_test {
+            depth += line.matches('{').count() as i32;
+            depth -= line.matches('}').count() as i32;
+            if depth <= 0 {
+                in_test = false;
+            }
+            out.push('\n');
+            continue;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
 
 #[cfg(test)]
 mod tests {

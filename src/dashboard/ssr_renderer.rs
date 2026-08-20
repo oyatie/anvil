@@ -93,13 +93,13 @@ pub struct ActivityEventView {
     pub status: String,
 }
 
-pub struct HyperscalerDashboardRenderer;
+pub struct SsrDashboardRenderer;
 
 /// Backward-compatibility alias
-pub type LeptosDashboardRenderer = HyperscalerDashboardRenderer;
+pub type LeptosDashboardRenderer = SsrDashboardRenderer;
 
-impl HyperscalerDashboardRenderer {
-    /// Renders Tier-0 Hyperscaler DevOps Cockpit with Real-Time Reactive Hydration & Account Pool Controls
+impl SsrDashboardRenderer {
+    /// Renders the fleet control plane: live pipeline state, gate outcomes, and account-pool controls.
     pub fn render_html(state: &DashboardStateView) -> String {
         let repo_cards = crate::dashboard::panel_formatters::build_repo_cards(state);
         let merge_train_rows = crate::dashboard::panel_formatters::build_merge_train_rows(state);
@@ -118,7 +118,7 @@ impl HyperscalerDashboardRenderer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Oyatie Anvil | Tier-0 Hyperscaler Fleet Control Plane</title>
+    <title>Oyatie Anvil | Fleet Control Plane</title>
     <style>
 {}
     </style>
@@ -184,10 +184,10 @@ impl HyperscalerDashboardRenderer {
             </div>
         </div>
 
-        <!-- QUADRANT 3: 70-GATE CONTINUOUS GOVERNANCE & MUTATION KILL RATE MATRIX -->
+        <!-- QUADRANT 3: CONTINUOUS GOVERNANCE & MUTATION KILL RATE MATRIX -->
         <div class="panel-card">
             <div class="panel-header">
-                <span class="panel-title">🛡️ Panel 3: 70-Gate Continuous Governance &amp; Mutation Matrix</span>
+                <span class="panel-title">🛡️ Panel 3: Continuous Governance &amp; Mutation Matrix</span>
                 <span class="badge badge-healthy">100% Mutation Kill Rate</span>
             </div>
             <div class="gate-grid-container">

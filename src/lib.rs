@@ -1,6 +1,6 @@
 //! Oyatie Anvil: Autonomous Engineering & Hyperscale Delivery Fabric
 //!
-//! Provides the 70-gate PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
+//! Provides the PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
 //! deterministic PR & issue self-healing loops, zero-trust workload validation, and fail-closed merge train orchestration.
 
 pub mod adr_drift_ratchet;
@@ -89,7 +89,7 @@ pub mod replay_harness;
 pub mod review_memory;
 pub mod reviewer;
 pub mod roadmap_guard;
-pub mod rust_skills_guard;
+pub mod rust_language_policy;
 pub mod schema_evolution;
 pub mod self_governance;
 pub mod semantic_abi_ratchet;

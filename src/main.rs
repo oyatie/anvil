@@ -75,7 +75,7 @@ use anvil::remote_cache_optimizer::RemoteCacheOptimizer;
 use anvil::replay_harness::DeterministicReplayHarness;
 use anvil::review_memory::ReviewMemoryEngine;
 use anvil::reviewer::Reviewer;
-use anvil::rust_skills_guard::RustSkillsGuard;
+use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::schema_evolution::SchemaEvolutionRatchet;
 use anvil::semantic_abi_ratchet::SemanticAbiRatchet;
 use anvil::shadow_traffic_harness::ShadowTrafficHarness;
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
     let debt_shrink_guard = Arc::new(DebtShrinkGuard::new());
     let modularization_guard = Arc::new(ModularizationGuard::new());
     let coverage_guard = Arc::new(CoverageGuard::new());
-    let rust_skills_guard = Arc::new(RustSkillsGuard::new(&config.data_dir));
+    let rust_language_policy = Arc::new(RustLanguagePolicy::new(&config.data_dir));
     let kani_guard = Arc::new(KaniGuard::new());
     let slo_canary_guard = Arc::new(SloCanaryGuard::new());
     let adr_drift_ratchet = Arc::new(AdrDriftRatchet::new());
@@ -259,7 +259,7 @@ async fn main() -> Result<()> {
         debt_shrink_guard: debt_shrink_guard.clone(),
         modularization_guard: modularization_guard.clone(),
         coverage_guard: coverage_guard.clone(),
-        rust_skills_guard: rust_skills_guard.clone(),
+        rust_language_policy: rust_language_policy.clone(),
         kani_guard: kani_guard.clone(),
         slo_canary_guard: slo_canary_guard.clone(),
         adr_drift_ratchet: adr_drift_ratchet.clone(),

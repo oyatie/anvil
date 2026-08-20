@@ -210,7 +210,7 @@ impl MergeEnlister {
                 repo, pr_number
             );
             let approval = ReviewResponse {
-                summary: "### 🟢 Pre-Merge Quality Approval\n\nAll automated review, documentation parity, clean architecture, and hyperscale safety gates have passed with 100% compliance. Certified for merge queue admission.".to_string(),
+                summary: "### 🟢 Pre-Merge Quality Approval\n\nAll automated review, documentation parity, clean architecture, and safety gates have passed with 100% compliance. Certified for merge queue admission.".to_string(),
                 verdict: "APPROVE".to_string(),
                 comments: Vec::new(),
             };

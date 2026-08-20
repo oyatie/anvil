@@ -50,7 +50,7 @@ impl MonorepoGuard {
         diff_ctx: &PrDiffContext,
     ) -> Result<MonorepoGuardReport> {
         info!(
-            "Running MonorepoGuard hyperscaler patterns on {}#{}...",
+            "Running monorepo boundary rules (hermetic boundaries, harness quarantine, SSOT authority) on {}#{}...",
             diff_ctx.repo, diff_ctx.pr_number
         );
 
@@ -165,7 +165,7 @@ impl MonorepoGuard {
 
         let is_compliant = violations.is_empty();
         let summary = if is_compliant {
-            "Hyperscaler monorepo patterns verified: hermetic boundaries, harness quarantine, and SSOT authority rules 100% compliant.".to_string()
+            "Monorepo boundary rules verified: hermetic boundaries, harness quarantine, and SSOT authority rules 100% compliant.".to_string()
         } else {
             format!(
                 "Monorepo pattern warnings ({} items): {}",

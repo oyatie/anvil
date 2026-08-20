@@ -86,7 +86,7 @@ impl DocGuard {
         // Step 2: Analyze semantic documentation parity.
         //
         // A probe failure is reported as `errored`, not propagated: the rest of
-        // the 70-gate matrix must still run and the scorecard must still post.
+        // the gate matrix must still run and the scorecard must still post.
         // It maps to GateStatus::Errored, which blocks (invariant I1) without
         // claiming the documentation is actually deficient.
         let eval = match self
@@ -117,7 +117,7 @@ impl DocGuard {
                             errored: None,
                 is_sufficient: true,
                 files_created_or_updated: Vec::new(),
-                summary: "Documentation and SSOT frontmatters are fully compliant with hyperscaler standards.".to_string(),
+                summary: "Documentation and SSOT frontmatters satisfy the required fields and parity rules.".to_string(),
             });
         }
 

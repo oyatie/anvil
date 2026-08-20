@@ -54,7 +54,7 @@ use crate::progressive_rollout::ProgressiveRingReport;
 use crate::psa_admission_guard::PsaAdmissionReport;
 use crate::remote_cache_optimizer::CacheReport;
 use crate::replay_harness::ReplayHarnessReport;
-use crate::rust_skills_guard::RustSkillsReport;
+use crate::rust_language_policy::RustSkillsReport;
 use crate::schema_evolution::SchemaEvolutionReport;
 use crate::semantic_abi_ratchet::SemanticAbiReport;
 use crate::shadow_traffic_harness::ShadowTrafficReport;
@@ -156,8 +156,10 @@ impl PreMergeGuard {
         review_verdict: &str,
     ) -> Result<PreMergeCertificationReport> {
         info!(
-            "Evaluating Hyperscale Full-Lifecycle Quality & GitOps Gates for {}#{} (70 gates)...",
-            diff_ctx.repo, diff_ctx.pr_number
+            "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
+            diff_ctx.repo,
+            diff_ctx.pr_number,
+            crate::pre_merge_guard::report::TOTAL_GATES
         );
 
         // 1. Doc Parity

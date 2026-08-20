@@ -178,7 +178,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         fidelity: Fidelity::Partial,
         gap: "Now fails closed after the Phase 0a fix, and creates missing ADRs. It cannot AMEND an existing \
               document: generate_and_write_docs writes only when !path.exists(), so README.md and \
-              CHANGELOG.md are never updated (doc_guard/mod.rs:280).",
+              CHANGELOG.md are never updated (doc_guard/mod.rs:300).",
         blocked_on: None,
     },
     GateFidelity {

@@ -446,6 +446,51 @@ mod tests {
         }
     }
 
+    /// Each field cap is checked on its own by the lane tests; none of them
+    /// pushes every field over at once. This does, because the caps only buy
+    /// an absolute ceiling if they hold together: a prompt that no pull
+    /// request can inflate is the whole point of capping any of them.
+    #[test]
+    fn the_prompt_is_bounded_with_every_untrusted_field_oversized() {
+        let ctx = PrDiffContext {
+            repo: "oyatie/console".to_string(),
+            pr_number: 1,
+            base_branch: "main".to_string(),
+            base_sha: "base".to_string(),
+            head_sha: "head".to_string(),
+            previous_head_sha: None,
+            repo_working_dir: PathBuf::from("."),
+            diff_content: "d".repeat(MAX_DIFF_CHARS * 4),
+            changed_files: vec!["src/lib.rs".to_string()],
+            is_incremental: false,
+        };
+        let prompt = reviewer().build_prompt(
+            &ctx,
+            &"t".repeat(MAX_PR_TITLE_CHARS * 4),
+            &"b".repeat(MAX_PR_BODY_CHARS * 4),
+            &"r".repeat(MAX_CUSTOM_RULES_CHARS * 4),
+        );
+
+        // The four caps plus the fixed preamble, rubric, schema and fences.
+        let ceiling = MAX_DIFF_CHARS
+            + MAX_PR_TITLE_CHARS
+            + MAX_PR_BODY_CHARS
+            + MAX_CUSTOM_RULES_CHARS
+            + 8_000;
+        assert!(
+            prompt.len() <= ceiling,
+            "prompt is {} bytes, over the {ceiling}-byte ceiling",
+            prompt.len()
+        );
+        // And every cut is declared: a bounded prompt that hides what it
+        // dropped just moves the fabrication from the size to the verdict.
+        assert_eq!(
+            prompt.matches("[TRUNCATED:").count(),
+            4,
+            "all four oversized fields must declare their truncation"
+        );
+    }
+
     /// The errored summary must carry the raw output so the scorecard explains
     /// the failure rather than silently showing nothing.
     #[test]

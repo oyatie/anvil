@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use std::sync::Arc;
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use anvil::adr_drift_ratchet::AdrDriftRatchet;
@@ -122,6 +123,25 @@ async fn main() -> Result<()> {
     let cell_isolation_guard = Arc::new(CellIsolationGuard::new());
     let supply_chain_guard = Arc::new(SupplyChainGuard::new());
     let clean_arch_guard = Arc::new(CleanArchitectureGuard::new());
+    // Turn the Clean Architecture guard inward before it is ever pointed at
+    // another repository's PR. Anvil applies this standard to everyone; the
+    // result of applying it to Anvil itself is recorded at boot, whatever it
+    // says. Today it says NotMeasured — Anvil has no core/ports/adapters/facade
+    // layering — and that finding is emitted rather than suppressed.
+    match clean_arch_guard.self_conformance() {
+        Ok(self_report) => {
+            info!(
+                "Clean Architecture self-conformance ({}): {}",
+                self_report.scope, self_report.summary
+            );
+        }
+        Err(e) => {
+            warn!("Clean Architecture self-conformance could not run: {e}");
+        }
+    }
+    if let Ok(report) = clean_arch_guard.evaluate_self(&std::env::current_dir().unwrap_or_default()) {
+        tracing::debug!("Clean architecture self_conformance report: {}", report.summary);
+    }
     let monorepo_guard = Arc::new(MonorepoGuard::new());
     let debt_shrink_guard = Arc::new(DebtShrinkGuard::new());
     let modularization_guard = Arc::new(ModularizationGuard::new());

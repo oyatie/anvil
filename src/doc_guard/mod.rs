@@ -152,6 +152,23 @@ impl DocGuard {
         pr_title: &str,
         pr_body: &str,
     ) -> Result<DocParityEvaluation> {
+        let changed_files_preview = if diff_ctx.changed_files.len() > 100 {
+            format!(
+                "{}\n- ... and {} more files",
+                diff_ctx.changed_files.iter().take(100).cloned().collect::<Vec<_>>().join("\n- "),
+                diff_ctx.changed_files.len() - 100
+            )
+        } else {
+            diff_ctx.changed_files.join("\n- ")
+        };
+
+        let diff_content_bounded = if diff_ctx.diff_content.chars().count() > 50_000 {
+            let truncated: String = diff_ctx.diff_content.chars().take(50_000).collect();
+            format!("{truncated}\n\n[... remaining diff truncated for doc evaluation ...]")
+        } else {
+            diff_ctx.diff_content.clone()
+        };
+
         let prompt = format!(
             r#####"You are Oyatie's Principal Documentation Architect. Evaluate whether this Pull Request on `{repo}` has sufficient documentation parity or if documentation must be updated.
 
@@ -195,8 +212,8 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             } else {
                 pr_body
             },
-            changed_files = diff_ctx.changed_files.join("\n- "),
-            diff_content = diff_ctx.diff_content
+            changed_files = changed_files_preview,
+            diff_content = diff_content_bounded
         );
 
         let target = format!("{}#{}", repo, diff_ctx.pr_number);

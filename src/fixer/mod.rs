@@ -41,8 +41,12 @@ impl Fixer {
         pr_number: u64,
         head_branch: &str,
         _head_sha: &str,
+        is_cross_repository: bool,
         feedback_items: &[ReviewFeedbackItem],
     ) -> Result<Option<String>> {
+        // Refuse fork PRs before doing any work: `HEAD:<head_branch>` would
+        // resolve against the BASE repository. See github::fork_guard.
+        crate::github::fork_guard::ensure_push_allowed(repo, pr_number, is_cross_repository)?;
         if feedback_items.is_empty() {
             info!(
                 "No review feedback items to resolve for {}#{}",

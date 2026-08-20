@@ -139,6 +139,8 @@ impl LockfileReconciler {
             .output()
             .await;
 
+        // Never push to a branch that belongs to a fork; see github::fork_guard.
+        crate::github::fork_guard::ensure_push_allowed(repo, pr_number, meta.is_cross_repository)?;
         let push_target = format!("HEAD:{}", meta.head_ref_name);
         let push_out = Command::new("git")
             .current_dir(&repo_dir)

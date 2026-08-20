@@ -95,6 +95,7 @@ pub mod stack_whitelist_guard;
 pub mod stacked_diffs;
 pub mod state;
 pub mod supply_chain_guard;
+pub mod task_orchestrator;
 pub mod telemetry_store;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;

@@ -212,6 +212,19 @@ async fn main() -> Result<()> {
         telemetry_store.clone(),
     ));
     let broadcaster = Arc::new(anvil::webhook::sse::FleetEventBroadcaster::new());
+    let verifier = Arc::new(anvil::task_orchestrator::SourceDocVerifier::new());
+    let sequencer = Arc::new(anvil::task_orchestrator::TaskDagSequencer::new());
+    let fix_engine = Arc::new(anvil::task_orchestrator::AutonomousFixEngine::new(
+        git_mgr.clone(),
+        github_client.clone(),
+        Arc::new(anvil::ai_driver::SubscriptionExecutor::with_pool(Arc::new(self_governor.quota.account_pool.clone()))),
+        self_governor.deathloop.clone(),
+    ));
+    let task_orchestrator = Arc::new(anvil::task_orchestrator::AutonomousTaskOrchestrator::new(
+        verifier,
+        sequencer,
+        fix_engine,
+    ));
 
     let app_state = AppState {
         config: config.clone(),
@@ -302,6 +315,7 @@ async fn main() -> Result<()> {
         broadcaster,
         telemetry_store,
         fleet_observer,
+        task_orchestrator,
     };
 
     let res = handle_cli(app_state).await;

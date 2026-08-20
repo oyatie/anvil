@@ -1,16 +1,48 @@
 use axum::{
+    body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use tracing::{error, info};
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
+use tracing::{error, info, warn};
 
 use super::pipelines::execute_pr_review;
 use super::{ApiResponse, AppState};
 use crate::fixer::ReviewFeedbackItem;
 use crate::queue_healer::QueueHealer;
+
+/// Verifies GitHub X-Hub-Signature-256 HMAC in constant time to prevent timing attacks
+pub fn verify_github_hmac(secret: &str, raw_bytes: &[u8], signature_header: Option<&str>) -> bool {
+    let signature = match signature_header {
+        Some(sig) => sig,
+        None => return false,
+    };
+
+    let expected_hex = match signature.strip_prefix("sha256=") {
+        Some(hex) => hex,
+        None => signature,
+    };
+
+    let expected_bytes = match hex::decode(expected_hex) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+
+    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    mac.update(raw_bytes);
+    let result = mac.finalize().into_bytes();
+
+    result.as_slice().ct_eq(&expected_bytes).into()
+}
 
 #[derive(Deserialize, Debug)]
 pub struct GitHubWebhookPayload {
@@ -88,8 +120,25 @@ pub struct WebhookRepository {
 pub async fn webhook_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<GitHubWebhookPayload>,
+    body_bytes: Bytes,
 ) -> impl IntoResponse {
+    // 1. Constant-time HMAC-SHA256 verification (Zero-Trust Ingress Security)
+    if let Some(secret) = &state.config.webhook_secret {
+        let sig = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok());
+        if !verify_github_hmac(secret, &body_bytes, sig) {
+            warn!("🚨 [Webhook Ingress Security] HMAC-SHA256 signature verification failed. Rejecting request with 401 Unauthorized.");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ApiResponse {
+                    success: false,
+                    message: "Invalid or missing X-Hub-Signature-256 HMAC signature".to_string(),
+                }),
+            );
+        }
+    }
+
     let event_type = headers
         .get("x-github-event")
         .and_then(|v| v.to_str().ok())
@@ -106,6 +155,19 @@ pub async fn webhook_handler(
             }),
         );
     }
+
+    let payload: GitHubWebhookPayload = match serde_json::from_slice(&body_bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse {
+                    success: false,
+                    message: format!("Invalid JSON payload: {}", e),
+                }),
+            );
+        }
+    };
 
     let repo_name = payload
         .repository

@@ -1,6 +1,6 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Deserialize;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::pipelines::{execute_pr_certify, execute_pr_fix, execute_pr_review};
 use super::{ApiResponse, AppState};
@@ -55,6 +55,16 @@ pub async fn manual_review_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualReviewRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &req.repo) {
+        warn!("[/api] rejected repo '{}': {}", req.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!("Manual review requested for {}#{}", req.repo, req.pr_number);
 
     let pr_meta = match state
@@ -113,6 +123,16 @@ pub async fn manual_fix_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualFixRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &req.repo) {
+        warn!("[/api] rejected repo '{}': {}", req.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!("Manual fix requested for {}#{}", req.repo, req.pr_number);
 
     let state_clone = state.clone();
@@ -138,6 +158,16 @@ pub async fn manual_certify_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualCertifyRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &req.repo) {
+        warn!("[/api] rejected repo '{}': {}", req.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!(
         "Manual certification requested for {}#{}",
         req.repo, req.pr_number
@@ -172,6 +202,16 @@ pub async fn manual_triage_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualTriageRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &req.repo) {
+        warn!("[/api] rejected repo '{}': {}", req.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!(
         "Manual triage requested for run #{} on {}",
         req.run_id, req.repo
@@ -206,6 +246,16 @@ pub async fn manual_enlist_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualEnlistRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &req.repo) {
+        warn!("[/api] rejected repo '{}': {}", req.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!(
         "Manual merge queue enlistment requested for {}#{}",
         req.repo, req.pr_number
@@ -235,6 +285,16 @@ pub async fn manual_heal_queue_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualQueueHealRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &req.repo) {
+        warn!("[/api] rejected repo '{}': {}", req.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!(
         "Manual queue healing requested for {}#{}",
         req.repo, req.pr_number
@@ -264,6 +324,16 @@ pub async fn manual_reconcile_handler(
     State(state): State<AppState>,
     Json(req): Json<ManualReconcileRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &req.repo) {
+        warn!("[/api] rejected repo '{}': {}", req.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!(
         "Manual lockfile reconciliation requested for {}#{}",
         req.repo, req.pr_number
@@ -429,6 +499,16 @@ pub async fn task_sweep_handler(
     State(state): State<AppState>,
     Json(payload): Json<TaskSweepRequest>,
 ) -> impl IntoResponse {
+    if let Err(e) = crate::webhook::repo_guard::validate(&state.config, &payload.repo) {
+        warn!("[/api] rejected repo '{}': {}", payload.repo, e);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: e,
+            }),
+        );
+    }
     info!(
         "Autonomous task sweep requested for '{}' via REST API...",
         payload.repo

@@ -1,5 +1,6 @@
 pub mod manual_handlers;
 pub mod pipelines;
+pub mod repo_guard;
 pub mod sse;
 pub mod webhook_handlers;
 

@@ -164,18 +164,33 @@ pub async fn run_server(state: AppState) -> Result<()> {
                 repo, host, port
             );
             let target_url = format!("http://{}:{}/webhook", host, port);
-            let child = Command::new("gh")
-                .args([
-                    "webhook",
-                    "forward",
-                    "--repo",
-                    repo,
-                    "--events",
-                    "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group",
-                    "--url",
-                    &target_url,
-                ])
-                .spawn();
+            // The forwarder must create its GitHub-side hook with the SAME secret
+            // the daemon verifies with, or every delivery arrives unsigned and
+            // HMAC verification rejects all of it — a daemon that looks healthy
+            // and processes nothing. Verified live: all watched repos currently
+            // show `secret_set: false` via `gh api repos/{r}/hooks`.
+            let mut fwd = Command::new("gh");
+            fwd.args([
+                "webhook",
+                "forward",
+                "--repo",
+                repo,
+                "--events",
+                "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group",
+                "--url",
+                &target_url,
+            ]);
+            match state.config.webhook_secret.as_deref() {
+                Some(secret) => {
+                    fwd.args(["--secret", secret]);
+                }
+                None => warn!(
+                    "GITHUB_WEBHOOK_SECRET is unset: forwarding {} with UNSIGNED deliveries. \
+                     Signature verification cannot succeed until this is set.",
+                    repo
+                ),
+            }
+            let child = fwd.spawn();
 
             match child {
                 Ok(c) => forward_children.push(c),
@@ -235,6 +250,7 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
 
     for repo in &config.watched_repos {
         let repo_clone = repo.clone();
+        let secret_clone = config.webhook_secret.clone();
         let target_url = format!("http://{}:{}/webhook", config.host, config.port);
         let task = tokio::spawn(async move {
             info!("Forwarding webhooks for {} to {}", repo_clone, target_url);
@@ -249,6 +265,10 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
                 "--url",
                 &target_url,
             ]);
+            // Same shared secret as the verifier; see the boot-time forwarder.
+            if let Some(secret) = secret_clone.as_deref() {
+                cmd.args(["--secret", secret]);
+            }
             if let Err(e) = cmd.status().await {
                 error!("Webhook forwarder exited for {}: {}", repo_clone, e);
             }

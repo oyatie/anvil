@@ -1,4 +1,5 @@
 pub mod client_scripts;
+pub mod escape;
 pub mod panel_formatters;
 pub mod ssr_renderer;
 pub mod styles;

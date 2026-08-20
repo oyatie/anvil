@@ -26,8 +26,28 @@ impl GitManager {
     }
 
     /// Gets the local bare/primary path for a given repository (e.g., "oyatie/oyatie" -> "repos/oyatie")
+    ///
+    /// Defence in depth: callers are expected to have validated the name via
+    /// `webhook::repo_guard`, but this took the segment after the last '/'
+    /// unconditionally, so `"x/.."` yielded `repos_base_dir.join("..")` —
+    /// escaping the repos directory (`install_repo_hooks` then writes
+    /// executable files there). Any segment that is not a plain path component
+    /// is now sanitised rather than trusted.
     pub fn get_repo_dir(&self, repo: &str) -> PathBuf {
-        let name = repo.split('/').next_back().unwrap_or(repo);
+        let raw = repo.split('/').next_back().unwrap_or(repo);
+        let safe: String = raw
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+            .collect();
+        // Reject any residue containing "..", not just an exact match: stripping
+        // disallowed characters can reassemble a traversal-looking component
+        // (e.g. "..%2f.." -> "..2f.."). A legitimate repository name never
+        // contains "..".
+        let name = if safe.is_empty() || safe == "." || safe.contains("..") {
+            "_invalid_repo_name"
+        } else {
+            safe.as_str()
+        };
         self.repos_base_dir.join(name)
     }
 
@@ -405,6 +425,31 @@ fi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn get_repo_dir_cannot_escape_the_repos_directory() {
+        let gm = GitManager::new(PathBuf::from("/tmp/anvil-repos"));
+        for hostile in ["x/..", "../etc", "x/../..", "a/.", "owner/..%2f.."] {
+            let p = gm.get_repo_dir(hostile);
+            assert!(
+                p.starts_with("/tmp/anvil-repos"),
+                "{hostile:?} escaped to {p:?}"
+            );
+            assert!(
+                !p.to_string_lossy().contains(".."),
+                "{hostile:?} produced a traversal component: {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn get_repo_dir_still_resolves_normal_names() {
+        let gm = GitManager::new(PathBuf::from("/tmp/anvil-repos"));
+        assert_eq!(
+            gm.get_repo_dir("oyatie/anvil"),
+            PathBuf::from("/tmp/anvil-repos/anvil")
+        );
+    }
 
     #[tokio::test]
     async fn test_git_manager_creates_and_cleans_abandoned_worktrees() {

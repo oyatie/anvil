@@ -122,21 +122,49 @@ pub async fn webhook_handler(
     headers: HeaderMap,
     body_bytes: Bytes,
 ) -> impl IntoResponse {
-    // 1. Constant-time HMAC-SHA256 verification (Zero-Trust Ingress Security)
-    if let Some(secret) = &state.config.webhook_secret {
-        let sig = headers
-            .get("x-hub-signature-256")
-            .and_then(|v| v.to_str().ok());
-        if !verify_github_hmac(secret, &body_bytes, sig) {
-            warn!("🚨 [Webhook Ingress Security] HMAC-SHA256 signature verification failed. Rejecting request with 401 Unauthorized.");
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ApiResponse {
-                    success: false,
-                    message: "Invalid or missing X-Hub-Signature-256 HMAC signature".to_string(),
-                }),
-            );
+    // 1. Constant-time HMAC-SHA256 verification (Zero-Trust Ingress Security).
+    //
+    // ============================ OBSERVE MODE ============================
+    // Verification runs and its outcome is logged, but a failure does NOT
+    // reject the request yet.
+    //
+    // Why: deliveries reach this daemon through `gh webhook forward`, a
+    // development tool that relays through webhook-forwarder.github.com. It is
+    // not established that the original X-Hub-Signature-256 survives that relay.
+    // Enforcing before confirming that would produce a daemon that boots, looks
+    // healthy, and silently rejects every delivery — /healthz is a static "ok"
+    // and would not reveal it.
+    //
+    // TO PROMOTE TO ENFORCING: confirm the logs below show
+    // `signature_valid=true` on real deliveries, then replace this block with a
+    // 401 return on `!valid`, and make `webhook_secret` mandatory at startup.
+    // Tracked as Phase 0 step 4; see plan section 14 for the ingress rework
+    // (GitHub App + accept-and-enqueue) that supersedes this path entirely.
+    // ======================================================================
+    match &state.config.webhook_secret {
+        Some(secret) => {
+            let sig = headers
+                .get("x-hub-signature-256")
+                .and_then(|v| v.to_str().ok());
+            let signature_present = sig.is_some();
+            let signature_valid = verify_github_hmac(secret, &body_bytes, sig);
+            if signature_valid {
+                info!(
+                    "[Webhook Ingress] signature_present={} signature_valid=true — ready to enforce",
+                    signature_present
+                );
+            } else {
+                warn!(
+                    "🚨 [Webhook Ingress OBSERVE MODE] signature_present={} signature_valid=false \
+                     — this delivery WOULD BE REJECTED once enforcement is enabled. Accepting for now.",
+                    signature_present
+                );
+            }
         }
+        None => warn!(
+            "🚨 [Webhook Ingress] GITHUB_WEBHOOK_SECRET is not configured; \
+             deliveries are unauthenticated and unverifiable."
+        ),
     }
 
     let event_type = headers

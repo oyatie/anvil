@@ -170,6 +170,19 @@ pub async fn run_server(state: AppState) -> Result<()> {
             // and processes nothing. Verified live: all watched repos currently
             // show `secret_set: false` via `gh api repos/{r}/hooks`.
             let mut fwd = Command::new("gh");
+            // Detach stdin from the operator's terminal.
+            //
+            // These children previously inherited the pane's tty and the
+            // gh-webhook extension put it into raw mode (-opost, -isig) without
+            // restoring it. Two operator-visible failures resulted: log output
+            // staircased (LF with no CR, because -opost disables ONLCR), and
+            // Ctrl-C stopped working entirely (-isig disables INTR), so the
+            // daemon could only be stopped with SIGTERM.
+            //
+            // A process needs a tty file descriptor to call tcsetattr; denying
+            // stdin removes that handle while leaving stdout/stderr inherited so
+            // forwarder diagnostics still reach the log.
+            fwd.stdin(std::process::Stdio::null());
             fwd.args([
                 "webhook",
                 "forward",
@@ -255,6 +268,8 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
         let task = tokio::spawn(async move {
             info!("Forwarding webhooks for {} to {}", repo_clone, target_url);
             let mut cmd = Command::new("gh");
+            // See the boot-time forwarder: keep the child off the operator's tty.
+            cmd.stdin(std::process::Stdio::null());
             cmd.args([
                 "webhook",
                 "forward",

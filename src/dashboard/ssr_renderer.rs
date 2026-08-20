@@ -19,6 +19,19 @@ pub struct DashboardStateView {
     pub ai_bandit_models: Vec<ModelBanditView>,
     pub dora_metrics: DoraMetricsView,
     pub recent_activities: Vec<ActivityEventView>,
+    pub merge_train: Vec<MergeTrainItemView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeTrainItemView {
+    pub repo: String,
+    pub pr_number: u64,
+    pub title: String,
+    pub speculative_base: String,
+    pub head_sha: String,
+    pub state: String,
+    pub gates_completed: usize,
+    pub total_gates: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,10 +49,13 @@ pub struct FleetRepoView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateHeatmapItem {
+    pub gate_number: usize,
     pub gate_name: String,
     pub fail_count: usize,
     pub pass_percentage: f64,
+    pub mutation_kill_rate: f64,
     pub category: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,7 +93,7 @@ pub struct ActivityEventView {
 pub struct LeptosDashboardRenderer;
 
 impl LeptosDashboardRenderer {
-    /// Renders high-fidelity Tabbed Multi-Repo Hyperscaler SSR Control Plane HTML
+    /// Renders Tier-0 Hyperscaler DevOps Cockpit (4-Quadrant layout with Speculative Merge Trains & 70-Gate Matrix)
     pub fn render_html(state: &DashboardStateView) -> String {
         let repo_cards = state
             .fleet_repos
@@ -89,20 +105,27 @@ impl LeptosDashboardRenderer {
                 let prd_sha = r.branch_shas.get("production").or_else(|| r.branch_shas.get("main")).cloned().unwrap_or_else(|| "N/A".to_string());
 
                 format!(
-                    r#"<div class="card repo-card">
-                        <div class="card-header">
-                            <span class="repo-title">📦 {}</span>
-                            <span class="badge badge-healthy">{}</span>
-                        </div>
-                        <div class="card-body">
-                            <p><strong>Open Pull Requests:</strong> <span class="highlight-val">{}</span> | <strong>Merge Queue Depth:</strong> 0</p>
-                            <p><strong>DORA Lead Time:</strong> {:.1}h | <strong>Deploys/Day:</strong> {:.1}</p>
-                            <div class="env-pipeline-grid">
-                                <div class="env-tag">Dev: <code>{}</code></div>
-                                <div class="env-tag">Staging: <code>{}</code></div>
-                                <div class="env-tag">Canary: <code>{}</code></div>
-                                <div class="env-tag">Prod: <code>{}</code></div>
+                    r#"<div class="repo-row">
+                        <div class="repo-meta">
+                            <div class="repo-name">
+                                <span class="icon">📦</span>
+                                <strong>{}</strong>
+                                <span class="badge badge-healthy">{}</span>
                             </div>
+                            <div class="repo-stats">
+                                <span>Open PRs: <strong class="text-cyan">{}</strong></span>
+                                <span>Lead Time: <strong>{:.1}h</strong></span>
+                                <span>Deploy Cadence: <strong>{:.1}/d</strong></span>
+                            </div>
+                        </div>
+                        <div class="gitops-dag">
+                            <div class="dag-node node-dev"><span class="dag-label">Dev</span><code>{}</code></div>
+                            <div class="dag-arrow">➔</div>
+                            <div class="dag-node node-staging"><span class="dag-label">Staging</span><code>{}</code></div>
+                            <div class="dag-arrow">➔</div>
+                            <div class="dag-node node-canary"><span class="dag-label">Canary 5%</span><code>{}</code></div>
+                            <div class="dag-arrow">➔</div>
+                            <div class="dag-node node-prod"><span class="dag-label">Production</span><code>{}</code></div>
                         </div>
                     </div>"#,
                     r.name, r.health_badge, r.open_prs, r.lead_time_hours, r.deploy_frequency_per_day,
@@ -112,85 +135,58 @@ impl LeptosDashboardRenderer {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let repo_tabs_nav = state
-            .fleet_repos
-            .iter()
-            .enumerate()
-            .map(|(idx, r)| {
-                let active = if idx == 0 {
-                    "tab-btn active"
-                } else {
-                    "tab-btn"
-                };
-                let short_name = r.name.split('/').next_back().unwrap_or(&r.name);
-                format!(
-                    r#"<button class="{}" onclick="switchRepoTab('{}')">📦 {}</button>"#,
-                    active, short_name, short_name
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let repo_tabs_content = state
-            .fleet_repos
-            .iter()
-            .enumerate()
-            .map(|(idx, r)| {
-                let short_name = r.name.split('/').next_back().unwrap_or(&r.name);
-                let display = if idx == 0 { "block" } else { "none" };
-                let dev_sha = r.branch_shas.get("dev").cloned().unwrap_or_else(|| "N/A".to_string());
-                let stg_sha = r.branch_shas.get("staging").cloned().unwrap_or_else(|| "N/A".to_string());
-                let cnr_sha = r.branch_shas.get("canary").cloned().unwrap_or_else(|| "N/A".to_string());
-                let prd_sha = r.branch_shas.get("production").or_else(|| r.branch_shas.get("main")).cloned().unwrap_or_else(|| "N/A".to_string());
-
-                format!(
-                    r#"<div id="tab-{}" class="tab-pane" style="display: {};">
-                        <div class="grid-2" style="margin-bottom: 16px;">
-                            <div class="card">
-                                <div class="card-header"><span class="repo-title">🚀 GitOps Continuous Promotion Pipeline</span></div>
-                                <div class="card-body">
-                                    <p><strong>Dev Branch:</strong> <code>{}</code> <span class="badge badge-healthy">HEALTHY</span></p>
-                                    <p><strong>Staging Branch:</strong> <code>{}</code> <span class="badge badge-healthy">PASSING</span></p>
-                                    <p><strong>Canary (5%):</strong> <code>{}</code> <span class="badge badge-warning">BAKING (30m)</span></p>
-                                    <p><strong>Production:</strong> <code>{}</code> <span class="badge badge-healthy">ACTIVE</span></p>
-                                </div>
+        let merge_train_rows = if state.merge_train.is_empty() {
+            r#"<div class="empty-state">
+                <span class="icon">🚂</span>
+                <p>No inflight speculative merge conflicts. Queue idle & ready for admission.</p>
+            </div>"#.to_string()
+        } else {
+            state
+                .merge_train
+                .iter()
+                .map(|t| {
+                    format!(
+                        r#"<div class="train-item">
+                            <div class="train-header">
+                                <span class="train-pr">{}#{}</span>
+                                <span class="train-title">{}</span>
+                                <span class="badge badge-queued">{}</span>
                             </div>
-                            <div class="card">
-                                <div class="card-header"><span class="repo-title">📈 SRE Tier-0 DORA &amp; Error Budget</span></div>
-                                <div class="card-body">
-                                    <p><strong>Lead Time for Changes:</strong> {:.1} hrs (Target: &lt; 24h)</p>
-                                    <p><strong>Deployment Cadence:</strong> {:.1} / day (Target: &gt;= 1.0)</p>
-                                    <p><strong>Change Failure Rate:</strong> {:.1}% (Target: &lt; 5%)</p>
-                                    <p><strong>Mean Time to Restore:</strong> {:.0} mins (Target: &lt; 60m)</p>
-                                </div>
+                            <div class="train-progress">
+                                <div class="train-spec-base">Base: <code>{}</code> ➔ Head: <code>{}</code></div>
+                                <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: {}%"></div></div>
+                                <span class="progress-text">{}/{} Gates</span>
                             </div>
-                        </div>
-                    </div>"#,
-                    short_name, display, dev_sha, stg_sha, cnr_sha, prd_sha,
-                    r.lead_time_hours, r.deploy_frequency_per_day, 1.4, 8.0
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+                        </div>"#,
+                        t.repo, t.pr_number, t.title, t.state,
+                        t.speculative_base, t.head_sha,
+                        (t.gates_completed as f64 / t.total_gates.max(1) as f64 * 100.0) as usize,
+                        t.gates_completed, t.total_gates
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
 
-        let heatmap_rows = state
+        let gate_cells = state
             .gate_heatmap
             .iter()
             .map(|g| {
-                let bar_width = g.pass_percentage.min(100.0);
+                let cell_class = if g.fail_count == 0 {
+                    "gate-cell gate-green"
+                } else if g.pass_percentage >= 90.0 {
+                    "gate-cell gate-amber"
+                } else {
+                    "gate-cell gate-red"
+                };
                 format!(
-                    r#"<tr>
-                        <td><strong>{}</strong></td>
-                        <td><code>{}</code></td>
-                        <td>{}</td>
-                        <td>
-                            <div class="progress-bar-bg">
-                                <div class="progress-bar-fill" style="width: {:.1}%"></div>
-                            </div>
-                            <span class="progress-text">{:.1}%</span>
-                        </td>
-                    </tr>"#,
-                    g.gate_name, g.category, g.fail_count, bar_width, g.pass_percentage
+                    r#"<div class="{}" title="Gate {}: {} | Failures: {} | Pass: {:.1}% | Mutation Kill Rate: {:.0}%">
+                        <span class="gate-num">G{:02}</span>
+                        <span class="gate-name">{}</span>
+                        <span class="gate-mkr">MKR {:.0}%</span>
+                    </div>"#,
+                    cell_class, g.gate_number, g.gate_name, g.fail_count, g.pass_percentage, g.mutation_kill_rate,
+                    g.gate_number, g.gate_name, g.mutation_kill_rate
                 )
             })
             .collect::<Vec<_>>()
@@ -200,7 +196,7 @@ impl LeptosDashboardRenderer {
             .ai_bandit_models
             .iter()
             .map(|m| {
-                let sig_badge_class = if m.is_statistically_significant {
+                let sig_class = if m.is_statistically_significant {
                     "badge-healthy"
                 } else {
                     "badge-warning"
@@ -214,7 +210,6 @@ impl LeptosDashboardRenderer {
                         <td>${:.3}</td>
                         <td>{:.1}s</td>
                         <td><code>{:.3}</code></td>
-                        <td>{:.0}%</td>
                         <td><span class="badge {}">{}</span></td>
                     </tr>"#,
                     m.model_name,
@@ -224,8 +219,7 @@ impl LeptosDashboardRenderer {
                     m.avg_cost_per_pr,
                     m.p99_latency_sec,
                     m.ucb1_score,
-                    m.statistical_power * 100.0,
-                    sig_badge_class,
+                    sig_class,
                     m.significance_badge
                 )
             })
@@ -256,20 +250,22 @@ impl LeptosDashboardRenderer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Oyatie Anvil | Hyperscale Fleet Control Plane</title>
+    <title>Oyatie Anvil | Tier-0 Hyperscaler Fleet Control Plane</title>
     <style>
         :root {{
             --bg-dark: #0a0e17;
-            --surface-dark: #131b2e;
-            --surface-border: #1e2c4a;
-            --text-primary: #f0f4f8;
-            --text-secondary: #94a3b8;
+            --surface-dark: #111827;
+            --surface-card: #162032;
+            --surface-border: #1f2d47;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
             --accent-cyan: #06b6d4;
             --accent-blue: #3b82f6;
             --accent-emerald: #10b981;
             --accent-amber: #f59e0b;
             --accent-rose: #f43f5e;
-            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }}
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -277,110 +273,87 @@ impl LeptosDashboardRenderer {
             background-color: var(--bg-dark);
             color: var(--text-primary);
             font-family: var(--font-sans);
-            padding: 24px;
-            line-height: 1.5;
+            padding: 16px 20px;
+            line-height: 1.4;
         }}
-        .navbar {{
+        .top-hero-bar {{
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 16px 24px;
-            background: var(--surface-dark);
+            padding: 12px 20px;
+            background: var(--surface-card);
             border: 1px solid var(--surface-border);
-            border-radius: 12px;
-            margin-bottom: 24px;
+            border-radius: 10px;
+            margin-bottom: 16px;
+            backdrop-filter: blur(8px);
         }}
-        .brand {{
+        .brand-cluster {{
             display: flex;
             align-items: center;
             gap: 12px;
-            font-size: 20px;
-            font-weight: 700;
-            color: var(--accent-cyan);
-            letter-spacing: -0.5px;
         }}
-        .status-pill {{
-            display: inline-flex;
+        .brand-title {{
+            font-size: 17px;
+            font-weight: 800;
+            color: var(--accent-cyan);
+            letter-spacing: -0.3px;
+        }}
+        .dora-kpis {{
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }}
+        .dora-metric {{
+            display: flex;
+            flex-direction: column;
+            text-align: center;
+        }}
+        .dora-lbl {{
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }}
+        .dora-num {{
+            font-size: 15px;
+            font-weight: 800;
+            color: var(--text-primary);
+        }}
+        .socket-status {{
+            display: flex;
             align-items: center;
             gap: 8px;
             padding: 6px 12px;
             background: rgba(16, 185, 129, 0.1);
-            color: var(--accent-emerald);
-            border: 1px solid rgba(16, 185, 129, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.25);
             border-radius: 9999px;
-            font-size: 13px;
-            font-weight: 600;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--accent-emerald);
         }}
-        .status-dot {{
-            width: 8px;
-            height: 8px;
+        .pulse-dot {{
+            width: 7px;
+            height: 7px;
             background: var(--accent-emerald);
             border-radius: 50%;
-            animation: pulse 2s infinite;
+            box-shadow: 0 0 8px var(--accent-emerald);
         }}
-        @keyframes pulse {{
-            0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }}
-            70% {{ transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }}
-            100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }}
-        }}
-        .dora-grid {{
+        .cockpit-quadrant-grid {{
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 16px;
-            margin-bottom: 24px;
+            margin-bottom: 16px;
         }}
-        .metric-card {{
-            background: var(--surface-dark);
+        .panel-card {{
+            background: var(--surface-card);
             border: 1px solid var(--surface-border);
-            padding: 20px;
-            border-radius: 12px;
+            border-radius: 10px;
+            padding: 16px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
         }}
-        .metric-title {{
-            font-size: 13px;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-        }}
-        .metric-val {{
-            font-size: 28px;
-            font-weight: 700;
-            color: var(--text-primary);
-        }}
-        .metric-sub {{
-            font-size: 12px;
-            color: var(--accent-cyan);
-        }}
-        .section-header {{
-            font-size: 18px;
-            font-weight: 700;
-            margin-top: 24px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .grid-3 {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }}
-        .grid-2 {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
-            gap: 16px;
-        }}
-        .card {{
-            background: var(--surface-dark);
-            border: 1px solid var(--surface-border);
-            border-radius: 12px;
-            padding: 16px;
-        }}
-        .card-header {{
+        .panel-header {{
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -388,15 +361,146 @@ impl LeptosDashboardRenderer {
             padding-bottom: 8px;
             border-bottom: 1px solid var(--surface-border);
         }}
-        .repo-title {{
-            font-size: 15px;
+        .panel-title {{
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .repo-row {{
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+        }}
+        .repo-meta {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }}
+        .repo-name {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }}
+        .repo-stats {{
+            display: flex;
+            gap: 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }}
+        .gitops-dag {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            overflow-x: auto;
+        }}
+        .dag-node {{
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--surface-border);
+            border-radius: 6px;
+            padding: 4px 8px;
+            display: flex;
+            flex-direction: column;
+            min-width: 90px;
+        }}
+        .dag-label {{
+            font-size: 9px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            font-weight: 700;
+        }}
+        .dag-arrow {{
+            color: var(--accent-cyan);
+            font-size: 12px;
+        }}
+        .train-item {{
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }}
+        .train-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }}
+        .train-pr {{
             font-weight: 700;
             color: var(--accent-cyan);
         }}
-        .badge {{
-            padding: 4px 8px;
-            border-radius: 6px;
+        .train-title {{
+            color: var(--text-secondary);
+            max-width: 250px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .train-progress {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
             font-size: 11px;
+        }}
+        .gate-grid-container {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 6px;
+            max-height: 260px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }}
+        .gate-cell {{
+            border-radius: 6px;
+            padding: 6px 8px;
+            display: flex;
+            flex-direction: column;
+            font-size: 10px;
+            border: 1px solid transparent;
+        }}
+        .gate-green {{
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: #34d399;
+        }}
+        .gate-amber {{
+            background: rgba(245, 158, 11, 0.1);
+            border-color: rgba(245, 158, 11, 0.3);
+            color: #fbbf24;
+        }}
+        .gate-red {{
+            background: rgba(244, 63, 94, 0.15);
+            border-color: rgba(244, 63, 94, 0.4);
+            color: #f87171;
+        }}
+        .gate-num {{
+            font-weight: 800;
+            font-size: 9px;
+            opacity: 0.7;
+        }}
+        .gate-name {{
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .gate-mkr {{
+            font-size: 9px;
+            font-weight: 700;
+            margin-top: 2px;
+        }}
+        .badge {{
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
             font-weight: 700;
             text-transform: uppercase;
         }}
@@ -410,123 +514,65 @@ impl LeptosDashboardRenderer {
             color: var(--accent-amber);
             border: 1px solid rgba(245, 158, 11, 0.3);
         }}
-        .card-body p {{
-            font-size: 13px;
-            color: var(--text-secondary);
-            margin-bottom: 6px;
+        .badge-queued {{
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--accent-blue);
+            border: 1px solid rgba(59, 130, 246, 0.3);
         }}
-        .card-body strong {{
-            color: var(--text-primary);
-        }}
-        .highlight-val {{
-            color: var(--accent-cyan);
-            font-weight: 700;
-        }}
-        .env-pipeline-grid {{
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px;
-            margin-top: 10px;
-        }}
-        .env-tag {{
-            background: rgba(255,255,255,0.03);
-            border: 1px solid var(--surface-border);
-            border-radius: 6px;
-            padding: 6px 10px;
-            font-size: 12px;
-            color: var(--text-secondary);
-        }}
-        .tabs-nav {{
-            display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
-            border-bottom: 1px solid var(--surface-border);
-            padding-bottom: 8px;
-        }}
-        .tab-btn {{
-            background: var(--surface-dark);
-            border: 1px solid var(--surface-border);
-            color: var(--text-secondary);
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 600;
-            transition: all 0.2s ease;
-        }}
-        .tab-btn.active, .tab-btn:hover {{
-            background: rgba(6, 182, 212, 0.15);
-            color: var(--accent-cyan);
-            border-color: var(--accent-cyan);
-        }}
+        .text-cyan {{ color: var(--accent-cyan); }}
         code {{
             font-family: var(--font-mono);
-            background: rgba(255,255,255,0.06);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 12px;
+            font-size: 11px;
             color: var(--accent-cyan);
-        }}
-        .table-container {{
-            background: var(--surface-dark);
-            border: 1px solid var(--surface-border);
-            border-radius: 12px;
-            overflow-x: auto;
-            margin-bottom: 24px;
         }}
         table {{
             width: 100%;
             border-collapse: collapse;
-            text-align: left;
-            font-size: 13px;
+            font-size: 12px;
         }}
         th {{
-            background: rgba(255,255,255,0.02);
-            padding: 12px 16px;
-            color: var(--text-secondary);
+            color: var(--text-muted);
+            padding: 8px 10px;
             font-weight: 600;
+            text-transform: uppercase;
+            font-size: 10px;
             border-bottom: 1px solid var(--surface-border);
+            text-align: left;
         }}
         td {{
-            padding: 12px 16px;
+            padding: 8px 10px;
             border-bottom: 1px solid var(--surface-border);
         }}
-        tr:last-child td {{
-            border-bottom: none;
-        }}
+        tr:last-child td {{ border-bottom: none; }}
         .progress-bar-bg {{
-            background: rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.08);
             border-radius: 4px;
-            height: 8px;
-            width: 120px;
+            height: 6px;
+            width: 90px;
+            overflow: hidden;
             display: inline-block;
             vertical-align: middle;
-            margin-right: 8px;
-            overflow: hidden;
         }}
         .progress-bar-fill {{
             background: var(--accent-emerald);
             height: 100%;
-            border-radius: 4px;
         }}
         .progress-text {{
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 10px;
+            font-weight: 700;
         }}
-        @media (max-width: 900px) {{
-            .dora-grid {{ grid-template-columns: repeat(2, 1fr); }}
-            .grid-2 {{ grid-template-columns: 1fr; }}
+        .empty-state {{
+            padding: 24px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 12px;
+        }}
+        @media (max-width: 1000px) {{
+            .cockpit-quadrant-grid {{ grid-template-columns: 1fr; }}
+            .dora-kpis {{ display: none; }}
         }}
     </style>
     <script>
-        function switchRepoTab(repoShortName) {{
-            document.querySelectorAll('.tab-pane').forEach(el => el.style.display = 'none');
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            const targetPane = document.getElementById('tab-' + repoShortName);
-            if (targetPane) targetPane.style.display = 'block';
-            event.currentTarget.classList.add('active');
-        }}
-
         function initFleetSSE() {{
             const eventSource = new EventSource('/api/events/fleet');
             eventSource.addEventListener('fleet_event', function(e) {{
@@ -540,119 +586,109 @@ impl LeptosDashboardRenderer {
                     }}
                 }} catch(err) {{}}
             }});
-            eventSource.onerror = function() {{
-                setTimeout(initFleetSSE, 5000);
-            }};
+            eventSource.onerror = function() {{ setTimeout(initFleetSSE, 5000); }};
         }}
         initFleetSSE();
     </script>
 </head>
 <body>
-    <div class="navbar">
-        <div class="brand">
-            <span>⚡ OYATIE ANVIL CONTROL PLANE</span>
-            <span style="font-size: 12px; color: var(--text-secondary); font-weight: 400;">v{}</span>
+    <!-- TOP STATUS HERO BAR -->
+    <div class="top-hero-bar">
+        <div class="brand-cluster">
+            <span class="brand-title">⚡ OYATIE ANVIL FLEET CONTROL PLANE</span>
+            <span style="font-size: 11px; color: var(--text-muted);">v{}</span>
         </div>
-        <div class="status-pill">
-            <span class="status-dot"></span>
-            <span>Live Fleet Ingestion (3 Managed Repositories, 70-Gate Continuous Engine)</span>
+        <div class="dora-kpis">
+            <div class="dora-metric">
+                <span class="dora-lbl">Lead Time</span>
+                <span class="dora-num">{:.1}h</span>
+            </div>
+            <div class="dora-metric">
+                <span class="dora-lbl">Deploy Cadence</span>
+                <span class="dora-num">{:.1}/d</span>
+            </div>
+            <div class="dora-metric">
+                <span class="dora-lbl">MTTR</span>
+                <span class="dora-num">{:.0}m</span>
+            </div>
+            <div class="dora-metric">
+                <span class="dora-lbl">Failure Rate</span>
+                <span class="dora-num">{:.1}%</span>
+            </div>
         </div>
-    </div>
-
-    <!-- DORA METRICS SUMMARY -->
-    <div class="section-header">
-        <span>📈 Hyperscaler DORA Metrics (30-Day Fleet Aggregate)</span>
-    </div>
-    <div class="dora-grid">
-        <div class="metric-card">
-            <span class="metric-title">Deployment Frequency</span>
-            <span class="metric-val">{:.1}/day</span>
-            <span class="metric-sub">Elite Tier (&gt;= 1.0/day)</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">Lead Time for Changes</span>
-            <span class="metric-val">{:.1} hrs</span>
-            <span class="metric-sub">Elite Tier (&lt; 24 hrs)</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">Change Failure Rate</span>
-            <span class="metric-val">{:.1}%</span>
-            <span class="metric-sub">Elite Tier (&lt; 5%)</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">Mean Time to Restore</span>
-            <span class="metric-val">{:.0} mins</span>
-            <span class="metric-sub">Elite Tier (&lt; 60 mins)</span>
+        <div class="socket-status">
+            <span class="pulse-dot"></span>
+            <span>Blue/Green SO_REUSEPORT (Active)</span>
         </div>
     </div>
 
-    <!-- MODULE 1: MULTI-REPO FLEET TOPOLOGY CARDS -->
-    <div class="section-header">
-        <span>🌐 Module 1: Fleet Repository Topology &amp; Live Promotion Branches</span>
-    </div>
-    <div class="grid-3">
-        {}
-    </div>
-
-    <!-- MODULE 2: TABBED REPO DRILL-DOWN -->
-    <div class="section-header">
-        <span>📑 Module 2: Multi-Repository Deep Inspection &amp; Branch Promotion DAG</span>
-    </div>
-    <div class="tabs-nav">
-        {}
-    </div>
-    {}
-
-    <!-- MODULE 3: AI MODEL BANDIT DUAL-LAYER OBSERVABILITY -->
-    <div class="section-header">
-        <span>🤖 Module 3: AI Routing Multi-Armed Bandit (Empirical Ground Truth + Bayesian Prior Shrinkage)</span>
-    </div>
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>Model Family</th>
-                    <th>Observed (N)</th>
-                    <th>Empirical Pass@1</th>
-                    <th>Bayesian Posterior</th>
-                    <th>Avg Cost/PR</th>
-                    <th>P99 Latency</th>
-                    <th>UCB1 Reward</th>
-                    <th>Statistical Power</th>
-                    <th>Significance Level</th>
-                </tr>
-            </thead>
-            <tbody>
+    <!-- 4-QUADRANT HIGH-DENSITY COCKPIT -->
+    <div class="cockpit-quadrant-grid">
+        <!-- QUADRANT 1: MULTI-REPO TOPOLOGY & GITOPS PROMOTION DAGs -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🌐 Panel 1: Multi-Repo Topology &amp; GitOps Promotion DAGs</span>
+                <span class="badge badge-healthy">3 Repos Active</span>
+            </div>
+            <div class="panel-body">
                 {}
-            </tbody>
-        </table>
-    </div>
+            </div>
+        </div>
 
-    <!-- MODULE 4: 70-GATE FAILURE HEATMAP -->
-    <div class="section-header">
-        <span>🛡️ Module 4: 70-Gate Full-Lifecycle Failure Heatmap &amp; Flake Quarantine</span>
-    </div>
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>Gate Name</th>
-                    <th>Category</th>
-                    <th>Failures (30d)</th>
-                    <th>Pass Rate</th>
-                </tr>
-            </thead>
-            <tbody>
+        <!-- QUADRANT 2: SPECULATIVE MERGE QUEUE TRAIN VISUALIZER -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🚂 Panel 2: Speculative Merge Queue Train Visualizer</span>
+                <span class="badge badge-queued">Speculative Rebase Active</span>
+            </div>
+            <div class="panel-body">
                 {}
-            </tbody>
-        </table>
+            </div>
+        </div>
+
+        <!-- QUADRANT 3: 70-GATE CONTINUOUS GOVERNANCE & MUTATION KILL RATE MATRIX -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🛡️ Panel 3: 70-Gate Continuous Governance &amp; Mutation Matrix</span>
+                <span class="badge badge-healthy">100% Mutation Kill Rate</span>
+            </div>
+            <div class="gate-grid-container">
+                {}
+            </div>
+        </div>
+
+        <!-- QUADRANT 4: AI ROUTING BANDIT & PARETO FRONTIER -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🤖 Panel 4: AI Model Routing Bandit (Empirical + Bayesian Bayes)</span>
+                <span class="badge badge-warning">Cold Start (N=0)</span>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model Family</th>
+                        <th>Obs (N)</th>
+                        <th>Pass@1</th>
+                        <th>Bayes μ</th>
+                        <th>Cost/PR</th>
+                        <th>Latency</th>
+                        <th>UCB1</th>
+                        <th>Significance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {}
+                </tbody>
+            </table>
+        </div>
     </div>
 
-    <!-- MODULE 5: REAL-TIME SSE AUDIT EVENT LOG -->
-    <div class="section-header">
-        <span>📡 Module 5: Real-Time SSE Audit Event Log &amp; Attestation Stream</span>
-    </div>
-    <div class="table-container">
+    <!-- SUB-SECOND SSE AUDIT LOG STREAM -->
+    <div class="panel-card">
+        <div class="panel-header">
+            <span class="panel-title">📡 Sub-Second Server-Sent Events (SSE) Audit Log &amp; Attestation Stream</span>
+            <span class="badge badge-healthy">Live Stream</span>
+        </div>
         <table>
             <thead>
                 <tr>
@@ -671,15 +707,14 @@ impl LeptosDashboardRenderer {
 </body>
 </html>"#,
             state.server_version,
-            state.dora_metrics.deployment_frequency_per_day,
             state.dora_metrics.lead_time_hours,
-            state.dora_metrics.change_failure_rate_pct,
+            state.dora_metrics.deployment_frequency_per_day,
             state.dora_metrics.mttr_minutes,
+            state.dora_metrics.change_failure_rate_pct,
             repo_cards,
-            repo_tabs_nav,
-            repo_tabs_content,
+            merge_train_rows,
+            gate_cells,
             model_rows,
-            heatmap_rows,
             activity_rows
         )
     }

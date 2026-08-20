@@ -19,7 +19,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
-          toolchain: stable
+          toolchain: "1.97.1"
           components: rustfmt, clippy
 
       - name: Rust Cache
@@ -29,8 +29,11 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Run Full Test Suite (Unit + Integration + Adversarial Red/Green Gates)
-        run: cargo test --all-targets --all-features -- --nocapture
+        run: cargo test --all-targets --locked -- --nocapture
+
+      - name: Release Build (the artifact scripts/start.sh deploys)
+        run: cargo build --release --locked
 

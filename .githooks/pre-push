@@ -14,7 +14,7 @@ command -v cargo >/dev/null 2>&1 || exit 0
 [ -f Cargo.toml ] || exit 0
 
 echo "[pre-push] checking the tree compiles..."
-if ! cargo check --all-targets --quiet 2>&1 | tail -20; then
+if ! cargo check --all-targets --locked --quiet 2>&1 | tail -20; then
     echo "[pre-push] REFUSED: the tree does not compile."
     echo "           Pushing a non-compiling branch wastes every downstream reader's time."
     exit 1

@@ -15,11 +15,14 @@ async fn test_multi_account_pool_least_loaded_leasing() {
     let acc1_id = acc1.read().await.account_id.clone();
     assert_eq!(acc1_id, "claude:cli-default");
 
-    // 2. Add second Claude account with explicit quota
+    // 2. Add second Claude account with explicit quota and OAuth token
     let acc2_custom = ManagedAccount {
         account_id: "claude-custom-pool-02".to_string(),
         provider: ModelProvider::AnthropicClaudeCode,
+        auth_type: anvil::self_governance::AuthType::OAuthToken,
         auth_profile_or_key: Some("CLAUDE_CUSTOM_AUTH".to_string()),
+        oauth_token: Some("sk-ant-oat01-test-token-123".to_string()),
+        config_dir: None,
         max_5hr_tokens: Some(500_000),
         max_weekly_budget_usd: Some(100.0),
         usage_history: VecDeque::new(),
@@ -53,7 +56,10 @@ async fn test_multi_account_rate_limit_failover() {
     let secondary = ManagedAccount {
         account_id: "claude:backup-account".to_string(),
         provider: ModelProvider::AnthropicClaudeCode,
+        auth_type: anvil::self_governance::AuthType::ApiKey,
         auth_profile_or_key: Some("CLAUDE_BACKUP_KEY".to_string()),
+        oauth_token: None,
+        config_dir: None,
         max_5hr_tokens: Some(500_000),
         max_weekly_budget_usd: Some(100.0),
         usage_history: VecDeque::new(),
@@ -93,7 +99,10 @@ async fn test_multi_horizon_5hr_and_weekly_accounting() {
     let custom = ManagedAccount {
         account_id: "codex:enterprise-01".to_string(),
         provider: ModelProvider::OpenAiCodex,
+        auth_type: anvil::self_governance::AuthType::ConfigDirectory,
         auth_profile_or_key: Some("OPENAI_KEY_ENT".to_string()),
+        oauth_token: None,
+        config_dir: Some("/Users/name/.codex-enterprise".to_string()),
         max_5hr_tokens: Some(1_000_000),
         max_weekly_budget_usd: Some(150.0),
         usage_history: VecDeque::new(),
@@ -128,7 +137,10 @@ async fn test_dynamic_account_addition_and_drain() {
     let new_acc = ManagedAccount {
         account_id: "claude-dynamic-gamma".to_string(),
         provider: ModelProvider::AnthropicClaudeCode,
+        auth_type: anvil::self_governance::AuthType::OAuthToken,
         auth_profile_or_key: Some("CLAUDE_GAMMA_KEY".to_string()),
+        oauth_token: Some("sk-ant-oat01-gamma-token".to_string()),
+        config_dir: None,
         max_5hr_tokens: Some(1_000_000),
         max_weekly_budget_usd: Some(250.0),
         usage_history: VecDeque::new(),
@@ -172,7 +184,10 @@ async fn test_context_cache_affinity_leasing() {
     let custom = ManagedAccount {
         account_id: "claude:secondary".to_string(),
         provider: ModelProvider::AnthropicClaudeCode,
+        auth_type: anvil::self_governance::AuthType::CliPassthrough,
         auth_profile_or_key: Some("CLAUDE_SEC".to_string()),
+        oauth_token: None,
+        config_dir: None,
         max_5hr_tokens: Some(500_000),
         max_weekly_budget_usd: Some(100.0),
         usage_history: VecDeque::new(),

@@ -78,6 +78,13 @@ impl SubscriptionExecutor {
             .account_pool
             .lease_account(ModelProvider::AnthropicClaudeCode)
             .await;
+        let mut cmd = Command::new("claude");
+        cmd.args(["-p", prompt]);
+        cmd.args(["--model", model_name]);
+        cmd.current_dir(working_dir);
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
 
         let account_id = match &leased {
             Ok(acc_arc) => {
@@ -86,6 +93,18 @@ impl SubscriptionExecutor {
                     "Leased account '{}' for Claude Code (model: {}, effort: {})...",
                     acc.account_id, model_name, config.reasoning_effort
                 );
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("CLAUDE_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("CLAUDE_CODE_OAUTH_TOKEN", tok);
+                    cmd.env("ANTHROPIC_AUTH_TOKEN", tok);
+                }
+                if let Some(key) = &acc.auth_profile_or_key {
+                    if !key.starts_with("HOST_") {
+                        cmd.env("ANTHROPIC_API_KEY", key);
+                    }
+                }
                 acc.account_id.clone()
             }
             Err(e) => {
@@ -96,14 +115,6 @@ impl SubscriptionExecutor {
                 "claude-default".to_string()
             }
         };
-
-        let mut cmd = Command::new("claude");
-        cmd.args(["-p", prompt]);
-        cmd.args(["--model", model_name]);
-        cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
 
         match cmd.output().await {
             Ok(output) if output.status.success() => {
@@ -161,23 +172,10 @@ impl SubscriptionExecutor {
         config: &ModelExecutionConfig,
     ) -> Result<String> {
         let model_name = config.resolved_model();
-
         let leased = self
             .account_pool
             .lease_account(ModelProvider::OpenAiCodex)
             .await;
-
-        let account_id = match &leased {
-            Ok(acc_arc) => {
-                let acc = acc_arc.read().await;
-                info!(
-                    "Leased account '{}' for OpenAI Codex (model: {}, effort: {})...",
-                    acc.account_id, model_name, config.reasoning_effort
-                );
-                acc.account_id.clone()
-            }
-            Err(_) => "codex-default".to_string(),
-        };
 
         let mut cmd = Command::new("codex");
         cmd.args(["exec", prompt]);
@@ -186,6 +184,30 @@ impl SubscriptionExecutor {
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                info!(
+                    "Leased account '{}' for OpenAI Codex (model: {}, effort: {})...",
+                    acc.account_id, model_name, config.reasoning_effort
+                );
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("CODEX_HOME", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("OPENAI_AUTH_TOKEN", tok);
+                    cmd.env("CODEX_AUTH_TOKEN", tok);
+                }
+                if let Some(key) = &acc.auth_profile_or_key {
+                    if !key.starts_with("HOST_") {
+                        cmd.env("OPENAI_API_KEY", key);
+                    }
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "codex-default".to_string(),
+        };
 
         match cmd.output().await {
             Ok(output) if output.status.success() => {
@@ -231,11 +253,31 @@ impl SubscriptionExecutor {
         working_dir: &Path,
         model: &str,
     ) -> Result<String> {
+        let leased = self
+            .account_pool
+            .lease_account(ModelProvider::CursorAgent)
+            .await;
+
         let mut cmd = Command::new("cursor");
         cmd.args(["agent", "--print", prompt]);
         if !model.is_empty() && model != "default" {
             cmd.args(["--model", model]);
         }
+
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("CURSOR_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("CURSOR_AUTH_TOKEN", tok);
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "cursor-default".to_string(),
+        };
+
         cmd.current_dir(working_dir);
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
@@ -245,6 +287,12 @@ impl SubscriptionExecutor {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty() {
+                    let tokens = ((prompt.len() + stdout.len()) as f64 / 3.8).ceil() as usize;
+                    let cost_usd = (tokens as f64 / 1_000_000.0) * 20.0;
+                    let _ = self
+                        .account_pool
+                        .record_spend(&account_id, model, tokens, cost_usd)
+                        .await;
                     return Ok(stdout);
                 }
             }
@@ -268,8 +316,35 @@ impl SubscriptionExecutor {
         config: &ModelExecutionConfig,
     ) -> Result<String> {
         let model = config.resolved_model();
+
+        let leased = self
+            .account_pool
+            .lease_account(ModelProvider::XAiGrok)
+            .await;
+
         let mut cmd = Command::new("grok");
         cmd.args(["--prompt", prompt, "--model", model]);
+
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("GROK_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("GROK_AUTH_TOKEN", tok);
+                    cmd.env("XAI_API_KEY", tok);
+                }
+                if let Some(key) = &acc.auth_profile_or_key {
+                    if !key.starts_with("HOST_") {
+                        cmd.env("XAI_API_KEY", key);
+                    }
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "grok-default".to_string(),
+        };
+
         cmd.current_dir(working_dir);
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
@@ -279,6 +354,12 @@ impl SubscriptionExecutor {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty() {
+                    let tokens = ((prompt.len() + stdout.len()) as f64 / 3.8).ceil() as usize;
+                    let cost_usd = (tokens as f64 / 1_000_000.0) * 10.0;
+                    let _ = self
+                        .account_pool
+                        .record_spend(&account_id, model, tokens, cost_usd)
+                        .await;
                     return Ok(stdout);
                 }
             }
@@ -309,14 +390,6 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::Antigravity)
             .await;
 
-        let account_id = match &leased {
-            Ok(acc_arc) => {
-                let acc = acc_arc.read().await;
-                acc.account_id.clone()
-            }
-            Err(_) => "agy-default".to_string(),
-        };
-
         let mut cmd = Command::new("agy");
         cmd.args([
             "--print",
@@ -329,6 +402,27 @@ impl SubscriptionExecutor {
         if !model.is_empty() && model != "default" {
             cmd.args(["--model", model]);
         }
+
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("ANTIGRAVITY_CONFIG_DIR", dir);
+                    cmd.env("GEMINI_CLI_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("ANTIGRAVITY_AUTH_TOKEN", tok);
+                    cmd.env("GEMINI_API_KEY", tok);
+                }
+                if let Some(key) = &acc.auth_profile_or_key {
+                    if !key.starts_with("HOST_") {
+                        cmd.env("GEMINI_API_KEY", key);
+                    }
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "agy-default".to_string(),
+        };
 
         cmd.current_dir(working_dir);
         cmd.stdin(std::process::Stdio::null());

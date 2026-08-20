@@ -5,8 +5,8 @@ pub mod quota_enforcer;
 pub mod resource_reaper;
 
 pub use account_pool::{
-    AccountPoolManager, AccountQuotaView, AddAccountPayload, DrainAccountPayload, ManagedAccount,
-    UsageRecord,
+    AccountPoolManager, AccountQuotaView, AddAccountPayload, AuthType, DrainAccountPayload,
+    ManagedAccount, UsageRecord,
 };
 pub use deathloop_detector::{DeathloopDetector, DeathloopVerdict};
 pub use process_registry::{ProcessRecord, ProcessRegistry};

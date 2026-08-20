@@ -766,7 +766,9 @@ impl HyperscalerDashboardRenderer {
             event.preventDefault();
             const accountId = document.querySelector('#acc-id').value.trim();
             const provider = document.querySelector('#acc-provider').value;
-            const authKey = document.querySelector('#acc-auth').value.trim();
+            const authType = document.querySelector('#acc-authtype').value;
+            const oauthToken = document.querySelector('#acc-oauth').value.trim();
+            const configDir = document.querySelector('#acc-config-dir').value.trim();
             const max5hr = parseInt(document.querySelector('#acc-5hr').value, 10);
             const weeklyBudget = parseFloat(document.querySelector('#acc-budget').value);
 
@@ -777,7 +779,10 @@ impl HyperscalerDashboardRenderer {
                     body: JSON.stringify({{
                         account_id: accountId,
                         provider: provider,
-                        auth_profile_or_key: authKey || null,
+                        auth_type: authType,
+                        oauth_token: oauthToken || null,
+                        config_dir: configDir || null,
+                        auth_profile_or_key: oauthToken || null,
                         max_5hr_tokens: max5hr || 1000000,
                         max_weekly_budget_usd: weeklyBudget || 100.0
                     }})
@@ -986,8 +991,23 @@ impl HyperscalerDashboardRenderer {
             </div>
 
             <div class="form-group">
-                <label for="acc-auth">Auth Key / Profile (Optional)</label>
-                <input class="form-control" type="text" id="acc-auth" placeholder="e.g. ANTHROPIC_API_KEY_03" />
+                <label for="acc-authtype">Authentication Mode</label>
+                <select class="form-control" id="acc-authtype">
+                    <option value="oauth">OAuth Token / Passthrough (e.g. Bearer token)</option>
+                    <option value="config_dir">Config Directory (e.g. ~/.claude-seat2, CODEX_HOME)</option>
+                    <option value="api_key">API Key (Direct Provider Key)</option>
+                    <option value="cli">Host CLI Default</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="acc-oauth">OAuth Token / Key Value</label>
+                <input class="form-control" type="password" id="acc-oauth" placeholder="e.g. sk-ant-oat01-..." />
+            </div>
+
+            <div class="form-group">
+                <label for="acc-config-dir">Config Directory Path (Optional)</label>
+                <input class="form-control" type="text" id="acc-config-dir" placeholder="e.g. /Users/name/.claude-seat2" />
             </div>
 
             <div class="form-group">

@@ -17,11 +17,34 @@ pub struct UsageRecord {
     pub estimated_cost_usd: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum AuthType {
+    #[default]
+    CliPassthrough,
+    OAuthToken,
+    ConfigDirectory,
+    ApiKey,
+}
+
+impl AuthType {
+    pub fn from_str_opt(val: Option<&str>) -> Self {
+        match val.map(|s| s.to_lowercase()).as_deref() {
+            Some("oauth") | Some("oauth_token") | Some("token") => AuthType::OAuthToken,
+            Some("config_dir") | Some("dir") | Some("profile_dir") => AuthType::ConfigDirectory,
+            Some("api_key") | Some("key") => AuthType::ApiKey,
+            _ => AuthType::CliPassthrough,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ManagedAccount {
     pub account_id: String,
     pub provider: ModelProvider,
+    pub auth_type: AuthType,
     pub auth_profile_or_key: Option<String>,
+    pub oauth_token: Option<String>,
+    pub config_dir: Option<String>,
     pub max_5hr_tokens: Option<usize>,
     pub max_weekly_budget_usd: Option<f64>,
     pub usage_history: VecDeque<UsageRecord>,
@@ -34,6 +57,7 @@ pub struct ManagedAccount {
 pub struct AccountQuotaView {
     pub account_id: String,
     pub provider: String,
+    pub auth_type: Option<String>,
     pub used_5hr_tokens: usize,
     pub max_5hr_tokens: Option<usize>,
     pub remaining_5hr_tokens: Option<usize>,
@@ -52,7 +76,10 @@ pub struct AccountQuotaView {
 pub struct AddAccountPayload {
     pub account_id: String,
     pub provider: String,
+    pub auth_type: Option<String>,
     pub auth_profile_or_key: Option<String>,
+    pub oauth_token: Option<String>,
+    pub config_dir: Option<String>,
     pub max_5hr_tokens: Option<usize>,
     pub max_weekly_budget_usd: Option<f64>,
 }
@@ -86,7 +113,10 @@ impl AccountPoolManager {
         let claude_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
             account_id: "claude:cli-default".to_string(),
             provider: ModelProvider::AnthropicClaudeCode,
+            auth_type: AuthType::CliPassthrough,
             auth_profile_or_key: Some("HOST_CLAUDE_CLI_AUTH".to_string()),
+            oauth_token: None,
+            config_dir: None,
             max_5hr_tokens: None,        // Uncapped CLI subscription
             max_weekly_budget_usd: None, // Uncapped CLI subscription
             usage_history: VecDeque::new(),
@@ -100,7 +130,10 @@ impl AccountPoolManager {
         let codex_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
             account_id: "codex:cli-default".to_string(),
             provider: ModelProvider::OpenAiCodex,
+            auth_type: AuthType::CliPassthrough,
             auth_profile_or_key: Some("HOST_CODEX_CLI_AUTH".to_string()),
+            oauth_token: None,
+            config_dir: None,
             max_5hr_tokens: None,
             max_weekly_budget_usd: None,
             usage_history: VecDeque::new(),
@@ -114,7 +147,10 @@ impl AccountPoolManager {
         let agy_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
             account_id: "agy:cli-default".to_string(),
             provider: ModelProvider::Antigravity,
+            auth_type: AuthType::CliPassthrough,
             auth_profile_or_key: Some("HOST_AGY_CLI_AUTH".to_string()),
+            oauth_token: None,
+            config_dir: None,
             max_5hr_tokens: None,
             max_weekly_budget_usd: None,
             usage_history: VecDeque::new(),
@@ -128,7 +164,10 @@ impl AccountPoolManager {
         let cursor_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
             account_id: "cursor:cli-default".to_string(),
             provider: ModelProvider::CursorAgent,
+            auth_type: AuthType::CliPassthrough,
             auth_profile_or_key: Some("HOST_CURSOR_CLI_AUTH".to_string()),
+            oauth_token: None,
+            config_dir: None,
             max_5hr_tokens: None,
             max_weekly_budget_usd: None,
             usage_history: VecDeque::new(),
@@ -142,7 +181,10 @@ impl AccountPoolManager {
         let grok_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
             account_id: "grok:cli-default".to_string(),
             provider: ModelProvider::XAiGrok,
+            auth_type: AuthType::CliPassthrough,
             auth_profile_or_key: Some("HOST_GROK_CLI_AUTH".to_string()),
+            oauth_token: None,
+            config_dir: None,
             max_5hr_tokens: None,
             max_weekly_budget_usd: None,
             usage_history: VecDeque::new(),
@@ -466,6 +508,7 @@ impl AccountPoolManager {
                     return Ok(AccountQuotaView {
                         account_id: acc.account_id.clone(),
                         provider: acc.provider.display_name().to_string(),
+                        auth_type: Some(format!("{:?}", acc.auth_type)),
                         used_5hr_tokens: used_5hr,
                         max_5hr_tokens: acc.max_5hr_tokens,
                         remaining_5hr_tokens: rem_5hr,
@@ -579,6 +622,7 @@ impl AccountPoolManager {
                 views.push(AccountQuotaView {
                     account_id: acc.account_id.clone(),
                     provider: acc.provider.display_name().to_string(),
+                    auth_type: Some(format!("{:?}", acc.auth_type)),
                     used_5hr_tokens: used_5hr,
                     max_5hr_tokens: acc.max_5hr_tokens,
                     remaining_5hr_tokens: rem_5hr,

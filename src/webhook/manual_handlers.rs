@@ -320,10 +320,14 @@ pub async fn add_account_pool_handler(
     );
 
     let provider = crate::ai_driver::provider::ModelProvider::from_str_name(&payload.provider);
+    let auth_type = crate::self_governance::AuthType::from_str_opt(payload.auth_type.as_deref());
     let account = crate::self_governance::ManagedAccount {
         account_id: payload.account_id.clone(),
         provider,
+        auth_type,
         auth_profile_or_key: payload.auth_profile_or_key,
+        oauth_token: payload.oauth_token,
+        config_dir: payload.config_dir,
         max_5hr_tokens: payload.max_5hr_tokens,
         max_weekly_budget_usd: payload.max_weekly_budget_usd,
         usage_history: std::collections::VecDeque::new(),

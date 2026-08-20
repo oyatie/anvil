@@ -19,6 +19,13 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 .await?;
             server::run_server(state).await?;
         }
+        Commands::Shape { action } => match action {
+            crate::cli::args::ShapeAction::ValidateSpec { path, registry } => {
+                let summary =
+                    crate::shape::facade::cli::validate_spec_file(&path, registry.as_deref())?;
+                println!("{}", summary.render());
+            }
+        },
         Commands::Review { repo, pr, force } => {
             info!("Running on-demand review for {}#{}", repo, pr);
             let meta = state

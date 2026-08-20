@@ -1,0 +1,122 @@
+{
+  "schema": "anvil/shape/v1",
+  "destination_stable_default": false,
+  "profiles": ["rust-cargo", "rust-buck2"],
+  "unit_registry": {
+    "path": "governance/capability-registry.json",
+    "units": { "pointer": "/capabilities", "key": "name" },
+    "meta_dirs": { "pointer": "/meta_directories", "key": "dir" },
+    "faces": { "pointer": "/faces", "key": "face" }
+  },
+  "unit_kinds": {
+    "capability": { "root": "<name>/", "skeleton": "standard", "members": "registry" },
+    "app": { "root": "app/<name>/", "skeleton": "standard", "members": "discover:manifest.json" },
+    "meta": { "root": "<name>/", "skeleton": "meta", "members": "registry-meta-dirs" }
+  },
+  "skeletons": {
+    "standard": {
+      "faces": { "core": "core/", "ports": "ports/", "adapters": "adapters/", "facade": "facade/" },
+      "required_faces": ["core", "ports", "facade"],
+      "unit_marker": "manifest.json",
+      "face_dependency_matrix": {
+        "facade": ["ports"],
+        "adapters": ["ports", "core"],
+        "core": [],
+        "ports": []
+      },
+      "cross_unit_edges": "facade-only",
+      "satellites": {
+        "slos": { "dir": "slos/", "form": "*.openslo.yaml", "aliases": ["observability/slos/"] },
+        "runbooks": { "dir": "runbooks/", "form": "*.md" },
+        "contracts": { "dir": "contracts/", "form": "{openapi,asyncapi,proto}/**" },
+        "iac": { "dir": "iac/", "form": "**" },
+        "policy": { "dir": "policy/", "form": "**", "aliases": ["policies/"] },
+        "cedar": { "dir": "cedar/", "form": "*.cedar" },
+        "dpia": { "dir": "dpia/", "form": "dpia.md" },
+        "ips": { "dir": "IPs/", "form": "IP-*.md" },
+        "scorecards": { "dir": "scorecards/", "form": "overrides.json" },
+        "dashboards": { "dir": "dashboards/", "form": "*.json" },
+        "decisions": { "dir": "decisions/", "form": "*.md" },
+        "tests": { "dir": "tests/", "form": "**", "aliases": ["testing/", "test-plans/"] },
+        "observability": { "dir": "observability/", "form": "**", "excludes": ["slos/"] }
+      },
+      "allowed_unit_root_files": ["manifest.json", "BUCK", "OWNERS", "README.md", "REORG-DRAIN.md"]
+    },
+    "meta": {
+      "faces": { "harness": "harness/" },
+      "required_faces": [],
+      "satellites": {}
+    }
+  },
+  "placement": {
+    "steps": [
+      { "kind": "meta_dir", "dir": "kernel/" },
+      { "kind": "meta_dir", "dir": "os/" },
+      { "kind": "artifact_class", "class": "decision", "dest": "governance/", "patterns": ["ADR-*.md"] },
+      { "kind": "artifact_class", "class": "vendored", "dest": "third-party/", "patterns": ["third-party/**"] },
+      { "kind": "shared_primitive", "min_consumers": 3, "below_all": true, "dest": "base/" },
+      { "kind": "composition", "min_units": 2, "dest": "app/<name>/" },
+      { "kind": "unit_by_face" },
+      { "kind": "lowest_dag_node" }
+    ]
+  },
+  "root_files": {
+    "mode": "allowlist",
+    "rules": [
+      { "id": "cargo-manifest", "kind": "exact", "value": "Cargo.toml" },
+      { "id": "cargo-lock", "kind": "exact", "value": "Cargo.lock" },
+      { "id": "buckconfig", "kind": "exact", "value": ".buckconfig" },
+      { "id": "buckroot", "kind": "exact", "value": ".buckroot" },
+      { "id": "rust-toolchain", "kind": "exact", "value": "rust-toolchain.toml" },
+      { "id": "rust-project", "kind": "exact", "value": "rust-project.json" },
+      { "id": "rustfmt", "kind": "exact", "value": "rustfmt.toml" },
+      { "id": "reindeer", "kind": "exact", "value": "reindeer.toml" },
+      { "id": "deny", "kind": "exact", "value": "deny.toml" },
+      { "id": "readme", "kind": "prefix_dot", "value": "README" },
+      { "id": "license", "kind": "prefix_dot", "value": "LICENSE" },
+      { "id": "claude", "kind": "exact", "value": "CLAUDE.md" },
+      { "id": "agents", "kind": "exact", "value": "AGENTS.md" },
+      { "id": "handoff", "kind": "exact", "value": "HANDOFF.md" },
+      { "id": "owners", "kind": "exact", "value": "OWNERS" },
+      { "id": "oya-deps", "kind": "exact", "value": "oya-deps.toml" },
+      { "id": "oya-ci", "kind": "exact", "value": "oya-ci.toml" },
+      { "id": "makefile", "kind": "exact", "value": "Makefile" },
+      { "id": "dockerfile", "kind": "exact", "value": "Dockerfile.distroless" },
+      { "id": "gitignore", "kind": "exact", "value": ".gitignore" },
+      { "id": "gitattributes", "kind": "exact", "value": ".gitattributes" },
+      { "id": "editorconfig", "kind": "exact", "value": ".editorconfig" }
+    ]
+  },
+  "naming": {
+    "crate_prefix": "oya-",
+    "layer_suffixes": ["kernel", "domain", "usecase", "app", "adapter", "infrastructure", "cli", "rest", "grpc", "worker", "sdk", "api"],
+    "face_by_suffix": {
+      "kernel": "core", "domain": "core", "usecase": "core",
+      "adapter": "adapters", "infrastructure": "adapters",
+      "app": "facade", "rest": "facade", "grpc": "facade", "cli": "facade", "worker": "facade", "sdk": "facade", "api": "facade"
+    },
+    "adapter_name": "<port>-<technology>",
+    "transient_adapter_suffixes": ["-inmemory", "-local"],
+    "port_name_suffixes": ["Port", "Repository", "Store", "Gateway"]
+  },
+  "legacy_roots": ["oya/", "cloud/", "libs/", "tools/", "infra/"],
+  "units": {
+    "ci": { "destination_stable": true },
+    "calendar": { "destination_stable": false }
+  },
+  "rules": {
+    "unit_missing_face": { "mode": "advisory-until-infra" },
+    "file_misplaced": { "mode": "baseline-block-on-new" },
+    "satellite_alias_used": { "mode": "baseline-block-on-new" },
+    "face_edge_denied": { "mode": "baseline-block-on-new" },
+    "cross_unit_non_facade": { "mode": "baseline-block-on-new" },
+    "port_defined_in_adapter": { "mode": "baseline-block-on-new" },
+    "root_file_unallowlisted": { "mode": "baseline-block-on-new", "frozen_empty": true },
+    "legacy_root_growth": { "mode": "baseline-block-on-new" },
+    "crate_name_prefix": { "mode": "baseline-block-on-new" },
+    "crate_layer_suffix": { "mode": "baseline-block-on-new" },
+    "suffix_face_disagree": { "mode": "baseline-block-on-new" },
+    "workspace_members_not_glob": { "mode": "advisory-until-infra" },
+    "placement_ambiguous": { "mode": "advisory-until-infra" }
+  }
+}

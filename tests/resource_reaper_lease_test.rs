@@ -423,3 +423,40 @@ async fn reclaim_removes_a_worktree_whose_directory_still_exists() {
          git worktree list:\n{listed}"
     );
 }
+
+/// `--force` must never reach `git worktree remove`.
+///
+/// The reaper refuses a dirty worktree via its own `git status --porcelain`
+/// probe, and that probe short-circuits before the removal command is built.
+/// That makes the status check the ONLY defence actually exercised: injecting
+/// `--force` into the removal path passes every behavioural test in this file,
+/// because no test reaches the command with a dirty tree.
+///
+/// Plain `git worktree remove` exits 128 on a dirty tree with
+/// `fatal: '...' contains modified or untracked files, use --force to delete it`,
+/// leaving the bytes untouched. That refusal is the second line of defence the
+/// module documents, and it exists only while `--force` is absent.
+///
+/// A live audit found 80 of 159 stale worktrees holding 4,332 tracked-file
+/// modifications that existed nowhere else. `--force` would have destroyed all
+/// of it. Prompting will not keep that flag out of the code; this will.
+#[test]
+fn force_is_never_passed_to_git_worktree_remove() {
+    let src = std::fs::read_to_string("src/self_governance/resource_reaper.rs")
+        .expect("resource_reaper.rs must exist");
+
+    // Comments explain why --force is banned; they must not trip the ban.
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        !code.contains("--force"),
+        "`--force` appears in the reaper's removal path. Plain `git worktree remove` \
+         refuses a dirty tree and leaves it byte-identical; --force deletes it. The \
+         status probe short-circuits before this command, so no behavioural test in \
+         this file would catch the flag being added."
+    );
+}

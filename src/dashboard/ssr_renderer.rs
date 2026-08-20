@@ -822,7 +822,7 @@ impl LeptosDashboardRenderer {
                 }}
             }} catch(e) {{}}
         }}
-    </style>
+    </script>
 </head>
 <body>
     <!-- TOP STATUS HERO BAR -->

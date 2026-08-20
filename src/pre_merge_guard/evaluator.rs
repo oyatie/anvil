@@ -153,6 +153,7 @@ impl PreMergeGuard {
         bench_report: &BenchmarkReport,
         attestation_report: &AttestationReport,
         test_suite_passed: bool,
+        review_verdict: &str,
     ) -> Result<PreMergeCertificationReport> {
         info!(
             "Evaluating Hyperscale Full-Lifecycle Quality & GitOps Gates for {}#{} (70 gates)...",
@@ -652,6 +653,16 @@ impl PreMergeGuard {
             GateStatus::Failed("Test suite reported failures during verification gate.".to_string())
         };
 
+        // 69. AI Code Review & 16-Lens Invariant Gate
+        let review_verdict_status = if review_verdict == "APPROVE" || review_verdict == "COMMENT" {
+            GateStatus::Passed
+        } else {
+            GateStatus::Failed(format!(
+                "AI Code Review & 16-Lens Matrix issued blocking verdict: {}",
+                review_verdict
+            ))
+        };
+
         let is_certified_ready = doc_parity_status.is_acceptable()
             && cedar_status.is_acceptable()
             && compliance_status.is_acceptable()
@@ -719,7 +730,8 @@ impl PreMergeGuard {
             && security_scan_status.is_acceptable()
             && schema_compat_status.is_acceptable()
             && performance_concurrency_status.is_acceptable()
-            && test_suite_status.is_acceptable();
+            && test_suite_status.is_acceptable()
+            && review_verdict_status.is_acceptable();
 
         let summary_markdown = MatrixRenderer::render_matrix(
             &doc_parity_status,

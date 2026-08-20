@@ -110,6 +110,9 @@ impl AdaptiveRoutingBandit {
         }
 
         if let Ok(mut ledger_lock) = self.ledger.write() {
+            if ledger_lock.len() >= 10_000 {
+                ledger_lock.remove(0); // Bounded ring buffer eviction to prevent memory leaks
+            }
             ledger_lock.push(record);
         }
     }

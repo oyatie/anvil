@@ -1,5 +1,6 @@
 pub mod manual_handlers;
 pub mod pipelines;
+pub mod sse;
 pub mod webhook_handlers;
 
 use std::sync::Arc;
@@ -181,6 +182,10 @@ pub struct AppState {
     pub github_client: Arc<GitHubClient>,
     pub state_mgr: Arc<StateManager>,
     pub metrics: Arc<crate::metrics::PrometheusRegistry>,
+    pub self_governor: Arc<crate::self_governance::SelfGovernor>,
+    pub broadcaster: Arc<crate::webhook::sse::FleetEventBroadcaster>,
+    pub telemetry_store: Arc<crate::telemetry_store::TelemetryStore>,
+    pub fleet_observer: Arc<crate::fleet_observer::FleetObserver>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -211,6 +216,22 @@ pub async fn metrics_handler(
 /// Constructs the Axum HTTP router with webhook ingress, healthz probes, and on-demand API endpoints.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        .route(
+            "/",
+            axum::routing::get(crate::dashboard::dashboard_html_handler),
+        )
+        .route(
+            "/dashboard",
+            axum::routing::get(crate::dashboard::dashboard_html_handler),
+        )
+        .route(
+            "/api/dashboard/state",
+            axum::routing::get(crate::dashboard::dashboard_state_api_handler),
+        )
+        .route(
+            "/api/events/fleet",
+            axum::routing::get(crate::webhook::sse::sse_fleet_stream_handler),
+        )
         .route("/healthz", axum::routing::get(healthz_handler))
         .route("/metrics", axum::routing::get(metrics_handler))
         .route("/webhook", post(webhook_handler))
@@ -221,6 +242,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/enlist", post(manual_enlist_handler))
         .route("/api/heal-queue", post(manual_heal_queue_handler))
         .route("/api/reconcile", post(manual_reconcile_handler))
+        .route("/api/drain", post(manual_handlers::drain_handler))
         .with_state(state)
 }
 

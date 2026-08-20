@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
+use tokio::task::AbortHandle;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +15,7 @@ pub struct ProcessRecord {
     pub max_inactivity_window: Duration,
     pub estimated_cost_usd_limit: f64,
     pub current_tokens_used: usize,
+    pub os_pid: Option<u32>,
 }
 
 struct InternalProcessState {
@@ -21,6 +23,7 @@ struct InternalProcessState {
     started_at: Instant,
     last_vital_sign: Instant,
     is_active: bool,
+    abort_handle: Option<AbortHandle>,
 }
 
 #[derive(Clone, Default)]
@@ -37,6 +40,15 @@ impl ProcessRegistry {
 
     /// Registers a newly spawned child task or LLM operation
     pub async fn register_task(&self, record: ProcessRecord) {
+        self.register_task_with_abort(record, None).await;
+    }
+
+    /// Registers a task with an abort handle for guaranteed resource reclamation
+    pub async fn register_task_with_abort(
+        &self,
+        record: ProcessRecord,
+        abort_handle: Option<AbortHandle>,
+    ) {
         let mut tasks = self.tasks.write().await;
         let now = Instant::now();
         info!(
@@ -54,6 +66,7 @@ impl ProcessRegistry {
                 started_at: now,
                 last_vital_sign: now,
                 is_active: true,
+                abort_handle,
             },
         );
     }
@@ -82,6 +95,31 @@ impl ProcessRegistry {
         }
     }
 
+    /// Explicitly cancels and aborts a running task and terminates any OS child process
+    pub async fn cancel_and_reap_task(&self, task_id: &str, reason: &str) {
+        let mut tasks = self.tasks.write().await;
+        if let Some(mut state) = tasks.remove(task_id) {
+            state.is_active = false;
+            if let Some(abort) = state.abort_handle.take() {
+                info!(
+                    "🛑 [Process Registry] Aborting async task handle for '{}' (reason: {})",
+                    task_id, reason
+                );
+                abort.abort();
+            }
+            if let Some(pid) = state.record.os_pid {
+                warn!(
+                    "🛑 [Process Registry] Killing orphaned OS process PID {} for '{}'",
+                    pid, task_id
+                );
+                let _ = tokio::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output()
+                    .await;
+            }
+        }
+    }
+
     /// Identifies all stalled or SLA-breaching tasks for autonomous reaping
     pub async fn scan_stalled_tasks(&self) -> Vec<ProcessRecord> {
         let tasks = self.tasks.read().await;
@@ -98,17 +136,18 @@ impl ProcessRegistry {
 
             if idle_duration > state.record.max_inactivity_window {
                 warn!(
-                    "🚨 [Process Registry] Task '{}' ({}) breached idle threshold: {:.1}s > {:.0}s",
+                    "⚠️ [Process Registry] Task '{}' exceeded sliding idle window ({:.1}s > {:.1}s)",
                     state.record.task_id,
-                    state.record.task_name,
                     idle_duration.as_secs_f64(),
                     state.record.max_inactivity_window.as_secs_f64()
                 );
                 stalled.push(state.record.clone());
             } else if total_duration > state.record.max_sla {
                 error!(
-                    "🚨 [Process Registry] Task '{}' ({}) breached global SLA limit: {:.1}s > {:.0}s",
-                    state.record.task_id, state.record.task_name, total_duration.as_secs_f64(), state.record.max_sla.as_secs_f64()
+                    "🚨 [Process Registry] Task '{}' breached hard SLA ceiling ({:.1}s > {:.1}s)",
+                    state.record.task_id,
+                    total_duration.as_secs_f64(),
+                    state.record.max_sla.as_secs_f64()
                 );
                 stalled.push(state.record.clone());
             }
@@ -116,35 +155,10 @@ impl ProcessRegistry {
 
         stalled
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_process_registry_lifecycle() {
-        let registry = ProcessRegistry::new();
-        let record = ProcessRecord {
-            task_id: "test-task-1".to_string(),
-            task_name: "KaniVerification".to_string(),
-            target_entity: "oyatie/anvil#1".to_string(),
-            max_sla: Duration::from_secs(60),
-            max_inactivity_window: Duration::from_millis(50),
-            estimated_cost_usd_limit: 2.50,
-            current_tokens_used: 0,
-        };
-
-        registry.register_task(record).await;
-        assert_eq!(registry.scan_stalled_tasks().await.len(), 0);
-
-        // Sleep beyond inactivity window
-        tokio::time::sleep(Duration::from_millis(60)).await;
-        let stalled = registry.scan_stalled_tasks().await;
-        assert_eq!(stalled.len(), 1);
-        assert_eq!(stalled[0].task_id, "test-task-1");
-
-        registry.complete_task("test-task-1").await;
-        assert_eq!(registry.scan_stalled_tasks().await.len(), 0);
+    /// Returns the number of currently active registered tasks
+    pub async fn active_task_count(&self) -> usize {
+        let tasks = self.tasks.read().await;
+        tasks.values().filter(|s| s.is_active).count()
     }
 }

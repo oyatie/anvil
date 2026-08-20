@@ -321,6 +321,20 @@ pub enum Commands {
         #[arg(short, long, help = "Perform dry-run without modifying files")]
         dry_run: bool,
     },
+    /// Execute Zero-Downtime Blue/Green Self-Replacement & Binary Handover
+    Swap {
+        #[arg(
+            short,
+            long,
+            help = "Path to new green binary (default: target/release/anvil)"
+        )]
+        binary: Option<std::path::PathBuf>,
+    },
+    /// Run Full Outage Recovery & PR/Issue Reconciliation Sweep across watched repos
+    Recover {
+        #[arg(short, long, help = "Repository filter (optional)")]
+        repo: Option<String>,
+    },
     /// Run GitHub CLI webhook forwarding manually
     Forward,
     /// Verify GitHub CLI authentication and environment readiness

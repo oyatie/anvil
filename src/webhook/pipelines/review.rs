@@ -528,6 +528,7 @@ pub async fn execute_pr_review(
         &bench_report,
         &attestation_report,
         true,
+        &review_resp.verdict,
     )?;
 
     // Post or Update Certification Matrix in-place (Zero Clutter)

@@ -88,23 +88,44 @@ impl LensFeedbackEngine {
 
         let mut findings = Vec::new();
         let decisions_dir = repo_dir.join("docs/decisions");
-
-        // Parse lens mentions in review output
+        // Parse all 16 canonical lenses in review output
         for (lens, pattern, adr_key) in [
+            (CanonicalLens::CartesianDoubt, "Cartesian Doubt", "ADR-0701"),
+            (CanonicalLens::EssentialismYagni, "Essentialism", "ADR-0702"),
             (
                 CanonicalLens::ChestertonsFence,
                 "Chesterton's Fence",
                 "ADR-0709",
             ),
+            (CanonicalLens::Contrarian10x, "Contrarian", "ADR-0703"),
+            (
+                CanonicalLens::SocraticInquiries,
+                "Socratic Inquiries",
+                "ADR-0704",
+            ),
+            (CanonicalLens::Pragmatism, "Pragmatism", "ADR-0705"),
+            (CanonicalLens::RedTeamThreatModel, "Red Team", "ADR-0711"),
+            (
+                CanonicalLens::SystemsThinking,
+                "Systems Thinking",
+                "ADR-0706",
+            ),
+            (CanonicalLens::OperabilityDay2, "Operability", "ADR-0714"),
+            (
+                CanonicalLens::OpportunityCost,
+                "Opportunity Cost",
+                "ADR-0707",
+            ),
+            (CanonicalLens::BlastRadius, "Blast-radius", "ADR-0712"),
+            (CanonicalLens::AntiFragility, "Anti-fragility", "ADR-0708"),
+            (CanonicalLens::SharedNothing, "Shared-nothing", "ADR-0715"),
+            (CanonicalLens::FinOpsUnitCost, "FinOps", "ADR-0716"),
+            (CanonicalLens::TelemetryFirst, "Telemetry-first", "ADR-0713"),
             (
                 CanonicalLens::ZeroTrustDefenseInDepth,
                 "Zero-trust",
                 "ADR-0710",
             ),
-            (CanonicalLens::RedTeamThreatModel, "Red Team", "ADR-0711"),
-            (CanonicalLens::BlastRadius, "Blast-radius", "ADR-0712"),
-            (CanonicalLens::TelemetryFirst, "Telemetry-first", "ADR-0713"),
-            (CanonicalLens::OperabilityDay2, "Operability", "ADR-0714"),
         ] {
             if raw_review_text.contains(pattern) {
                 let is_critical = raw_review_text.contains("CRITICAL VIOLATION")
@@ -112,16 +133,18 @@ impl LensFeedbackEngine {
                     || raw_review_text.contains("REQUEST_CHANGES");
 
                 if is_critical {
-                    // Check if an authoritative ADR resolves this lens finding
-                    let has_resolving_adr = decisions_dir.exists()
-                        && (raw_review_text.contains(adr_key)
-                            || std::fs::read_dir(&decisions_dir)
-                                .map(|entries| {
-                                    entries
-                                        .filter_map(|e| e.ok())
-                                        .any(|e| e.file_name().to_string_lossy().contains(adr_key))
-                                })
-                                .unwrap_or(false));
+                    // Check if PR explicitly cites an authoritative ADR that resolves this lens finding
+                    let explicitly_cited = raw_review_text.contains(adr_key);
+                    let adr_exists_on_disk = decisions_dir.exists()
+                        && std::fs::read_dir(&decisions_dir)
+                            .map(|entries| {
+                                entries
+                                    .filter_map(|e| e.ok())
+                                    .any(|e| e.file_name().to_string_lossy().contains(adr_key))
+                            })
+                            .unwrap_or(false);
+
+                    let has_resolving_adr = explicitly_cited && adr_exists_on_disk;
 
                     if has_resolving_adr {
                         findings.push(LensEvaluationFinding {
@@ -142,8 +165,9 @@ impl LensFeedbackEngine {
                             lens,
                             severity: LensFindingSeverity::CriticalViolation,
                             description: format!(
-                                "Unresolved critical finding on '{}'. Authoritative ADR or migration note required.",
-                                lens.name()
+                                "Unresolved critical finding on '{}'. Authoritative ADR ({}) citation required.",
+                                lens.name(),
+                                adr_key
                             ),
                             resolution_receipt: None,
                         });

@@ -150,7 +150,7 @@ impl MatrixRenderer {
 | **💥 AST Chaos Mutation Test Adequacy** | {} | Critical branches verified against surviving mutants |
 | **🚩 Feature Flag & Dead Branch Lifecycle** | {} | Zero stale or dead toggle fallback branches |
 | **⚡ Micro-Benchmark & Latency Ratchet** | {} | Hot paths within +3% latency & zero-leak budget |
-| **🔏 Cryptographic Provenance Attestation** | {} | Stamped verification receipts in .cursor/receipts |
+| **🔏 Cryptographic Provenance Attestation** | {} | Stamped verification receipts in .anvil/receipts |
 | **🔐 Secret & Credential Scan** | {} | Deep entropy scan for leaked credentials |
 | **🔄 Schema & Migration Compatibility** | {} | Zero destructive breakages across cell nodes |
 | **⚡ Concurrency, Perf & Flake Guard** | {} | Bounded execution and flake-resistant timings |

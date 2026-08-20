@@ -21,11 +21,13 @@
 //!   3. the self-check is wired into production code, not only into a test;
 //!   4. the report type can say "not measured" when there is no layering to read.
 //!
-//! Anvil today has 106 flat `pub mod` declarations in `src/lib.rs` and zero
-//! directories named core / ports / adapters / facade / domain / application
-//! (verified by `find src -type d -name core -o ...`, which returned nothing).
-//! The correct outcome of a self-check is therefore a `NotMeasured`-style result
-//! naming that absence -- never `is_clean = true`.
+//! When this test was written Anvil had 106 flat `pub mod` declarations and zero
+//! directories named core / ports / adapters / facade, so the only honest
+//! self-check result was `NotMeasured`. Since the Shape Program landed
+//! `src/shape/{core,facade}` the guard classifies a handful of files and the
+//! honest result is a *count*: N layered files measured, M files not. A clean
+//! verdict must state both numbers; it must never describe the whole tree as
+//! "verified" or "100% intact" on the strength of the few files it could read.
 //!
 //! WHY PROMPTING WOULD NOT PREVENT THIS
 //! ------------------------------------
@@ -237,6 +239,31 @@ fn guard_run_over_anvils_own_tree_does_not_fabricate_a_clean_pass() {
              summary: {}\n  \
              With no layering present the honest result is an explicit \
              NotMeasured-style report naming that absence.",
+            report.summary
+        );
+    } else {
+        // A measured run must carry its own denominator: how many files it
+        // classified and how many it could not. A count the reader can check
+        // is the difference between a measurement and a slogan.
+        assert!(
+            report.measurement.is_measured(),
+            "{layered} layered file(s) exist but the report says it measured nothing"
+        );
+        // The guard also classifies facade/adapter paths this heuristic does
+        // not count, so its number may exceed ours but never fall short.
+        let classified = report.measurement.files_classified();
+        assert!(
+            classified >= layered,
+            "guard classified {classified} file(s) but {layered} layered path(s) exist"
+        );
+        assert!(
+            s.contains(&format!("{classified} layered file")),
+            "summary must state the measured count ({classified}): {}",
+            report.summary
+        );
+        assert!(
+            s.contains("not measured"),
+            "summary must state that the unlayered remainder was not measured: {}",
             report.summary
         );
     }

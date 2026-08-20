@@ -53,6 +53,56 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     print!("{}", crate::shape::facade::measure::render(&report));
                 }
             }
+            crate::cli::args::ShapeAction::Baseline {
+                repo_dir,
+                rev,
+                spec_override,
+                out,
+            } => {
+                let (baseline, report) = crate::shape::facade::baseline::seed_from_commit(
+                    &repo_dir,
+                    &rev,
+                    spec_override.as_deref(),
+                )
+                .await?;
+                let json = baseline.to_json();
+                match out {
+                    Some(p) => {
+                        if let Some(parent) = p.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::write(&p, format!("{json}\n"))?;
+                        println!(
+                            "baseline written to {} ({} key(s) across {} rule(s), measured at {})",
+                            p.display(),
+                            baseline.total_keys(),
+                            baseline.rules.len(),
+                            &report.rev[..12]
+                        );
+                    }
+                    None => println!("{json}"),
+                }
+            }
+            crate::cli::args::ShapeAction::Ratchet {
+                repo_dir,
+                base_ref,
+                head,
+                spec_override,
+            } => {
+                let j = crate::shape::facade::baseline::judge(
+                    &repo_dir,
+                    &base_ref,
+                    &head,
+                    spec_override.as_deref(),
+                )
+                .await?;
+                print!("{}", crate::shape::facade::baseline::render_judgement(&j));
+                if let crate::shape::facade::baseline::Judgement::Judged { verdict, .. } = &j
+                    && verdict.fails
+                {
+                    anyhow::bail!("ratchet regressions present");
+                }
+            }
         },
         Commands::Review { repo, pr, force } => {
             info!("Running on-demand review for {}#{}", repo, pr);

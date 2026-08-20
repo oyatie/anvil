@@ -384,4 +384,33 @@ pub enum ShapeAction {
         #[arg(long, help = "Print the full report as JSON")]
         json: bool,
     },
+    /// Seed a ratchet baseline from a named commit (full sha; never the
+    /// working directory). Prints the baseline JSON or writes it to --out.
+    Baseline {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, help = "Full 40-character commit sha to measure")]
+        rev: String,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+
+        #[arg(long, help = "Write the baseline here instead of stdout")]
+        out: Option<PathBuf>,
+    },
+    /// Judge a head commit against the baseline frozen at merge-base(base-ref, head)
+    Ratchet {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, help = "The ref the change targets (e.g. origin/main)")]
+        base_ref: String,
+
+        #[arg(long, default_value = "HEAD", help = "The head commit to judge")]
+        head: String,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+    },
 }

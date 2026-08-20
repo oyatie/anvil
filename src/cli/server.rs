@@ -77,6 +77,49 @@ pub async fn run_server(state: AppState) -> Result<()> {
         }
     });
 
+    // Spawn periodic issue refresh & triage.
+    //
+    // Issue reconciliation previously ran in exactly one place: the outage-recovery
+    // sweep, spawned once at startup. Every other worker in this file has a cadence
+    // (10s self-governance, 30s fleet observer, 600s worktree GC, 900s, 86400s upgrade
+    // train) but issues had none, so after boot an issue was never looked at again
+    // until the daemon restarted. Combined with the fact that the rest of the daemon is
+    // webhook-driven, a running Anvil with no inbound deliveries did no issue work at
+    // all -- it only polled telemetry.
+    //
+    // 15 minutes: fast enough that a newly filed issue is triaged within one coffee
+    // break, slow enough that it is not a meaningful share of the API budget.
+    let issue_repos = state.config.watched_repos.clone();
+    let issue_client = state.github_client.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(900));
+        interval.tick().await; // fires immediately; the boot sweep already covered this pass
+        loop {
+            interval.tick().await;
+            let reconciler = crate::issue_reconciler::IssueReconciler::new(issue_client.clone());
+            for repo in &issue_repos {
+                match reconciler.reconcile_issues(repo).await {
+                    Ok(reconciled) => {
+                        info!(
+                            "[Issue Refresh] Reconciled {} issues for {}",
+                            reconciled.len(),
+                            repo
+                        );
+                    }
+                    Err(e) => {
+                        // Warn, never abort: one repo failing must not stop the others,
+                        // and must not kill the recurring task.
+                        tracing::warn!(
+                            "[Issue Refresh] Reconciliation for {} noticed: {}",
+                            repo,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    });
+
     // Spawn background upstream sync for rust-skills repository
     let rsg_clone = state.rust_skills_guard.clone();
     tokio::spawn(async move {

@@ -142,6 +142,25 @@ impl Default for CleanArchitectureGuard {
 
 /// Classifies a file path into an architectural layer, or `None` when the path
 /// carries no layer information at all.
+/// Whether a source line is an import statement (Rust `use`/`extern crate`,
+/// TS/JS `import`, Python `from ... import`). Comments and strings are not
+/// dependency edges, however many layer names they mention.
+fn is_import_line(trimmed: &str) -> bool {
+    let t = trimmed.trim_start();
+    if t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') || t.starts_with('#') {
+        return false;
+    }
+    let t = t
+        .strip_prefix("pub(crate) ")
+        .or_else(|| t.strip_prefix("pub(super) "))
+        .or_else(|| t.strip_prefix("pub "))
+        .unwrap_or(t);
+    t.starts_with("use ")
+        || t.starts_with("extern crate ")
+        || t.starts_with("import ")
+        || t.starts_with("from ")
+}
+
 fn classify_layer(file_path: &str) -> Option<ArchLayer> {
     // Normalise so a tree-relative path such as `core/x.rs` matches the same
     // `/core/` convention a repo-relative path uses.
@@ -318,6 +337,12 @@ impl CleanArchitectureGuard {
 
             if line.starts_with('+') && !line.starts_with("+++") {
                 let trimmed = line[1..].trim();
+                // Only an import statement can create a dependency edge. A
+                // comment containing "because ports -> core" matched the
+                // unanchored `use\s+` through "beca|use" on Anvil's own tree.
+                if !is_import_line(trimmed) {
+                    continue;
+                }
 
                 match current_layer {
                     Some(ArchLayer::Core) => {
@@ -509,6 +534,26 @@ mod tests {
             "a real ports import must still fire"
         );
         assert_eq!(report.violations[0].target_layer, "PORTS/APPLICATION");
+    }
+
+    #[test]
+    fn comments_and_strings_are_not_dependency_edges() {
+        let guard = CleanArchitectureGuard::new();
+        let ctx = PrDiffContext {
+            repo: "oyatie/anvil".to_string(),
+            pr_number: 205,
+            base_branch: "main".to_string(),
+            base_sha: "aaa".to_string(),
+            head_sha: "bbb".to_string(),
+            previous_head_sha: None,
+            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            diff_content: "+++ b/src/shape/core/dependency.rs\n+ // denied target (facade -> ports, because ports -> core)\n+ /// an adapters face is where adapters live\n+ let msg = \"use the ports face\";\n+ use super::tree::TreeSource;".to_string(),
+            changed_files: vec!["src/shape/core/dependency.rs".to_string()],
+            is_incremental: false,
+        };
+        let report = guard.evaluate_architecture(&ctx).expect("Evaluates");
+        assert!(report.is_clean, "{:?}", report.violations);
+        assert!(report.measurement.is_measured());
     }
 
     #[test]

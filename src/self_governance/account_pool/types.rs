@@ -35,7 +35,7 @@ impl AuthType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ManagedAccount {
     pub account_id: String,
     pub provider: ModelProvider,
@@ -70,7 +70,7 @@ pub struct AccountQuotaView {
     pub cooldown_remaining_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AddAccountPayload {
     pub account_id: String,
     pub provider: String,
@@ -89,3 +89,113 @@ pub struct DrainAccountPayload {
 
 pub type AccountPoolMap = HashMap<ModelProvider, Vec<Arc<RwLock<ManagedAccount>>>>;
 pub type AffinityCacheMap = HashMap<String, (String, Instant)>; // affinity_key -> (account_id, expires_at)
+
+/// Hand-written so a credential can never reach a log through `{:?}`.
+///
+/// `ManagedAccount` previously derived `Debug` while holding `oauth_token` and
+/// `auth_profile_or_key` as plain `String`s. Nothing logs the whole struct
+/// today, but the derive made it one careless `{:?}` away — and a token in a
+/// log line is a token on disk (invariant I6).
+impl std::fmt::Debug for ManagedAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManagedAccount")
+            .field("account_id", &self.account_id)
+            .field("provider", &self.provider)
+            .field("auth_type", &self.auth_type)
+            .field("auth_profile_or_key", &redacted(&self.auth_profile_or_key))
+            .field("oauth_token", &redacted(&self.oauth_token))
+            .field("config_dir", &self.config_dir)
+            .field("max_5hr_tokens", &self.max_5hr_tokens)
+            .field("max_weekly_budget_usd", &self.max_weekly_budget_usd)
+            .field("usage_records", &self.usage_history.len())
+            .field("cooldown_until", &self.cooldown_until)
+            .field("is_draining", &self.is_draining)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for AddAccountPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddAccountPayload")
+            .field("account_id", &self.account_id)
+            .field("provider", &self.provider)
+            .field("auth_type", &self.auth_type)
+            .field("auth_profile_or_key", &redacted(&self.auth_profile_or_key))
+            .field("oauth_token", &redacted(&self.oauth_token))
+            .field("config_dir", &self.config_dir)
+            .field("max_5hr_tokens", &self.max_5hr_tokens)
+            .field("max_weekly_budget_usd", &self.max_weekly_budget_usd)
+            .finish()
+    }
+}
+
+/// Reports only whether a secret is present, never any part of its value.
+///
+/// Deliberately not a prefix or a length: both leak information about the
+/// credential, and a prefix identifies the issuing provider and token family.
+fn redacted(v: &Option<String>) -> &'static str {
+    match v {
+        Some(_) => "[REDACTED]",
+        None => "None",
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::time::Instant;
+
+    fn account_with_secrets() -> ManagedAccount {
+        ManagedAccount {
+            account_id: "claude:seat-1".to_string(),
+            provider: ModelProvider::AnthropicClaudeCode,
+            auth_type: AuthType::OAuthToken,
+            auth_profile_or_key: Some("sk-ant-api03-SUPERSECRETKEYVALUE".to_string()),
+            oauth_token: Some("sk-ant-oat01-SUPERSECRETTOKENVALUE".to_string()),
+            config_dir: None,
+            max_5hr_tokens: None,
+            max_weekly_budget_usd: None,
+            usage_history: VecDeque::new(),
+            cooldown_until: None,
+            last_leased_at: Instant::now(),
+            is_draining: false,
+        }
+    }
+
+    #[test]
+    fn debug_never_emits_credential_material() {
+        let rendered = format!("{:?}", account_with_secrets());
+        assert!(!rendered.contains("SUPERSECRETTOKENVALUE"));
+        assert!(!rendered.contains("SUPERSECRETKEYVALUE"));
+        assert!(!rendered.contains("sk-ant-"));
+        assert!(rendered.contains("[REDACTED]"));
+        // Non-secret fields must still be useful for debugging.
+        assert!(rendered.contains("claude:seat-1"));
+    }
+
+    #[test]
+    fn debug_distinguishes_absent_from_redacted() {
+        let mut acc = account_with_secrets();
+        acc.oauth_token = None;
+        let rendered = format!("{:?}", acc);
+        assert!(rendered.contains("oauth_token: \"None\""));
+    }
+
+    #[test]
+    fn payload_debug_also_redacts() {
+        let p = AddAccountPayload {
+            account_id: "x".to_string(),
+            provider: "claude".to_string(),
+            auth_type: Some("oauth".to_string()),
+            auth_profile_or_key: None,
+            oauth_token: Some("sk-ant-oat01-LEAKME".to_string()),
+            config_dir: None,
+            max_5hr_tokens: None,
+            max_weekly_budget_usd: None,
+        };
+        let rendered = format!("{:?}", p);
+        assert!(!rendered.contains("LEAKME"));
+        assert!(rendered.contains("[REDACTED]"));
+    }
+}

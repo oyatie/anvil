@@ -147,7 +147,23 @@ pub async fn webhook_handler(
                 .get("x-hub-signature-256")
                 .and_then(|v| v.to_str().ok());
             let signature_present = sig.is_some();
-            let signature_valid = verify_github_hmac(secret, &body_bytes, sig);
+            // Accept the previous secret too, so a rotation does not drop
+            // deliveries that were signed before the hook was updated.
+            let matched_primary = verify_github_hmac(secret, &body_bytes, sig);
+            let matched_previous = !matched_primary
+                && state
+                    .config
+                    .webhook_secret_previous
+                    .as_deref()
+                    .is_some_and(|prev| verify_github_hmac(prev, &body_bytes, sig));
+            if matched_previous {
+                warn!(
+                    "[Webhook Ingress] delivery verified against GITHUB_WEBHOOK_SECRET_PREVIOUS; \
+                     rotation is in progress. Clear the previous secret once deliveries \
+                     stop matching it."
+                );
+            }
+            let signature_valid = matched_primary || matched_previous;
             if signature_valid {
                 info!(
                     "[Webhook Ingress] signature_present={} signature_valid=true — ready to enforce",
@@ -461,4 +477,57 @@ pub async fn webhook_handler(
             message: format!("Ignored event: {}/{}", event_type, action),
         }),
     )
+}
+
+#[cfg(test)]
+mod hmac_tests {
+    use super::*;
+    use hmac::Mac;
+
+    fn sign(secret: &str, body: &[u8]) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body);
+        format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+    }
+
+    #[test]
+    fn accepts_a_correctly_signed_body() {
+        let body = br#"{"action":"opened"}"#;
+        assert!(verify_github_hmac(
+            "s3cr3t",
+            body,
+            Some(&sign("s3cr3t", body))
+        ));
+    }
+
+    #[test]
+    fn rejects_wrong_secret_missing_header_and_tampered_body() {
+        let body = br#"{"action":"opened"}"#;
+        let sig = sign("s3cr3t", body);
+        assert!(!verify_github_hmac("other", body, Some(&sig)));
+        assert!(!verify_github_hmac("s3cr3t", body, None));
+        assert!(!verify_github_hmac(
+            "s3cr3t",
+            br#"{"action":"closed"}"#,
+            Some(&sig)
+        ));
+        assert!(!verify_github_hmac("s3cr3t", body, Some("sha256=zzzz")));
+        assert!(!verify_github_hmac("s3cr3t", body, Some("")));
+    }
+
+    /// The rotation window: a delivery signed with the OLD secret must still
+    /// verify while GITHUB_WEBHOOK_SECRET_PREVIOUS is set, and must stop
+    /// verifying once it is cleared. This is what makes rotation lossless.
+    #[test]
+    fn rotation_window_accepts_old_signatures_then_stops() {
+        let body = br#"{"action":"synchronize"}"#;
+        let old_sig = sign("old-secret", body);
+
+        // New secret alone does not accept an old-signed delivery.
+        assert!(!verify_github_hmac("new-secret", body, Some(&old_sig)));
+        // The previous secret does -- this is the fallback the handler consults.
+        assert!(verify_github_hmac("old-secret", body, Some(&old_sig)));
+        // After the window closes, the old signature is refused.
+        assert!(!verify_github_hmac("unrelated", body, Some(&old_sig)));
+    }
 }

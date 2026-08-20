@@ -65,15 +65,22 @@ impl IssueAuditor {
             };
         }
 
-        // Check 2: Resolved by trunk CI recovery
+        // Check 2: candidate for closure if trunk has since recovered.
+        //
+        // This previously published "Trunk CI is green and passing all gates on the
+        // latest commit" -- a factual claim about CI state derived from nothing but the
+        // issue title. CI was never queried. The reason below states only what was
+        // actually observed; establishing whether trunk recovered requires a real run
+        // query and is the reader's call until that signal is wired in.
         if title.contains("🚨 Trunk CI Failure") || title.contains("CI failure") {
-            // In live reconciliation, if trunk is clean, this is marked resolved
             return IssueAuditFinding {
                 issue_number,
                 title: title.to_string(),
                 status: IssueAuditStatus::ResolvedByCommit,
-                resolution_reason: "Trunk CI is green and passing all gates on the latest commit."
-                    .to_string(),
+                resolution_reason:
+                    "Title matches the transient trunk-CI-failure report pattern. Anvil did \
+                     not query CI; whether trunk has since recovered is unverified here."
+                        .to_string(),
                 resolution_receipt: Some(format!("ANVIL-TRUNK-RECOVERY-RECEIPT#{}", issue_number)),
             };
         }

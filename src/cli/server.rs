@@ -237,7 +237,7 @@ pub async fn run_server(state: AppState) -> Result<()> {
                 "--repo",
                 repo,
                 "--events",
-                "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group",
+                "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group,issues,issue_comment",
                 "--url",
                 &target_url,
             ]);
@@ -328,7 +328,7 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
                 "--repo",
                 &repo_clone,
                 "--events",
-                "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group",
+                "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group,issues,issue_comment",
                 "--url",
                 &target_url,
             ]);

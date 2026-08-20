@@ -100,6 +100,32 @@ impl GitManager {
         Ok(repo_dir)
     }
 
+    /// Points a repository at its tracked `.githooks/` directory.
+    ///
+    /// Hooks written into `.git/hooks` are invisible: untracked, unreviewable,
+    /// and silently different on every machine. A tracked `.githooks/` plus
+    /// `core.hooksPath` makes them ordinary reviewed code, and installing them
+    /// is one config write rather than a file copy that can drift.
+    ///
+    /// Anvil runs this on itself as well as on the repositories it manages.
+    /// Every previous hook mechanism here was pointed outward only, which is
+    /// the same defect as a guard that evaluates other people's repositories
+    /// and never its own.
+    pub async fn point_at_tracked_hooks(repo_dir: &Path) -> Result<bool> {
+        if !repo_dir.join(".githooks").is_dir() {
+            return Ok(false);
+        }
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.arg("-C")
+            .arg(repo_dir)
+            .args(["config", "core.hooksPath", ".githooks"])
+            .stdin(std::process::Stdio::null());
+        let out =
+            crate::exec::run_bounded(cmd, crate::exec::ExecClass::Vcs, "git config hooksPath")
+                .await?;
+        Ok(out.status.success())
+    }
+
     /// Automatically maintains and updates standard developer inner-loop git hooks in a maintained repository
     pub async fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
         let hooks_dir = repo_dir.join(".git").join("hooks");

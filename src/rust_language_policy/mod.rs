@@ -20,12 +20,12 @@ pub struct RustSkillsReport {
     pub summary: String,
 }
 
-pub struct RustSkillsGuard {
+pub struct RustLanguagePolicy {
     engine: RustQualityEngine,
     syncer: UpstreamRustSkillsSyncer,
 }
 
-impl RustSkillsGuard {
+impl RustLanguagePolicy {
     pub fn new(data_dir: &Path) -> Self {
         Self {
             engine: RustQualityEngine::new(),
@@ -66,7 +66,7 @@ impl RustSkillsGuard {
         diff_ctx: &PrDiffContext,
     ) -> Result<RustSkillsReport> {
         info!(
-            "Running RustSkillsGuard (Upstream 380 Rust 2024 Edition Rules) on {}#{}...",
+            "Running RustLanguagePolicy (Upstream 380 Rust 2024 Edition Rules) on {}#{}...",
             diff_ctx.repo, diff_ctx.pr_number
         );
 
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn test_detects_unwrap_in_prod() {
         let temp_dir = std::env::temp_dir();
-        let guard = RustSkillsGuard::new(&temp_dir);
+        let guard = RustLanguagePolicy::new(&temp_dir);
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
             pr_number: 601,
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn test_detects_ref_string_param() {
         let temp_dir = std::env::temp_dir();
-        let guard = RustSkillsGuard::new(&temp_dir);
+        let guard = RustLanguagePolicy::new(&temp_dir);
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
             pr_number: 602,
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn test_detects_unsafe_without_safety_comment() {
         let temp_dir = std::env::temp_dir();
-        let guard = RustSkillsGuard::new(&temp_dir);
+        let guard = RustLanguagePolicy::new(&temp_dir);
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
             pr_number: 603,

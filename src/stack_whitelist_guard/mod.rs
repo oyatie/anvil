@@ -128,7 +128,7 @@ impl StackWhitelistGuard {
 
         let is_compliant = violations.is_empty();
         let summary = if is_compliant {
-            "Stack Whitelist & Apex Authority Locks verified: 100% compliant with approved hyperscaler architecture.".to_string()
+            "Stack Whitelist & Apex Authority Locks verified: 100% compliant with the approved architecture.".to_string()
         } else {
             format!(
                 "Stack & Authority violations ({} items): {}",

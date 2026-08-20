@@ -11,6 +11,10 @@ pub struct MicrobenchmarkSample {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BenchmarkRegressionVerdict {
+    /// No benchmark was executed, so there is no base or head figure to
+    /// compare. Deliberately distinct from `Optimal`: an unrun benchmark is not
+    /// a fast one.
+    NotMeasured,
     Optimal,
     Regression {
         benchmark: String,

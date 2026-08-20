@@ -50,7 +50,7 @@ impl MonorepoGuard {
         diff_ctx: &PrDiffContext,
     ) -> Result<MonorepoGuardReport> {
         info!(
-            "Running MonorepoGuard hyperscaler patterns on {}#{}...",
+            "Running monorepo boundary rules (hermetic boundaries, harness quarantine, SSOT authority) on {}#{}...",
             diff_ctx.repo, diff_ctx.pr_number
         );
 
@@ -112,28 +112,52 @@ impl MonorepoGuard {
             }
         }
 
-        // Run check-undeclared-imports.mjs if available
+        // Run check-undeclared-imports.mjs if available.
+        // Fails closed: a linter that hangs, is missing or crashes yields a
+        // violation, never a silent "no undeclared imports".
         let undeclared_script = repo_dir.join("scripts/check-undeclared-imports.mjs");
         if undeclared_script.exists() {
-            let out = Command::new("node")
-                .current_dir(repo_dir)
-                .arg("scripts/check-undeclared-imports.mjs")
-                .output()
-                .await;
+            let mut cmd = Command::new("node");
+            cmd.current_dir(repo_dir)
+                .arg("scripts/check-undeclared-imports.mjs");
 
-            if let Ok(res) = out {
-                if !res.status.success() {
-                    let err = String::from_utf8_lossy(&res.stderr);
-                    warn!("check-undeclared-imports.mjs reported issues: {}", err);
+            match crate::exec::run_bounded(
+                cmd,
+                crate::exec::ExecClass::Build,
+                "check-undeclared-imports.mjs",
+            )
+            .await
+            {
+                Ok(res) => {
+                    if !res.status.success() {
+                        let err = String::from_utf8_lossy(&res.stderr);
+                        warn!("check-undeclared-imports.mjs reported issues: {}", err);
+                        violations.push(MonorepoViolation {
+                            category: "UNDECLARED_IMPORT".to_string(),
+                            description:
+                                "Undeclared monorepo package import detected by linter script"
+                                    .to_string(),
+                            snippet: err
+                                .lines()
+                                .next()
+                                .unwrap_or("undeclared import")
+                                .to_string(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "check-undeclared-imports.mjs did not complete ({}). Recording a violation \
+                         rather than a pass.",
+                        e
+                    );
                     violations.push(MonorepoViolation {
-                        category: "UNDECLARED_IMPORT".to_string(),
-                        description: "Undeclared monorepo package import detected by linter script"
-                            .to_string(),
-                        snippet: err
-                            .lines()
-                            .next()
-                            .unwrap_or("undeclared import")
-                            .to_string(),
+                        category: "UNDECLARED_IMPORT_CHECK_FAILED".to_string(),
+                        description:
+                            "Undeclared-import linter could not be run to completion, so imports \
+                             are unverified"
+                                .to_string(),
+                        snippet: format!("check-undeclared-imports.mjs did not complete: {e}"),
                     });
                 }
             }
@@ -141,7 +165,7 @@ impl MonorepoGuard {
 
         let is_compliant = violations.is_empty();
         let summary = if is_compliant {
-            "Hyperscaler monorepo patterns verified: hermetic boundaries, harness quarantine, and SSOT authority rules 100% compliant.".to_string()
+            "Monorepo boundary rules verified: hermetic boundaries, harness quarantine, and SSOT authority rules 100% compliant.".to_string()
         } else {
             format!(
                 "Monorepo pattern warnings ({} items): {}",

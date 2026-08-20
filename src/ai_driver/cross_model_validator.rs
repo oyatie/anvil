@@ -1,10 +1,20 @@
+//! Cross-model dual verification: two peer models judge the same prompt, and the
+//! gate only passes when neither rejects.
+//!
+//! This is one of the three units in `ai_driver` with no oyatie counterpart, so it
+//! survives absorption. It therefore depends on execution only through
+//! [`PromptExecutor`] — never on the subscription executor, the account pool or a
+//! process spawner. The consequence is that the agreement arithmetic, the
+//! discrepancy record and the fail-closed branch are all reachable from a test with
+//! a scripted double (`tests/ai_driver_executor_port_test.rs`) instead of requiring
+//! two vendor CLIs and a logged-in subscription.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::{info, warn};
 
-use super::provider::{ModelExecutionConfig, ModelProvider};
-use super::router::SubscriptionExecutor;
+use super::executor_port::PromptExecutor;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrossModelConsensusReport {
@@ -16,57 +26,66 @@ pub struct CrossModelConsensusReport {
     pub identified_discrepancies: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct CrossModelDualValidator {
-    executor: SubscriptionExecutor,
+/// A verdict that rejects the change, in the path where both peers answered.
+fn is_rejection(text: &str) -> bool {
+    text.contains("REQUEST_CHANGES") || text.contains("REJECT") || text.contains("VIOLATION")
 }
 
-impl CrossModelDualValidator {
-    pub fn new() -> Self {
+/// A verdict that rejects the change, in the path where only one peer answered.
+///
+/// Deliberately wider than [`is_rejection`]: with half the evidence missing, a bare
+/// `FAIL` is also treated as a rejection rather than being read as approval.
+fn is_lone_survivor_rejection(text: &str) -> bool {
+    is_rejection(text) || text.contains("FAIL")
+}
+
+#[derive(Debug, Clone)]
+pub struct CrossModelDualValidator<E: PromptExecutor> {
+    executor: E,
+    model_a: String,
+    model_b: String,
+}
+
+impl<E: PromptExecutor> CrossModelDualValidator<E> {
+    /// Builds a validator that compares the two named models through `executor`.
+    ///
+    /// Which two models duel is the caller's decision. The previous version
+    /// hardcoded one specific pair of subscriptions, which is what made the type
+    /// impossible to construct without them.
+    pub fn new(executor: E, model_a: impl Into<String>, model_b: impl Into<String>) -> Self {
         Self {
-            executor: SubscriptionExecutor::new(),
+            executor,
+            model_a: model_a.into(),
+            model_b: model_b.into(),
         }
     }
 
-    /// Evaluates critical tasks across dual diverse model families (e.g. Claude Opus 5 + GPT-5.6-Sol)
+    /// Evaluates a critical task across two diverse peer models and reports whether
+    /// they agree.
     pub async fn verify_cross_model_consensus(
         &self,
         prompt: &str,
         working_dir: &Path,
     ) -> Result<CrossModelConsensusReport> {
-        info!("Executing Cross-Model Dual-Verification (Claude Opus 5 ⚔️ GPT-5.6-Sol)...");
+        info!(
+            "Executing cross-model dual verification ({} vs {})...",
+            self.model_a, self.model_b
+        );
 
-        let config_a = ModelExecutionConfig {
-            provider: ModelProvider::AnthropicClaudeCode,
-            specific_model: Some("opus-5".to_string()),
-            reasoning_effort: "high".to_string(),
-            print_timeout_secs: 420,
-        };
-
-        let config_b = ModelExecutionConfig {
-            provider: ModelProvider::OpenAiCodex,
-            specific_model: Some("gpt-5.6-sol".to_string()),
-            reasoning_effort: "high".to_string(),
-            print_timeout_secs: 420,
-        };
-
-        // Execute both model prompts concurrently in parallel
+        // Both peers are consulted concurrently; neither result gates the other.
         let (result_a, result_b) = tokio::join!(
-            self.executor.execute_prompt(prompt, working_dir, &config_a),
-            self.executor.execute_prompt(prompt, working_dir, &config_b)
+            self.executor.execute(&self.model_a, prompt, working_dir),
+            self.executor.execute(&self.model_b, prompt, working_dir)
         );
 
         let (text_a, text_b) = match (result_a, result_b) {
             (Ok(a), Ok(b)) => (a, b),
             (Ok(a), Err(e)) => {
                 warn!(
-                    "Model B failed in cross-validation: {}. Evaluating Model A fail-closed.",
-                    e
+                    "Model {} failed in cross-validation: {}. Evaluating model {} fail-closed.",
+                    self.model_b, e, self.model_a
                 );
-                let has_rejection = a.contains("REQUEST_CHANGES")
-                    || a.contains("VIOLATION")
-                    || a.contains("REJECT")
-                    || a.contains("FAIL");
+                let has_rejection = is_lone_survivor_rejection(&a);
 
                 return Ok(CrossModelConsensusReport {
                     is_consensus_reached: !has_rejection,
@@ -78,11 +97,16 @@ impl CrossModelDualValidator {
                     model_b_verdict: "UNAVAILABLE_FAIL_CLOSED".to_string(),
                     agreement_score: if has_rejection { 0.0 } else { 0.85 },
                     consensus_summary: format!(
-                        "Model A evaluation (Model B unavailable): {}",
+                        "{} evaluation ({} unavailable): {}",
+                        self.model_a,
+                        self.model_b,
                         a.chars().take(200).collect::<String>()
                     ),
                     identified_discrepancies: if has_rejection {
-                        vec!["Model A issued rejection or critical violation while Model B was unavailable".to_string()]
+                        vec![format!(
+                            "{} issued rejection or critical violation while {} was unavailable",
+                            self.model_a, self.model_b
+                        )]
                     } else {
                         Vec::new()
                     },
@@ -90,13 +114,10 @@ impl CrossModelDualValidator {
             }
             (Err(e), Ok(b)) => {
                 warn!(
-                    "Model A failed in cross-validation: {}. Evaluating Model B fail-closed.",
-                    e
+                    "Model {} failed in cross-validation: {}. Evaluating model {} fail-closed.",
+                    self.model_a, e, self.model_b
                 );
-                let has_rejection = b.contains("REQUEST_CHANGES")
-                    || b.contains("VIOLATION")
-                    || b.contains("REJECT")
-                    || b.contains("FAIL");
+                let has_rejection = is_lone_survivor_rejection(&b);
 
                 return Ok(CrossModelConsensusReport {
                     is_consensus_reached: !has_rejection,
@@ -108,11 +129,16 @@ impl CrossModelDualValidator {
                     },
                     agreement_score: if has_rejection { 0.0 } else { 0.85 },
                     consensus_summary: format!(
-                        "Model B evaluation (Model A unavailable): {}",
+                        "{} evaluation ({} unavailable): {}",
+                        self.model_b,
+                        self.model_a,
                         b.chars().take(200).collect::<String>()
                     ),
                     identified_discrepancies: if has_rejection {
-                        vec!["Model B issued rejection or critical violation while Model A was unavailable".to_string()]
+                        vec![format!(
+                            "{} issued rejection or critical violation while {} was unavailable",
+                            self.model_b, self.model_a
+                        )]
                     } else {
                         Vec::new()
                     },
@@ -123,29 +149,31 @@ impl CrossModelDualValidator {
             }
         };
 
-        let is_a_reject = text_a.contains("REQUEST_CHANGES")
-            || text_a.contains("REJECT")
-            || text_a.contains("VIOLATION");
-        let is_b_reject = text_b.contains("REQUEST_CHANGES")
-            || text_b.contains("REJECT")
-            || text_b.contains("VIOLATION");
+        let is_a_reject = is_rejection(&text_a);
+        let is_b_reject = is_rejection(&text_b);
 
         let mut discrepancies = Vec::new();
         let agreement_score = if is_a_reject == is_b_reject {
             1.0
         } else {
-            discrepancies.push(
-                "Divergence: Model A and Model B emitted conflicting verdicts on safety invariants"
-                    .to_string(),
-            );
+            discrepancies.push(format!(
+                "Divergence: {} and {} emitted conflicting verdicts on safety invariants",
+                self.model_a, self.model_b
+            ));
             0.5
         };
 
         let is_consensus_reached = agreement_score >= 0.8 && !is_a_reject && !is_b_reject;
         let summary = if is_consensus_reached {
-            "✅ DUAL-MODEL CONSENSUS REACHED: Both Claude Opus 5 and GPT-5.6-Sol verified safety and correctness.".to_string()
+            format!(
+                "✅ DUAL-MODEL CONSENSUS REACHED: both {} and {} verified safety and correctness.",
+                self.model_a, self.model_b
+            )
         } else if is_a_reject || is_b_reject {
-            format!("🚨 CRITICAL SAFETY CONFLICT: Dual verification identified safety rejections (Model A Reject: {}, Model B Reject: {})", is_a_reject, is_b_reject)
+            format!(
+                "🚨 CRITICAL SAFETY CONFLICT: dual verification identified safety rejections ({} reject: {}, {} reject: {})",
+                self.model_a, is_a_reject, self.model_b, is_b_reject
+            )
         } else {
             "⚠️ Partial agreement between peer models.".to_string()
         };

@@ -20,7 +20,7 @@ use anvil::kani_guard::KaniGuard;
 use anvil::microbenchmark_ratchet::{MicroBenchmarkRatchet, MicrobenchmarkSample};
 use anvil::psa_admission_guard::PsaAdmissionGuard;
 use anvil::replay_harness::{DeterministicReplayHarness, ReplayTraceRecord};
-use anvil::rust_skills_guard::RustSkillsGuard;
+use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::schema_evolution::SchemaEvolutionRatchet;
 use anvil::trace_context_guard::TraceContextGuard;
 use anvil::unresolved_review_guard::{ThreadScanner, UnresolvedReviewThread};
@@ -576,7 +576,7 @@ fn test_upgrade_train_green_compatible_patch_upgrade() {
 
 #[test]
 fn test_rust_skills_red_flag_unwrap_in_production() {
-    let guard = RustSkillsGuard::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
     // RED: Production unwrap without error handling
     let bad_diff = create_test_diff_context("src/handler.rs", "+ let value = opt_val.unwrap();");
     let report = guard
@@ -590,7 +590,7 @@ fn test_rust_skills_red_flag_unwrap_in_production() {
 
 #[test]
 fn test_rust_skills_green_question_mark_operator() {
-    let guard = RustSkillsGuard::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
     // GREEN: Idiomatic ? error propagation
     let good_diff = create_test_diff_context(
         "src/handler.rs",
@@ -884,17 +884,27 @@ async fn test_git_hook_provisioning_and_permissions() {
         .unwrap();
 
     let pre_commit = repo_path.join(".git").join("hooks").join("pre-commit");
+    let commit_msg = repo_path.join(".git").join("hooks").join("commit-msg");
     let pre_push = repo_path.join(".git").join("hooks").join("pre-push");
+    let post_merge = repo_path.join(".git").join("hooks").join("post-merge");
 
     assert!(pre_commit.exists(), "pre-commit hook must be created");
+    assert!(commit_msg.exists(), "commit-msg hook must be created");
     assert!(pre_push.exists(), "pre-push hook must be created");
+    assert!(post_merge.exists(), "post-merge hook must be created");
 
     let pre_commit_content = tokio::fs::read_to_string(&pre_commit).await.unwrap();
     assert!(pre_commit_content.contains("cargo fmt"));
     assert!(pre_commit_content.contains("cargo clippy"));
 
+    let commit_msg_content = tokio::fs::read_to_string(&commit_msg).await.unwrap();
+    assert!(commit_msg_content.contains("CONVENTIONAL_REGEX"));
+
     let pre_push_content = tokio::fs::read_to_string(&pre_push).await.unwrap();
     assert!(pre_push_content.contains("red_green_gates_test"));
+
+    let post_merge_content = tokio::fs::read_to_string(&post_merge).await.unwrap();
+    assert!(post_merge_content.contains("Cargo.lock"));
 }
 
 // =========================================================================
@@ -1284,7 +1294,7 @@ fn test_subtle_cell_isolation_nested_subquery_evasion() {
 #[test]
 fn test_subtle_rust_skills_empty_expect_evasion() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let guard = RustSkillsGuard::new(temp_dir.path());
+    let guard = RustLanguagePolicy::new(temp_dir.path());
     // SUBTLE RED: Attempting to bypass unwrap check by using empty expect string
     let subtle_bad_diff =
         create_test_diff_context("src/handler.rs", "+ let value = option_val.expect(\"\");");

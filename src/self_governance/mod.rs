@@ -1,10 +1,19 @@
+pub mod account_pool;
+pub mod deathloop_detector;
 pub mod process_registry;
 pub mod quota_enforcer;
 pub mod resource_reaper;
+pub mod worktree_lease;
 
+pub use account_pool::{
+    AccountPoolManager, AccountQuotaView, AddAccountPayload, AuthType, DrainAccountPayload,
+    ManagedAccount, UsageRecord,
+};
+pub use deathloop_detector::{DeathloopDetector, DeathloopVerdict};
 pub use process_registry::{ProcessRecord, ProcessRegistry};
 pub use quota_enforcer::{QuotaBudgetReport, QuotaEnforcer};
 pub use resource_reaper::{AutonomousResourceReaper, GarbageCollectionReport};
+pub use worktree_lease::{LeaseStore, LeaseVerdict, WorktreeLease};
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,6 +24,7 @@ pub struct SelfGovernor {
     pub registry: Arc<ProcessRegistry>,
     pub quota: Arc<QuotaEnforcer>,
     pub reaper: Arc<AutonomousResourceReaper>,
+    pub deathloop: Arc<DeathloopDetector>,
 }
 
 impl Default for SelfGovernor {
@@ -29,6 +39,7 @@ impl SelfGovernor {
             registry: Arc::new(ProcessRegistry::new()),
             quota: Arc::new(QuotaEnforcer::default()),
             reaper: Arc::new(AutonomousResourceReaper::default()),
+            deathloop: Arc::new(DeathloopDetector::default()),
         }
     }
 
@@ -51,21 +62,21 @@ impl SelfGovernor {
                     governor.registry.complete_task(&task.task_id).await;
                 }
 
-                // 2. Perform periodic resource and worktree garbage collection
-                let _ = governor.reaper.run_sweep(None).await;
+                // 2. Perform periodic resource garbage collection.
+                //
+                // `run_sweep` takes no repo argument: the previous signature
+                // was `run_sweep(Option<&Path>)` and this call site passed
+                // `None`, which skipped the entire worktree path ~8,640 times
+                // a day. The set of worktrees under consideration now comes
+                // from a lease store instead.
+                //
+                // The governor's reaper is built with
+                // `AutonomousResourceReaper::default()`, which carries NO lease
+                // store, so worktree reclaim stays OFF on this cadence. Arming
+                // it means constructing the reaper with `with_lease_store` and
+                // is a deliberate, separate decision.
+                let _ = governor.reaper.run_sweep().await;
             }
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_self_governor_init() {
-        let governor = SelfGovernor::new();
-        governor.spawn_monitoring_daemon();
-        assert_eq!(governor.quota.current_spend_usd(), 0.0);
     }
 }

@@ -61,10 +61,10 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 )
                 .await?;
             let res = state
-                .rust_skills_guard
+                .rust_language_policy
                 .evaluate_rust_quality(&repo_dir, &diff_ctx)?;
             println!(
-                "\n🦀 RustSkillsGuard Result: {}\nFindings: {}\n",
+                "\n🦀 RustLanguagePolicy Result: {}\nFindings: {}\n",
                 res.summary,
                 res.findings.len()
             );
@@ -402,7 +402,14 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
             let res = state
                 .attestation_guard
-                .stamp_lane_receipt(&repo_dir, &repo, pr, &meta.head_ref_oid)
+                .stamp_lane_receipt(
+                    &repo_dir,
+                    &repo,
+                    pr,
+                    &meta.head_ref_oid,
+                    crate::attestation_guard::AttestationGuard::VERDICT_PENDING,
+                    Vec::new(),
+                )
                 .await?;
             println!(
                 "\n🔏 AttestationGuard Result: {}\nPath: {:?}\n",
@@ -469,24 +476,29 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             let diff_content = if let Some(d) = diff {
                 d
             } else {
-                let out = tokio::process::Command::new("git")
-                    .args(["diff", "--cached"])
-                    .output()
-                    .await;
-                if let Ok(o) = out {
-                    if !o.stdout.is_empty() {
-                        String::from_utf8_lossy(&o.stdout).to_string()
-                    } else {
-                        let out_unstaged = tokio::process::Command::new("git")
-                            .args(["diff"])
-                            .output()
-                            .await;
-                        out_unstaged
-                            .map(|u| String::from_utf8_lossy(&u.stdout).to_string())
-                            .unwrap_or_default()
-                    }
+                // Fails closed: a probe that could not read the diff has verified
+                // nothing, so a spawn failure or a timeout must not fall through to
+                // an empty diff and print "PASSED".
+                let mut staged = tokio::process::Command::new("git");
+                staged.args(["diff", "--cached"]);
+                let o = crate::exec::run_bounded(
+                    staged,
+                    crate::exec::ExecClass::Quick,
+                    "git diff --cached",
+                )
+                .await?;
+                if !o.stdout.is_empty() {
+                    String::from_utf8_lossy(&o.stdout).to_string()
                 } else {
-                    String::new()
+                    let mut unstaged = tokio::process::Command::new("git");
+                    unstaged.args(["diff"]);
+                    let u = crate::exec::run_bounded(
+                        unstaged,
+                        crate::exec::ExecClass::Quick,
+                        "git diff",
+                    )
+                    .await?;
+                    String::from_utf8_lossy(&u.stdout).to_string()
                 }
             };
 

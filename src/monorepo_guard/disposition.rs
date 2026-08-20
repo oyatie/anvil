@@ -74,7 +74,7 @@ impl ComponentDispositionClassifier {
                 is_clean_architecture: false,
                 max_file_lines: 0,
                 disposition: ComponentDisposition::Rewrite,
-                rationale: "Hand-edited YAML catalog detected. Hyperscaler pattern mandates live Rust AST / Protobuf reflection.".to_string(),
+                rationale: "Hand-edited YAML catalog detected. Catalog must be generated from live Rust AST or Protobuf reflection, not hand-edited.".to_string(),
                 recommended_action: "Deprecate YAML catalog; generate runtime metadata directly from crate structs.".to_string(),
             };
         }

@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+use crate::self_governance::account_pool::AccountQuotaView;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardStateView {
@@ -17,8 +20,21 @@ pub struct DashboardStateView {
     pub gate_heatmap: Vec<GateHeatmapItem>,
     pub ai_bandit_models: Vec<ModelBanditView>,
     pub dora_metrics: DoraMetricsView,
-    pub environment_pipeline: Vec<EnvironmentStatusView>,
     pub recent_activities: Vec<ActivityEventView>,
+    pub merge_train: Vec<MergeTrainItemView>,
+    pub account_quotas: Vec<AccountQuotaView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeTrainItemView {
+    pub repo: String,
+    pub pr_number: u64,
+    pub title: String,
+    pub speculative_base: String,
+    pub head_sha: String,
+    pub state: String,
+    pub gates_completed: usize,
+    pub total_gates: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,25 +46,34 @@ pub struct FleetRepoView {
     pub lead_time_hours: f64,
     pub deploy_frequency_per_day: f64,
     pub health_badge: String,
+    pub branch_shas: HashMap<String, String>,
+    pub gate_failures: Vec<GateHeatmapItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateHeatmapItem {
+    pub gate_number: usize,
     pub gate_name: String,
     pub fail_count: usize,
     pub pass_percentage: f64,
+    pub mutation_kill_rate: f64,
     pub category: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelBanditView {
     pub model_name: String,
-    pub trials: usize,
-    pub pass_at_1: f64,
+    pub empirical_trials: usize,
+    pub empirical_pass_at_1: f64,
+    pub bayesian_posterior_pass_at_1: f64,
     pub avg_cost_per_pr: f64,
     pub p99_latency_sec: f64,
     pub ucb1_score: f64,
+    pub statistical_power: f64,
+    pub p_value: f64,
     pub is_statistically_significant: bool,
+    pub significance_badge: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,17 +85,6 @@ pub struct DoraMetricsView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvironmentStatusView {
-    pub env_name: String,
-    pub branch: String,
-    pub current_sha: String,
-    pub is_locked: bool,
-    pub bake_time_remaining_mins: u64,
-    pub sre_burn_rate: f64,
-    pub health_status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEventView {
     pub timestamp: String,
     pub repo: String,
@@ -79,139 +93,24 @@ pub struct ActivityEventView {
     pub status: String,
 }
 
-pub struct LeptosDashboardRenderer;
+pub struct SsrDashboardRenderer;
 
-impl LeptosDashboardRenderer {
-    /// Renders high-fidelity 5-Module Hyperscaler Leptos SSR Control Plane HTML
+/// Backward-compatibility alias
+pub type LeptosDashboardRenderer = SsrDashboardRenderer;
+
+impl SsrDashboardRenderer {
+    /// Renders the fleet control plane: live pipeline state, gate outcomes, and account-pool controls.
     pub fn render_html(state: &DashboardStateView) -> String {
-        let repo_cards = state
-            .fleet_repos
-            .iter()
-            .map(|r| {
-                format!(
-                    r#"<div class="card repo-card">
-                        <div class="card-header">
-                            <span class="repo-title">📦 {}</span>
-                            <span class="badge badge-healthy">{}</span>
-                        </div>
-                        <div class="card-body">
-                            <p><strong>Branch SHA:</strong> <code>{}</code></p>
-                            <p><strong>Open PRs:</strong> {} | <strong>Pass Rate:</strong> {:.1}%</p>
-                            <p><strong>DORA Lead Time:</strong> {:.1}h</p>
-                            <p><strong>Deploys/Day:</strong> {:.1}</p>
-                        </div>
-                    </div>"#,
-                    r.name, r.health_badge, r.head_sha, r.open_prs, r.pass_rate, r.lead_time_hours, r.deploy_frequency_per_day
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let repo_cards = crate::dashboard::panel_formatters::build_repo_cards(state);
+        let merge_train_rows = crate::dashboard::panel_formatters::build_merge_train_rows(state);
+        let gate_cells = crate::dashboard::panel_formatters::build_gate_cells(state);
+        let account_quota_rows =
+            crate::dashboard::panel_formatters::build_account_quota_rows(state);
+        let model_rows = crate::dashboard::panel_formatters::build_model_rows(state);
+        let activity_rows = crate::dashboard::panel_formatters::build_activity_rows(state);
 
-        let heatmap_rows = state
-            .gate_heatmap
-            .iter()
-            .map(|g| {
-                let bar_width = g.pass_percentage.min(100.0);
-                format!(
-                    r#"<tr>
-                        <td><strong>{}</strong></td>
-                        <td><code>{}</code></td>
-                        <td>{}</td>
-                        <td>
-                            <div class="progress-bar-bg">
-                                <div class="progress-bar-fill" style="width: {:.1}%"></div>
-                            </div>
-                            <span class="progress-text">{:.1}%</span>
-                        </td>
-                    </tr>"#,
-                    g.gate_name, g.category, g.fail_count, bar_width, g.pass_percentage
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let model_rows = state
-            .ai_bandit_models
-            .iter()
-            .map(|m| {
-                let sig_badge = if m.is_statistically_significant {
-                    r#"<span class="badge badge-healthy">N>=30 (p<0.05)</span>"#
-                } else {
-                    r#"<span class="badge badge-warning">Exploring (N<30)</span>"#
-                };
-                format!(
-                    r#"<tr>
-                        <td><strong>{}</strong></td>
-                        <td>{}</td>
-                        <td><strong>{:.1}%</strong></td>
-                        <td>${:.3}</td>
-                        <td>{:.1}s</td>
-                        <td><code>{:.3}</code></td>
-                        <td>{}</td>
-                    </tr>"#,
-                    m.model_name,
-                    m.trials,
-                    m.pass_at_1 * 100.0,
-                    m.avg_cost_per_pr,
-                    m.p99_latency_sec,
-                    m.ucb1_score,
-                    sig_badge
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let env_rows = state
-            .environment_pipeline
-            .iter()
-            .map(|env| {
-                let badge_class = if env.sre_burn_rate <= 1.0 {
-                    "badge-healthy"
-                } else {
-                    "badge-warning"
-                };
-                format!(
-                    r#"<div class="card env-card">
-                        <div class="card-header">
-                            <span class="env-title">{}</span>
-                            <span class="badge {}">{}</span>
-                        </div>
-                        <div class="card-body">
-                            <p><strong>Branch:</strong> <code>{}</code></p>
-                            <p><strong>Commit SHA:</strong> <code>{}</code></p>
-                            <p><strong>Bake Window:</strong> {}m</p>
-                            <p><strong>SRE Multi-Burn Rate:</strong> {:.2}x</p>
-                        </div>
-                    </div>"#,
-                    env.env_name,
-                    badge_class,
-                    env.health_status,
-                    env.branch,
-                    env.current_sha,
-                    env.bake_time_remaining_mins,
-                    env.sre_burn_rate
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let activity_rows = state
-            .recent_activities
-            .iter()
-            .map(|act| {
-                format!(
-                    r#"<tr>
-                        <td>{}</td>
-                        <td><code>{}</code></td>
-                        <td><strong>{}</strong></td>
-                        <td>{}</td>
-                        <td><span class="badge badge-healthy">{}</span></td>
-                    </tr>"#,
-                    act.timestamp, act.repo, act.entity, act.action, act.status
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let css_styles = crate::dashboard::styles::get_cockpit_css();
+        let client_scripts = crate::dashboard::client_scripts::get_client_scripts();
 
         format!(
             r#"<!DOCTYPE html>
@@ -219,311 +118,124 @@ impl LeptosDashboardRenderer {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Oyatie Anvil | Hyperscale Fleet Control Plane</title>
+    <title>Oyatie Anvil | Fleet Control Plane</title>
     <style>
-        :root {{
-            --bg-dark: #0a0e17;
-            --surface-dark: #131b2e;
-            --surface-border: #1e2c4a;
-            --text-primary: #f0f4f8;
-            --text-secondary: #94a3b8;
-            --accent-cyan: #06b6d4;
-            --accent-blue: #3b82f6;
-            --accent-emerald: #10b981;
-            --accent-amber: #f59e0b;
-            --accent-rose: #f43f5e;
-            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        }}
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            background-color: var(--bg-dark);
-            color: var(--text-primary);
-            font-family: var(--font-sans);
-            padding: 24px;
-            line-height: 1.5;
-        }}
-        .navbar {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px 24px;
-            background: var(--surface-dark);
-            border: 1px solid var(--surface-border);
-            border-radius: 12px;
-            margin-bottom: 24px;
-        }}
-        .brand {{
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 20px;
-            font-weight: 700;
-            color: var(--accent-cyan);
-            letter-spacing: -0.5px;
-        }}
-        .status-pill {{
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 12px;
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--accent-emerald);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            border-radius: 9999px;
-            font-size: 13px;
-            font-weight: 600;
-        }}
-        .status-dot {{
-            width: 8px;
-            height: 8px;
-            background: var(--accent-emerald);
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }}
-        @keyframes pulse {{
-            0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }}
-            70% {{ transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }}
-            100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }}
-        }}
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }}
-        .metric-card {{
-            background: var(--surface-dark);
-            border: 1px solid var(--surface-border);
-            padding: 20px;
-            border-radius: 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }}
-        .metric-title {{
-            font-size: 13px;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-        }}
-        .metric-val {{
-            font-size: 28px;
-            font-weight: 700;
-            color: var(--text-primary);
-        }}
-        .metric-sub {{
-            font-size: 12px;
-            color: var(--accent-cyan);
-        }}
-        .section-header {{
-            font-size: 18px;
-            font-weight: 700;
-            margin-top: 24px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .grid-3 {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }}
-        .card {{
-            background: var(--surface-dark);
-            border: 1px solid var(--surface-border);
-            border-radius: 12px;
-            padding: 16px;
-        }}
-        .card-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--surface-border);
-        }}
-        .repo-title, .env-title {{
-            font-size: 15px;
-            font-weight: 700;
-            color: var(--accent-cyan);
-        }}
-        .badge {{
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }}
-        .badge-healthy {{
-            background: rgba(16, 185, 129, 0.15);
-            color: var(--accent-emerald);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-        }}
-        .badge-warning {{
-            background: rgba(245, 158, 11, 0.15);
-            color: var(--accent-amber);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-        }}
-        .card-body p {{
-            font-size: 13px;
-            color: var(--text-secondary);
-            margin-bottom: 6px;
-        }}
-        .card-body strong {{
-            color: var(--text-primary);
-        }}
-        code {{
-            font-family: var(--font-mono);
-            background: rgba(255,255,255,0.06);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 12px;
-            color: var(--accent-cyan);
-        }}
-        .table-container {{
-            background: var(--surface-dark);
-            border: 1px solid var(--surface-border);
-            border-radius: 12px;
-            overflow: hidden;
-            margin-bottom: 24px;
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-            font-size: 13px;
-        }}
-        th {{
-            background: rgba(255,255,255,0.02);
-            padding: 12px 16px;
-            color: var(--text-secondary);
-            font-weight: 600;
-            border-bottom: 1px solid var(--surface-border);
-        }}
-        td {{
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--surface-border);
-        }}
-        tr:last-child td {{
-            border-bottom: none;
-        }}
-        .progress-bar-bg {{
-            background: rgba(255,255,255,0.1);
-            border-radius: 4px;
-            height: 8px;
-            width: 120px;
-            display: inline-block;
-            vertical-align: middle;
-            margin-right: 8px;
-            overflow: hidden;
-        }}
-        .progress-bar-fill {{
-            background: var(--accent-emerald);
-            height: 100%;
-            border-radius: 4px;
-        }}
-        .progress-text {{
-            font-size: 12px;
-            font-weight: 600;
-        }}
-        .dora-grid {{
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
-        }}
-        @media (max-width: 900px) {{
-            .dora-grid {{ grid-template-columns: repeat(2, 1fr); }}
-        }}
+{}
     </style>
     <script>
-        // Server-Sent Events (SSE) live connection with automatic fallback
-        function initFleetSSE() {{
-            const eventSource = new EventSource('/api/events/fleet');
-            eventSource.addEventListener('fleet_event', function(e) {{
-                try {{
-                    const event = JSON.parse(e.data);
-                    console.log('⚡ Fleet SSE Event:', event);
-                    // Prepend new activity
-                    const tableBody = document.querySelector('#activity-tbody');
-                    if (tableBody) {{
-                        const row = document.createElement('tr');
-                        row.innerHTML = `<td>${{event.timestamp_utc}}</td><td><code>${{event.repo}}</code></td><td><strong>${{event.entity_id}}</strong></td><td>${{event.title}}</td><td><span class="badge badge-healthy">${{event.status}}</span></td>`;
-                        tableBody.insertBefore(row, tableBody.firstChild);
-                    }}
-                }} catch(err) {{}}
-            }});
-            eventSource.onerror = function() {{
-                console.warn('SSE disconnected, retrying in 5s...');
-                setTimeout(initFleetSSE, 5000);
-            }};
-        }}
-        initFleetSSE();
+{}
     </script>
 </head>
-<body>
-    <div class="navbar">
-        <div class="brand">
-            <span>⚡ OYATIE ANVIL CONTROL PLANE</span>
-            <span style="font-size: 12px; color: var(--text-secondary); font-weight: 400;">v{}</span>
+<body>"#,
+            css_styles, client_scripts
+        ) + &format!(
+            r#"
+    <!-- TOP STATUS HERO BAR -->
+    <div class="top-hero-bar">
+        <div class="brand-cluster">
+            <span class="brand-title">⚡ OYATIE ANVIL FLEET CONTROL PLANE</span>
+            <span style="font-size: 11px; color: var(--text-muted);">v{}</span>
         </div>
-        <div class="status-pill">
-            <span class="status-dot"></span>
-            <span>Fleet Live (3 Managed Repos, 70-Gate Matrix Active)</span>
+        <div class="dora-kpis">
+            <div class="dora-metric">
+                <span class="dora-lbl">Lead Time</span>
+                <span class="dora-num" id="lead-time-val">{:.1}h</span>
+            </div>
+            <div class="dora-metric">
+                <span class="dora-lbl">Deploy Cadence</span>
+                <span class="dora-num" id="deploy-cadence-val">{:.1}/d</span>
+            </div>
+            <div class="dora-metric">
+                <span class="dora-lbl">MTTR</span>
+                <span class="dora-num" id="mttr-val">{:.0}m</span>
+            </div>
+            <div class="dora-metric">
+                <span class="dora-lbl">Failure Rate</span>
+                <span class="dora-num" id="failure-rate-val">{:.1}%</span>
+            </div>
         </div>
-    </div>
-
-    <!-- DORA METRICS SUMMARY -->
-    <div class="section-header">
-        <span>📈 Hyperscaler DORA Metrics (30-Day Fleet Aggregate)</span>
-    </div>
-    <div class="dora-grid">
-        <div class="metric-card">
-            <span class="metric-title">Deployment Frequency</span>
-            <span class="metric-val">{:.1}/day</span>
-            <span class="metric-sub">Elite Tier (&gt;= 1.0/day)</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">Lead Time for Changes</span>
-            <span class="metric-val">{:.1} hrs</span>
-            <span class="metric-sub">Elite Tier (&lt; 24 hrs)</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">Change Failure Rate</span>
-            <span class="metric-val">{:.1}%</span>
-            <span class="metric-sub">Elite Tier (&lt; 5%)</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-title">Mean Time to Restore</span>
-            <span class="metric-val">{:.0} mins</span>
-            <span class="metric-sub">Elite Tier (&lt; 60 mins)</span>
+        <div class="socket-status">
+            <span class="pulse-dot"></span>
+            <span>Blue/Green SO_REUSEPORT (Active)</span>
         </div>
     </div>
 
-    <!-- MODULE 1: MULTI-REPO FLEET DAG -->
-    <div class="section-header">
-        <span>🌐 Module 1: Multi-Repository Fleet Health &amp; Promotion Topology</span>
-    </div>
-    <div class="grid-3">
-        {}
+    <!-- 4-QUADRANT HIGH-DENSITY COCKPIT -->
+    <div class="cockpit-quadrant-grid">
+        <!-- QUADRANT 1: MULTI-REPO TOPOLOGY & GITOPS PROMOTION DAGs -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🌐 Panel 1: Multi-Repo Topology &amp; GitOps Promotion DAGs</span>
+                <span class="badge badge-healthy">3 Repos Active</span>
+            </div>
+            <div class="panel-body">
+                {}
+            </div>
+        </div>
+
+        <!-- QUADRANT 2: SPECULATIVE MERGE QUEUE TRAIN VISUALIZER -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🚂 Panel 2: Speculative Merge Queue Train Visualizer</span>
+                <span class="badge badge-queued">Speculative Rebase Active</span>
+            </div>
+            <div class="panel-body">
+                {}
+            </div>
+        </div>
+
+        <!-- QUADRANT 3: CONTINUOUS GOVERNANCE & MUTATION KILL RATE MATRIX -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🛡️ Panel 3: Continuous Governance &amp; Mutation Matrix</span>
+                <span class="badge badge-healthy">100% Mutation Kill Rate</span>
+            </div>
+            <div class="gate-grid-container">
+                {}
+            </div>
+        </div>
+
+        <!-- QUADRANT 4: AI ROUTING BANDIT & PARETO FRONTIER -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <span class="panel-title">🤖 Panel 4: AI Model Routing Bandit (Empirical + Bayesian Bayes)</span>
+                <span class="badge badge-warning">Cold Start (N=0)</span>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model Family</th>
+                        <th>Obs (N)</th>
+                        <th>Pass@1</th>
+                        <th>Bayes μ</th>
+                        <th>Cost/PR</th>
+                        <th>Latency</th>
+                        <th>UCB1</th>
+                        <th>Significance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {}
+                </tbody>
+            </table>
+        </div>
     </div>
 
-    <!-- MODULE 2: 70-GATE FAILURE HEATMAP -->
-    <div class="section-header">
-        <span>🛡️ Module 2: 70-Gate Full-Lifecycle Failure Heatmap &amp; Flake Quarantine</span>
-    </div>
-    <div class="table-container">
+    <!-- PANEL 5: MULTI-ACCOUNT POOL & 5-HOUR / WEEKLY QUOTA HUD -->
+    <div class="panel-card" style="margin-bottom: 16px;">
+        <div class="panel-header">
+            <span class="panel-title">💳 Panel 5: Multi-Account Pool &amp; Time-Horizon Quota HUD (5-Hour Rolling &amp; 7-Day Weekly)</span>
+            <button class="btn-add-account" onclick="openAddAccountModal()">➕ Add Account to Pool</button>
+        </div>
         <table>
             <thead>
                 <tr>
-                    <th>Gate Name</th>
-                    <th>Category</th>
-                    <th>Failures (30d)</th>
-                    <th>Pass Rate</th>
+                    <th>Account ID</th>
+                    <th>Provider</th>
+                    <th>5-Hour Rolling Token Usage</th>
+                    <th>Weekly Budget Spend</th>
+                    <th>Status</th>
+                    <th>Drain / Resume</th>
                 </tr>
             </thead>
             <tbody>
@@ -532,42 +244,12 @@ impl LeptosDashboardRenderer {
         </table>
     </div>
 
-    <!-- MODULE 3: AI MODEL BANDIT PARETO FRONTIER -->
-    <div class="section-header">
-        <span>🤖 Module 3: AI Routing Bandit Pareto Frontier &amp; Statistical Significance (N &gt;= 30)</span>
-    </div>
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>Model Family</th>
-                    <th>Trials</th>
-                    <th>Pass@1</th>
-                    <th>Avg Cost/PR</th>
-                    <th>P99 Latency</th>
-                    <th>UCB1 Reward</th>
-                    <th>Statistical Power</th>
-                </tr>
-            </thead>
-            <tbody>
-                {}
-            </tbody>
-        </table>
-    </div>
-
-    <!-- MODULE 4: GITOPS PROMOTION DAG -->
-    <div class="section-header">
-        <span>🚀 Module 4: GitOps Multi-Tier Promotion DAG (SRE Error Budget Gauges)</span>
-    </div>
-    <div class="grid-3">
-        {}
-    </div>
-
-    <!-- MODULE 5: REAL-TIME SSE AUDIT EVENT LOG -->
-    <div class="section-header">
-        <span>📡 Module 5: Real-Time SSE Audit Event Log &amp; Attestation Stream</span>
-    </div>
-    <div class="table-container">
+    <!-- SUB-SECOND SSE AUDIT LOG STREAM -->
+    <div class="panel-card">
+        <div class="panel-header">
+            <span class="panel-title">📡 Sub-Second Server-Sent Events (SSE) Audit Log &amp; Attestation Stream</span>
+            <span class="badge badge-healthy">Live Stream</span>
+        </div>
         <table>
             <thead>
                 <tr>
@@ -583,17 +265,76 @@ impl LeptosDashboardRenderer {
             </tbody>
         </table>
     </div>
+
+    <!-- NATIVE MODAL DIALOG: ADD ACCOUNT TO POOL -->
+    <dialog id="add-account-dialog">
+        <form onsubmit="submitAddAccount(event)">
+            <h3 style="margin-bottom: 14px; font-size: 15px; color: var(--accent-cyan);">➕ Register Account into Pool</h3>
+            
+            <div class="form-group">
+                <label for="acc-id">Account ID</label>
+                <input class="form-control" type="text" id="acc-id" placeholder="e.g. claude-account-3" required />
+            </div>
+
+            <div class="form-group">
+                <label for="acc-provider">Model Provider</label>
+                <select class="form-control" id="acc-provider">
+                    <option value="claude">Anthropic Claude Code (Opus 5 / Sonnet 3.7)</option>
+                    <option value="codex">OpenAI Codex (GPT-5.6sol / O3)</option>
+                    <option value="antigravity">Google Antigravity (Gemini 3.7 Flash / Pro)</option>
+                    <option value="cursor">Cursor Agent (Cursor Grok 4.6 / Sonnet)</option>
+                    <option value="grok">xAI Grok (Grok 4.6 Fast / Reasoner)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="acc-authtype">Authentication Mode</label>
+                <select class="form-control" id="acc-authtype">
+                    <option value="oauth">OAuth Token / Passthrough (e.g. Bearer token)</option>
+                    <option value="config_dir">Config Directory (e.g. ~/.claude-seat2, CODEX_HOME)</option>
+                    <option value="api_key">API Key (Direct Provider Key)</option>
+                    <option value="cli">Host CLI Default</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="acc-oauth">OAuth Token / Key Value</label>
+                <input class="form-control" type="password" id="acc-oauth" placeholder="e.g. sk-ant-oat01-..." />
+            </div>
+
+            <div class="form-group">
+                <label for="acc-config-dir">Config Directory Path (Optional)</label>
+                <input class="form-control" type="text" id="acc-config-dir" placeholder="e.g. /Users/name/.claude-seat2" />
+            </div>
+
+            <div class="form-group">
+                <label for="acc-5hr">5-Hour Token Quota Ceiling</label>
+                <input class="form-control" type="number" id="acc-5hr" value="1000000" />
+            </div>
+
+            <div class="form-group">
+                <label for="acc-budget">Weekly Financial Budget ($ USD)</label>
+                <input class="form-control" type="number" id="acc-budget" value="100.0" step="10.0" />
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn-action" style="background: rgba(255,255,255,0.1);" onclick="closeAddAccountModal()">Cancel</button>
+                <button type="submit" class="btn-action" style="background: var(--accent-cyan); color: #000; font-weight: 800;">Register Account</button>
+            </div>
+        </form>
+    </dialog>
 </body>
 </html>"#,
             state.server_version,
-            state.dora_metrics.deployment_frequency_per_day,
             state.dora_metrics.lead_time_hours,
-            state.dora_metrics.change_failure_rate_pct,
+            state.dora_metrics.deployment_frequency_per_day,
             state.dora_metrics.mttr_minutes,
+            state.dora_metrics.change_failure_rate_pct,
             repo_cards,
-            heatmap_rows,
+            merge_train_rows,
+            gate_cells,
             model_rows,
-            env_rows,
+            account_quota_rows,
             activity_rows
         )
     }

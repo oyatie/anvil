@@ -130,7 +130,7 @@ impl RoadmapReconciler {
             - **Modified Files**: {} total\n\
             - **Roadmap Alignment**: {}\n\
             - **SSOT Integrity**: {}\n\n\
-            {}\n\n---\n*🤖 Reconciled by Oyatie Anvil*",
+            {}\n\n---\n*🤖 [Reconciled] by Oyatie Anvil*",
             detected_capabilities.join(", "),
             diff_ctx.changed_files.len(),
             if matched_work_items.is_empty() {

@@ -18,7 +18,7 @@ use anvil::kani_guard::KaniGuard;
 use anvil::modularization_guard::ModularizationGuard;
 use anvil::monorepo_guard::MonorepoGuard;
 use anvil::pre_merge_guard::PreMergeGuard;
-use anvil::rust_skills_guard::RustSkillsGuard;
+use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::slo_canary_guard::SloCanaryGuard;
 use anvil::supply_chain_guard::SupplyChainGuard;
 use std::path::PathBuf;
@@ -39,7 +39,7 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
     let debt_guard = DebtShrinkGuard::new();
     let modular_guard = ModularizationGuard::new();
     let coverage_guard = CoverageGuard::new();
-    let rust_skills_guard = RustSkillsGuard::new(repo_dir);
+    let rust_language_policy = RustLanguagePolicy::new(repo_dir);
     let kani_guard = KaniGuard::new();
     let slo_guard = SloCanaryGuard::new();
     let ghost_guard = GhostMigrationHarness::new();

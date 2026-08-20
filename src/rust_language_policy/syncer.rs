@@ -41,17 +41,21 @@ impl UpstreamRustSkillsSyncer {
             if let Some(parent) = self.cache_dir.parent() {
                 let _ = tokio::fs::create_dir_all(parent).await;
             }
-            let output = Command::new("git")
-                .args([
-                    "clone",
-                    "--depth",
-                    "1",
-                    &self.repo_url,
-                    self.cache_dir.to_str().unwrap(),
-                ])
-                .output()
-                .await
-                .context("Failed to clone upstream rust-skills repo")?;
+            let mut clone_cmd = Command::new("git");
+            clone_cmd.args([
+                "clone",
+                "--depth",
+                "1",
+                &self.repo_url,
+                self.cache_dir.to_str().unwrap(),
+            ]);
+            let output = crate::exec::run_bounded(
+                clone_cmd,
+                crate::exec::ExecClass::Vcs,
+                "git clone rust-skills",
+            )
+            .await
+            .context("Failed to clone upstream rust-skills repo")?;
 
             if !output.status.success() {
                 warn!(
@@ -64,11 +68,16 @@ impl UpstreamRustSkillsSyncer {
                 "Pulling latest upstream rust-skills updates in {:?}...",
                 self.cache_dir
             );
-            let _ = Command::new("git")
+            let mut pull_cmd = Command::new("git");
+            pull_cmd
                 .current_dir(&self.cache_dir)
-                .args(["pull", "--ff-only"])
-                .output()
-                .await;
+                .args(["pull", "--ff-only"]);
+            let _ = crate::exec::run_bounded(
+                pull_cmd,
+                crate::exec::ExecClass::Vcs,
+                "git pull --ff-only (rust-skills)",
+            )
+            .await;
         }
 
         self.index_rules_from_cache().await

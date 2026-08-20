@@ -34,22 +34,23 @@ impl IssueReconciler {
             repo
         );
 
-        let output = Command::new("gh")
-            .args([
-                "issue",
-                "list",
-                "--repo",
-                repo,
-                "--state",
-                "open",
-                "--json",
-                "number,title,body,createdAt",
-                "--limit",
-                "100",
-            ])
-            .output()
-            .await
-            .context("Failed to list open issues via gh")?;
+        let mut list_cmd = Command::new("gh");
+        list_cmd.args([
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,body,createdAt",
+            "--limit",
+            "100",
+        ]);
+        let output =
+            crate::exec::run_bounded(list_cmd, crate::exec::ExecClass::Api, "gh issue list")
+                .await
+                .context("Failed to list open issues via gh")?;
 
         if !output.status.success() {
             warn!(
@@ -74,25 +75,44 @@ impl IssueReconciler {
 
             if finding.status != IssueAuditStatus::Active {
                 info!(
-                    "Auto-reconciling issue #{} on {}: {}",
+                    "Proposing resolution for issue #{} on {}: {}",
                     number, repo, finding.resolution_reason
                 );
-                let _ = Command::new("gh")
-                    .args([
-                        "issue",
-                        "close",
-                        &number.to_string(),
-                        "--repo",
-                        repo,
-                        "--comment",
-                        &format!(
-                            "🤖 **Autonomous Anvil Issue Reconciliation**\n\n**Status:** Auto-closed\n**Reason:** {}\n**Verification Receipt:** `{}`\n\n---\n*🤖 Reconciled by Oyatie Anvil*",
-                            finding.resolution_reason,
-                            finding.resolution_receipt.as_deref().unwrap_or("N/A")
-                        ),
-                    ])
-                    .output()
-                    .await;
+                // Propose, do not close.
+                //
+                // `IssueAuditor` reaches its verdict from a title/body substring match
+                // alone -- `ResolvedByCommit` in particular publishes "Trunk CI is green
+                // and passing all gates" without ever querying CI. Closing another
+                // team's issue on an unevaluated factual claim is not recoverable by the
+                // reader, who sees a confident reason and no way to know it was never
+                // checked. Until each verdict is backed by a real signal, Anvil states
+                // its finding and a human decides.
+                let mut close_cmd = Command::new("gh");
+                close_cmd.args([
+                    "issue",
+                    "comment",
+                    &number.to_string(),
+                    "--repo",
+                    repo,
+                    "--body",
+                    &format!(
+                        "**Proposed resolution:** close as `{:?}`\n\n\
+                         **Basis:** {}\n\n\
+                         **How this was determined:** issue title/body pattern match. \
+                         Anvil did not independently verify the underlying condition, so \
+                         this is a proposal, not a finding. Close if it reflects reality.\n\n\
+                         **Receipt:** `{}`\n\n---\n*[Reconciled] by Oyatie Anvil*",
+                        finding.status,
+                        finding.resolution_reason,
+                        finding.resolution_receipt.as_deref().unwrap_or("N/A")
+                    ),
+                ]);
+                let _ = crate::exec::run_bounded(
+                    close_cmd,
+                    crate::exec::ExecClass::Api,
+                    "gh issue close (reconciler)",
+                )
+                .await;
 
                 reconciled.push(ReconciledIssue {
                     issue_number: number,

@@ -1,6 +1,6 @@
 //! Oyatie Anvil: Autonomous Engineering & Hyperscale Delivery Fabric
 //!
-//! Provides the 70-gate PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
+//! Provides the PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
 //! deterministic PR & issue self-healing loops, zero-trust workload validation, and fail-closed merge train orchestration.
 
 pub mod adr_drift_ratchet;
@@ -9,6 +9,7 @@ pub mod api_contract_guard;
 pub mod attestation_guard;
 pub mod auto_rollback;
 pub mod automated_canary;
+pub mod brand_absence;
 pub mod canary_rollout;
 pub mod carbon_aware;
 pub mod cedar_guard;
@@ -41,7 +42,9 @@ pub mod dual_track_build_guard;
 pub mod early_exit_cascade;
 pub mod ephemeral_sandbox;
 pub mod ephemeral_secrets;
+pub mod exec;
 pub mod feature_flag_ratchet;
+pub mod fidelity;
 pub mod finops_ratchet;
 pub mod fixer;
 pub mod flake_bisector;
@@ -68,6 +71,7 @@ pub mod mainline_ci_healer;
 pub mod merge_enlister;
 pub mod metrics;
 pub mod microbenchmark_ratchet;
+pub mod migration;
 pub mod migration_orchestrator;
 pub mod modularization_guard;
 pub mod monorepo_guard;
@@ -77,6 +81,7 @@ pub mod predictive_test_selector;
 pub mod preview_env_reaper;
 pub mod progressive_rollout;
 pub mod psa_admission_guard;
+pub mod publish;
 pub mod queue_healer;
 pub mod recovery;
 pub mod remote_cache_optimizer;
@@ -84,7 +89,7 @@ pub mod replay_harness;
 pub mod review_memory;
 pub mod reviewer;
 pub mod roadmap_guard;
-pub mod rust_skills_guard;
+pub mod rust_language_policy;
 pub mod schema_evolution;
 pub mod self_governance;
 pub mod semantic_abi_ratchet;
@@ -95,6 +100,7 @@ pub mod stack_whitelist_guard;
 pub mod stacked_diffs;
 pub mod state;
 pub mod supply_chain_guard;
+pub mod task_orchestrator;
 pub mod telemetry_store;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;

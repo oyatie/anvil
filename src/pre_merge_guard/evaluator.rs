@@ -54,7 +54,7 @@ use crate::progressive_rollout::ProgressiveRingReport;
 use crate::psa_admission_guard::PsaAdmissionReport;
 use crate::remote_cache_optimizer::CacheReport;
 use crate::replay_harness::ReplayHarnessReport;
-use crate::rust_skills_guard::RustSkillsReport;
+use crate::rust_language_policy::RustSkillsReport;
 use crate::schema_evolution::SchemaEvolutionReport;
 use crate::semantic_abi_ratchet::SemanticAbiReport;
 use crate::shadow_traffic_harness::ShadowTrafficReport;
@@ -156,12 +156,19 @@ impl PreMergeGuard {
         review_verdict: &str,
     ) -> Result<PreMergeCertificationReport> {
         info!(
-            "Evaluating Hyperscale Full-Lifecycle Quality & GitOps Gates for {}#{} (70 gates)...",
-            diff_ctx.repo, diff_ctx.pr_number
+            "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
+            diff_ctx.repo,
+            diff_ctx.pr_number,
+            crate::pre_merge_guard::report::TOTAL_GATES
         );
 
         // 1. Doc Parity
-        let doc_parity_status = if !doc_report.files_created_or_updated.is_empty() {
+        // A probe that could not run is Errored, not Failed: we have no evidence
+        // the documentation is deficient, only that we could not judge it.
+        // Both block (invariant I1).
+        let doc_parity_status = if let Some(err) = &doc_report.errored {
+            GateStatus::Errored(err.clone())
+        } else if !doc_report.files_created_or_updated.is_empty() {
             GateStatus::AutoUpdated
         } else if doc_report.is_sufficient {
             GateStatus::Passed
@@ -207,10 +214,16 @@ impl PreMergeGuard {
         };
 
         // 7. Clean Architecture
-        let clean_arch_status = if clean_arch_report.is_clean {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(clean_arch_report.summary.clone())
+        // A run that classified no layered file measured nothing: reporting it
+        // as Passed would be absent evidence dressed as a pass (invariant I1),
+        // and reporting it as Failed would be a fabricated accusation.
+        let clean_arch_status = match clean_arch_report.measurement.not_measured_reason() {
+            Some(reason) => GateStatus::NotMeasured {
+                gate_id: "clean_arch_status".to_string(),
+                reason: reason.to_string(),
+            },
+            None if clean_arch_report.is_clean => GateStatus::Passed,
+            None => GateStatus::Failed(clean_arch_report.summary.clone()),
         };
 
         // 8. Monorepo Guard
@@ -235,14 +248,11 @@ impl PreMergeGuard {
         };
 
         // 11. Differential Coverage
-        let coverage_status = if coverage_report.is_sufficient {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(format!(
-                "Coverage {:.1}% is below requirement",
-                coverage_report.estimated_diff_coverage_percent
-            ))
-        };
+        // Read the gate's own verdict. Rebuilding it from `is_sufficient` here
+        // discarded `NotMeasured` and formatted `f64::NAN` into the accusation
+        // "Coverage NaN% is below requirement" -- a fabricated failure published on
+        // every PR that adds code without coverage evidence.
+        let coverage_status = coverage_report.gate_status();
 
         // 12. Rust Skills Guard (Upstream 380 Rust Rules)
         let rust_skills_status = if rust_skills_report.is_idiomatic {
@@ -259,11 +269,9 @@ impl PreMergeGuard {
         };
 
         // 14. OpenSLO & Error Budget Burn Rate
-        let slo_status = if slo_report.is_compliant {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(slo_report.summary.clone())
-        };
+        // `is_compliant` is true when nothing was measured, so rebuilding from it
+        // published absent evidence as `Passed` -- the exact inversion I1 forbids.
+        let slo_status = slo_report.status.clone();
 
         // 15. Living ADR Drift Ratchet
         let adr_status = if adr_report.is_compliant {
@@ -336,11 +344,7 @@ impl PreMergeGuard {
         };
 
         // 25. Live Cluster Readback & Drift Auditor
-        let cluster_audit_status = if cluster_audit_report.is_synchronized {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(cluster_audit_report.summary.clone())
-        };
+        let cluster_audit_status = cluster_audit_report.status.clone();
 
         // 26. Database Expand-Contract Lifecycle
         let migration_orch_status = if migration_orch_report.is_ordered {
@@ -350,11 +354,7 @@ impl PreMergeGuard {
         };
 
         // 27. CI Wallclock & Compute Cost Ratchet
-        let ci_wallclock_status = if ci_wallclock_report.is_acceptable {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(ci_wallclock_report.summary.clone())
-        };
+        let ci_wallclock_status = ci_wallclock_report.status.clone();
 
         // 28. DAG Predictive Test Selection
         let predictive_test_status = if predictive_test_report.is_optimized {
@@ -371,11 +371,7 @@ impl PreMergeGuard {
         };
 
         // 30. Remote Sccache Cache Alignment
-        let remote_cache_status = if remote_cache_report.is_cache_aligned {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(remote_cache_report.summary.clone())
-        };
+        let remote_cache_status = remote_cache_report.status.clone();
 
         // 31. Runner SKU Tiering
         let runner_economics_status = if runner_economics_report.is_cost_optimal {
@@ -413,11 +409,7 @@ impl PreMergeGuard {
         };
 
         // 36. Production Dark-Traffic Shadow Replay
-        let shadow_traffic_status = if shadow_traffic_report.is_verified {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(shadow_traffic_report.summary.clone())
-        };
+        let shadow_traffic_status = shadow_traffic_report.status.clone();
 
         // 37. Zero-Unresolved-Comments Review Gate
         let unresolved_review_status = if unresolved_review_report.is_clean {
@@ -466,14 +458,11 @@ impl PreMergeGuard {
         };
 
         // 43. Automated Canary Analysis (ACA)
-        let automated_canary_status = if aca_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(
-                "Statistical canary evaluation detected P99 latency or error divergence."
-                    .to_string(),
-            )
-        };
+        // Read the gate's own verdict. Rebuilding it from `passed` discarded
+        // `NotMeasured` and republished an unqueried canary as `Passed`, while a
+        // `false` produced the accusation "detected P99 latency divergence" over
+        // samples nobody had read.
+        let automated_canary_status = aca_report.status.clone();
 
         // 44. Progressive Rollout Rings
         let progressive_ring_status = if ring_report.passed {
@@ -518,22 +507,14 @@ impl PreMergeGuard {
         };
 
         // 49. Stacked Diffs & PR DAG Synchronization
-        let stacked_diffs_status = if stacked_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(
-                "Stacked PR DAG detected out-of-order rebase dependency.".to_string(),
-            )
-        };
+        // As above: `passed` is `plan.atomic_merge_ready`, which is true for a
+        // stack that was never read.
+        let stacked_diffs_status = stacked_report.status.clone();
 
         // 50. Microbenchmark Hotpath Ratchet
-        let microbench_status = if microbench_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(
-                "Microbenchmark analyzer detected sub-microsecond hotpath regression.".to_string(),
-            )
-        };
+        // As above: `passed` is arithmetic over a caller-supplied sample, and no
+        // benchmark produced one.
+        let microbench_status = microbench_report.status.clone();
 
         // 51. Jittered Exponential Backoff Gate
         let jittered_backoff_status = if jittered_report.passed {
@@ -654,13 +635,21 @@ impl PreMergeGuard {
         };
 
         // 69. AI Code Review & 16-Lens Invariant Gate
-        let review_verdict_status = if review_verdict == "APPROVE" || review_verdict == "COMMENT" {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(format!(
+        //
+        // Only an explicit APPROVE or COMMENT from a successfully parsed response
+        // may pass. VERDICT_ERRORED means the harness obtained no review at all —
+        // that is Errored, not Failed, because the model did not judge the code
+        // adversely; the review simply did not happen. Both block (invariant I1).
+        let review_verdict_status = match review_verdict {
+            "APPROVE" | "COMMENT" => GateStatus::Passed,
+            crate::reviewer::VERDICT_ERRORED => GateStatus::Errored(
+                "AI Code Review produced no parseable verdict; the review did not complete"
+                    .to_string(),
+            ),
+            other => GateStatus::Failed(format!(
                 "AI Code Review & 16-Lens Matrix issued blocking verdict: {}",
-                review_verdict
-            ))
+                other
+            )),
         };
 
         let is_certified_ready = doc_parity_status.is_acceptable()
@@ -805,7 +794,7 @@ impl PreMergeGuard {
             is_certified_ready,
         );
 
-        Ok(PreMergeCertificationReport {
+        let mut report = PreMergeCertificationReport {
             is_certified_ready,
             doc_parity_status,
             cedar_status,
@@ -875,7 +864,11 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
+            unmeasured_gates: Vec::new(),
             summary_markdown,
-        })
+        };
+        // Populate from the statuses just assigned, so the field can never drift.
+        report.recompute_unmeasured();
+        Ok(report)
     }
 }

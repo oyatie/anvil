@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
@@ -73,14 +73,23 @@ impl UnresolvedReviewGuard {
             pr = pr_number
         );
 
-        let output = tokio::process::Command::new("gh")
-            .args(["api", "graphql", "-f", &format!("query={}", query)])
-            .output()
-            .await;
+        let mut gh_cmd = tokio::process::Command::new("gh");
+        gh_cmd.args(["api", "graphql", "-f", &format!("query={}", query)]);
+        // Fail closed: this guard blocks merge-queue admission, so a query that
+        // never completed (spawn failure or the api-class timeout) must not fall
+        // through to an empty thread list and report "zero unresolved comments".
+        let output = crate::exec::run_bounded(
+            gh_cmd,
+            crate::exec::ExecClass::Api,
+            "gh api graphql (unresolved review threads)",
+        )
+        .await
+        .context("Failed to query PR review threads")?;
 
         let mut unresolved = Vec::new();
 
-        if let Ok(out) = output {
+        {
+            let out = output;
             if out.status.success() {
                 if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                     if let Some(nodes) = val["data"]["repository"]["pullRequest"]["reviewThreads"]

@@ -196,11 +196,16 @@ impl FixEngine {
         if !output.status.success() {
             error!("agy returned non-zero status: {}", output.status);
             warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
         }
 
-        Ok(stdout_str)
+        // Same rule as the queue healer, and for the same reason: this agent
+        // edits the workspace directly, so a run that died mid-edit has left
+        // the tree in a state nobody chose. Partial output is not partial
+        // success.
+        crate::queue_healer::interpret_agy_outcome(
+            output.status.success(),
+            &stdout_str,
+            &stderr_str,
+        )
     }
 }

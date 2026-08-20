@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -288,12 +288,13 @@ Write the policy files directly to the workspace now."#####,
                 output.status
             );
             warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
         }
 
-        Ok(stdout_str)
+        crate::queue_healer::interpret_agy_outcome(
+            output.status.success(),
+            &stdout_str,
+            &stderr_str,
+        )
     }
 }
 

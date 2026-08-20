@@ -34,22 +34,23 @@ impl IssueReconciler {
             repo
         );
 
-        let output = Command::new("gh")
-            .args([
-                "issue",
-                "list",
-                "--repo",
-                repo,
-                "--state",
-                "open",
-                "--json",
-                "number,title,body,createdAt",
-                "--limit",
-                "100",
-            ])
-            .output()
-            .await
-            .context("Failed to list open issues via gh")?;
+        let mut list_cmd = Command::new("gh");
+        list_cmd.args([
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,body,createdAt",
+            "--limit",
+            "100",
+        ]);
+        let output =
+            crate::exec::run_bounded(list_cmd, crate::exec::ExecClass::Api, "gh issue list")
+                .await
+                .context("Failed to list open issues via gh")?;
 
         if !output.status.success() {
             warn!(
@@ -77,22 +78,26 @@ impl IssueReconciler {
                     "Auto-reconciling issue #{} on {}: {}",
                     number, repo, finding.resolution_reason
                 );
-                let _ = Command::new("gh")
-                    .args([
-                        "issue",
-                        "close",
-                        &number.to_string(),
-                        "--repo",
-                        repo,
-                        "--comment",
-                        &format!(
-                            "🤖 **Autonomous Anvil Issue Reconciliation**\n\n**Status:** Auto-closed\n**Reason:** {}\n**Verification Receipt:** `{}`\n\n---\n*🤖 Reconciled by Oyatie Anvil*",
-                            finding.resolution_reason,
-                            finding.resolution_receipt.as_deref().unwrap_or("N/A")
-                        ),
-                    ])
-                    .output()
-                    .await;
+                let mut close_cmd = Command::new("gh");
+                close_cmd.args([
+                    "issue",
+                    "close",
+                    &number.to_string(),
+                    "--repo",
+                    repo,
+                    "--comment",
+                    &format!(
+                        "🤖 **Autonomous Anvil Issue Reconciliation**\n\n**Status:** Auto-closed\n**Reason:** {}\n**Verification Receipt:** `{}`\n\n---\n*🤖 Reconciled by Oyatie Anvil*",
+                        finding.resolution_reason,
+                        finding.resolution_receipt.as_deref().unwrap_or("N/A")
+                    ),
+                ]);
+                let _ = crate::exec::run_bounded(
+                    close_cmd,
+                    crate::exec::ExecClass::Api,
+                    "gh issue close (reconciler)",
+                )
+                .await;
 
                 reconciled.push(ReconciledIssue {
                     issue_number: number,

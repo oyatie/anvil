@@ -183,6 +183,11 @@ pub async fn run_server(state: AppState) -> Result<()> {
             // stdin removes that handle while leaving stdout/stderr inherited so
             // forwarder diagnostics still reach the log.
             fwd.stdin(std::process::Stdio::null());
+            // `gh webhook forward` is a deliberately unbounded daemon child, so it
+            // cannot go through `run_bounded` (any ExecClass timeout would sever
+            // webhook delivery). It still gets the other half of I5: `kill_on_drop`
+            // so an aborted boot task reaps the forwarder instead of orphaning it.
+            fwd.kill_on_drop(true);
             fwd.args([
                 "webhook",
                 "forward",
@@ -270,6 +275,10 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
             let mut cmd = Command::new("gh");
             // See the boot-time forwarder: keep the child off the operator's tty.
             cmd.stdin(std::process::Stdio::null());
+            // Unbounded by design, same as the boot-time forwarder: this child is
+            // the webhook transport and must outlive any ExecClass bound. It takes
+            // `kill_on_drop` so aborting this task does not orphan a `gh` process.
+            cmd.kill_on_drop(true);
             cmd.args([
                 "webhook",
                 "forward",
@@ -299,7 +308,9 @@ pub async fn check_environment(github_client: &GitHubClient, config: &Config) ->
     println!("\n🔍 Checking Oyatie Autonomous Engineering Pipeline Environment:\n");
 
     print!("1. GitHub CLI (`gh`): ");
-    match Command::new("gh").arg("--version").output().await {
+    let mut gh_ver = Command::new("gh");
+    gh_ver.arg("--version");
+    match crate::exec::run_bounded(gh_ver, crate::exec::ExecClass::Quick, "gh --version").await {
         Ok(out) if out.status.success() => {
             let version = String::from_utf8_lossy(&out.stdout)
                 .lines()
@@ -318,13 +329,17 @@ pub async fn check_environment(github_client: &GitHubClient, config: &Config) ->
     }
 
     print!("3. Antigravity CLI (`agy`): ");
-    match Command::new("agy").arg("--help").output().await {
+    let mut agy_help = Command::new("agy");
+    agy_help.arg("--help");
+    match crate::exec::run_bounded(agy_help, crate::exec::ExecClass::Quick, "agy --help").await {
         Ok(out) if out.status.success() => println!("✅ Ready"),
         _ => println!("❌ 'agy' not found in PATH"),
     }
 
     print!("4. Git: ");
-    match Command::new("git").arg("--version").output().await {
+    let mut git_ver = Command::new("git");
+    git_ver.arg("--version");
+    match crate::exec::run_bounded(git_ver, crate::exec::ExecClass::Quick, "git --version").await {
         Ok(out) if out.status.success() => {
             let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
             println!("✅ Found ({})", ver);

@@ -7,6 +7,7 @@ pub mod fork_guard;
 pub mod graphql;
 pub mod reviews;
 
+use crate::exec::{run_bounded, ExecClass};
 use crate::reviewer::ReviewResponse;
 pub use graphql::{GitHubGraphQLClient, ReviewThreadNode};
 
@@ -77,9 +78,9 @@ impl GitHubClient {
     }
 
     pub async fn check_auth(&self) -> Result<()> {
-        let output = Command::new("gh")
-            .args(["auth", "status"])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args(["auth", "status"]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh auth status")
             .await
             .context("Failed to execute `gh auth status`")?;
 
@@ -91,20 +92,24 @@ impl GitHubClient {
     }
 
     pub async fn ensure_webhook_extension(&self) -> Result<()> {
-        let output = Command::new("gh")
-            .args(["extension", "list"])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args(["extension", "list"]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh extension list")
             .await
             .context("Failed to list gh extensions")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains("gh-webhook") && !stdout.contains("cli/gh-webhook") {
             info!("Installing gh-webhook extension...");
-            let install_out = Command::new("gh")
-                .args(["extension", "install", "cli/gh-webhook"])
-                .output()
-                .await
-                .context("Failed to install gh-webhook")?;
+            let mut install_cmd = Command::new("gh");
+            install_cmd.args(["extension", "install", "cli/gh-webhook"]);
+            let install_out = run_bounded(
+                install_cmd,
+                ExecClass::Vcs,
+                "gh extension install cli/gh-webhook",
+            )
+            .await
+            .context("Failed to install gh-webhook")?;
 
             if !install_out.status.success() {
                 warn!(
@@ -117,10 +122,9 @@ impl GitHubClient {
     }
 
     pub async fn cleanup_stale_forward_webhooks(&self, repo: &str) -> Result<()> {
-        let list_out = Command::new("gh")
-            .args(["api", &format!("repos/{}/hooks", repo)])
-            .output()
-            .await;
+        let mut list_cmd = Command::new("gh");
+        list_cmd.args(["api", &format!("repos/{}/hooks", repo)]);
+        let list_out = run_bounded(list_cmd, ExecClass::Api, "gh api repos/:repo/hooks").await;
 
         if let Ok(out) = list_out {
             if out.status.success() {
@@ -130,15 +134,19 @@ impl GitHubClient {
                             let url = config.get("url").and_then(|u| u.as_str()).unwrap_or("");
                             if url.contains("forwarder") || url.contains("webhook.github.com") {
                                 if let Some(id) = hook.get("id").and_then(|i| i.as_u64()) {
-                                    let _ = Command::new("gh")
-                                        .args([
-                                            "api",
-                                            "--method",
-                                            "DELETE",
-                                            &format!("repos/{}/hooks/{}", repo, id),
-                                        ])
-                                        .output()
-                                        .await;
+                                    let mut del_cmd = Command::new("gh");
+                                    del_cmd.args([
+                                        "api",
+                                        "--method",
+                                        "DELETE",
+                                        &format!("repos/{}/hooks/{}", repo, id),
+                                    ]);
+                                    let _ = run_bounded(
+                                        del_cmd,
+                                        ExecClass::Api,
+                                        "gh api DELETE stale forwarder webhook",
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -150,17 +158,17 @@ impl GitHubClient {
     }
 
     pub async fn fetch_pr_metadata(&self, repo: &str, pr_number: u64) -> Result<PrMetadata> {
-        let output = Command::new("gh")
-            .args([
-                "pr",
-                "view",
-                &pr_number.to_string(),
-                "--repo",
-                repo,
-                "--json",
-                "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state,isCrossRepository,headRepositoryOwner",
-            ])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args([
+            "pr",
+            "view",
+            &pr_number.to_string(),
+            "--repo",
+            repo,
+            "--json",
+            "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state,isCrossRepository,headRepositoryOwner",
+        ]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh pr view")
             .await
             .context("Failed to fetch PR details from GitHub CLI")?;
 
@@ -208,17 +216,17 @@ impl GitHubClient {
     }
 
     pub async fn post_pr_comment(&self, repo: &str, pr_number: u64, body: &str) -> Result<()> {
-        let output = Command::new("gh")
-            .args([
-                "pr",
-                "comment",
-                &pr_number.to_string(),
-                "--repo",
-                repo,
-                "--body",
-                body,
-            ])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args([
+            "pr",
+            "comment",
+            &pr_number.to_string(),
+            "--repo",
+            repo,
+            "--body",
+            body,
+        ]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh pr comment")
             .await
             .context("Failed to post comment via `gh pr comment`")?;
 
@@ -243,9 +251,9 @@ impl GitHubClient {
         body: &str,
     ) -> Result<()> {
         let list_endpoint = format!("repos/{}/issues/{}/comments", repo, pr_number);
-        let output = Command::new("gh")
-            .args(["api", &list_endpoint])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args(["api", &list_endpoint]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh api list PR issue comments")
             .await
             .context("Failed to fetch PR issue comments from GitHub API")?;
 
@@ -266,17 +274,17 @@ impl GitHubClient {
                         existing.id, repo, pr_number
                     );
                     let patch_endpoint = format!("repos/{}/issues/comments/{}", repo, existing.id);
-                    let patch_out = Command::new("gh")
-                        .args([
-                            "api",
-                            "--method",
-                            "PATCH",
-                            &patch_endpoint,
-                            "-f",
-                            &format!("body={}", body),
-                        ])
-                        .output()
-                        .await;
+                    let mut patch_cmd = Command::new("gh");
+                    patch_cmd.args([
+                        "api",
+                        "--method",
+                        "PATCH",
+                        &patch_endpoint,
+                        "-f",
+                        &format!("body={}", body),
+                    ]);
+                    let patch_out =
+                        run_bounded(patch_cmd, ExecClass::Api, "gh api PATCH issue comment").await;
 
                     if let Ok(res) = patch_out {
                         if res.status.success() {
@@ -298,9 +306,9 @@ impl GitHubClient {
         pr_number: u64,
     ) -> Result<Vec<GitHubReviewComment>> {
         let endpoint = format!("repos/{}/pulls/{}/comments", repo, pr_number);
-        let output = Command::new("gh")
-            .args(["api", &endpoint])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args(["api", &endpoint]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh api list PR review comments")
             .await
             .context("Failed to fetch review comments from GitHub API")?;
 
@@ -324,16 +332,16 @@ impl GitHubClient {
             "repos/{}/pulls/{}/comments/{}/replies",
             repo, pr_number, comment_id
         );
-        let output = Command::new("gh")
-            .args([
-                "api",
-                "--method",
-                "POST",
-                &endpoint,
-                "-f",
-                &format!("body={}", body),
-            ])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args([
+            "api",
+            "--method",
+            "POST",
+            &endpoint,
+            "-f",
+            &format!("body={}", body),
+        ]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh api POST review comment reply")
             .await
             .context("Failed to reply to review comment")?;
 
@@ -351,18 +359,18 @@ impl GitHubClient {
 
     /// Fetches all open pull requests for a given repository
     pub async fn list_open_prs(&self, repo: &str) -> Result<Vec<PrMetadata>> {
-        let output = Command::new("gh")
-            .args([
-                "pr",
-                "list",
-                "--repo",
-                repo,
-                "--state",
-                "open",
-                "--json",
-                "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state,isCrossRepository,headRepositoryOwner",
-            ])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args([
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state,isCrossRepository,headRepositoryOwner",
+        ]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh pr list --state open")
             .await
             .context("Failed to list open PRs from GitHub CLI")?;
 
@@ -392,9 +400,9 @@ impl GitHubClient {
     /// Fetches the latest commit SHA for a specific branch
     pub async fn fetch_branch_sha(&self, repo: &str, branch: &str) -> Result<String> {
         let endpoint = format!("repos/{}/commits/{}", repo, branch);
-        let output = Command::new("gh")
-            .args(["api", &endpoint, "--jq", ".sha"])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args(["api", &endpoint, "--jq", ".sha"]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh api branch commit sha")
             .await
             .context("Failed to fetch branch commit SHA from GitHub API")?;
 
@@ -410,18 +418,18 @@ impl GitHubClient {
     /// Fetches merge queue depth for a branch
     pub async fn fetch_merge_queue_depth(&self, repo: &str, _branch: &str) -> Result<usize> {
         // Query PRs in merge_queue or currently running checks in merge group
-        let output = Command::new("gh")
-            .args([
-                "pr",
-                "list",
-                "--repo",
-                repo,
-                "--search",
-                "status:in-progress",
-                "--json",
-                "number",
-            ])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args([
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--search",
+            "status:in-progress",
+            "--json",
+            "number",
+        ]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh pr list merge queue depth")
             .await
             .context("Failed to fetch merge queue depth")?;
 
@@ -453,20 +461,20 @@ impl GitHubClient {
         }
 
         // 1. Fetch merged PRs
-        let pr_output = Command::new("gh")
-            .args([
-                "pr",
-                "list",
-                "--repo",
-                repo,
-                "--state",
-                "merged",
-                "--limit",
-                "20",
-                "--json",
-                "number,createdAt,mergedAt",
-            ])
-            .output()
+        let mut pr_cmd = Command::new("gh");
+        pr_cmd.args([
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "merged",
+            "--limit",
+            "20",
+            "--json",
+            "number,createdAt,mergedAt",
+        ]);
+        let pr_output = run_bounded(pr_cmd, ExecClass::Api, "gh pr list --state merged (DORA)")
             .await
             .context("Failed to fetch merged PRs for DORA calculation")?;
 
@@ -513,18 +521,18 @@ impl GitHubClient {
             updated_at: String,
         }
 
-        let run_output = Command::new("gh")
-            .args([
-                "run",
-                "list",
-                "--repo",
-                repo,
-                "--limit",
-                "20",
-                "--json",
-                "conclusion,createdAt,updatedAt",
-            ])
-            .output()
+        let mut run_cmd = Command::new("gh");
+        run_cmd.args([
+            "run",
+            "list",
+            "--repo",
+            repo,
+            "--limit",
+            "20",
+            "--json",
+            "conclusion,createdAt,updatedAt",
+        ]);
+        let run_output = run_bounded(run_cmd, ExecClass::Api, "gh run list (DORA)")
             .await
             .context("Failed to fetch workflow runs for CFR calculation")?;
 

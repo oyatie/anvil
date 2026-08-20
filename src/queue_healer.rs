@@ -67,40 +67,58 @@ impl QueueHealer {
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
         // 1. Fetch latest main and checkout PR branch
-        let _ = Command::new("git")
+        let mut fetch_main_cmd = Command::new("git");
+        fetch_main_cmd
             .current_dir(&repo_dir)
-            .args(["fetch", "origin", "main", "--prune"])
-            .output()
-            .await;
+            .args(["fetch", "origin", "main", "--prune"]);
+        let _ = crate::exec::run_bounded(
+            fetch_main_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git fetch origin main (queue healer)",
+        )
+        .await;
 
-        let _ = Command::new("git")
-            .current_dir(&repo_dir)
-            .args([
-                "fetch",
-                "origin",
-                &format!("pull/{}/head", pr_number),
-                "--force",
-            ])
-            .output()
-            .await;
+        let mut fetch_pr_cmd = Command::new("git");
+        fetch_pr_cmd.current_dir(&repo_dir).args([
+            "fetch",
+            "origin",
+            &format!("pull/{}/head", pr_number),
+            "--force",
+        ]);
+        let _ = crate::exec::run_bounded(
+            fetch_pr_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git fetch pull head (queue healer)",
+        )
+        .await;
 
         let branch_name = format!("pr-{}", pr_number);
-        let _ = Command::new("git")
+        let mut checkout_cmd = Command::new("git");
+        checkout_cmd
             .current_dir(&repo_dir)
-            .args(["checkout", "-B", &branch_name, "FETCH_HEAD"])
-            .output()
-            .await;
+            .args(["checkout", "-B", &branch_name, "FETCH_HEAD"]);
+        let _ = crate::exec::run_bounded(
+            checkout_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git checkout -B (queue healer)",
+        )
+        .await;
 
         // 2. Speculatively merge origin/main into the PR branch
         info!(
             "Speculatively merging origin/main into {} for {}#{}...",
             branch_name, repo, pr_number
         );
-        let merge_out = Command::new("git")
+        let mut merge_cmd = Command::new("git");
+        merge_cmd
             .current_dir(&repo_dir)
-            .args(["merge", "origin/main", "--no-edit"])
-            .output()
-            .await?;
+            .args(["merge", "origin/main", "--no-edit"]);
+        let merge_out = crate::exec::run_bounded(
+            merge_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git merge origin/main (queue healer)",
+        )
+        .await?;
 
         let has_merge_conflict = !merge_out.status.success();
         let conflict_details = if has_merge_conflict {
@@ -150,19 +168,27 @@ Apply all necessary file edits directly in the repository workspace now."#####,
         }
 
         // 5. Commit and push the healed branch
-        let status_out = Command::new("git")
+        let mut status_cmd = Command::new("git");
+        status_cmd
             .current_dir(&repo_dir)
-            .args(["status", "--porcelain"])
-            .output()
-            .await?;
+            .args(["status", "--porcelain"]);
+        let status_out = crate::exec::run_bounded(
+            status_cmd,
+            crate::exec::ExecClass::Quick,
+            "git status --porcelain (queue healer)",
+        )
+        .await?;
 
         let changes = String::from_utf8_lossy(&status_out.stdout);
         if !changes.trim().is_empty() {
-            let _ = Command::new("git")
-                .current_dir(&repo_dir)
-                .args(["add", "-A"])
-                .output()
-                .await;
+            let mut add_cmd = Command::new("git");
+            add_cmd.current_dir(&repo_dir).args(["add", "-A"]);
+            let _ = crate::exec::run_bounded(
+                add_cmd,
+                crate::exec::ExecClass::Quick,
+                "git add -A (queue healer)",
+            )
+            .await;
 
             let commit_msg = format!(
                 "fix(merge-train): auto-heal merge queue divergence for PR #{}\n\n\
@@ -171,11 +197,16 @@ Apply all necessary file edits directly in the repository workspace now."#####,
                 *🤖 Healed by Oyatie Anvil*",
                 pr_number
             );
-            let commit_out = Command::new("git")
+            let mut commit_cmd = Command::new("git");
+            commit_cmd
                 .current_dir(&repo_dir)
-                .args(["commit", "-m", &commit_msg])
-                .output()
-                .await?;
+                .args(["commit", "-m", &commit_msg]);
+            let commit_out = crate::exec::run_bounded(
+                commit_cmd,
+                crate::exec::ExecClass::Quick,
+                "git commit (queue healer)",
+            )
+            .await?;
 
             if commit_out.status.success() {
                 // Never push to a branch that belongs to a fork; see github::fork_guard.
@@ -185,11 +216,16 @@ Apply all necessary file edits directly in the repository workspace now."#####,
                     meta.is_cross_repository,
                 )?;
                 let push_target = format!("HEAD:{}", meta.head_ref_name);
-                let push_out = Command::new("git")
+                let mut push_cmd = Command::new("git");
+                push_cmd
                     .current_dir(&repo_dir)
-                    .args(["push", "origin", &push_target])
-                    .output()
-                    .await?;
+                    .args(["push", "origin", &push_target]);
+                let push_out = crate::exec::run_bounded(
+                    push_cmd,
+                    crate::exec::ExecClass::Vcs,
+                    "git push (queue healer)",
+                )
+                .await?;
 
                 if push_out.status.success() {
                     info!(
@@ -218,13 +254,24 @@ Apply all necessary file edits directly in the repository workspace now."#####,
 
     async fn run_local_test_gate(&self, repo_dir: &Path) -> Result<bool> {
         if repo_dir.join("Cargo.toml").exists() {
-            let check = Command::new("cargo")
-                .current_dir(repo_dir)
-                .arg("check")
-                .output()
-                .await;
-            if let Ok(out) = check {
-                if !out.status.success() {
+            let mut check_cmd = Command::new("cargo");
+            check_cmd.current_dir(repo_dir).arg("check");
+            let check = crate::exec::run_bounded(
+                check_cmd,
+                crate::exec::ExecClass::Build,
+                "cargo check (queue healer test gate)",
+            )
+            .await;
+            match check {
+                Ok(out) => {
+                    if !out.status.success() {
+                        return Ok(false);
+                    }
+                }
+                // Fail closed: a check that never completed (spawn failure or the
+                // build timeout) is not a passing test gate.
+                Err(e) => {
+                    warn!("cargo check did not complete in queue healer gate: {}", e);
                     return Ok(false);
                 }
             }
@@ -245,7 +292,10 @@ Apply all necessary file edits directly in the repository workspace now."#####,
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd.output().await.context("Failed to run agy command")?;
+        let output =
+            crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy (queue healer)")
+                .await
+                .context("Failed to run agy command")?;
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 

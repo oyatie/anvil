@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::process::Command;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocsAsCodeReport {
@@ -76,15 +76,28 @@ impl DocsAsCodeGuard {
         // Run cargo test --doc if Rust files were modified and Cargo.toml exists
         let mut doctest_success = true;
         if rust_files_modified && repo_dir.join("Cargo.toml").exists() {
-            let out = Command::new("cargo")
+            let mut doctest_cmd = Command::new("cargo");
+            doctest_cmd
                 .current_dir(repo_dir)
-                .args(["test", "--doc", "--workspace"])
-                .output()
-                .await;
+                .args(["test", "--doc", "--workspace"]);
 
-            if let Ok(res) = out {
-                doctest_success = res.status.success();
-            }
+            let out = crate::exec::run_bounded(
+                doctest_cmd,
+                crate::exec::ExecClass::Build,
+                "cargo test --doc --workspace",
+            )
+            .await;
+
+            // Fail closed: a doctest run that could not be executed (or that was
+            // killed at the build timeout) produced no evidence, so it must not
+            // leave `doctest_success` at its optimistic default.
+            doctest_success = match out {
+                Ok(res) => res.status.success(),
+                Err(e) => {
+                    warn!("cargo test --doc did not complete: {}", e);
+                    false
+                }
+            };
         }
 
         let is_compliant = missing_docstrings.is_empty() && doctest_success;

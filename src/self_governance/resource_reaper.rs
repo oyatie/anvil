@@ -35,11 +35,14 @@ impl AutonomousResourceReaper {
         // 1. Clean Git worktrees if repo_dir provided
         if let Some(dir) = repo_dir {
             if dir.join(".git").exists() {
-                let cmd = tokio::process::Command::new("git")
-                    .args(["worktree", "prune"])
-                    .current_dir(dir)
-                    .output()
-                    .await;
+                let mut prune_cmd = tokio::process::Command::new("git");
+                prune_cmd.args(["worktree", "prune"]).current_dir(dir);
+                let cmd = crate::exec::run_bounded(
+                    prune_cmd,
+                    crate::exec::ExecClass::Quick,
+                    "git worktree prune",
+                )
+                .await;
 
                 if let Ok(out) = cmd {
                     if out.status.success() {

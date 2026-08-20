@@ -11,6 +11,12 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
 
     match cli.command.unwrap_or(Commands::Serve) {
         Commands::Serve => {
+            // Boot invariant: no managed clone may be the tree this binary runs
+            // from. Fails closed before the first webhook is accepted.
+            state
+                .config
+                .assert_managed_clones_are_not_this_tree()
+                .await?;
             server::run_server(state).await?;
         }
         Commands::Review { repo, pr, force } => {

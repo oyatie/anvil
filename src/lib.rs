@@ -71,6 +71,7 @@ pub mod mainline_ci_healer;
 pub mod merge_enlister;
 pub mod metrics;
 pub mod microbenchmark_ratchet;
+pub mod migration;
 pub mod migration_orchestrator;
 pub mod modularization_guard;
 pub mod monorepo_guard;

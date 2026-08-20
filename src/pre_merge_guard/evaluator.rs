@@ -154,6 +154,7 @@ impl PreMergeGuard {
         attestation_report: &AttestationReport,
         test_suite_passed: bool,
         review_verdict: &str,
+        shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
     ) -> Result<PreMergeCertificationReport> {
         info!(
             "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
@@ -686,6 +687,43 @@ impl PreMergeGuard {
             },
         };
 
+        // Shape Program gate: measured at the PR head, judged against the
+        // baseline frozen at the merge-base. Bootstrap (no baseline yet) and
+        // advisory-only regressions warn; a blocking regression fails; no spec
+        // is NotMeasured; a git failure is Errored (I1).
+        let shape_status = {
+            use crate::shape::facade::gate::ShapeGateOutcome as O;
+            match shape_outcome {
+                O::NoSpec { reason } => GateStatus::NotMeasured {
+                    gate_id: "shape_status".to_string(),
+                    reason: reason.clone(),
+                },
+                O::Errored { reason } => GateStatus::Errored(reason.clone()),
+                O::Bootstrap { .. } => GateStatus::Warning(shape_outcome.summary()),
+                O::Judged {
+                    blocking,
+                    measurement,
+                } => {
+                    if !blocking.is_empty() {
+                        let mut first: Vec<&str> =
+                            blocking.iter().take(5).map(String::as_str).collect();
+                        if blocking.len() > 5 {
+                            first.push("…");
+                        }
+                        GateStatus::Failed(format!(
+                            "{} regression(s) on blocking shape rules since the baseline: {}",
+                            blocking.len(),
+                            first.join("; ")
+                        ))
+                    } else if measurement.advisory_regressions > 0 {
+                        GateStatus::Warning(shape_outcome.summary())
+                    } else {
+                        GateStatus::Passed
+                    }
+                }
+            }
+        };
+
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
             is_certified_ready: false,
@@ -734,6 +772,7 @@ impl PreMergeGuard {
             review_verdict_status,
             brand_absence_status,
             migration_boundary_status,
+            shape_status,
             automated_canary_status,
             progressive_ring_status,
             hermetic_build_status,

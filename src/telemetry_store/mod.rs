@@ -35,12 +35,30 @@ pub struct GateFailureRecord {
     pub timestamp: DateTime<Utc>,
 }
 
+/// One shape measurement of one repository at one revision, as measured —
+/// counts derived from findings, never a stored verdict (I2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShapeMeasurementRecord {
+    pub repo: String,
+    pub rev: String,
+    pub spec_source: String,
+    pub findings_total: usize,
+    pub units_total: usize,
+    pub units_conformant: usize,
+    pub per_rule: std::collections::BTreeMap<String, usize>,
+    pub blocking_regressions: usize,
+    pub advisory_regressions: usize,
+    pub recorded_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelemetryStoreData {
     pub pr_history: Vec<FleetPrRecord>,
     pub gate_failures: Vec<GateFailureRecord>,
     pub deployments: Vec<DeploymentEvent>,
     pub incidents: Vec<IncidentEvent>,
+    #[serde(default)]
+    pub shape_measurements: Vec<ShapeMeasurementRecord>,
 }
 
 #[derive(Clone)]
@@ -81,6 +99,35 @@ impl TelemetryStore {
         d.gate_failures.push(failure);
         drop(d);
         let _ = self.persist_to_disk().await;
+    }
+
+    pub async fn record_shape_measurement(&self, rec: ShapeMeasurementRecord) {
+        {
+            let mut d = self.data.write().await;
+            d.shape_measurements.push(rec);
+            // Keep one year of hourly sweeps per repo at most; the journal is
+            // a trend, not an archive.
+            if d.shape_measurements.len() > 10_000 {
+                let excess = d.shape_measurements.len() - 10_000;
+                d.shape_measurements.drain(0..excess);
+            }
+        }
+        let _ = self.persist_to_disk().await;
+    }
+
+    /// The latest measurement per repository.
+    pub async fn latest_shape_measurements(&self) -> HashMap<String, ShapeMeasurementRecord> {
+        let d = self.data.read().await;
+        let mut out: HashMap<String, ShapeMeasurementRecord> = HashMap::new();
+        for r in &d.shape_measurements {
+            let newer = out
+                .get(&r.repo)
+                .is_none_or(|cur| cur.recorded_at <= r.recorded_at);
+            if newer {
+                out.insert(r.repo.clone(), r.clone());
+            }
+        }
+        out
     }
 
     pub async fn record_deployment(&self, dep: DeploymentEvent) {

@@ -244,6 +244,11 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
         "Anvil's Migrating components never depend on code oyatie supersedes",
     ),
     (
+        "shape_status",
+        "📐 Monorepo Shape Conformance Ratchet",
+        "Distance to the tenant's shape spec; blocking rules may not regress past the baseline frozen at merge-base",
+    ),
+    (
         "automated_canary_status",
         "📊 Automated Canary Analysis (ACA)",
         "Mann-Whitney U-test statistical distribution validation",

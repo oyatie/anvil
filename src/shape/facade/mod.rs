@@ -3,4 +3,5 @@
 
 pub mod baseline;
 pub mod cli;
+pub mod gate;
 pub mod measure;

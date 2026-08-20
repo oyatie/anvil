@@ -63,6 +63,10 @@ const REMEDIATION: &[(&str, &str)] = &[
         "test_suite_status",
         "fix the failing tests locally before pushing",
     ),
+    (
+        "shape_status",
+        "run `anvil shape plan --repo-dir <clone>` for the move plan; a regression on a blocking rule needs an entry in .anvil/baselines/shape.signoff.json",
+    ),
 ];
 
 fn remediation_for(gate_id: &str) -> Option<&'static str> {

@@ -139,6 +139,33 @@ async fn main() -> Result<()> {
             warn!("Clean Architecture self-conformance could not run: {e}");
         }
     }
+    // Shape Program: Anvil's own distance to its adopted spec, measured from
+    // the checked-out commit through git plumbing — the same number the gate
+    // and the fleet sweep produce, recorded at boot so the trend starts here.
+    {
+        let req = anvil::shape::facade::measure::MeasureRequest {
+            repo_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            rev: "HEAD".to_string(),
+            repo: config.self_repo.clone(),
+            spec_override: None,
+            registry_override: None,
+        };
+        match anvil::shape::facade::measure::measure_repo(&req).await {
+            Ok(report) => {
+                let d = report.distance();
+                info!(
+                    "Shape self-measurement ({} @ {}): distance {} — {}/{} units conformant, {} rule(s) not measured",
+                    report.repo,
+                    &report.rev[..report.rev.len().min(12)],
+                    d.findings_total,
+                    d.units_conformant,
+                    d.units_total,
+                    report.not_measured.len()
+                );
+            }
+            Err(e) => warn!("Shape self-measurement could not run: {e}"),
+        }
+    }
     let monorepo_guard = Arc::new(MonorepoGuard::new());
     let debt_shrink_guard = Arc::new(DebtShrinkGuard::new());
     let modularization_guard = Arc::new(ModularizationGuard::new());

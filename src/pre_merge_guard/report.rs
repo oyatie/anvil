@@ -66,6 +66,9 @@ pub struct PreMergeCertificationReport {
     /// supersedes -- it cannot migrate while anchored to something being
     /// deleted.
     pub migration_boundary_status: GateStatus,
+    /// Distance to the tenant's shape spec, judged against the baseline frozen
+    /// at the merge-base (Shape Program). Blocking rules may not regress.
+    pub shape_status: GateStatus,
     pub automated_canary_status: GateStatus,
     pub progressive_ring_status: GateStatus,
     pub hermetic_build_status: GateStatus,
@@ -111,7 +114,7 @@ pub struct PreMergeCertificationReport {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 71;
+pub const TOTAL_GATES: usize = 72;
 
 impl PreMergeCertificationReport {
     /// Every gate status on this report, in declaration order.
@@ -162,6 +165,7 @@ impl PreMergeCertificationReport {
             &self.review_verdict_status,
             &self.brand_absence_status,
             &self.migration_boundary_status,
+            &self.shape_status,
             &self.automated_canary_status,
             &self.progressive_ring_status,
             &self.hermetic_build_status,
@@ -244,6 +248,7 @@ impl PreMergeCertificationReport {
             ("review_verdict_status", &self.review_verdict_status),
             ("brand_absence_status", &self.brand_absence_status),
             ("migration_boundary_status", &self.migration_boundary_status),
+            ("shape_status", &self.shape_status),
             ("automated_canary_status", &self.automated_canary_status),
             ("progressive_ring_status", &self.progressive_ring_status),
             ("hermetic_build_status", &self.hermetic_build_status),
@@ -370,6 +375,7 @@ impl PreMergeCertificationReport {
             review_verdict_status: nm("review_verdict_status"),
             brand_absence_status: nm("brand_absence_status"),
             migration_boundary_status: nm("migration_boundary_status"),
+            shape_status: nm("shape_status"),
             automated_canary_status: nm("automated_canary_status"),
             progressive_ring_status: nm("progressive_ring_status"),
             hermetic_build_status: nm("hermetic_build_status"),
@@ -534,6 +540,7 @@ mod tests {
             review_verdict_status: GateStatus::Passed,
             brand_absence_status: GateStatus::Passed,
             migration_boundary_status: GateStatus::Passed,
+            shape_status: GateStatus::Passed,
             automated_canary_status: GateStatus::Passed,
             progressive_ring_status: GateStatus::Passed,
             hermetic_build_status: GateStatus::Passed,

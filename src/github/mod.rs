@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod fork_guard;
 pub mod graphql;
 pub mod reviews;
 
@@ -18,6 +19,15 @@ pub struct PrMetadata {
     pub base_ref_oid: String,
     pub head_ref_name: String,
     pub head_ref_oid: String,
+    /// True when the PR head lives in a fork rather than the base repository.
+    ///
+    /// Without this, a fork PR is indistinguishable from a same-repo PR, and
+    /// `git push origin HEAD:<head_ref_name>` targets the BASE repository's
+    /// branch of that name. A fork PR with head branch "dev" or "main" would
+    /// therefore push straight into the base repo, bypassing review, the gate
+    /// matrix and the merge queue.
+    #[serde(default)]
+    pub is_cross_repository: bool,
     pub state: String,
 }
 
@@ -48,6 +58,8 @@ struct GhPrViewOutput {
     head_ref_name: String,
     #[serde(rename = "headRefOid")]
     head_ref_oid: String,
+    #[serde(rename = "isCrossRepository", default)]
+    is_cross_repository: bool,
     state: String,
 }
 
@@ -146,7 +158,7 @@ impl GitHubClient {
                 "--repo",
                 repo,
                 "--json",
-                "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state",
+                "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state,isCrossRepository,headRepositoryOwner",
             ])
             .output()
             .await
@@ -166,6 +178,7 @@ impl GitHubClient {
             base_ref_oid: raw.base_ref_oid,
             head_ref_name: raw.head_ref_name,
             head_ref_oid: raw.head_ref_oid,
+            is_cross_repository: raw.is_cross_repository,
             state: raw.state,
         })
     }
@@ -347,7 +360,7 @@ impl GitHubClient {
                 "--state",
                 "open",
                 "--json",
-                "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state",
+                "number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,state,isCrossRepository,headRepositoryOwner",
             ])
             .output()
             .await
@@ -369,6 +382,7 @@ impl GitHubClient {
                 base_ref_oid: r.base_ref_oid,
                 head_ref_name: r.head_ref_name,
                 head_ref_oid: r.head_ref_oid,
+                is_cross_repository: r.is_cross_repository,
                 state: r.state,
             })
             .collect();

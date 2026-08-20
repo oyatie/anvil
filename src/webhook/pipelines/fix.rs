@@ -36,6 +36,7 @@ pub async fn execute_pr_fix(state: &AppState, repo: &str, pr_number: u64) -> Res
             pr_number,
             &meta.head_ref_name,
             &meta.head_ref_oid,
+            meta.is_cross_repository,
             &feedback_items,
         )
         .await?;

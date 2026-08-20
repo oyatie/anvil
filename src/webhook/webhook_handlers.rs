@@ -70,6 +70,12 @@ pub struct WebhookCommitRef {
     pub sha: String,
     #[serde(rename = "ref")]
     pub branch_ref: String,
+    /// Present on pull_request payloads. Comparing head.repo to base.repo is the
+    /// payload-side equivalent of `isCrossRepository`: it identifies a fork PR,
+    /// whose head branch name must never be used as a push target against the
+    /// base repository. See github::fork_guard.
+    #[serde(default)]
+    pub repo: Option<WebhookRepository>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -367,6 +373,17 @@ pub async fn webhook_handler(
             let pr_number = pr.number;
             let head_branch = pr.head.branch_ref.clone();
             let head_sha = pr.head.sha.clone();
+            // Fork detection from the payload: differing head/base repositories
+            // is the equivalent of `isCrossRepository`. Unknown (either side
+            // absent) is treated as cross-repo -- absent evidence must not
+            // authorise a push (invariant I1). See github::fork_guard.
+            let is_cross_repository = match (
+                pr.head.repo.as_ref().map(|r| r.full_name.as_str()),
+                pr.base.repo.as_ref().map(|r| r.full_name.as_str()),
+            ) {
+                (Some(h), Some(b)) => !h.eq_ignore_ascii_case(b),
+                _ => true,
+            };
 
             tokio::spawn(async move {
                 let _ = state_clone
@@ -376,6 +393,7 @@ pub async fn webhook_handler(
                         pr_number,
                         &head_branch,
                         &head_sha,
+                        is_cross_repository,
                         &[feedback_item],
                     )
                     .await;

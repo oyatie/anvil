@@ -6,12 +6,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::ai_driver::provider::ModelProvider;
 use super::defaults::bootstrap_default_accounts;
 use super::quota_view::compute_quota_view;
 use super::types::{
     AccountPoolMap, AccountQuotaView, AffinityCacheMap, ManagedAccount, UsageRecord,
 };
+use crate::ai_driver::provider::ModelProvider;
 
 #[derive(Debug, Clone)]
 pub struct AccountPoolManager {

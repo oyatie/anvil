@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-use crate::ai_driver::provider::ModelProvider;
 use super::types::{AuthType, ManagedAccount};
+use crate::ai_driver::provider::ModelProvider;
 
 /// Creates the 5 default CLI passthrough accounts from the host environment.
 /// Each provider gets one account bootstrapped from the locally-authenticated CLI session.

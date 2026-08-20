@@ -62,8 +62,9 @@ impl Config {
         let ai_provider_str = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "agy".to_string());
         let ai_provider = ModelProvider::from_str_name(&ai_provider_str);
         let specific_model = std::env::var("AI_MODEL").ok();
-        let webhook_secret =
-            std::env::var("GITHUB_WEBHOOK_SECRET").ok().filter(|s| !s.is_empty());
+        let webhook_secret = std::env::var("GITHUB_WEBHOOK_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty());
 
         Self {
             host,

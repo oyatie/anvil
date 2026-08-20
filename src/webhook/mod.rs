@@ -243,7 +243,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/enlist", post(manual_enlist_handler))
         .route("/api/heal-queue", post(manual_heal_queue_handler))
         .route("/api/reconcile", post(manual_reconcile_handler))
-        .route("/api/tasks/sweep", post(manual_handlers::task_sweep_handler))
+        .route(
+            "/api/tasks/sweep",
+            post(manual_handlers::task_sweep_handler),
+        )
         .route("/api/drain", post(manual_handlers::drain_handler))
         .route(
             "/api/accounts/pool",

@@ -128,10 +128,10 @@ fn ai_driver_modules() -> BTreeSet<String> {
         if p.extension().and_then(|e| e.to_str()) != Some("rs") {
             continue;
         }
-        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-            if stem != "mod" {
-                out.insert(stem.to_string());
-            }
+        if let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+            && stem != "mod"
+        {
+            out.insert(stem.to_string());
         }
     }
     assert!(

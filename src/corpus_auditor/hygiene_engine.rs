@@ -37,44 +37,44 @@ impl ContinuousHygieneEngine {
         // Select top candidates from dormant files or unauthorized SSOT files
         for record in freshness.dormant_files.iter().take(batch_size) {
             let full_path = repo_dir.join(&record.file_path);
-            if full_path.is_file() {
-                if let Ok(content) = std::fs::read_to_string(&full_path) {
-                    let mut updated_content = content.clone();
-                    let mut changed = false;
+            if full_path.is_file()
+                && let Ok(content) = std::fs::read_to_string(&full_path)
+            {
+                let mut updated_content = content.clone();
+                let mut changed = false;
 
-                    // Update last_verified_at if frontmatter exists
-                    if content.contains("last_verified_at:") {
-                        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-                        // replace date
-                        let lines: Vec<String> = updated_content
-                            .lines()
-                            .map(|l| {
-                                if l.trim_start().starts_with("last_verified_at:") {
-                                    format!("last_verified_at: \"{}\"", today)
-                                } else {
-                                    l.to_string()
-                                }
-                            })
-                            .collect();
-                        updated_content = lines.join("\n");
-                        changed = true;
-                    }
+                // Update last_verified_at if frontmatter exists
+                if content.contains("last_verified_at:") {
+                    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                    // replace date
+                    let lines: Vec<String> = updated_content
+                        .lines()
+                        .map(|l| {
+                            if l.trim_start().starts_with("last_verified_at:") {
+                                format!("last_verified_at: \"{}\"", today)
+                            } else {
+                                l.to_string()
+                            }
+                        })
+                        .collect();
+                    updated_content = lines.join("\n");
+                    changed = true;
+                }
 
-                    // Demote unauthorized SSOT if outside docs/
-                    if !record.file_path.starts_with("docs/")
-                        && !record.file_path.starts_with("contracts/")
-                        && updated_content.contains("canonical_authority: true")
-                    {
-                        updated_content = updated_content
-                            .replace("canonical_authority: true", "canonical_authority: false");
-                        changed = true;
-                    }
+                // Demote unauthorized SSOT if outside docs/
+                if !record.file_path.starts_with("docs/")
+                    && !record.file_path.starts_with("contracts/")
+                    && updated_content.contains("canonical_authority: true")
+                {
+                    updated_content = updated_content
+                        .replace("canonical_authority: true", "canonical_authority: false");
+                    changed = true;
+                }
 
-                    if changed {
-                        files_modified.push(record.file_path.clone());
-                        if !dry_run {
-                            let _ = std::fs::write(&full_path, updated_content);
-                        }
+                if changed {
+                    files_modified.push(record.file_path.clone());
+                    if !dry_run {
+                        let _ = std::fs::write(&full_path, updated_content);
                     }
                 }
             }

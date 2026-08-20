@@ -4,7 +4,7 @@ use tracing::info;
 
 use super::args::{Cli, Commands};
 use super::server;
-use crate::webhook::{execute_pr_certify, execute_pr_fix, execute_pr_review, AppState};
+use crate::webhook::{AppState, execute_pr_certify, execute_pr_fix, execute_pr_review};
 
 pub async fn handle_cli(state: AppState) -> Result<()> {
     let cli = Cli::parse();
@@ -608,7 +608,12 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             .await?;
             println!(
                 "🧹 DocArchivalSweeper Report for {} (dry_run: {}):\n  - Files Archived: {}\n  - Forward-Pointer Stubs Written: {}\n  - SSOT Declarations Demoted: {}\n  - Summary: {}",
-                repo, dry_run, report.files_archived.len(), report.stubs_written.len(), report.ssot_claims_demoted.len(), report.summary
+                repo,
+                dry_run,
+                report.files_archived.len(),
+                report.stubs_written.len(),
+                report.ssot_claims_demoted.len(),
+                report.summary
             );
         }
         Commands::ComponentEval { repo, target } => {
@@ -622,7 +627,13 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             println!(
                 "🔍 Component Disposition Evaluation for '{}' on {}:\n  - Disposition: {:?}\n  - Clean Architecture Compliant: {}\n  - Max File Lines: {}\n  - Rationale: {}\n  - Action: {}",
-                target, repo, report.disposition, report.is_clean_architecture, report.max_file_lines, report.rationale, report.recommended_action
+                target,
+                repo,
+                report.disposition,
+                report.is_clean_architecture,
+                report.max_file_lines,
+                report.rationale,
+                report.recommended_action
             );
         }
         Commands::AuditCorpus { repo, stale_days } => {
@@ -635,7 +646,15 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 crate::corpus_auditor::CorpusAuditor::audit_repository(&repo_dir, stale_days)?;
             println!(
                 "📊 100% Full-Corpus Audit Report for {}:\n  - Total Files Audited: {}\n  - Freshness Ratio: {:.1}%\n  - Dormant Files (>{}d): {}\n  - Stale ADRs in Archive: {}\n  - Unauthorized SSOT Claims: {}\n  - Frontmatter Violations: {}\n  - Summary: {}",
-                repo, report.total_files, report.freshness_ratio * 100.0, stale_days, report.dormant_files_count, report.stale_adrs_count, report.unauthorized_ssot_claims.len(), report.frontmatter_violations.len(), report.summary
+                repo,
+                report.total_files,
+                report.freshness_ratio * 100.0,
+                stale_days,
+                report.dormant_files_count,
+                report.stale_adrs_count,
+                report.unauthorized_ssot_claims.len(),
+                report.frontmatter_violations.len(),
+                report.summary
             );
         }
         Commands::HealCorpus {
@@ -654,7 +673,11 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 )?;
             println!(
                 "🌱 Continuous Hygiene Batch Report for {} (dry_run: {}):\n  - Batch ID: {}\n  - Files Refreshed/Healed: {}\n  - Summary: {}",
-                repo, dry_run, report.batch_id, report.files_modified.len(), report.summary
+                repo,
+                dry_run,
+                report.batch_id,
+                report.files_modified.len(),
+                report.summary
             );
         }
         Commands::IssueAudit { repo } => {
@@ -693,7 +716,11 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             .await?;
             println!(
                 "📁 Issue #{} Doc Consolidation Summary (dry_run: {}):\n  - Files Archived: {}\n  - Stubs Written: {}\n  - Summary: {}",
-                issue, dry_run, report.files_archived.len(), report.stubs_written.len(), report.summary
+                issue,
+                dry_run,
+                report.files_archived.len(),
+                report.stubs_written.len(),
+                report.summary
             );
         }
         Commands::Swap { binary } => {
@@ -714,8 +741,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             .await?;
             println!(
                 "🎉 Blue/Green Self-Replacement Successful!\n  - Swapped Target: {:?}\n  - Source Green Binary: {:?}\n  - Status: Atomic Binary Replacement Complete (Zero Downtime)",
-                current_exe,
-                green_binary
+                current_exe, green_binary
             );
         }
         Commands::Recover { repo } => {

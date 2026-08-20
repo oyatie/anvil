@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Prometheus Metrics Registry for Anvil Hyperscaler Telemetry
 pub struct PrometheusRegistry {

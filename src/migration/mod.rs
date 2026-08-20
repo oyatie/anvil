@@ -3,8 +3,8 @@
 pub mod boundary;
 pub mod registry;
 
-pub use boundary::{check_edge, edge_is_allowed, verdict_for, BoundaryViolation};
-pub use registry::{Confidence, MigrationEntry, Verdict, MIGRATION_LEDGER};
+pub use boundary::{BoundaryViolation, check_edge, edge_is_allowed, verdict_for};
+pub use registry::{Confidence, MIGRATION_LEDGER, MigrationEntry, Verdict};
 
 /// Counts by verdict. Returns (migrating, rewired, superseded, scaffolding).
 pub fn verdict_counts() -> (usize, usize, usize, usize) {

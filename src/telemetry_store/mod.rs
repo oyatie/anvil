@@ -111,18 +111,17 @@ impl TelemetryStore {
 
     async fn load_from_disk(&self) {
         let file_path = self.storage_dir.join("telemetry_journal.json");
-        if file_path.exists() {
-            if let Ok(bytes) = tokio::fs::read(&file_path).await {
-                if let Ok(loaded) = serde_json::from_slice::<TelemetryStoreData>(&bytes) {
-                    let mut d = self.data.write().await;
-                    *d = loaded;
-                    info!(
-                        "📂 [Telemetry Store] Loaded {} PR records and {} gate failure entries from disk.",
-                        d.pr_history.len(),
-                        d.gate_failures.len()
-                    );
-                }
-            }
+        if file_path.exists()
+            && let Ok(bytes) = tokio::fs::read(&file_path).await
+            && let Ok(loaded) = serde_json::from_slice::<TelemetryStoreData>(&bytes)
+        {
+            let mut d = self.data.write().await;
+            *d = loaded;
+            info!(
+                "📂 [Telemetry Store] Loaded {} PR records and {} gate failure entries from disk.",
+                d.pr_history.len(),
+                d.gate_failures.len()
+            );
         }
     }
 

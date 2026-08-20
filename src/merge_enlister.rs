@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -146,35 +146,37 @@ impl MergeEnlister {
         let mut needs_approval = true;
         {
             let out = check_out;
-            if out.status.success() {
-                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                    if let Some(decision) = val.get("reviewDecision").and_then(|d| d.as_str()) {
-                        if decision == "CHANGES_REQUESTED" {
-                            bail!(
-                                "🚨 Merge queue enlistment blocked: PR {}#{} has active CHANGES_REQUESTED review verdict. Invariant 2 requires all reviews to approve.",
-                                repo, pr_number
-                            );
-                        }
-                        if decision == "APPROVED" {
-                            info!(
-                                "PR {}#{} already has reviewDecision: APPROVED",
-                                repo, pr_number
-                            );
-                            needs_approval = false;
-                        }
+            if out.status.success()
+                && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+            {
+                if let Some(decision) = val.get("reviewDecision").and_then(|d| d.as_str()) {
+                    if decision == "CHANGES_REQUESTED" {
+                        bail!(
+                            "🚨 Merge queue enlistment blocked: PR {}#{} has active CHANGES_REQUESTED review verdict. Invariant 2 requires all reviews to approve.",
+                            repo,
+                            pr_number
+                        );
                     }
+                    if decision == "APPROVED" {
+                        info!(
+                            "PR {}#{} already has reviewDecision: APPROVED",
+                            repo, pr_number
+                        );
+                        needs_approval = false;
+                    }
+                }
 
-                    // Check individual review states in the payload
-                    if let Some(reviews) = val.get("reviews").and_then(|r| r.as_array()) {
-                        for review in reviews {
-                            if let Some(state) = review.get("state").and_then(|s| s.as_str()) {
-                                if state == "CHANGES_REQUESTED" {
-                                    bail!(
-                                        "🚨 Merge queue enlistment blocked: PR {}#{} has a blocking review with state CHANGES_REQUESTED",
-                                        repo, pr_number
-                                    );
-                                }
-                            }
+                // Check individual review states in the payload
+                if let Some(reviews) = val.get("reviews").and_then(|r| r.as_array()) {
+                    for review in reviews {
+                        if let Some(state) = review.get("state").and_then(|s| s.as_str())
+                            && state == "CHANGES_REQUESTED"
+                        {
+                            bail!(
+                                "🚨 Merge queue enlistment blocked: PR {}#{} has a blocking review with state CHANGES_REQUESTED",
+                                repo,
+                                pr_number
+                            );
                         }
                     }
                 }
@@ -200,7 +202,9 @@ impl MergeEnlister {
         if !unresolved_comments.is_empty() {
             bail!(
                 "🚨 Merge queue enlistment blocked: PR {}#{} has {} unaddressed review comment(s). Zero Unresolved Review Threads Invariant violated.",
-                repo, pr_number, unresolved_comments.len()
+                repo,
+                pr_number,
+                unresolved_comments.len()
             );
         }
 
@@ -229,7 +233,9 @@ impl MergeEnlister {
                 } else {
                     bail!(
                         "🚨 Merge queue enlistment blocked: Failed to submit mandatory approving review on PR {}#{}: {}. Invariant 2 requires strict review authorization.",
-                        repo, pr_number, e
+                        repo,
+                        pr_number,
+                        e
                     );
                 }
             }

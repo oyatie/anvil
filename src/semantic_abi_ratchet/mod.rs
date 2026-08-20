@@ -47,10 +47,10 @@ impl SemanticAbiRatchet {
         for file_diff in diff_ctx.diff_content.split("diff --git") {
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "src/lib.rs".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let file_findings = self.scanner.scan_abi_diff(&current_file, file_diff);

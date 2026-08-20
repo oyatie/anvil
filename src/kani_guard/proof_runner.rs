@@ -36,7 +36,9 @@ impl KaniProofRunner {
         let has_kani = which_out.map(|o| o.status.success()).unwrap_or(false);
 
         if !has_kani {
-            info!("Kani binary not detected in environment; utilizing static AST proof-clause verifier");
+            info!(
+                "Kani binary not detected in environment; utilizing static AST proof-clause verifier"
+            );
             return Ok(vec![KaniProofReport {
                 proof_name: "static_ast_safety_proof_verifier".to_string(),
                 status: "VERIFIED_STATIC".to_string(),

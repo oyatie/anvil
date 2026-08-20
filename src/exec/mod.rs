@@ -13,7 +13,7 @@
 //!
 //! Invariant I5: every subprocess has a timeout AND `kill_on_drop(true)`.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::process::Output;
 use std::time::Duration;
 use tokio::process::Command;
@@ -206,7 +206,7 @@ pub async fn run_bounded_with_stdin(
 mod tests {
     #[test]
     fn agy_print_timeout_sits_a_margin_under_anvils_bound() {
-        use super::{agy_print_timeout_arg, ExecClass};
+        use super::{ExecClass, agy_print_timeout_arg};
         use std::time::Duration;
         assert_eq!(
             agy_print_timeout_arg(ExecClass::Model.timeout()),

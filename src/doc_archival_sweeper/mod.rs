@@ -103,7 +103,10 @@ impl DocArchivalSweeper {
 
         let summary = format!(
             "DocArchivalSweeper completed (dry_run: {}): {} files archived, {} stubs created, {} SSOT claims demoted.",
-            dry_run, files_archived.len(), stubs_written.len(), ssot_claims_demoted.len()
+            dry_run,
+            files_archived.len(),
+            stubs_written.len(),
+            ssot_claims_demoted.len()
         );
 
         Ok(ArchivalSweepReport {

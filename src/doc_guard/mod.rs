@@ -66,20 +66,18 @@ impl DocGuard {
         // Step 1: Validate frontmatters on all modified documentation and config files
         for file in &diff_ctx.changed_files {
             let file_full = repo_dir.join(file);
-            if file_full.exists() {
-                if let Ok(content) = tokio::fs::read_to_string(&file_full).await {
-                    if let Err(err) =
-                        FrontmatterValidator::validate_doc_frontmatter(file, &content, repo_dir)
-                    {
-                        warn!("DocGuard frontmatter violation: {}", err);
-                        return Ok(DocGuardReport {
-                            errored: None,
-                            is_sufficient: false,
-                            files_created_or_updated: Vec::new(),
-                            summary: format!("❌ Frontmatter & SSOT validation failed: {}", err),
-                        });
-                    }
-                }
+            if file_full.exists()
+                && let Ok(content) = tokio::fs::read_to_string(&file_full).await
+                && let Err(err) =
+                    FrontmatterValidator::validate_doc_frontmatter(file, &content, repo_dir)
+            {
+                warn!("DocGuard frontmatter violation: {}", err);
+                return Ok(DocGuardReport {
+                    errored: None,
+                    is_sufficient: false,
+                    files_created_or_updated: Vec::new(),
+                    summary: format!("❌ Frontmatter & SSOT validation failed: {}", err),
+                });
             }
         }
 
@@ -268,11 +266,10 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                 {
                     Ok(output) if output.status.success() => {
                         let stdout = String::from_utf8_lossy(&output.stdout);
-                        if let Some(json_str) = extract_json_block(&stdout) {
-                            if let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
-                            {
-                                return Ok(eval);
-                            }
+                        if let Some(json_str) = extract_json_block(&stdout)
+                            && let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
+                        {
+                            return Ok(eval);
                         }
                         // Ran successfully but produced nothing parseable: we
                         // have no judgement, so we must not claim sufficiency.

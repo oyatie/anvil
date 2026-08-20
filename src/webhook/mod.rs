@@ -8,7 +8,7 @@ pub mod webhook_handlers;
 
 use std::sync::Arc;
 
-use axum::{routing::post, Router};
+use axum::{Router, routing::post};
 use serde::{Deserialize, Serialize};
 
 use admin_auth::admin_guarded;

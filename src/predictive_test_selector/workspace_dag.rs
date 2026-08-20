@@ -119,52 +119,48 @@ impl WorkspaceDagSelector {
             "cargo metadata --no-deps (sync)",
         );
 
-        if let Ok(output) = out {
-            if output.status.success() {
-                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    if let Some(packages) = val.get("packages").and_then(|p| p.as_array()) {
-                        let mut res = Vec::new();
-                        for pkg in packages {
-                            let name = pkg
-                                .get("name")
-                                .and_then(|n| n.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let manifest = pkg
-                                .get("manifest_path")
-                                .and_then(|m| m.as_str())
-                                .unwrap_or("");
-                            let path = if let Some(parent) = Path::new(manifest).parent() {
-                                parent
-                                    .strip_prefix(repo_dir)
-                                    .unwrap_or(parent)
-                                    .to_string_lossy()
-                                    .to_string()
-                            } else {
-                                String::new()
-                            };
+        if let Ok(output) = out
+            && output.status.success()
+            && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+            && let Some(packages) = val.get("packages").and_then(|p| p.as_array())
+        {
+            let mut res = Vec::new();
+            for pkg in packages {
+                let name = pkg
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let manifest = pkg
+                    .get("manifest_path")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("");
+                let path = if let Some(parent) = Path::new(manifest).parent() {
+                    parent
+                        .strip_prefix(repo_dir)
+                        .unwrap_or(parent)
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    String::new()
+                };
 
-                            let mut deps = Vec::new();
-                            if let Some(dep_array) =
-                                pkg.get("dependencies").and_then(|d| d.as_array())
-                            {
-                                for d in dep_array {
-                                    if let Some(dname) = d.get("name").and_then(|n| n.as_str()) {
-                                        deps.push(dname.to_string());
-                                    }
-                                }
-                            }
-
-                            res.push(WorkspacePackage {
-                                name,
-                                path,
-                                dependencies: deps,
-                            });
+                let mut deps = Vec::new();
+                if let Some(dep_array) = pkg.get("dependencies").and_then(|d| d.as_array()) {
+                    for d in dep_array {
+                        if let Some(dname) = d.get("name").and_then(|n| n.as_str()) {
+                            deps.push(dname.to_string());
                         }
-                        return res;
                     }
                 }
+
+                res.push(WorkspacePackage {
+                    name,
+                    path,
+                    dependencies: deps,
+                });
             }
+            return res;
         }
 
         Vec::new()
@@ -188,52 +184,48 @@ impl WorkspaceDagSelector {
         )
         .await;
 
-        if let Ok(output) = out {
-            if output.status.success() {
-                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    if let Some(packages) = val.get("packages").and_then(|p| p.as_array()) {
-                        let mut res = Vec::new();
-                        for pkg in packages {
-                            let name = pkg
-                                .get("name")
-                                .and_then(|n| n.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let manifest = pkg
-                                .get("manifest_path")
-                                .and_then(|m| m.as_str())
-                                .unwrap_or("");
-                            let path = if let Some(parent) = Path::new(manifest).parent() {
-                                parent
-                                    .strip_prefix(repo_dir)
-                                    .unwrap_or(parent)
-                                    .to_string_lossy()
-                                    .to_string()
-                            } else {
-                                String::new()
-                            };
+        if let Ok(output) = out
+            && output.status.success()
+            && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+            && let Some(packages) = val.get("packages").and_then(|p| p.as_array())
+        {
+            let mut res = Vec::new();
+            for pkg in packages {
+                let name = pkg
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let manifest = pkg
+                    .get("manifest_path")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("");
+                let path = if let Some(parent) = Path::new(manifest).parent() {
+                    parent
+                        .strip_prefix(repo_dir)
+                        .unwrap_or(parent)
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    String::new()
+                };
 
-                            let mut deps = Vec::new();
-                            if let Some(dep_array) =
-                                pkg.get("dependencies").and_then(|d| d.as_array())
-                            {
-                                for d in dep_array {
-                                    if let Some(dname) = d.get("name").and_then(|n| n.as_str()) {
-                                        deps.push(dname.to_string());
-                                    }
-                                }
-                            }
-
-                            res.push(WorkspacePackage {
-                                name,
-                                path,
-                                dependencies: deps,
-                            });
+                let mut deps = Vec::new();
+                if let Some(dep_array) = pkg.get("dependencies").and_then(|d| d.as_array()) {
+                    for d in dep_array {
+                        if let Some(dname) = d.get("name").and_then(|n| n.as_str()) {
+                            deps.push(dname.to_string());
                         }
-                        return res;
                     }
                 }
+
+                res.push(WorkspacePackage {
+                    name,
+                    path,
+                    dependencies: deps,
+                });
             }
+            return res;
         }
 
         Vec::new()

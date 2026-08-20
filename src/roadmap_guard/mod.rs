@@ -81,29 +81,28 @@ impl RoadmapReconciler {
                 && !file.starts_with("contracts/")
             {
                 let full_path = repo_dir.join(file);
-                if let Ok(content) = std::fs::read_to_string(&full_path) {
-                    if content.contains("canonical_authority: true")
-                        || content.contains("live_plan_authority: true")
-                    {
-                        ssot_doc_violations.push(format!(
-                            "File '{}' claims canonical authority but is outside docs/ or contracts/.",
-                            file
-                        ));
-                    }
+                if let Ok(content) = std::fs::read_to_string(&full_path)
+                    && (content.contains("canonical_authority: true")
+                        || content.contains("live_plan_authority: true"))
+                {
+                    ssot_doc_violations.push(format!(
+                        "File '{}' claims canonical authority but is outside docs/ or contracts/.",
+                        file
+                    ));
                 }
             }
         }
 
         // 3. Inspect masterplan.json if present
         let masterplan_path = repo_dir.join("specs/masterplan.json");
-        if masterplan_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&masterplan_path) {
-                for cap in &detected_capabilities {
-                    if content.contains(&format!("\"capability\": \"{}\"", cap))
-                        || content.contains(&format!("\"{}\"", cap))
-                    {
-                        matched_work_items.push(format!("CAP-{}", cap.to_uppercase()));
-                    }
+        if masterplan_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&masterplan_path)
+        {
+            for cap in &detected_capabilities {
+                if content.contains(&format!("\"capability\": \"{}\"", cap))
+                    || content.contains(&format!("\"{}\"", cap))
+                {
+                    matched_work_items.push(format!("CAP-{}", cap.to_uppercase()));
                 }
             }
         }
@@ -233,9 +232,11 @@ mod tests {
         assert!(report.is_aligned);
         assert_eq!(report.detected_capabilities.len(), 3);
         assert!(report.detected_capabilities.contains(&"iam".to_string()));
-        assert!(report
-            .detected_capabilities
-            .contains(&"storage".to_string()));
+        assert!(
+            report
+                .detected_capabilities
+                .contains(&"storage".to_string())
+        );
         assert!(report.detected_capabilities.contains(&"docs".to_string()));
     }
 

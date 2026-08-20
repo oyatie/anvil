@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -7,7 +7,7 @@ pub mod fork_guard;
 pub mod graphql;
 pub mod reviews;
 
-use crate::exec::{run_bounded, ExecClass};
+use crate::exec::{ExecClass, run_bounded};
 use crate::reviewer::ReviewResponse;
 pub use graphql::{GitHubGraphQLClient, ReviewThreadNode};
 
@@ -126,30 +126,29 @@ impl GitHubClient {
         list_cmd.args(["api", &format!("repos/{}/hooks", repo)]);
         let list_out = run_bounded(list_cmd, ExecClass::Api, "gh api repos/:repo/hooks").await;
 
-        if let Ok(out) = list_out {
-            if out.status.success() {
-                if let Ok(hooks) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) {
-                    for hook in hooks {
-                        if let Some(config) = hook.get("config") {
-                            let url = config.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                            if url.contains("forwarder") || url.contains("webhook.github.com") {
-                                if let Some(id) = hook.get("id").and_then(|i| i.as_u64()) {
-                                    let mut del_cmd = Command::new("gh");
-                                    del_cmd.args([
-                                        "api",
-                                        "--method",
-                                        "DELETE",
-                                        &format!("repos/{}/hooks/{}", repo, id),
-                                    ]);
-                                    let _ = run_bounded(
-                                        del_cmd,
-                                        ExecClass::Api,
-                                        "gh api DELETE stale forwarder webhook",
-                                    )
-                                    .await;
-                                }
-                            }
-                        }
+        if let Ok(out) = list_out
+            && out.status.success()
+            && let Ok(hooks) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout)
+        {
+            for hook in hooks {
+                if let Some(config) = hook.get("config") {
+                    let url = config.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                    if (url.contains("forwarder") || url.contains("webhook.github.com"))
+                        && let Some(id) = hook.get("id").and_then(|i| i.as_u64())
+                    {
+                        let mut del_cmd = Command::new("gh");
+                        del_cmd.args([
+                            "api",
+                            "--method",
+                            "DELETE",
+                            &format!("repos/{}/hooks/{}", repo, id),
+                        ]);
+                        let _ = run_bounded(
+                            del_cmd,
+                            ExecClass::Api,
+                            "gh api DELETE stale forwarder webhook",
+                        )
+                        .await;
                     }
                 }
             }
@@ -264,34 +263,33 @@ impl GitHubClient {
                 body: Option<String>,
             }
 
-            if let Ok(comments) = serde_json::from_slice::<Vec<IssueCommentItem>>(&output.stdout) {
-                if let Some(existing) = comments
+            if let Ok(comments) = serde_json::from_slice::<Vec<IssueCommentItem>>(&output.stdout)
+                && let Some(existing) = comments
                     .iter()
                     .find(|c| c.body.as_ref().map(|b| b.contains(marker)).unwrap_or(false))
-                {
-                    info!(
-                        "Found existing Anvil comment #{} on {}#{}. Updating in-place...",
-                        existing.id, repo, pr_number
-                    );
-                    let patch_endpoint = format!("repos/{}/issues/comments/{}", repo, existing.id);
-                    let mut patch_cmd = Command::new("gh");
-                    patch_cmd.args([
-                        "api",
-                        "--method",
-                        "PATCH",
-                        &patch_endpoint,
-                        "-f",
-                        &format!("body={}", body),
-                    ]);
-                    let patch_out =
-                        run_bounded(patch_cmd, ExecClass::Api, "gh api PATCH issue comment").await;
+            {
+                info!(
+                    "Found existing Anvil comment #{} on {}#{}. Updating in-place...",
+                    existing.id, repo, pr_number
+                );
+                let patch_endpoint = format!("repos/{}/issues/comments/{}", repo, existing.id);
+                let mut patch_cmd = Command::new("gh");
+                patch_cmd.args([
+                    "api",
+                    "--method",
+                    "PATCH",
+                    &patch_endpoint,
+                    "-f",
+                    &format!("body={}", body),
+                ]);
+                let patch_out =
+                    run_bounded(patch_cmd, ExecClass::Api, "gh api PATCH issue comment").await;
 
-                    if let Ok(res) = patch_out {
-                        if res.status.success() {
-                            info!("Successfully updated comment #{} in-place", existing.id);
-                            return Ok(());
-                        }
-                    }
+                if let Ok(res) = patch_out
+                    && res.status.success()
+                {
+                    info!("Successfully updated comment #{} in-place", existing.id);
+                    return Ok(());
                 }
             }
         }
@@ -488,16 +486,16 @@ impl GitHubClient {
         let mut valid_lead_count = 0;
 
         for pr in &merged_prs {
-            if let Some(merged_str) = &pr.merged_at {
-                if let (Ok(created), Ok(merged)) = (
+            if let Some(merged_str) = &pr.merged_at
+                && let (Ok(created), Ok(merged)) = (
                     chrono::DateTime::parse_from_rfc3339(&pr.created_at),
                     chrono::DateTime::parse_from_rfc3339(merged_str),
-                ) {
-                    let diff_mins = (merged - created).num_minutes() as f64;
-                    if diff_mins > 0.0 {
-                        total_lead_hours += diff_mins / 60.0;
-                        valid_lead_count += 1;
-                    }
+                )
+            {
+                let diff_mins = (merged - created).num_minutes() as f64;
+                if diff_mins > 0.0 {
+                    total_lead_hours += diff_mins / 60.0;
+                    valid_lead_count += 1;
                 }
             }
         }
@@ -563,15 +561,15 @@ impl GitHubClient {
         let mut incident_count = 0;
 
         for r in &completed_runs {
-            if r.conclusion.as_deref() == Some("failure") {
-                if let (Ok(created), Ok(updated)) = (
+            if r.conclusion.as_deref() == Some("failure")
+                && let (Ok(created), Ok(updated)) = (
                     chrono::DateTime::parse_from_rfc3339(&r.created_at),
                     chrono::DateTime::parse_from_rfc3339(&r.updated_at),
-                ) {
-                    let duration = (updated - created).num_minutes() as f64;
-                    mttr_minutes += duration.max(2.0);
-                    incident_count += 1;
-                }
+                )
+            {
+                let duration = (updated - created).num_minutes() as f64;
+                mttr_minutes += duration.max(2.0);
+                incident_count += 1;
             }
         }
 

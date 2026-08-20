@@ -131,7 +131,7 @@ fn names_at(doc: &serde_json::Value, pointer: &str, key: &str) -> Result<Vec<Str
             _ => {
                 return Err(SpecError::Registry(format!(
                     "registry element {pointer}/{i} is neither a string nor an object"
-                )))
+                )));
             }
         };
         if name.trim().is_empty() {

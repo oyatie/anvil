@@ -176,13 +176,17 @@ mod tests {
             .evaluate_stack_whitelist(Path::new("/tmp"), &diff_ctx, false)
             .unwrap();
         assert!(!report.is_compliant);
-        assert!(report
-            .violations
-            .iter()
-            .any(|v| v.category == "APEX_ADR_IMMUTABILITY_BREACH"));
-        assert!(report
-            .violations
-            .iter()
-            .any(|v| v.category == "UNAPPROVED_STACK_TECHNOLOGY"));
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.category == "APEX_ADR_IMMUTABILITY_BREACH")
+        );
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.category == "UNAPPROVED_STACK_TECHNOLOGY")
+        );
     }
 }

@@ -719,10 +719,11 @@ fn declared_names(code: &str) -> Vec<(usize, String)> {
             .filter(|t| !t.is_empty());
         let mut prev: Option<&str> = None;
         for token in tokens {
-            if let Some(kw) = prev {
-                if DECL_KEYWORDS.contains(&kw) && !DECL_KEYWORDS.contains(&token) {
-                    out.push((idx + 1, token.to_string()));
-                }
+            if let Some(kw) = prev
+                && DECL_KEYWORDS.contains(&kw)
+                && !DECL_KEYWORDS.contains(&token)
+            {
+                out.push((idx + 1, token.to_string()));
             }
             prev = Some(token);
         }
@@ -754,21 +755,96 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 ///
 /// This is debt, not an exemption. Each entry's `occurrences` is a ceiling.
 pub static KNOWN_VIOLATIONS: &[AllowlistedDebt] = &[
-    AllowlistedDebt { path: "src/cloud_native_guard/mod.rs", stamp: "cloud_native", occurrences: 7, debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/doc_archival_sweeper/issue_doc_consolidator.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/doc_archival_sweeper/mod.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/doc_guard/frontmatter.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/doc_guard/mod.rs", stamp: "hyperscaler", occurrences: 2, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/hyperscaler_consensus_guard/mod.rs", stamp: "aws", occurrences: 2, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/hyperscaler_consensus_guard/mod.rs", stamp: "hyperscaler", occurrences: 11, debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/lib.rs", stamp: "cloud_native", occurrences: 1, debt_note: "pre-existing name; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/lib.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing name; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/monorepo_guard/mod.rs", stamp: "hyperscaler", occurrences: 2, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/pre_merge_guard/evaluator.rs", stamp: "70", occurrences: 1, debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/pre_merge_guard/evaluator.rs", stamp: "hyperscale", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/stack_whitelist_guard/mod.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/webhook/pipelines/review.rs", stamp: "70", occurrences: 2, debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/webhook/pipelines/review.rs", stamp: "hyperscale", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
+    AllowlistedDebt {
+        path: "src/cloud_native_guard/mod.rs",
+        stamp: "cloud_native",
+        occurrences: 7,
+        debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/doc_archival_sweeper/issue_doc_consolidator.rs",
+        stamp: "hyperscaler",
+        occurrences: 1,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/doc_archival_sweeper/mod.rs",
+        stamp: "hyperscaler",
+        occurrences: 1,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/doc_guard/frontmatter.rs",
+        stamp: "hyperscaler",
+        occurrences: 1,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/doc_guard/mod.rs",
+        stamp: "hyperscaler",
+        occurrences: 2,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/hyperscaler_consensus_guard/mod.rs",
+        stamp: "aws",
+        occurrences: 2,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/hyperscaler_consensus_guard/mod.rs",
+        stamp: "hyperscaler",
+        occurrences: 11,
+        debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/lib.rs",
+        stamp: "cloud_native",
+        occurrences: 1,
+        debt_note: "pre-existing name; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/lib.rs",
+        stamp: "hyperscaler",
+        occurrences: 1,
+        debt_note: "pre-existing name; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/monorepo_guard/mod.rs",
+        stamp: "hyperscaler",
+        occurrences: 2,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/pre_merge_guard/evaluator.rs",
+        stamp: "70",
+        occurrences: 1,
+        debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/pre_merge_guard/evaluator.rs",
+        stamp: "hyperscale",
+        occurrences: 1,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/stack_whitelist_guard/mod.rs",
+        stamp: "hyperscaler",
+        occurrences: 1,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/webhook/pipelines/review.rs",
+        stamp: "70",
+        occurrences: 2,
+        debt_note: "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)",
+    },
+    AllowlistedDebt {
+        path: "src/webhook/pipelines/review.rs",
+        stamp: "hyperscale",
+        occurrences: 1,
+        debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)",
+    },
 ];
 
 /// Blanks out `#[cfg(test)]` modules, preserving line numbering.

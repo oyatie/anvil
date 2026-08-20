@@ -6,7 +6,7 @@
 //! its policy file and ignores half of it.
 
 use anvil::shape::core::spec::{MembersSource, RuleMode};
-use anvil::shape::core::{resolve, ShapeSpec, SpecError, SCHEMA_V1};
+use anvil::shape::core::{SCHEMA_V1, ShapeSpec, SpecError, resolve};
 use std::path::PathBuf;
 
 fn fixture(name: &str) -> String {

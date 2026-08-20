@@ -50,10 +50,12 @@ fn test_apex_adr_immutability_lock_allows_human_blocks_agent() {
         .evaluate_stack_whitelist(Path::new("/tmp"), &diff_ctx, false)
         .unwrap();
     assert!(!agent_report.is_compliant);
-    assert!(agent_report
-        .violations
-        .iter()
-        .any(|v| v.category == "APEX_ADR_IMMUTABILITY_BREACH"));
+    assert!(
+        agent_report
+            .violations
+            .iter()
+            .any(|v| v.category == "APEX_ADR_IMMUTABILITY_BREACH")
+    );
 
     // Human PR passes
     let human_report = guard
@@ -83,10 +85,12 @@ fn test_asymmetric_dependency_ratchet_allows_removal_blocks_addition() {
         .evaluate_stack_whitelist(Path::new("/tmp"), &add_diff, false)
         .unwrap();
     assert!(!add_report.is_compliant);
-    assert!(add_report
-        .violations
-        .iter()
-        .any(|v| v.category == "UNAUTHORIZED_DEPENDENCY_EXPANSION"));
+    assert!(
+        add_report
+            .violations
+            .iter()
+            .any(|v| v.category == "UNAUTHORIZED_DEPENDENCY_EXPANSION")
+    );
 
     // 2. Agent removing an unused/misplaced dependency passes cleanly!
     let remove_diff = PrDiffContext {

@@ -59,14 +59,14 @@ pub fn managed_clone_overlaps_daemon_tree(
             daemon_toplevel.display()
         ));
     }
-    if let Some(top) = clone_toplevel {
-        if top == daemon_toplevel {
-            return Err(format!(
-                "managed clone {} belongs to the daemon's own git repository {}",
-                clone_path.display(),
-                daemon_toplevel.display()
-            ));
-        }
+    if let Some(top) = clone_toplevel
+        && top == daemon_toplevel
+    {
+        return Err(format!(
+            "managed clone {} belongs to the daemon's own git repository {}",
+            clone_path.display(),
+            daemon_toplevel.display()
+        ));
     }
     Ok(())
 }

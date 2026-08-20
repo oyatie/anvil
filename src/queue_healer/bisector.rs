@@ -97,7 +97,9 @@ impl MergeTrainBisector {
         let diagnosis = if let Some(c) = culprit {
             format!(
                 "Isolated regression to PR #{} after {} bisection step(s). Remaining {} PR(s) validated clean.",
-                c, iterations, clean_prs.len()
+                c,
+                iterations,
+                clean_prs.len()
             )
         } else {
             "Could not isolate single culprit; multi-PR incompatibility detected".to_string()

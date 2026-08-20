@@ -83,21 +83,22 @@ impl ComponentDispositionClassifier {
         let mut max_lines = 0;
         let mut has_mixed_io = false;
 
-        if full_path.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&full_path) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_file() && (p.extension().and_then(|s| s.to_str()) == Some("rs")) {
-                        if let Ok(content) = std::fs::read_to_string(&p) {
-                            let lines = content.lines().count();
-                            max_lines = max_lines.max(lines);
-                            if content.contains("sqlx::")
-                                || content.contains("reqwest::")
-                                || content.contains("tokio::net")
-                            {
-                                has_mixed_io = true;
-                            }
-                        }
+        if full_path.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&full_path)
+        {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file()
+                    && (p.extension().and_then(|s| s.to_str()) == Some("rs"))
+                    && let Ok(content) = std::fs::read_to_string(&p)
+                {
+                    let lines = content.lines().count();
+                    max_lines = max_lines.max(lines);
+                    if content.contains("sqlx::")
+                        || content.contains("reqwest::")
+                        || content.contains("tokio::net")
+                    {
+                        has_mixed_io = true;
                     }
                 }
             }

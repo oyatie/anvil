@@ -42,8 +42,16 @@ impl PostmortemGenerator {
             "# Blameless Postmortem: {}\n\n## Root Cause\n{}\n\n## Timeline\n{}\n\n## Action Items\n{}",
             service,
             root_cause,
-            timeline.iter().map(|t| format!("- {}", t)).collect::<Vec<_>>().join("\n"),
-            action_items.iter().map(|a| format!("- [ ] {}", a)).collect::<Vec<_>>().join("\n")
+            timeline
+                .iter()
+                .map(|t| format!("- {}", t))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            action_items
+                .iter()
+                .map(|a| format!("- [ ] {}", a))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
 
         PostmortemBundle {

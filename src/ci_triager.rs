@@ -174,7 +174,9 @@ Output strictly valid JSON matching this schema:
                     actionable_remediation: "Inspect workflow failure logs for details".to_string(),
                     formatted_markdown: format!(
                         "### 🚨 Trunk CI Failure on `{}` (Run #{})\n\n**Logs Snippet:**\n```text\n{}\n```",
-                        branch, run_id, logs.lines().take(30).collect::<Vec<_>>().join("\n")
+                        branch,
+                        run_id,
+                        logs.lines().take(30).collect::<Vec<_>>().join("\n")
                     ),
                 })
             }
@@ -266,16 +268,16 @@ Output strictly valid JSON matching this schema:
 
 fn extract_json_block(text: &str) -> String {
     let json_block_re = regex::Regex::new(r"(?s)```(?:json)?\s*(\{.*?\})\s*```").unwrap();
-    if let Some(caps) = json_block_re.captures(text) {
-        if let Some(m) = caps.get(1) {
-            return m.as_str().to_string();
-        }
+    if let Some(caps) = json_block_re.captures(text)
+        && let Some(m) = caps.get(1)
+    {
+        return m.as_str().to_string();
     }
 
-    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}')) {
-        if first < last {
-            return text[first..=last].to_string();
-        }
+    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}'))
+        && first < last
+    {
+        return text[first..=last].to_string();
     }
 
     text.to_string()

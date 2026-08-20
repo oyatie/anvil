@@ -35,16 +35,15 @@ pub async fn execute_pr_review(
         .as_ref()
         .map(|s| s.last_reviewed_head_sha.as_str());
 
-    if !force {
-        if let Some(last_sha) = prev_sha {
-            if last_sha == head_sha {
-                info!(
-                    "PR {}#{} HEAD {} was already reviewed. Skipping.",
-                    repo, pr_number, head_sha
-                );
-                return Ok(());
-            }
-        }
+    if !force
+        && let Some(last_sha) = prev_sha
+        && last_sha == head_sha
+    {
+        info!(
+            "PR {}#{} HEAD {} was already reviewed. Skipping.",
+            repo, pr_number, head_sha
+        );
+        return Ok(());
     }
 
     let repo_dir = state

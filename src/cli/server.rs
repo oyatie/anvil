@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 
 use crate::config::Config;
 use crate::github::GitHubClient;
-use crate::webhook::{create_router, AppState};
+use crate::webhook::{AppState, create_router};
 
 pub async fn run_server(state: AppState) -> Result<()> {
     let host = state.config.host.clone();
@@ -55,7 +55,8 @@ pub async fn run_server(state: AppState) -> Result<()> {
                         info!(
                             "[Outage Recovery] Dispatched review and {}-gate certification for {}#{}",
                             crate::pre_merge_guard::report::TOTAL_GATES,
-                            repo, pr.number
+                            repo,
+                            pr.number
                         );
                         let _ = crate::webhook::pipelines::review::execute_pr_review(
                             &task_state,

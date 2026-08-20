@@ -322,31 +322,31 @@ impl CleanArchitectureGuard {
                 match current_layer {
                     Some(ArchLayer::Core) => {
                         for (pattern, target_layer, desc) in &core_forbidden_imports {
-                            if let Ok(re) = Regex::new(pattern) {
-                                if re.is_match(trimmed) {
-                                    violations.push(ArchViolation {
-                                        file_path: current_file.clone(),
-                                        source_layer: "CORE/DOMAIN".to_string(),
-                                        target_layer: target_layer.to_string(),
-                                        description: desc.to_string(),
-                                        snippet: trimmed.to_string(),
-                                    });
-                                }
+                            if let Ok(re) = Regex::new(pattern)
+                                && re.is_match(trimmed)
+                            {
+                                violations.push(ArchViolation {
+                                    file_path: current_file.clone(),
+                                    source_layer: "CORE/DOMAIN".to_string(),
+                                    target_layer: target_layer.to_string(),
+                                    description: desc.to_string(),
+                                    snippet: trimmed.to_string(),
+                                });
                             }
                         }
                     }
                     Some(ArchLayer::Ports) => {
                         for (pattern, target_layer, desc) in &ports_forbidden_imports {
-                            if let Ok(re) = Regex::new(pattern) {
-                                if re.is_match(trimmed) {
-                                    violations.push(ArchViolation {
-                                        file_path: current_file.clone(),
-                                        source_layer: "PORTS/APPLICATION".to_string(),
-                                        target_layer: target_layer.to_string(),
-                                        description: desc.to_string(),
-                                        snippet: trimmed.to_string(),
-                                    });
-                                }
+                            if let Ok(re) = Regex::new(pattern)
+                                && re.is_match(trimmed)
+                            {
+                                violations.push(ArchViolation {
+                                    file_path: current_file.clone(),
+                                    source_layer: "PORTS/APPLICATION".to_string(),
+                                    target_layer: target_layer.to_string(),
+                                    description: desc.to_string(),
+                                    snippet: trimmed.to_string(),
+                                });
                             }
                         }
                     }

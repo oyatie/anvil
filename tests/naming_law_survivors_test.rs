@@ -47,7 +47,7 @@
 use anvil::brand_absence::{
     BrandAbsenceGate, BrandViolation, BrandViolationKind, VOCABULARY_DEFINITION_PATH,
 };
-use anvil::migration::{Verdict, MIGRATION_LEDGER};
+use anvil::migration::{MIGRATION_LEDGER, Verdict};
 use anvil::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -663,6 +663,7 @@ fn live_gate_count() -> usize {
         zero_day_status: GateStatus::Passed,
         formal_verification_status: GateStatus::Passed,
         deadlock_status: GateStatus::Passed,
+        review_verdict_status: GateStatus::Passed,
         brand_absence_status: GateStatus::Passed,
         migration_boundary_status: GateStatus::Passed,
         automated_canary_status: GateStatus::Passed,

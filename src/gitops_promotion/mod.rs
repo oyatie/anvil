@@ -63,10 +63,10 @@ impl GitOpsPromotionEngine {
 
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "manifest.yaml".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let findings = self.pinner.scan_unpinned_images(&current_file, file_diff);

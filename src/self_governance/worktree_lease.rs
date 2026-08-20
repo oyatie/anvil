@@ -206,7 +206,7 @@ impl LeaseStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(leases),
             Err(e) => {
                 return Err(e)
-                    .with_context(|| format!("reading lease store {}", self.root.display()))
+                    .with_context(|| format!("reading lease store {}", self.root.display()));
             }
         };
         while let Some(entry) = entries.next_entry().await? {

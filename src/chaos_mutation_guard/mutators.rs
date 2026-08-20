@@ -99,11 +99,13 @@ pub fn check_bound(val: usize) -> bool {
 "#;
         let muts = engine.generate_mutations("src/bound.rs", code);
         assert!(!muts.is_empty());
-        assert!(muts
-            .iter()
-            .any(|m| m.mutation_type.contains("BoundaryShrink")));
-        assert!(muts
-            .iter()
-            .any(|m| m.mutation_type.contains("InvertBoolLiteral")));
+        assert!(
+            muts.iter()
+                .any(|m| m.mutation_type.contains("BoundaryShrink"))
+        );
+        assert!(
+            muts.iter()
+                .any(|m| m.mutation_type.contains("InvertBoolLiteral"))
+        );
     }
 }

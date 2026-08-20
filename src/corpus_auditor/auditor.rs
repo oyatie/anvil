@@ -60,29 +60,28 @@ impl CorpusAuditor {
                         stack.push(path);
                     } else if path.is_file()
                         && (rel.ends_with(".md") || rel.ends_with(".yaml") || rel.ends_with(".yml"))
+                        && let Ok(content) = std::fs::read_to_string(&path)
                     {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            // Check SSOT claim location
-                            let is_canonical_dir =
-                                rel.starts_with("docs/") || rel.starts_with("contracts/");
-                            if !is_canonical_dir
-                                && (content.contains("canonical_authority: true")
-                                    || (content.contains("source of truth")
-                                        && content.contains("canonical")))
-                            {
-                                unauthorized_ssot_claims.push(rel.clone());
-                            }
+                        // Check SSOT claim location
+                        let is_canonical_dir =
+                            rel.starts_with("docs/") || rel.starts_with("contracts/");
+                        if !is_canonical_dir
+                            && (content.contains("canonical_authority: true")
+                                || (content.contains("source of truth")
+                                    && content.contains("canonical")))
+                        {
+                            unauthorized_ssot_claims.push(rel.clone());
+                        }
 
-                            // Check frontmatter validity
-                            if let Err(err) = FrontmatterValidator::validate_doc_frontmatter(
-                                &rel, &content, repo_dir,
-                            ) {
-                                frontmatter_violations.push(err);
-                            }
+                        // Check frontmatter validity
+                        if let Err(err) =
+                            FrontmatterValidator::validate_doc_frontmatter(&rel, &content, repo_dir)
+                        {
+                            frontmatter_violations.push(err);
+                        }
 
-                            if rel.starts_with("docs/adr-archive/") {
-                                stale_adrs_count += 1;
-                            }
+                        if rel.starts_with("docs/adr-archive/") {
+                            stale_adrs_count += 1;
                         }
                     }
                 }

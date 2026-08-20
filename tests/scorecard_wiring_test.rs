@@ -89,6 +89,7 @@ fn all_passing() -> PreMergeCertificationReport {
         zero_day_status: GateStatus::Passed,
         formal_verification_status: GateStatus::Passed,
         deadlock_status: GateStatus::Passed,
+        review_verdict_status: GateStatus::Passed,
         brand_absence_status: GateStatus::Passed,
         migration_boundary_status: GateStatus::Passed,
         automated_canary_status: GateStatus::Passed,

@@ -45,6 +45,18 @@ pub struct PreMergeCertificationReport {
     pub zero_day_status: GateStatus,
     pub formal_verification_status: GateStatus,
     pub deadlock_status: GateStatus,
+    /// Verdict of the AI code review and 16-lens matrix.
+    ///
+    /// This was computed in the evaluator and then thrown away: it never became
+    /// a field, so `all_statuses()` could not see it and `seal()` could not gate
+    /// on it. A pull request whose review returned REQUEST_CHANGES or REJECT was
+    /// still certified. The original chain in 117a1f6 ended
+    /// `&& review_verdict_status.is_acceptable()`; when certification moved to
+    /// `seal()`, the value was left behind rather than carried across.
+    ///
+    /// Nothing failed when that happened -- the gate simply stopped mattering,
+    /// silently, which is why an unused-variable lint found it and no review did.
+    pub review_verdict_status: GateStatus,
     /// Names and PR-visible strings must describe what the code verifies, not
     /// stamp an aspiration onto it. Anvil enforced naming discipline on other
     /// repositories while carrying `hyperscaler_consensus_guard` and
@@ -99,7 +111,7 @@ pub struct PreMergeCertificationReport {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 70;
+pub const TOTAL_GATES: usize = 71;
 
 impl PreMergeCertificationReport {
     /// Every gate status on this report, in declaration order.
@@ -147,6 +159,7 @@ impl PreMergeCertificationReport {
             &self.zero_day_status,
             &self.formal_verification_status,
             &self.deadlock_status,
+            &self.review_verdict_status,
             &self.brand_absence_status,
             &self.migration_boundary_status,
             &self.automated_canary_status,
@@ -228,6 +241,7 @@ impl PreMergeCertificationReport {
                 &self.formal_verification_status,
             ),
             ("deadlock_status", &self.deadlock_status),
+            ("review_verdict_status", &self.review_verdict_status),
             ("brand_absence_status", &self.brand_absence_status),
             ("migration_boundary_status", &self.migration_boundary_status),
             ("automated_canary_status", &self.automated_canary_status),
@@ -298,6 +312,20 @@ impl PreMergeCertificationReport {
     /// Invariant I1 — absent evidence must not merge.
     pub fn is_admissible(&self) -> bool {
         self.is_certified_ready && self.unmeasured_gates.is_empty()
+    }
+
+    /// Derives every summary field from the gate statuses.
+    ///
+    /// `is_certified_ready` is the conjunction of `all_statuses()`, so a gate
+    /// added to the struct is in the verdict by construction. The evaluator
+    /// previously held a hand-written 68-term conjunction that was computed
+    /// before the two self-directed gates existed, so `brand_absence_status`
+    /// and `migration_boundary_status` could fail while the report certified.
+    /// The field list is pinned to `TOTAL_GATES` by test; the verdict now
+    /// reads that list rather than a second copy of it.
+    pub fn seal(&mut self) {
+        self.recompute_unmeasured();
+        self.is_certified_ready = self.all_statuses().iter().all(|s| s.is_acceptable());
     }
 }
 
@@ -414,6 +442,7 @@ mod tests {
             zero_day_status: GateStatus::Passed,
             formal_verification_status: GateStatus::Passed,
             deadlock_status: GateStatus::Passed,
+            review_verdict_status: GateStatus::Passed,
             brand_absence_status: GateStatus::Passed,
             migration_boundary_status: GateStatus::Passed,
             automated_canary_status: GateStatus::Passed,
@@ -588,5 +617,105 @@ mod total_gates_pin {
             "the gate corpus changed but TOTAL_GATES did not; every PR-visible count \
              claim is now wrong"
         );
+    }
+}
+
+#[cfg(test)]
+mod seal_tests {
+    use super::GateStatus;
+    use super::tests::sample_report;
+
+    #[test]
+    fn seal_derives_the_verdict_from_every_gate_including_the_self_directed_ones() {
+        // The defect: brand_absence_status and migration_boundary_status were
+        // computed after the certification conjunction, so they never blocked.
+        let mut r = sample_report();
+        r.brand_absence_status = GateStatus::Failed("stamp".into());
+        r.is_certified_ready = true;
+        r.seal();
+        assert!(
+            !r.is_certified_ready,
+            "a failing brand_absence_status must uncertify"
+        );
+
+        let mut r = sample_report();
+        r.migration_boundary_status = GateStatus::Failed("edge".into());
+        r.seal();
+        assert!(
+            !r.is_certified_ready,
+            "a failing migration_boundary_status must uncertify"
+        );
+    }
+
+    #[test]
+    fn seal_certifies_an_all_passing_report_and_withholds_an_unmeasured_one() {
+        let mut r = sample_report();
+        r.is_certified_ready = false;
+        r.seal();
+        assert!(r.is_certified_ready);
+        assert!(r.is_admissible());
+
+        let mut r = sample_report();
+        r.slo_status = GateStatus::NotMeasured {
+            gate_id: "slo_status".into(),
+            reason: "no endpoint".into(),
+        };
+        r.seal();
+        assert!(
+            r.is_certified_ready,
+            "NotMeasured is individually acceptable"
+        );
+        assert!(!r.is_admissible(), "but it withholds admission (I1)");
+        assert_eq!(r.unmeasured_gates, vec!["slo_status".to_string()]);
+    }
+
+    #[test]
+    fn seal_overrides_a_stale_precomputed_verdict() {
+        let mut r = sample_report();
+        r.test_suite_status = GateStatus::Errored("did not run".into());
+        r.is_certified_ready = true; // a caller's stale opinion
+        r.seal();
+        assert!(!r.is_certified_ready);
+    }
+}
+
+#[cfg(test)]
+mod review_verdict_is_binding {
+    use super::*;
+
+    /// A blocking review verdict must prevent certification.
+    ///
+    /// It did not. `review_verdict_status` was computed in the evaluator and
+    /// never became a field, so `all_statuses()` could not see it and `seal()`
+    /// could not gate on it. A pull request whose 16-lens review returned
+    /// REQUEST_CHANGES or REJECT was certified anyway.
+    ///
+    /// The original chain ended `&& review_verdict_status.is_acceptable()`.
+    /// When certification moved into `seal()`, the value was left behind. No
+    /// test failed, because no test asserted the gate was reachable -- it simply
+    /// stopped mattering. An unused-variable lint found it; no review did.
+    #[test]
+    fn a_blocking_review_verdict_prevents_certification() {
+        let mut r = tests::sample_report();
+        r.seal();
+        assert!(r.is_certified_ready, "the clean fixture must certify");
+
+        r.review_verdict_status =
+            GateStatus::Failed("16-Lens Matrix issued blocking verdict: REJECT".to_string());
+        r.seal();
+        assert!(
+            !r.is_certified_ready,
+            "a REJECT review certified the pull request anyway; the review gate is not wired"
+        );
+    }
+
+    /// An unobtained review is Errored, not Failed -- the model did not judge
+    /// the code adversely, the review did not happen -- and both must block.
+    #[test]
+    fn a_review_that_never_completed_also_blocks() {
+        let mut r = tests::sample_report();
+        r.review_verdict_status = GateStatus::Errored("no parseable verdict".to_string());
+        r.seal();
+        assert!(!r.is_certified_ready, "absent evidence must not certify");
     }
 }

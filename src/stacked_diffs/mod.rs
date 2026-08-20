@@ -31,8 +31,7 @@ pub use dag_manager::{StackSyncPlan, StackedBranchNode, StackedDagManager};
 const GATE_ID: &str = "stacked_diffs_status";
 
 /// What must exist before a stack can be evaluated at all.
-const MISSING_STACK_SOURCE: &str =
-    "no pull request DAG was read from the forge, so this PR's parent branch and \
+const MISSING_STACK_SOURCE: &str = "no pull request DAG was read from the forge, so this PR's parent branch and \
      any children stacked on it are unknown and no stack was evaluated";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

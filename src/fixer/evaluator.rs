@@ -107,16 +107,16 @@ Return strictly valid JSON matching this schema:
 
 pub fn extract_json_block(text: &str) -> String {
     let json_block_re = Regex::new(r"(?s)```(?:json)?\s*(\{.*?\})\s*```").unwrap();
-    if let Some(caps) = json_block_re.captures(text) {
-        if let Some(m) = caps.get(1) {
-            return m.as_str().to_string();
-        }
+    if let Some(caps) = json_block_re.captures(text)
+        && let Some(m) = caps.get(1)
+    {
+        return m.as_str().to_string();
     }
 
-    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}')) {
-        if first < last {
-            return text[first..=last].to_string();
-        }
+    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}'))
+        && first < last
+    {
+        return text[first..=last].to_string();
     }
 
     text.to_string()

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::process::Command;
@@ -252,12 +252,13 @@ Output strictly valid JSON matching this schema:
                 output.status
             );
             warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
         }
 
-        Ok(stdout_str)
+        crate::queue_healer::interpret_agy_outcome(
+            output.status.success(),
+            &stdout_str,
+            &stderr_str,
+        )
     }
 }
 

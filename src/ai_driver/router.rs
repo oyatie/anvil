@@ -574,10 +574,18 @@ impl SubscriptionExecutor {
                 output.status
             );
             warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
         }
+
+        // A non-zero exit fails the call outright. This previously fell through
+        // whenever any stdout had been produced, so a stream truncated by
+        // `Error: timeout waiting for response` was handed to the parser below
+        // and became a review verdict -- a judgement assembled from however much
+        // of the model's answer happened to arrive.
+        let stdout_str = crate::queue_healer::interpret_agy_outcome(
+            output.status.success(),
+            &stdout_str,
+            &stderr_str,
+        )?;
 
         let response = agy_stream_response(&stdout_str)
             .map_err(|e| anyhow::anyhow!("{}; agy stderr: {}", e, stderr_str.trim()))?;

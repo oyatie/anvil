@@ -198,7 +198,7 @@ Output strictly valid JSON matching this schema:
             branch, run_id, diag.failure_category
         );
         let body = format!(
-            "{}\n\n*Run URL: https://github.com/{}/actions/runs/{}*\n\n---\n*🤖 Triaged by Oyatie Anvil*",
+            "{}\n\n*Run URL: https://github.com/{}/actions/runs/{}*\n\n---\n*🤖 [Triaged] by Oyatie Anvil*",
             diag.formatted_markdown, repo, run_id
         );
 

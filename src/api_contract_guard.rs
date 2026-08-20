@@ -57,19 +57,37 @@ impl ApiContractGuard {
         // 1. Run OpenAPI schema reference checks if script exists
         let check_script = repo_dir.join("scripts/check-openapi-refs.mjs");
         let mut script_failed = false;
+        // Fails closed: a check we could not run to completion is never evidence
+        // of an intact contract, and no amount of auto-reconciliation clears it.
+        let mut unverifiable: Option<String> = None;
         if check_script.exists() {
-            let out = Command::new("node")
-                .current_dir(repo_dir)
-                .arg("scripts/check-openapi-refs.mjs")
-                .output()
-                .await;
+            let mut cmd = Command::new("node");
+            cmd.current_dir(repo_dir)
+                .arg("scripts/check-openapi-refs.mjs");
 
-            if let Ok(res) = out {
-                if !res.status.success() {
+            match crate::exec::run_bounded(
+                cmd,
+                crate::exec::ExecClass::Build,
+                "check-openapi-refs.mjs",
+            )
+            .await
+            {
+                Ok(res) => {
+                    if !res.status.success() {
+                        warn!(
+                            "check-openapi-refs.mjs flagged drift. Triggering auto-reconciliation..."
+                        );
+                        script_failed = true;
+                    }
+                }
+                Err(e) => {
                     warn!(
-                        "check-openapi-refs.mjs flagged drift. Triggering auto-reconciliation..."
+                        "check-openapi-refs.mjs did not complete ({}). Reporting contract drift \
+                         rather than a pass.",
+                        e
                     );
                     script_failed = true;
+                    unverifiable = Some(format!("check-openapi-refs.mjs did not complete: {e}"));
                 }
             }
         }
@@ -77,20 +95,50 @@ impl ApiContractGuard {
         // 2. Run union-openapi.py if available
         let union_script = repo_dir.join("scripts/union-openapi.py");
         if union_script.exists() {
-            let _ = Command::new("python3")
-                .current_dir(repo_dir)
-                .arg("scripts/union-openapi.py")
-                .output()
-                .await;
+            let mut cmd = Command::new("python3");
+            cmd.current_dir(repo_dir).arg("scripts/union-openapi.py");
+
+            match crate::exec::run_bounded(cmd, crate::exec::ExecClass::Build, "union-openapi.py")
+                .await
+            {
+                Ok(res) if res.status.success() => {}
+                Ok(res) => {
+                    let err = String::from_utf8_lossy(&res.stderr);
+                    warn!(
+                        "union-openapi.py exited with {}: {}",
+                        res.status,
+                        err.trim()
+                    );
+                    script_failed = true;
+                    unverifiable.get_or_insert_with(|| {
+                        format!("union-openapi.py exited with {}", res.status)
+                    });
+                }
+                Err(e) => {
+                    warn!(
+                        "union-openapi.py did not complete ({}). Reporting contract drift rather \
+                         than a pass.",
+                        e
+                    );
+                    script_failed = true;
+                    unverifiable
+                        .get_or_insert_with(|| format!("union-openapi.py did not complete: {e}"));
+                }
+            }
         }
 
         // 3. Check for modified schema files
-        let status_out = Command::new("git")
+        let mut status_cmd = Command::new("git");
+        status_cmd
             .current_dir(repo_dir)
-            .args(["status", "--porcelain"])
-            .output()
-            .await
-            .context("Failed to check git status in ApiContractGuard")?;
+            .args(["status", "--porcelain"]);
+        let status_out = crate::exec::run_bounded(
+            status_cmd,
+            crate::exec::ExecClass::Quick,
+            "git status --porcelain (ApiContractGuard)",
+        )
+        .await
+        .context("Failed to check git status in ApiContractGuard")?;
 
         let modified_lines = String::from_utf8_lossy(&status_out.stdout);
         let synced_files: Vec<String> = modified_lines
@@ -99,9 +147,13 @@ impl ApiContractGuard {
             .filter(|f| f.contains("openapi") || f.contains("schema") || f.contains("contract"))
             .collect();
 
-        let is_intact = !script_failed || !synced_files.is_empty();
+        // An unverifiable check outranks auto-reconciliation: if the tooling never
+        // produced a verdict we cannot claim the contract is intact.
+        let is_intact = unverifiable.is_none() && (!script_failed || !synced_files.is_empty());
 
-        let summary = if !synced_files.is_empty() {
+        let summary = if let Some(reason) = &unverifiable {
+            format!("OpenAPI contract integrity could not be verified: {reason}")
+        } else if !synced_files.is_empty() {
             format!(
                 "Auto-reconciled OpenAPI schemas & contract definitions: {}",
                 synced_files.join(", ")

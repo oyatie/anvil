@@ -442,11 +442,25 @@ pub async fn execute_pr_review(
             "Domain guards generated real updates: {:?}. Committing & pushing...",
             modified_files
         );
-        let _ = Command::new("git")
-            .current_dir(&repo_dir)
-            .args(["add", "-A"])
-            .output()
-            .await;
+        // Staging is bounded and fails CLOSED: a hang, a spawn failure or a non-zero
+        // exit aborts the review instead of letting the pipeline certify a PR whose
+        // auto-synced governance files were never actually committed.
+        let mut add_cmd = Command::new("git");
+        add_cmd.current_dir(&repo_dir).args(["add", "-A"]);
+        let add_out = crate::exec::run_bounded(
+            add_cmd,
+            crate::exec::ExecClass::Quick,
+            "git add -A for domain guard auto-sync",
+        )
+        .await
+        .context("Failed to stage auto-synced documentation & cedar policies")?;
+        if !add_out.status.success() {
+            anyhow::bail!(
+                "git add -A failed while staging auto-synced governance files on PR #{}: {}",
+                pr_number,
+                String::from_utf8_lossy(&add_out.stderr).trim()
+            );
+        }
 
         let commit_msg = format!(
             "chore(governance): [skip review] auto-sync documentation & cedar policies on PR #{}\n\n\
@@ -455,18 +469,47 @@ pub async fn execute_pr_review(
             *🤖 Certified by Oyatie Anvil*",
             pr_number
         );
-        let _ = Command::new("git")
+        let mut commit_cmd = Command::new("git");
+        commit_cmd
             .current_dir(&repo_dir)
-            .args(["commit", "-m", &commit_msg])
-            .output()
-            .await;
+            .args(["commit", "-m", &commit_msg]);
+        let commit_out = crate::exec::run_bounded(
+            commit_cmd,
+            crate::exec::ExecClass::Quick,
+            "git commit for domain guard auto-sync",
+        )
+        .await
+        .context("Failed to commit auto-synced documentation & cedar policies")?;
 
-        // Auto-synced documentation & policies are staged and committed locally for gate verification
-        // Pushes are directed to the PR head branch rather than base_branch trunk
-        info!(
-            "Auto-synced documentation & policies committed locally on PR #{} for certification.",
-            pr_number
-        );
+        if commit_out.status.success() {
+            // Auto-synced documentation & policies are staged and committed locally for gate verification
+            // Pushes are directed to the PR head branch rather than base_branch trunk
+            info!(
+                "Auto-synced documentation & policies committed locally on PR #{} for certification.",
+                pr_number
+            );
+        } else {
+            let stdout = String::from_utf8_lossy(&commit_out.stdout);
+            let stderr = String::from_utf8_lossy(&commit_out.stderr);
+            let empty_commit = ["nothing to commit", "no changes added to commit"]
+                .iter()
+                .any(|needle| stdout.contains(needle) || stderr.contains(needle));
+            if empty_commit {
+                // Benign no-op: the guards rewrote files to content git already has.
+                // Nothing was lost, so the review may continue.
+                warn!(
+                    "Domain guards reported updates {:?} on PR #{}, but git had nothing to commit; the working tree already matched HEAD.",
+                    modified_files, pr_number
+                );
+            } else {
+                anyhow::bail!(
+                    "git commit failed for auto-synced governance files on PR #{}: {} {}",
+                    pr_number,
+                    stdout.trim(),
+                    stderr.trim()
+                );
+            }
+        }
     }
 
     // Evaluate full Pre-Merge, GitOps, CI Velocity & Security Certification Matrix (70 gates)

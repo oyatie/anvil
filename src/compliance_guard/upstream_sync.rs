@@ -219,7 +219,7 @@ impl UpstreamRegulatorySync {
             },
 
             // -------------------------------------------------------------
-            // 5. INTERNAL ENTERPRISE POLICY: Oyatie Living Security & Architecture Doctrine
+            // 5. INTERNAL POLICY: Oyatie living security & architecture doctrine
             // -------------------------------------------------------------
             DynamicRegulatoryRule {
                 rule_id: "INTERNAL_OYATIE_TENANT_ISOLATION_ADR_014".to_string(),

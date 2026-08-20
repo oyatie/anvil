@@ -244,26 +244,31 @@ fn flags_a_gate_count_claim_that_disagrees_with_the_real_count() {
     let real = gate.real_gate_count();
 
     assert_eq!(
-        real, 68,
-        "the real corpus is 68: 68 `: GateStatus,` fields on PreMergeCertificationReport, \
-         68 entries in all_statuses(), and report.rs asserts gate_counts() == (68, 0). \
-         If this number moved, the gate's own source of truth moved with it."
+        real,
+        anvil::pre_merge_guard::report::TOTAL_GATES,
+        "the corpus size must come from TOTAL_GATES, not a literal. This test hardcoded 68 \
+         and went stale the moment two real gates were added -- the same way seven PR-visible \
+         strings came to claim 70 against a corpus of 68"
     );
 
-    let synthetic = r#"
-fn emit() {
-    info!("Executing AI Code Review & 70-Gate Pipeline for {}#{}", repo, pr);
-}
-"#;
+    // Derived so it is wrong BY CONSTRUCTION. This fixture used to hardcode
+    // "70-Gate" to be wrong against a corpus of 68 -- then two real gates were
+    // added, the corpus became 70, and the fixture silently became CORRECT.
+    // The test then passed for the opposite of its stated reason, which is the
+    // same class of decay it exists to catch.
+    let wrong = real + 1;
+    let synthetic = format!(
+        "fn emit() {{\n    info!(\"Executing AI Code Review & {wrong}-Gate Pipeline for {{}}#{{}}\", repo, pr);\n}}\n"
+    );
 
-    let report = gate.scan_source("src/synthetic/pipeline.rs", synthetic);
+    let report = gate.scan_source("src/synthetic/pipeline.rs", &synthetic);
 
     assert!(
         report
             .new_violations
             .iter()
             .any(|v| v.kind == BrandViolationKind::GateCountClaim),
-        "gate must flag a '70-Gate' claim while the real count is {real}, got {:?}",
+        "gate must flag a {wrong}-gate claim while the real count is {real}, got {:?}",
         report.new_violations
     );
     assert!(
@@ -271,9 +276,9 @@ fn emit() {
             .new_violations
             .iter()
             .any(|v| v.kind == BrandViolationKind::GateCountClaim
-                && v.stamp == "70"
-                && v.snippet.contains("70-Gate")),
-        "the violation must name the claimed count (70) and carry the offending snippet, \
+                && v.stamp == wrong.to_string()
+                && v.snippet.contains(&format!("{wrong}-Gate"))),
+        "the violation must name the claimed count ({wrong}) and carry the offending snippet, \
          got {:?}",
         report.new_violations
     );

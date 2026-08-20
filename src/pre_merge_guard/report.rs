@@ -45,6 +45,15 @@ pub struct PreMergeCertificationReport {
     pub zero_day_status: GateStatus,
     pub formal_verification_status: GateStatus,
     pub deadlock_status: GateStatus,
+    /// Names and PR-visible strings must describe what the code verifies, not
+    /// stamp an aspiration onto it. Anvil enforced naming discipline on other
+    /// repositories while carrying `hyperscaler_consensus_guard` and
+    /// `EnterpriseAgenticPipelineRouter` itself.
+    pub brand_absence_status: GateStatus,
+    /// Code that is migrating to oyatie must not depend on code oyatie
+    /// supersedes -- it cannot migrate while anchored to something being
+    /// deleted.
+    pub migration_boundary_status: GateStatus,
     pub automated_canary_status: GateStatus,
     pub progressive_ring_status: GateStatus,
     pub hermetic_build_status: GateStatus,
@@ -90,7 +99,7 @@ pub struct PreMergeCertificationReport {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 68;
+pub const TOTAL_GATES: usize = 70;
 
 impl PreMergeCertificationReport {
     /// Every gate status on this report, in declaration order.
@@ -138,6 +147,8 @@ impl PreMergeCertificationReport {
             &self.zero_day_status,
             &self.formal_verification_status,
             &self.deadlock_status,
+            &self.brand_absence_status,
+            &self.migration_boundary_status,
             &self.automated_canary_status,
             &self.progressive_ring_status,
             &self.hermetic_build_status,
@@ -217,6 +228,8 @@ impl PreMergeCertificationReport {
                 &self.formal_verification_status,
             ),
             ("deadlock_status", &self.deadlock_status),
+            ("brand_absence_status", &self.brand_absence_status),
+            ("migration_boundary_status", &self.migration_boundary_status),
             ("automated_canary_status", &self.automated_canary_status),
             ("progressive_ring_status", &self.progressive_ring_status),
             ("hermetic_build_status", &self.hermetic_build_status),
@@ -401,6 +414,8 @@ mod tests {
             zero_day_status: GateStatus::Passed,
             formal_verification_status: GateStatus::Passed,
             deadlock_status: GateStatus::Passed,
+            brand_absence_status: GateStatus::Passed,
+            migration_boundary_status: GateStatus::Passed,
             automated_canary_status: GateStatus::Passed,
             progressive_ring_status: GateStatus::Passed,
             hermetic_build_status: GateStatus::Passed,
@@ -513,9 +528,9 @@ mod tests {
     #[test]
     fn gate_counts_reflect_reality_not_a_constant() {
         let mut r = sample_report();
-        // All 68 gates passing.
+        // Every gate passing; pinned to the corpus constant, not a literal.
         let (p, f) = r.gate_counts();
-        assert_eq!((p, f), (68, 0));
+        assert_eq!((p, f), (TOTAL_GATES, 0));
 
         // Three genuinely failing gates must report three, not the old constant 1.
         r.cedar_status = GateStatus::Failed("policy gap".into());
@@ -523,7 +538,7 @@ mod tests {
         r.slo_status = GateStatus::Errored("probe timed out".into());
         let (p, f) = r.gate_counts();
         assert_eq!(f, 3, "must count every failing gate, not a hardcoded 1");
-        assert_eq!(p, 65);
+        assert_eq!(p, TOTAL_GATES - 3, "the rest still pass");
         assert_eq!(p + f, r.all_statuses().len());
     }
 

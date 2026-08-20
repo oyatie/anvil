@@ -663,6 +663,8 @@ fn live_gate_count() -> usize {
         zero_day_status: GateStatus::Passed,
         formal_verification_status: GateStatus::Passed,
         deadlock_status: GateStatus::Passed,
+        brand_absence_status: GateStatus::Passed,
+        migration_boundary_status: GateStatus::Passed,
         automated_canary_status: GateStatus::Passed,
         progressive_ring_status: GateStatus::Passed,
         hermetic_build_status: GateStatus::Passed,

@@ -755,7 +755,6 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// This is debt, not an exemption. Each entry's `occurrences` is a ceiling.
 pub static KNOWN_VIOLATIONS: &[AllowlistedDebt] = &[
     AllowlistedDebt { path: "src/cloud_native_guard/mod.rs", stamp: "cloud_native", occurrences: 7, debt_note: "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
-    AllowlistedDebt { path: "src/compliance_guard/upstream_sync.rs", stamp: "enterprise", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/doc_archival_sweeper/issue_doc_consolidator.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/doc_archival_sweeper/mod.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
     AllowlistedDebt { path: "src/doc_guard/frontmatter.rs", stamp: "hyperscaler", occurrences: 1, debt_note: "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)" },
@@ -895,7 +894,13 @@ mod tests {
 
     #[test]
     fn real_gate_count_reads_the_corpus() {
-        assert_eq!(BrandAbsenceGate::new().real_gate_count(), 68);
+        // Pinned to the corpus constant rather than a literal. This test
+        // previously hardcoded 68, which is exactly how seven PR-visible
+        // strings came to claim 70 against a corpus of 68.
+        assert_eq!(
+            BrandAbsenceGate::new().real_gate_count(),
+            crate::pre_merge_guard::report::TOTAL_GATES
+        );
     }
 
     #[test]

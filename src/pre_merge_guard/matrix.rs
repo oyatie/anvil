@@ -1,3 +1,15 @@
+//! The 68-row certification table.
+//!
+//! No longer what Anvil publishes on a pull request: the scorecard comment is
+//! rendered by `crate::publish::scorecard::render`, which reports findings only
+//! and counts the passes instead of listing them. This table put sixty-odd
+//! `PASSED` rows above the two or three that needed action.
+//!
+//! Kept because it still has callers:
+//!   - `crate::pre_merge_guard::evaluator` populates
+//!     `PreMergeCertificationReport::summary_markdown` from it;
+//!   - `tests/red_green_gates_test.rs` asserts against its output.
+
 use super::GateStatus;
 
 pub struct MatrixRenderer;

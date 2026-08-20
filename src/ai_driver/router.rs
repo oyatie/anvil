@@ -8,6 +8,27 @@ use tracing::{error, info, warn};
 use super::provider::{ModelExecutionConfig, ModelProvider};
 use crate::self_governance::account_pool::AccountPoolManager;
 
+/// Delivers a prompt to a provider CLI over STDIN instead of argv.
+///
+/// argv is not a safe channel for a review prompt: Linux caps a single
+/// argument at MAX_ARG_STRLEN (~128KB) and Darwin caps the whole argv block at
+/// ARG_MAX (1MB), so a large diff makes the spawn itself fail with E2BIG. That
+/// failure arrives as an empty stdout, which `reviewer::parse_review_response`
+/// then has to interpret -- a spawn error that is indistinguishable from model
+/// output is the shape of defect this crate exists to eliminate.
+///
+/// The bound comes from `crate::exec`, which owns the timeout and
+/// `kill_on_drop` (invariant I5). Nothing in this module spawns a child or
+/// times one out on its own.
+pub async fn run_with_prompt_on_stdin(
+    cmd: Command,
+    prompt: &str,
+    limit: Duration,
+    what: &str,
+) -> Result<std::process::Output> {
+    crate::exec::run_bounded_with_stdin(cmd, prompt, limit, what).await
+}
+
 #[derive(Debug, Clone)]
 pub struct SubscriptionExecutor {
     account_pool: Arc<AccountPoolManager>,
@@ -79,10 +100,10 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::AnthropicClaudeCode)
             .await;
         let mut cmd = Command::new("claude");
-        cmd.args(["-p", prompt]);
+        // `-p` with no positional argument: the prompt arrives on STDIN.
+        cmd.arg("-p");
         cmd.args(["--model", model_name]);
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
@@ -116,8 +137,9 @@ impl SubscriptionExecutor {
             }
         };
 
-        match crate::exec::run_bounded_for(
+        match run_with_prompt_on_stdin(
             cmd,
+            prompt,
             std::time::Duration::from_secs(config.print_timeout_secs),
             "provider CLI",
         )
@@ -185,10 +207,10 @@ impl SubscriptionExecutor {
             .await;
 
         let mut cmd = Command::new("codex");
-        cmd.args(["exec", prompt]);
+        // `-` is codex's explicit "read the prompt from STDIN" argument.
+        cmd.args(["exec", "-"]);
         cmd.args(["--model", model_name]);
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
@@ -216,8 +238,9 @@ impl SubscriptionExecutor {
             Err(_) => "codex-default".to_string(),
         };
 
-        match crate::exec::run_bounded_for(
+        match run_with_prompt_on_stdin(
             cmd,
+            prompt,
             std::time::Duration::from_secs(config.print_timeout_secs),
             "provider CLI",
         )
@@ -273,7 +296,8 @@ impl SubscriptionExecutor {
             .await;
 
         let mut cmd = Command::new("cursor");
-        cmd.args(["agent", "--print", prompt]);
+        // No positional prompt: it is written to STDIN below.
+        cmd.args(["agent", "--print"]);
         if !model.is_empty() && model != "default" {
             cmd.args(["--model", model]);
         }
@@ -293,12 +317,12 @@ impl SubscriptionExecutor {
         };
 
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        match crate::exec::run_bounded_for(
+        match run_with_prompt_on_stdin(
             cmd,
+            prompt,
             crate::exec::ExecClass::Model.timeout(),
             "provider CLI",
         )
@@ -344,7 +368,8 @@ impl SubscriptionExecutor {
             .await;
 
         let mut cmd = Command::new("grok");
-        cmd.args(["--prompt", prompt, "--model", model]);
+        // No `--prompt` argument: the prompt is written to STDIN below.
+        cmd.args(["--model", model]);
 
         let account_id = match &leased {
             Ok(acc_arc) => {
@@ -367,12 +392,12 @@ impl SubscriptionExecutor {
         };
 
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        match crate::exec::run_bounded_for(
+        match run_with_prompt_on_stdin(
             cmd,
+            prompt,
             std::time::Duration::from_secs(config.print_timeout_secs),
             "provider CLI",
         )
@@ -419,9 +444,9 @@ impl SubscriptionExecutor {
             .await;
 
         let mut cmd = Command::new("agy");
+        // No positional prompt: it is written to STDIN below.
         cmd.args([
             "--print",
-            prompt,
             "--effort",
             &config.reasoning_effort,
             "--dangerously-skip-permissions",
@@ -453,14 +478,14 @@ impl SubscriptionExecutor {
         };
 
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
         // print_timeout_secs was set in 23 places and read nowhere; it now
         // actually bounds the call (invariant I5).
-        let output = crate::exec::run_bounded_for(
+        let output = run_with_prompt_on_stdin(
             cmd,
+            prompt,
             std::time::Duration::from_secs(config.print_timeout_secs),
             "agy subscription CLI",
         )

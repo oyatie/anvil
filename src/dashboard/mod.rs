@@ -1,4 +1,7 @@
+pub mod client_scripts;
+pub mod panel_formatters;
 pub mod ssr_renderer;
+pub mod styles;
 
 use axum::extract::State;
 use axum::response::{Html, IntoResponse, Json};

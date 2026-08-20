@@ -630,14 +630,14 @@ pub async fn execute_pr_review(
         );
     }
 
-    // Post or Update Certification Matrix in-place (Zero Clutter)
+    // Post or amend the scorecard in place, keyed on its marker (Zero Clutter).
     state
         .github_client
         .upsert_pr_comment(
             repo,
             pr_number,
             "<!-- ANVIL_SCORECARD_RECEIPT -->",
-            &cert_report.summary_markdown,
+            &scorecard_comment(&cert_report),
         )
         .await?;
 
@@ -747,4 +747,19 @@ pub async fn execute_pr_review(
     }
 
     Ok(())
+}
+
+/// The body published under the scorecard marker.
+///
+/// Delegates to `crate::publish::scorecard::render`: findings only, passing
+/// gates counted rather than enumerated, marker first and signature last. The
+/// 68-row matrix `evaluator.rs` still stores in `summary_markdown` is no longer
+/// what gets posted -- sixty-odd `PASSED` rows buried the two or three that
+/// needed action.
+///
+/// Kept as a named function rather than an inline call so the upsert call site
+/// names the renderer at the argument position, which is what the wiring test
+/// asserts against (I22: enforced by mechanism, not by convention).
+pub fn scorecard_comment(report: &crate::pre_merge_guard::PreMergeCertificationReport) -> String {
+    crate::publish::scorecard::render(report)
 }

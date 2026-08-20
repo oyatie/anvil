@@ -110,6 +110,76 @@ pub async fn run_bounded_for(mut cmd: Command, limit: Duration, what: &str) -> R
     }
 }
 
+/// Same bound, plus delivery of a payload on the child's STDIN.
+///
+/// # Why this lives here and not at the call site
+///
+/// Writing STDIN needs `spawn()` rather than `output()`, and a hand-rolled
+/// spawn/wait pair is exactly where the timeout and `kill_on_drop` pairing gets
+/// lost: the timeout ends up around the write, or around the wait, and the
+/// child outlives both. Keeping the spawn in this module means every provider
+/// path inherits the same bound and the same kill (invariant I5).
+///
+/// # Deadlock and EPIPE
+///
+/// The write and the drain of stdout/stderr run concurrently, so a child that
+/// echoes its input (every provider CLI does) cannot fill the stdout pipe and
+/// block us while we are still filling its stdin.
+///
+/// A child that exits before reading -- a usage error, an expired login --
+/// gives the writer `EPIPE`. That is the child's answer, not a harness fault,
+/// so the write error is dropped and the child's own output and status are
+/// returned. Rust disables `SIGPIPE` at startup, so this surfaces as an
+/// ordinary `io::Error` rather than a signal.
+///
+/// The pipe is closed once the payload is written; without that EOF the child
+/// waits for more input and every call runs to the timeout.
+pub async fn run_bounded_with_stdin(
+    mut cmd: Command,
+    stdin_payload: &str,
+    limit: Duration,
+    what: &str,
+) -> Result<Output> {
+    use tokio::io::AsyncWriteExt;
+
+    cmd.kill_on_drop(true);
+    cmd.stdin(std::process::Stdio::piped());
+
+    let deliver = async {
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => bail!("{} failed to run: {}", what, e),
+        };
+
+        let pipe = child.stdin.take();
+        let write = async move {
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.write_all(stdin_payload.as_bytes()).await;
+                let _ = pipe.shutdown().await;
+            }
+        };
+        let wait = child.wait_with_output();
+
+        let (_, waited) = tokio::join!(write, wait);
+        match waited {
+            Ok(output) => Ok(output),
+            Err(e) => bail!("{} failed to run: {}", what, e),
+        }
+    };
+
+    match tokio::time::timeout(limit, deliver).await {
+        Ok(result) => result,
+        Err(_) => {
+            warn!(
+                "{} exceeded its {}s timeout while being fed on stdin and was killed",
+                what,
+                limit.as_secs()
+            );
+            bail!("{} timed out after {}s", what, limit.as_secs())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

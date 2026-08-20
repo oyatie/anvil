@@ -1,3 +1,4 @@
+pub mod admin_auth;
 pub mod manual_handlers;
 pub mod pipelines;
 pub mod repo_guard;
@@ -8,6 +9,8 @@ use std::sync::Arc;
 
 use axum::{routing::post, Router};
 use serde::{Deserialize, Serialize};
+
+use admin_auth::admin_guarded;
 
 use crate::adr_drift_ratchet::AdrDriftRatchet;
 use crate::api_contract_guard::ApiContractGuard;
@@ -216,6 +219,25 @@ pub async fn metrics_handler(
 }
 
 /// Constructs the Axum HTTP router with webhook ingress, healthz probes, and on-demand API endpoints.
+///
+/// # Authentication
+///
+/// Every `/api/*` route is registered through [`admin_guarded`], which runs the
+/// admin check before the handler sees the request. On a loopback bind that
+/// check allows everything; on any other bind it requires
+/// `X-Anvil-Admin-Token` to match `ANVIL_ADMIN_TOKEN`, and refuses with 403 if
+/// no token is configured at all (invariant I1).
+///
+/// Two routes are deliberately NOT guarded:
+///   - `/healthz`, the Kubernetes liveness probe, and `/metrics`, the
+///     Prometheus scrape target. Both are pulled by infrastructure that cannot
+///     present a token; guarding them makes the pod look unhealthy and gets the
+///     whole check disabled.
+///   - `/webhook`, which authenticates differently and more strongly: it
+///     verifies the GitHub HMAC signature over the request body.
+///
+/// The dashboard at `/` and `/dashboard` is HTML only; every byte of data it
+/// renders arrives through the guarded `/api/dashboard/state`.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route(
@@ -228,38 +250,47 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/api/dashboard/state",
-            axum::routing::get(crate::dashboard::dashboard_state_api_handler),
+            axum::routing::get(admin_guarded(crate::dashboard::dashboard_state_api_handler)),
         )
         .route(
             "/api/events/fleet",
-            axum::routing::get(crate::webhook::sse::sse_fleet_stream_handler),
+            axum::routing::get(admin_guarded(crate::webhook::sse::sse_fleet_stream_handler)),
         )
         .route("/healthz", axum::routing::get(healthz_handler))
         .route("/metrics", axum::routing::get(metrics_handler))
         .route("/webhook", post(webhook_handler))
-        .route("/api/review", post(manual_review_handler))
-        .route("/api/fix", post(manual_fix_handler))
-        .route("/api/certify", post(manual_certify_handler))
-        .route("/api/triage", post(manual_triage_handler))
-        .route("/api/enlist", post(manual_enlist_handler))
-        .route("/api/heal-queue", post(manual_heal_queue_handler))
-        .route("/api/reconcile", post(manual_reconcile_handler))
+        .route("/api/review", post(admin_guarded(manual_review_handler)))
+        .route("/api/fix", post(admin_guarded(manual_fix_handler)))
+        .route("/api/certify", post(admin_guarded(manual_certify_handler)))
+        .route("/api/triage", post(admin_guarded(manual_triage_handler)))
+        .route("/api/enlist", post(admin_guarded(manual_enlist_handler)))
+        .route(
+            "/api/heal-queue",
+            post(admin_guarded(manual_heal_queue_handler)),
+        )
+        .route(
+            "/api/reconcile",
+            post(admin_guarded(manual_reconcile_handler)),
+        )
         .route(
             "/api/tasks/sweep",
-            post(manual_handlers::task_sweep_handler),
+            post(admin_guarded(manual_handlers::task_sweep_handler)),
         )
-        .route("/api/drain", post(manual_handlers::drain_handler))
+        .route(
+            "/api/drain",
+            post(admin_guarded(manual_handlers::drain_handler)),
+        )
         .route(
             "/api/accounts/pool",
-            post(manual_handlers::add_account_pool_handler),
+            post(admin_guarded(manual_handlers::add_account_pool_handler)),
         )
         .route(
             "/api/accounts/drain",
-            post(manual_handlers::drain_account_handler),
+            post(admin_guarded(manual_handlers::drain_account_handler)),
         )
         .route(
             "/api/accounts/resume",
-            post(manual_handlers::resume_account_handler),
+            post(admin_guarded(manual_handlers::resume_account_handler)),
         )
         .with_state(state)
 }

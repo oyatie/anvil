@@ -13,7 +13,7 @@
         "facade": ["ports"],
         "adapters": ["ports", "core"],
         "core": [],
-        "ports": []
+        "ports": ["core"]
       },
       "satellites": {
         "slos": { "dir": "slos/", "form": "*.openslo.yaml", "aliases": ["observability/slos/"] },

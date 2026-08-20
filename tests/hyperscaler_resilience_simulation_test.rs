@@ -117,6 +117,14 @@ async fn test_deathloop_excessive_token_burn_circuit_breaker() {
     }
 }
 
+fn is_agy_available() -> bool {
+    std::process::Command::new("agy")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[tokio::test]
 async fn test_multi_model_cascading_outage_cooldown_and_fallback() {
     let pool = Arc::new(AccountPoolManager::new());
@@ -138,6 +146,11 @@ async fn test_multi_model_cascading_outage_cooldown_and_fallback() {
     // Put OpenAI Codex in cooldown as well to simulate dual outage
     pool.mark_rate_limited("codex:cli-default", Duration::from_secs(300))
         .await;
+
+    if !is_agy_available() {
+        println!("Skipping live CLI invocation: agy CLI is not installed on this runner");
+        return;
+    }
 
     // Execute prompt targeted at Claude Code -> Should gracefully fall over to Antigravity (Gemini 3.7 Flash)
     let config = ModelExecutionConfig {

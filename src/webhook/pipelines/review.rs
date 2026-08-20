@@ -527,6 +527,33 @@ pub async fn execute_pr_review(
     }
 
     // Evaluate the full pre-merge, GitOps, CI-velocity and security certification matrix
+    // Shape Program: judge the head against the baseline frozen at the
+    // merge-base of the branch this PR targets, and record what was measured.
+    let shape_outcome = crate::shape::facade::gate::judge_pr(
+        &diff_ctx.repo_working_dir,
+        &diff_ctx.base_branch,
+        &diff_ctx.head_sha,
+        &diff_ctx.repo,
+    )
+    .await;
+    if let Some(m) = shape_outcome.measurement() {
+        state
+            .telemetry_store
+            .record_shape_measurement(crate::telemetry_store::ShapeMeasurementRecord {
+                repo: m.repo.clone(),
+                rev: m.rev.clone(),
+                spec_source: m.spec_source.clone(),
+                findings_total: m.distance.findings_total,
+                units_total: m.distance.units_total,
+                units_conformant: m.distance.units_conformant,
+                per_rule: m.per_rule.clone(),
+                blocking_regressions: m.blocking_regressions,
+                advisory_regressions: m.advisory_regressions,
+                recorded_at: chrono::Utc::now(),
+            })
+            .await;
+    }
+
     let cert_report = state.pre_merge_guard.evaluate_pre_merge_gates(
         &diff_ctx,
         &doc_report,
@@ -595,6 +622,7 @@ pub async fn execute_pr_review(
         &attestation_report,
         true,
         &review_resp.verdict,
+        &shape_outcome,
     )?;
 
     // Re-stamp the provenance receipt with the verdict that was actually

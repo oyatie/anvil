@@ -92,6 +92,7 @@ fn all_passing() -> PreMergeCertificationReport {
         review_verdict_status: GateStatus::Passed,
         brand_absence_status: GateStatus::Passed,
         migration_boundary_status: GateStatus::Passed,
+        shape_status: GateStatus::Passed,
         automated_canary_status: GateStatus::Passed,
         progressive_ring_status: GateStatus::Passed,
         hermetic_build_status: GateStatus::Passed,

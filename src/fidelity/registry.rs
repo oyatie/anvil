@@ -241,6 +241,21 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               (microbenchmark_ratchet/criterion_diff.rs:35-44).",
         blocked_on: Some("a criterion benchmark harness and a published trunk baseline"),
     },
+    GateFidelity {
+        gate_id: "shape_status",
+        aspiration: "Measure a repository's distance to its declared monorepo shape — unit skeleton, \
+                     satellite placement, root hygiene, naming, and the Dependency Rule over real \
+                     build edges — and refuse any regression past a baseline frozen at the merge-base.",
+        reference: "oyatie ADR-0562 placement rule and ci/facade/baseline-ratchet; Google Rosie/Tricorder \
+                    ratchets; ArchUnit FreezingArchRule",
+        fidelity: Fidelity::Partial,
+        gap: "Placement, skeleton, root and naming rules are measured from the tree at the PR head with \
+              seeded-defect fixtures. Dependency rules read Cargo path dependencies, Buck2 labels and \
+              `use crate::` paths; TypeScript imports are declared unavailable, so a spec naming \
+              ts-workspace gets NotMeasured for those rules. The adapter-naming rule is not implemented. \
+              Contention metrics are not yet collected.",
+        blocked_on: None,
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

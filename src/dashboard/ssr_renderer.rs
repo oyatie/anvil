@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::self_governance::account_pool::AccountQuotaView;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardStateView {
     pub server_version: String,
@@ -20,6 +22,7 @@ pub struct DashboardStateView {
     pub dora_metrics: DoraMetricsView,
     pub recent_activities: Vec<ActivityEventView>,
     pub merge_train: Vec<MergeTrainItemView>,
+    pub account_quotas: Vec<AccountQuotaView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,7 +96,7 @@ pub struct ActivityEventView {
 pub struct LeptosDashboardRenderer;
 
 impl LeptosDashboardRenderer {
-    /// Renders Tier-0 Hyperscaler DevOps Cockpit (4-Quadrant layout with Speculative Merge Trains & 70-Gate Matrix)
+    /// Renders Tier-0 Hyperscaler DevOps Cockpit (4-Quadrant layout + Multi-Account Pool Quota HUD)
     pub fn render_html(state: &DashboardStateView) -> String {
         let repo_cards = state
             .fleet_repos
@@ -139,7 +142,8 @@ impl LeptosDashboardRenderer {
             r#"<div class="empty-state">
                 <span class="icon">🚂</span>
                 <p>No inflight speculative merge conflicts. Queue idle & ready for admission.</p>
-            </div>"#.to_string()
+            </div>"#
+                .to_string()
         } else {
             state
                 .merge_train
@@ -187,6 +191,39 @@ impl LeptosDashboardRenderer {
                     </div>"#,
                     cell_class, g.gate_number, g.gate_name, g.fail_count, g.pass_percentage, g.mutation_kill_rate,
                     g.gate_number, g.gate_name, g.mutation_kill_rate
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let account_quota_rows = state
+            .account_quotas
+            .iter()
+            .map(|acc| {
+                let status_badge = if acc.is_active {
+                    "<span class=\"badge badge-healthy\">ACTIVE</span>"
+                } else {
+                    "<span class=\"badge badge-warning\">COOLDOWN</span>"
+                };
+                format!(
+                    r#"<tr>
+                        <td><strong>{}</strong></td>
+                        <td><code>{}</code></td>
+                        <td>
+                            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: {:.1}%"></div></div>
+                            <span class="progress-text">{:.1}% ({}k rem)</span>
+                        </td>
+                        <td>${:.2} / ${:.2}</td>
+                        <td>{}</td>
+                    </tr>"#,
+                    acc.account_id,
+                    acc.provider,
+                    acc.pct_5hr_used,
+                    acc.pct_5hr_used,
+                    acc.remaining_5hr_tokens / 1000,
+                    acc.weekly_spent_usd,
+                    acc.weekly_budget_usd,
+                    status_badge
                 )
             })
             .collect::<Vec<_>>()
@@ -683,6 +720,28 @@ impl LeptosDashboardRenderer {
         </div>
     </div>
 
+    <!-- PANEL 5: MULTI-ACCOUNT POOL & 5-HOUR / WEEKLY QUOTA HUD -->
+    <div class="panel-card" style="margin-bottom: 16px;">
+        <div class="panel-header">
+            <span class="panel-title">💳 Panel 5: Multi-Account Pool &amp; Time-Horizon Quota HUD (5-Hour Rolling &amp; 7-Day Weekly)</span>
+            <span class="badge badge-healthy">Active Pool Rotation</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Account ID</th>
+                    <th>Provider</th>
+                    <th>5-Hour Rolling Token Usage</th>
+                    <th>Weekly Budget Spend</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {}
+            </tbody>
+        </table>
+    </div>
+
     <!-- SUB-SECOND SSE AUDIT LOG STREAM -->
     <div class="panel-card">
         <div class="panel-header">
@@ -715,6 +774,7 @@ impl LeptosDashboardRenderer {
             merge_train_rows,
             gate_cells,
             model_rows,
+            account_quota_rows,
             activity_rows
         )
     }

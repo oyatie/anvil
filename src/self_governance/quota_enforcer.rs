@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{error, warn};
 
+use super::account_pool::AccountPoolManager;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuotaBudgetReport {
     pub total_tokens_consumed: u64,
@@ -18,6 +20,7 @@ pub struct QuotaEnforcer {
     total_cost_micro_usd: Arc<AtomicU64>, // cost in millionths of a dollar ($1 = 1,000,000)
     max_cost_budget_usd: f64,
     default_cost_per_million_tokens: f64,
+    pub account_pool: AccountPoolManager,
 }
 
 impl Default for QuotaEnforcer {
@@ -33,6 +36,7 @@ impl QuotaEnforcer {
             total_cost_micro_usd: Arc::new(AtomicU64::new(0)),
             max_cost_budget_usd,
             default_cost_per_million_tokens,
+            account_pool: AccountPoolManager::new(),
         }
     }
 
@@ -114,23 +118,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_quota_enforcer_model_pricing() {
+    fn test_quota_multi_model_rates() {
         let enforcer = QuotaEnforcer::new(50.0, 3.0);
 
-        // 1M tokens of Opus 5 = $30.00
+        // Record 1M tokens of Opus ($30)
         let rep1 = enforcer
             .record_model_spend("claude-opus-5", 1_000_000)
             .unwrap();
         assert_eq!(rep1.estimated_cost_usd, 30.0);
+        assert!(!rep1.is_circuit_broken);
 
-        // 1M tokens of Gemini Flash = $1.50 -> Total $31.50
+        // Record 1M tokens of Gemini Flash ($1.50)
         let rep2 = enforcer
             .record_model_spend("gemini-3.7-flash", 1_000_000)
             .unwrap();
         assert_eq!(rep2.estimated_cost_usd, 31.50);
 
-        // Another 1M tokens of Opus 5 = $30.00 -> Total $61.50 > $50 budget
-        let rep3 = enforcer.record_model_spend("claude-opus-5", 1_000_000);
-        assert!(rep3.is_err());
+        // Record 1M tokens of GPT-5.6 ($15) -> Total $46.50
+        let rep3 = enforcer
+            .record_model_spend("gpt-5.6-sol", 1_000_000)
+            .unwrap();
+        assert_eq!(rep3.estimated_cost_usd, 46.50);
+
+        // Next 1M tokens of Opus ($30) breaches $50 limit
+        assert!(enforcer
+            .record_model_spend("claude-opus-5", 1_000_000)
+            .is_err());
     }
 }

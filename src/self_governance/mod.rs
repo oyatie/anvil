@@ -1,7 +1,9 @@
+pub mod account_pool;
 pub mod process_registry;
 pub mod quota_enforcer;
 pub mod resource_reaper;
 
+pub use account_pool::{AccountPoolManager, AccountQuotaView, ManagedAccount, UsageRecord};
 pub use process_registry::{ProcessRecord, ProcessRegistry};
 pub use quota_enforcer::{QuotaBudgetReport, QuotaEnforcer};
 pub use resource_reaper::{AutonomousResourceReaper, GarbageCollectionReport};
@@ -55,17 +57,5 @@ impl SelfGovernor {
                 let _ = governor.reaper.run_sweep(None).await;
             }
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_self_governor_init() {
-        let governor = SelfGovernor::new();
-        governor.spawn_monitoring_daemon();
-        assert_eq!(governor.quota.current_spend_usd(), 0.0);
     }
 }

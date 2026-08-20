@@ -67,7 +67,22 @@ impl FleetObserver {
         let mut summaries = Vec::new();
 
         for repo in managed_repos {
-            let dora = self.telemetry_store.get_dora_metrics(repo, 30).await;
+            // Fetch live DORA metrics directly from GitHub facts for this repo
+            let dora = self
+                .github_client
+                .fetch_repo_dora_metrics(repo)
+                .await
+                .unwrap_or_else(|_| crate::telemetry_store::DoraMetricSnapshot {
+                    repo: repo.clone(),
+                    timestamp: chrono::Utc::now(),
+                    lead_time_for_changes_hours: 0.0,
+                    deployment_frequency_per_day: 0.0,
+                    change_failure_rate_percent: 0.0,
+                    mean_time_to_restore_mins: 0.0,
+                    total_deployments_30d: 0,
+                    total_incidents_30d: 0,
+                });
+
             let heatmap = self.telemetry_store.get_gate_failure_heatmap(repo).await;
 
             let mut sorted_failures: Vec<_> = heatmap.into_iter().collect();
@@ -107,12 +122,8 @@ impl FleetObserver {
                 .await
                 .unwrap_or(0);
 
-            // Compute empirical pass rate from history or default to 96.5%
-            let pass_rate_percent = if dora.total_deployments_30d > 0 {
-                (100.0 - dora.change_failure_rate_percent).clamp(80.0, 100.0)
-            } else {
-                97.5
-            };
+            // Compute empirical pass rate from actual change failure rate
+            let pass_rate_percent = (100.0 - dora.change_failure_rate_percent).clamp(0.0, 100.0);
 
             summaries.push(RepoFleetSummary {
                 repo_name: repo.clone(),
@@ -126,10 +137,44 @@ impl FleetObserver {
             });
         }
 
-        let global_dora = self
-            .telemetry_store
-            .get_dora_metrics("fleet_global", 30)
-            .await;
+        // Aggregate Global Fleet DORA metrics across all repositories
+        let total_repos_count = summaries.len().max(1);
+        let global_lead_time: f64 = summaries
+            .iter()
+            .map(|s| s.dora_metrics.lead_time_for_changes_hours)
+            .sum::<f64>()
+            / total_repos_count as f64;
+        let global_deploy_cadence: f64 = summaries
+            .iter()
+            .map(|s| s.dora_metrics.deployment_frequency_per_day)
+            .sum::<f64>();
+        let global_cfr: f64 = summaries
+            .iter()
+            .map(|s| s.dora_metrics.change_failure_rate_percent)
+            .sum::<f64>()
+            / total_repos_count as f64;
+        let global_mttr: f64 = summaries
+            .iter()
+            .map(|s| s.dora_metrics.mean_time_to_restore_mins)
+            .sum::<f64>()
+            / total_repos_count as f64;
+
+        let global_dora = crate::telemetry_store::DoraMetricSnapshot {
+            repo: "fleet_global".to_string(),
+            timestamp: chrono::Utc::now(),
+            lead_time_for_changes_hours: global_lead_time,
+            deployment_frequency_per_day: global_deploy_cadence,
+            change_failure_rate_percent: global_cfr,
+            mean_time_to_restore_mins: global_mttr,
+            total_deployments_30d: summaries
+                .iter()
+                .map(|s| s.dora_metrics.total_deployments_30d)
+                .sum(),
+            total_incidents_30d: summaries
+                .iter()
+                .map(|s| s.dora_metrics.total_incidents_30d)
+                .sum(),
+        };
 
         info!(
             "🌐 [Fleet Observer] Dynamically aggregated live telemetry across {} repositories.",

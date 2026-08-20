@@ -579,19 +579,21 @@ pub async fn execute_pr_review(
         })
         .await;
 
-    state.broadcaster.broadcast_event(crate::webhook::sse::FleetEventMessage {
-        event_type: "pr_review_certified".to_string(),
-        repo: repo.to_string(),
-        entity_id: format!("PR #{}", pr_number),
-        title: format!("{} ({}/70 Gates)", title, gates_passed),
-        status: if cert_report.is_certified_ready {
-            "CERTIFIED".to_string()
-        } else {
-            "BLOCKED".to_string()
-        },
-        timestamp_utc: chrono::Utc::now().to_rfc3339(),
-        payload_json: None,
-    });
+    state
+        .broadcaster
+        .broadcast_event(crate::webhook::sse::FleetEventMessage {
+            event_type: "pr_review_certified".to_string(),
+            repo: repo.to_string(),
+            entity_id: format!("PR #{}", pr_number),
+            title: format!("{} ({}/70 Gates)", title, gates_passed),
+            status: if cert_report.is_certified_ready {
+                "CERTIFIED".to_string()
+            } else {
+                "BLOCKED".to_string()
+            },
+            timestamp_utc: chrono::Utc::now().to_rfc3339(),
+            payload_json: None,
+        });
 
     // If 100% Certified Ready, autonomously enlist into GitHub Merge Queue!
     if cert_report.is_certified_ready {

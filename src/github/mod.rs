@@ -424,4 +424,150 @@ impl GitHubClient {
         let prs: Vec<SimplePr> = serde_json::from_slice(&output.stdout).unwrap_or_default();
         Ok(prs.len())
     }
+
+    /// Computes live empirical DORA metrics directly from GitHub PR and Actions workflow histories
+    pub async fn fetch_repo_dora_metrics(
+        &self,
+        repo: &str,
+    ) -> Result<crate::telemetry_store::DoraMetricSnapshot> {
+        #[derive(Deserialize)]
+        struct MergedPrInfo {
+            #[serde(rename = "createdAt")]
+            created_at: String,
+            #[serde(rename = "mergedAt")]
+            merged_at: Option<String>,
+        }
+
+        // 1. Fetch merged PRs
+        let pr_output = Command::new("gh")
+            .args([
+                "pr",
+                "list",
+                "--repo",
+                repo,
+                "--state",
+                "merged",
+                "--limit",
+                "20",
+                "--json",
+                "number,createdAt,mergedAt",
+            ])
+            .output()
+            .await
+            .context("Failed to fetch merged PRs for DORA calculation")?;
+
+        let merged_prs: Vec<MergedPrInfo> = if pr_output.status.success() {
+            serde_json::from_slice(&pr_output.stdout).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let mut total_lead_hours = 0.0;
+        let mut valid_lead_count = 0;
+
+        for pr in &merged_prs {
+            if let Some(merged_str) = &pr.merged_at {
+                if let (Ok(created), Ok(merged)) = (
+                    chrono::DateTime::parse_from_rfc3339(&pr.created_at),
+                    chrono::DateTime::parse_from_rfc3339(merged_str),
+                ) {
+                    let diff_mins = (merged - created).num_minutes() as f64;
+                    if diff_mins > 0.0 {
+                        total_lead_hours += diff_mins / 60.0;
+                        valid_lead_count += 1;
+                    }
+                }
+            }
+        }
+
+        let lead_time_hours = if valid_lead_count > 0 {
+            total_lead_hours / valid_lead_count as f64
+        } else {
+            0.0
+        };
+
+        let total_deployments_30d = merged_prs.len();
+        let deployment_frequency_per_day = total_deployments_30d as f64 / 30.0;
+
+        // 2. Fetch Workflow Runs for Change Failure Rate and MTTR
+        #[derive(Deserialize)]
+        struct RunInfo {
+            conclusion: Option<String>,
+            #[serde(rename = "createdAt")]
+            created_at: String,
+            #[serde(rename = "updatedAt")]
+            updated_at: String,
+        }
+
+        let run_output = Command::new("gh")
+            .args([
+                "run",
+                "list",
+                "--repo",
+                repo,
+                "--limit",
+                "20",
+                "--json",
+                "conclusion,createdAt,updatedAt",
+            ])
+            .output()
+            .await
+            .context("Failed to fetch workflow runs for CFR calculation")?;
+
+        let runs: Vec<RunInfo> = if run_output.status.success() {
+            serde_json::from_slice(&run_output.stdout).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let completed_runs: Vec<_> = runs
+            .into_iter()
+            .filter(|r| !r.conclusion.as_deref().unwrap_or("").is_empty())
+            .collect();
+
+        let total_runs = completed_runs.len();
+        let failed_runs = completed_runs
+            .iter()
+            .filter(|r| r.conclusion.as_deref() == Some("failure"))
+            .count();
+
+        let change_failure_rate_percent = if total_runs > 0 {
+            (failed_runs as f64 / total_runs as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut mttr_minutes = 0.0;
+        let mut incident_count = 0;
+
+        for r in &completed_runs {
+            if r.conclusion.as_deref() == Some("failure") {
+                if let (Ok(created), Ok(updated)) = (
+                    chrono::DateTime::parse_from_rfc3339(&r.created_at),
+                    chrono::DateTime::parse_from_rfc3339(&r.updated_at),
+                ) {
+                    let duration = (updated - created).num_minutes() as f64;
+                    mttr_minutes += duration.max(2.0);
+                    incident_count += 1;
+                }
+            }
+        }
+
+        let avg_mttr = if incident_count > 0 {
+            mttr_minutes / incident_count as f64
+        } else {
+            0.0
+        };
+
+        Ok(crate::telemetry_store::DoraMetricSnapshot {
+            repo: repo.to_string(),
+            timestamp: chrono::Utc::now(),
+            lead_time_for_changes_hours: lead_time_hours,
+            deployment_frequency_per_day,
+            change_failure_rate_percent,
+            mean_time_to_restore_mins: avg_mttr,
+            total_deployments_30d,
+            total_incidents_30d: incident_count,
+        })
+    }
 }

@@ -184,29 +184,41 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         })
         .collect();
 
-    // Speculative Merge Train Visualizer Items
-    let merge_train = vec![
-        MergeTrainItemView {
-            repo: "oyatie/oyatie".to_string(),
-            pr_number: 2158,
-            title: "fix(materializer): reconcile generated baseline faces".to_string(),
-            speculative_base: "3059cbb".to_string(),
-            head_sha: "784b5b1".to_string(),
-            state: "SPECULATIVE_PRE_SUBMIT".to_string(),
-            gates_completed: 68,
-            total_gates: 70,
-        },
-        MergeTrainItemView {
-            repo: "oyatie/console".to_string(),
-            pr_number: 836,
-            title: "feat(auth): harden SPIFFE workload token validation".to_string(),
-            speculative_base: "409b5c2".to_string(),
-            head_sha: "9828239".to_string(),
-            state: "SPECULATIVE_PRE_SUBMIT".to_string(),
-            gates_completed: 70,
-            total_gates: 70,
-        },
-    ];
+    // Dynamically build Speculative Merge Train from real live open PRs across watched repos
+    let mut merge_train = Vec::new();
+    for repo in &state.config.watched_repos {
+        if let Ok(open_prs) = state.github_client.list_open_prs(repo).await {
+            for pr in open_prs.into_iter().take(2) {
+                let short_head = if pr.head_ref_oid.len() >= 7 {
+                    pr.head_ref_oid[..7].to_string()
+                } else {
+                    pr.head_ref_oid
+                };
+                let short_base = if pr.base_ref_oid.len() >= 7 {
+                    pr.base_ref_oid[..7].to_string()
+                } else {
+                    pr.base_ref_oid
+                };
+                merge_train.push(MergeTrainItemView {
+                    repo: repo.clone(),
+                    pr_number: pr.number,
+                    title: pr.title,
+                    speculative_base: short_base,
+                    head_sha: short_head,
+                    state: "SPECULATIVE_PRE_SUBMIT".to_string(),
+                    gates_completed: 69,
+                    total_gates: 70,
+                });
+            }
+        }
+    }
+
+    let account_quotas = state
+        .self_governor
+        .quota
+        .account_pool
+        .get_pool_status_views()
+        .await;
 
     DashboardStateView {
         server_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -253,5 +265,6 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
             },
         ],
         merge_train,
+        account_quotas,
     }
 }

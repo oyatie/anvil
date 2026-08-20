@@ -600,11 +600,39 @@ pub async fn execute_pr_review(
         .quota
         .record_model_spend("gemini-3.7-flash", estimated_tokens);
 
-    let (gates_passed, gates_failed) = if cert_report.is_certified_ready {
-        (70, 0)
-    } else {
-        (69, 1)
-    };
+    // Real counts, computed from the gate statuses. These were hardcoded as
+    // (70, 0) / (69, 1), so every failing PR was recorded as exactly one failed
+    // gate no matter how many actually failed -- which is why the accumulated
+    // telemetry showed ~95% of PRs "stuck at 69/70". That was the constant, not
+    // a measurement (invariant I2).
+    let (gates_passed, gates_failed) = cert_report.gate_counts();
+
+    // Record WHICH gates failed, not just how many. `record_gate_failure` and
+    // GateFailureRecord already existed but had no callers, so the gate_failures
+    // sink in telemetry_journal.json has been empty for its whole life -- leaving
+    // no failure taxonomy to act on.
+    for (gate_name, status) in cert_report.named_statuses() {
+        let reason = match status {
+            crate::pre_merge_guard::GateStatus::Failed(r) => Some(r.clone()),
+            crate::pre_merge_guard::GateStatus::Errored(r) => Some(format!("ERRORED: {}", r)),
+            crate::pre_merge_guard::GateStatus::NotMeasured { reason, .. } => {
+                Some(format!("NOT_MEASURED: {}", reason))
+            }
+            _ => None,
+        };
+        if let Some(failure_reason) = reason {
+            state
+                .telemetry_store
+                .record_gate_failure(crate::telemetry_store::GateFailureRecord {
+                    repo: repo.to_string(),
+                    pr_number,
+                    gate_name: gate_name.to_string(),
+                    failure_reason,
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+        }
+    }
 
     state
         .telemetry_store

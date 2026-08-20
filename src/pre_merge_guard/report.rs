@@ -155,6 +155,104 @@ impl PreMergeCertificationReport {
         ]
     }
 
+    /// Every gate status paired with its field name, in declaration order.
+    ///
+    /// Used to record which specific gates failed, rather than only how many.
+    pub fn named_statuses(&self) -> Vec<(&'static str, &GateStatus)> {
+        vec![
+            ("doc_parity_status", &self.doc_parity_status),
+            ("cedar_status", &self.cedar_status),
+            ("compliance_status", &self.compliance_status),
+            ("api_contract_status", &self.api_contract_status),
+            ("cell_isolation_status", &self.cell_isolation_status),
+            ("supply_chain_status", &self.supply_chain_status),
+            ("clean_arch_status", &self.clean_arch_status),
+            ("monorepo_status", &self.monorepo_status),
+            ("debt_shrink_status", &self.debt_shrink_status),
+            ("modularization_status", &self.modularization_status),
+            ("coverage_status", &self.coverage_status),
+            ("rust_skills_status", &self.rust_skills_status),
+            ("kani_status", &self.kani_status),
+            ("slo_status", &self.slo_status),
+            ("adr_status", &self.adr_status),
+            ("shuffle_status", &self.shuffle_status),
+            ("trace_status", &self.trace_status),
+            ("constant_work_status", &self.constant_work_status),
+            ("idempotency_status", &self.idempotency_status),
+            ("finops_status", &self.finops_status),
+            ("ghost_migration_status", &self.ghost_migration_status),
+            ("gitops_promo_status", &self.gitops_promo_status),
+            ("gitops_drift_status", &self.gitops_drift_status),
+            ("canary_status", &self.canary_status),
+            ("cluster_audit_status", &self.cluster_audit_status),
+            ("migration_orch_status", &self.migration_orch_status),
+            ("ci_wallclock_status", &self.ci_wallclock_status),
+            ("predictive_test_status", &self.predictive_test_status),
+            ("compile_profile_status", &self.compile_profile_status),
+            ("remote_cache_status", &self.remote_cache_status),
+            ("runner_economics_status", &self.runner_economics_status),
+            ("sandbox_status", &self.sandbox_status),
+            ("cross_service_status", &self.cross_service_status),
+            ("ephemeral_secret_status", &self.ephemeral_secret_status),
+            ("psa_status", &self.psa_status),
+            ("shadow_traffic_status", &self.shadow_traffic_status),
+            ("unresolved_review_status", &self.unresolved_review_status),
+            ("local_probe_status", &self.local_probe_status),
+            ("semantic_abi_status", &self.semantic_abi_status),
+            ("zero_day_status", &self.zero_day_status),
+            (
+                "formal_verification_status",
+                &self.formal_verification_status,
+            ),
+            ("deadlock_status", &self.deadlock_status),
+            ("automated_canary_status", &self.automated_canary_status),
+            ("progressive_ring_status", &self.progressive_ring_status),
+            ("hermetic_build_status", &self.hermetic_build_status),
+            ("openvex_status", &self.openvex_status),
+            ("cosign_status", &self.cosign_status),
+            ("chaos_injection_status", &self.chaos_injection_status),
+            ("stacked_diffs_status", &self.stacked_diffs_status),
+            ("microbench_status", &self.microbench_status),
+            ("jittered_backoff_status", &self.jittered_backoff_status),
+            ("schema_evolution_status", &self.schema_evolution_status),
+            ("auto_rollback_status", &self.auto_rollback_status),
+            ("wasm_sandbox_status", &self.wasm_sandbox_status),
+            ("consistency_status", &self.consistency_status),
+            ("flake_quarantine_status", &self.flake_quarantine_status),
+            (
+                "zero_trust_workload_status",
+                &self.zero_trust_workload_status,
+            ),
+            ("carbon_compute_status", &self.carbon_compute_status),
+            ("replay_harness_status", &self.replay_harness_status),
+            ("upgrade_train_status", &self.upgrade_train_status),
+            ("mutation_status", &self.mutation_status),
+            ("feature_flag_status", &self.feature_flag_status),
+            ("bench_status", &self.bench_status),
+            ("attestation_status", &self.attestation_status),
+            ("security_scan_status", &self.security_scan_status),
+            ("schema_compat_status", &self.schema_compat_status),
+            (
+                "performance_concurrency_status",
+                &self.performance_concurrency_status,
+            ),
+            ("test_suite_status", &self.test_suite_status),
+        ]
+    }
+
+    /// Real pass/fail counts, computed from the statuses.
+    ///
+    /// These were previously hardcoded at the call site as `(70, 0)` when
+    /// certified and `(69, 1)` otherwise -- so every failing PR was recorded as
+    /// exactly one failed gate regardless of how many actually failed, and the
+    /// resulting "95% of PRs stuck at 69/70" in telemetry was an artefact of
+    /// that constant, not a measurement (invariant I2).
+    pub fn gate_counts(&self) -> (usize, usize) {
+        let all = self.all_statuses();
+        let passed = all.iter().filter(|s| s.is_acceptable()).count();
+        (passed, all.len() - passed)
+    }
+
     /// Recomputes `unmeasured_gates` from the current gate statuses.
     ///
     /// Called at construction so the field can never drift from the statuses it
@@ -398,6 +496,44 @@ mod tests {
             decl,
             "all_statuses() must list every GateStatus field"
         );
+    }
+
+    #[test]
+    fn gate_counts_reflect_reality_not_a_constant() {
+        let mut r = sample_report();
+        // All 68 gates passing.
+        let (p, f) = r.gate_counts();
+        assert_eq!((p, f), (68, 0));
+
+        // Three genuinely failing gates must report three, not the old constant 1.
+        r.cedar_status = GateStatus::Failed("policy gap".into());
+        r.coverage_status = GateStatus::Failed("below threshold".into());
+        r.slo_status = GateStatus::Errored("probe timed out".into());
+        let (p, f) = r.gate_counts();
+        assert_eq!(f, 3, "must count every failing gate, not a hardcoded 1");
+        assert_eq!(p, 65);
+        assert_eq!(p + f, r.all_statuses().len());
+    }
+
+    #[test]
+    fn named_statuses_identifies_which_gates_failed() {
+        let mut r = sample_report();
+        r.cedar_status = GateStatus::Failed("policy gap".into());
+        r.slo_status = GateStatus::Errored("probe timed out".into());
+
+        let failing: Vec<&str> = r
+            .named_statuses()
+            .into_iter()
+            .filter(|(_, s)| !matches!(s, GateStatus::Passed | GateStatus::AutoUpdated))
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(failing, vec!["cedar_status", "slo_status"]);
+    }
+
+    #[test]
+    fn named_statuses_and_all_statuses_stay_aligned() {
+        let r = sample_report();
+        assert_eq!(r.named_statuses().len(), r.all_statuses().len());
     }
 
     #[test]

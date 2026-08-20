@@ -58,22 +58,23 @@ impl OsvAdvisoryStream {
         );
         let payload = Self::build_query_payload(package_name, ecosystem, version);
 
-        let output = tokio::process::Command::new("curl")
-            .args([
-                "-s",
-                "-X",
-                "POST",
-                "https://api.osv.dev/v1/query",
-                "-H",
-                "Content-Type: application/json",
-                "-d",
-                &payload,
-                "--max-time",
-                "5",
-            ])
-            .output()
-            .await
-            .context("Failed to send request to OSV API via curl")?;
+        let mut curl_cmd = tokio::process::Command::new("curl");
+        curl_cmd.args([
+            "-s",
+            "-X",
+            "POST",
+            "https://api.osv.dev/v1/query",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &payload,
+            "--max-time",
+            "5",
+        ]);
+        let output =
+            crate::exec::run_bounded(curl_cmd, crate::exec::ExecClass::Api, "curl OSV API query")
+                .await
+                .context("Failed to send request to OSV API via curl")?;
 
         if !output.status.success() {
             return Ok(Vec::new());

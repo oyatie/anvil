@@ -58,22 +58,33 @@ impl Fixer {
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
         // Ensure PR branch is checked out
-        let _ = Command::new("git")
-            .current_dir(&repo_dir)
-            .args([
-                "fetch",
-                "origin",
-                &format!("pull/{}/head", pr_number),
-                "--force",
-            ])
-            .output()
-            .await;
+        let mut fetch_cmd = Command::new("git");
+        fetch_cmd.current_dir(&repo_dir).args([
+            "fetch",
+            "origin",
+            &format!("pull/{}/head", pr_number),
+            "--force",
+        ]);
+        let _ = crate::exec::run_bounded(
+            fetch_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git fetch pull head",
+        )
+        .await;
 
-        let _ = Command::new("git")
-            .current_dir(&repo_dir)
-            .args(["checkout", "-B", &format!("pr-{}", pr_number), "FETCH_HEAD"])
-            .output()
-            .await;
+        let mut checkout_cmd = Command::new("git");
+        checkout_cmd.current_dir(&repo_dir).args([
+            "checkout",
+            "-B",
+            &format!("pr-{}", pr_number),
+            "FETCH_HEAD",
+        ]);
+        let _ = crate::exec::run_bounded(
+            checkout_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git checkout PR branch",
+        )
+        .await;
 
         info!(
             "Evaluating {} review feedback items for {}#{} on branch {}",
@@ -159,12 +170,14 @@ impl Fixer {
         }
 
         // Step 5: Check git status, commit, and push
-        let status_out = Command::new("git")
+        let mut status_cmd = Command::new("git");
+        status_cmd
             .current_dir(&repo_dir)
-            .args(["status", "--porcelain"])
-            .output()
-            .await
-            .context("Failed to check git status")?;
+            .args(["status", "--porcelain"]);
+        let status_out =
+            crate::exec::run_bounded(status_cmd, crate::exec::ExecClass::Quick, "git status")
+                .await
+                .context("Failed to check git status")?;
 
         let changes = String::from_utf8_lossy(&status_out.stdout);
         if changes.trim().is_empty() {
@@ -175,11 +188,10 @@ impl Fixer {
             return Ok(None);
         }
 
-        let _ = Command::new("git")
-            .current_dir(&repo_dir)
-            .args(["add", "-A"])
-            .output()
-            .await;
+        let mut add_cmd = Command::new("git");
+        add_cmd.current_dir(&repo_dir).args(["add", "-A"]);
+        let _ =
+            crate::exec::run_bounded(add_cmd, crate::exec::ExecClass::Quick, "git add -A").await;
 
         let commit_msg = format!(
             "fix: address review feedback on PR #{}\n\n\
@@ -191,23 +203,25 @@ impl Fixer {
             valid_items.len()
         );
 
-        let commit_out = Command::new("git")
+        let mut commit_cmd = Command::new("git");
+        commit_cmd
             .current_dir(&repo_dir)
-            .args(["commit", "-m", &commit_msg])
-            .output()
-            .await
-            .context("Failed to create fix commit")?;
+            .args(["commit", "-m", &commit_msg]);
+        let commit_out =
+            crate::exec::run_bounded(commit_cmd, crate::exec::ExecClass::Quick, "git commit")
+                .await
+                .context("Failed to create fix commit")?;
 
         if !commit_out.status.success() {
             let err = String::from_utf8_lossy(&commit_out.stderr);
             bail!("git commit failed: {}", err);
         }
 
-        let sha_out = Command::new("git")
-            .current_dir(&repo_dir)
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .await?;
+        let mut sha_cmd = Command::new("git");
+        sha_cmd.current_dir(&repo_dir).args(["rev-parse", "HEAD"]);
+        let sha_out =
+            crate::exec::run_bounded(sha_cmd, crate::exec::ExecClass::Quick, "git rev-parse HEAD")
+                .await?;
         let new_commit_sha = String::from_utf8_lossy(&sha_out.stdout).trim().to_string();
 
         info!(
@@ -217,12 +231,14 @@ impl Fixer {
 
         info!("Pushing fix to origin branch {}...", head_branch);
         let push_target = format!("HEAD:{}", head_branch);
-        let push_out = Command::new("git")
+        let mut push_cmd = Command::new("git");
+        push_cmd
             .current_dir(&repo_dir)
-            .args(["push", "origin", &push_target])
-            .output()
-            .await
-            .context("Failed to execute git push")?;
+            .args(["push", "origin", &push_target]);
+        let push_out =
+            crate::exec::run_bounded(push_cmd, crate::exec::ExecClass::Vcs, "git push fix commit")
+                .await
+                .context("Failed to execute git push")?;
 
         if !push_out.status.success() {
             let err = String::from_utf8_lossy(&push_out.stderr);

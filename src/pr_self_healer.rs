@@ -33,12 +33,14 @@ impl PrSelfHealer {
         let mut report = SelfHealingReport::default();
 
         // Pass 1: Deterministic Code Formatting (cargo fmt --all)
-        let fmt_out = Command::new("cargo")
-            .arg("fmt")
-            .arg("--all")
-            .current_dir(repo_dir)
-            .output()
-            .await;
+        let mut fmt_cmd = Command::new("cargo");
+        fmt_cmd.arg("fmt").arg("--all").current_dir(repo_dir);
+        let fmt_out = crate::exec::run_bounded(
+            fmt_cmd,
+            crate::exec::ExecClass::Build,
+            "cargo fmt --all (self heal)",
+        )
+        .await;
 
         if let Ok(out) = fmt_out {
             if out.status.success() {
@@ -51,12 +53,17 @@ impl PrSelfHealer {
         report.owners_files_created = owners_created;
 
         // Pass 3: Check git status for modifications
-        let status_out = Command::new("git")
+        let mut status_cmd = Command::new("git");
+        status_cmd
             .args(["status", "--porcelain"])
-            .current_dir(repo_dir)
-            .output()
-            .await
-            .context("Failed to check git status in repo dir")?;
+            .current_dir(repo_dir);
+        let status_out = crate::exec::run_bounded(
+            status_cmd,
+            crate::exec::ExecClass::Quick,
+            "git status --porcelain (self heal)",
+        )
+        .await
+        .context("Failed to check git status in repo dir")?;
 
         let status_str = String::from_utf8_lossy(&status_out.stdout);
         if status_str.trim().is_empty() {
@@ -68,11 +75,14 @@ impl PrSelfHealer {
         }
 
         // Pass 4: Stage, Commit & Push Auto-Heal Diff
-        let _ = Command::new("git")
-            .args(["add", "-A"])
-            .current_dir(repo_dir)
-            .output()
-            .await;
+        let mut add_cmd = Command::new("git");
+        add_cmd.args(["add", "-A"]).current_dir(repo_dir);
+        let _ = crate::exec::run_bounded(
+            add_cmd,
+            crate::exec::ExecClass::Quick,
+            "git add -A (self heal)",
+        )
+        .await;
 
         let commit_msg = format!(
             "chore(anvil): autonomous deterministic self-heal for PR #{}\n\n\
@@ -84,19 +94,27 @@ impl PrSelfHealer {
             pr_number
         );
 
-        let commit_out = Command::new("git")
+        let mut commit_cmd = Command::new("git");
+        commit_cmd
             .args(["commit", "-m", &commit_msg, "--no-verify"])
-            .current_dir(repo_dir)
-            .output()
-            .await
-            .context("Failed to commit self-healing changes")?;
+            .current_dir(repo_dir);
+        let commit_out = crate::exec::run_bounded(
+            commit_cmd,
+            crate::exec::ExecClass::Quick,
+            "git commit (self heal)",
+        )
+        .await
+        .context("Failed to commit self-healing changes")?;
 
         if commit_out.status.success() {
-            let rev_out = Command::new("git")
-                .args(["rev-parse", "HEAD"])
-                .current_dir(repo_dir)
-                .output()
-                .await?;
+            let mut rev_cmd = Command::new("git");
+            rev_cmd.args(["rev-parse", "HEAD"]).current_dir(repo_dir);
+            let rev_out = crate::exec::run_bounded(
+                rev_cmd,
+                crate::exec::ExecClass::Quick,
+                "git rev-parse HEAD (self heal)",
+            )
+            .await?;
             let new_sha = String::from_utf8_lossy(&rev_out.stdout).trim().to_string();
             report.commit_sha = Some(new_sha.clone());
 
@@ -104,11 +122,16 @@ impl PrSelfHealer {
                 "Pushing autonomous self-healing commit {} to branch {}",
                 new_sha, branch
             );
-            let push_out = Command::new("git")
+            let mut push_cmd = Command::new("git");
+            push_cmd
                 .args(["push", "origin", branch])
-                .current_dir(repo_dir)
-                .output()
-                .await;
+                .current_dir(repo_dir);
+            let push_out = crate::exec::run_bounded(
+                push_cmd,
+                crate::exec::ExecClass::Vcs,
+                "git push (self heal)",
+            )
+            .await;
 
             if let Ok(p) = push_out {
                 if !p.status.success() {

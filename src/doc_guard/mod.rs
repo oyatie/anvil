@@ -218,10 +218,15 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                 // this probe executed in anvil's own working directory and
                 // judged the wrong tree.
                 cmd.current_dir(&repo_dir_owned);
-                cmd.kill_on_drop(true);
 
-                match tokio::time::timeout(DOC_PARITY_PROBE_TIMEOUT, cmd.output()).await {
-                    Ok(Ok(output)) if output.status.success() => {
+                match crate::exec::run_bounded_for(
+                    cmd,
+                    DOC_PARITY_PROBE_TIMEOUT,
+                    "doc parity probe",
+                )
+                .await
+                {
+                    Ok(output) if output.status.success() => {
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         if let Some(json_str) = extract_json_block(&stdout) {
                             if let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
@@ -236,16 +241,14 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                             stdout.len()
                         )
                     }
-                    Ok(Ok(output)) => anyhow::bail!(
+                    Ok(output) => anyhow::bail!(
                         "doc parity probe exited with status {}: {}",
                         output.status,
                         String::from_utf8_lossy(&output.stderr).trim()
                     ),
-                    Ok(Err(e)) => anyhow::bail!("doc parity probe failed to run: {}", e),
-                    Err(_) => anyhow::bail!(
-                        "doc parity probe timed out after {}s",
-                        DOC_PARITY_PROBE_TIMEOUT.as_secs()
-                    ),
+                    // `run_bounded_for` already distinguishes "failed to run"
+                    // from "timed out" in its message, and both stay errors.
+                    Err(e) => Err(e),
                 }
             },
             |err| {

@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::info;
 
+use crate::exec::{run_bounded, ExecClass};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewThreadNode {
     pub id: String,
@@ -38,9 +40,9 @@ impl GitHubGraphQLClient {
         );
         let mutation = Self::build_resolve_thread_mutation(thread_id);
 
-        let output = Command::new("gh")
-            .args(["api", "graphql", "-f", &format!("query={}", mutation)])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args(["api", "graphql", "-f", &format!("query={}", mutation)]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh api graphql resolveReviewThread")
             .await
             .context("Failed to execute gh api graphql")?;
 
@@ -85,9 +87,9 @@ impl GitHubGraphQLClient {
             }}"#
         );
 
-        let output = Command::new("gh")
-            .args(["api", "graphql", "-f", &format!("query={}", query)])
-            .output()
+        let mut cmd = Command::new("gh");
+        cmd.args(["api", "graphql", "-f", &format!("query={}", query)]);
+        let output = run_bounded(cmd, ExecClass::Api, "gh api graphql reviewThreads")
             .await
             .context("Failed to query review threads")?;
 

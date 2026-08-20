@@ -72,18 +72,22 @@ impl CiTriager {
     }
 
     async fn fetch_failed_run_logs(&self, repo: &str, run_id: u64) -> Result<String> {
-        let output = Command::new("gh")
-            .args([
-                "run",
-                "view",
-                &run_id.to_string(),
-                "--repo",
-                repo,
-                "--log-failed",
-            ])
-            .output()
-            .await
-            .context("Failed to execute gh run view --log-failed")?;
+        let mut logs_cmd = Command::new("gh");
+        logs_cmd.args([
+            "run",
+            "view",
+            &run_id.to_string(),
+            "--repo",
+            repo,
+            "--log-failed",
+        ]);
+        let output = crate::exec::run_bounded(
+            logs_cmd,
+            crate::exec::ExecClass::Api,
+            "gh run view --log-failed",
+        )
+        .await
+        .context("Failed to execute gh run view --log-failed")?;
 
         let logs = if output.status.success() {
             String::from_utf8_lossy(&output.stdout).to_string()
@@ -204,7 +208,12 @@ Output strictly valid JSON matching this schema:
             "issue", "create", "--repo", repo, "--title", &title, "--body", &body,
         ]);
 
-        let out = cmd.output().await?;
+        let out = crate::exec::run_bounded(
+            cmd,
+            crate::exec::ExecClass::Api,
+            "gh issue create (ci triage report)",
+        )
+        .await?;
         if out.status.success() {
             let issue_url = String::from_utf8_lossy(&out.stdout).trim().to_string();
             info!("Successfully created triage issue: {}", issue_url);
@@ -229,7 +238,10 @@ Output strictly valid JSON matching this schema:
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd.output().await.context("Failed to run agy command")?;
+        let output =
+            crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy (ci triager)")
+                .await
+                .context("Failed to run agy command")?;
 
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();

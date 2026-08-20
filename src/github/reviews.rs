@@ -3,6 +3,7 @@ use serde::Serialize;
 use tokio::process::Command;
 use tracing::{info, warn};
 
+use crate::exec::{run_bounded, ExecClass};
 use crate::reviewer::ReviewResponse;
 
 #[derive(Serialize)]
@@ -74,19 +75,29 @@ pub async fn submit_pr_review_impl(
     let json_body = serde_json::to_string(&request)?;
     let endpoint = format!("repos/{}/pulls/{}/reviews", repo, pr_number);
 
+    // `gh api --input -` needs a piped stdin, but the bounded runner drives the
+    // child through `Command::output()`, which closes stdin. Handing `gh` the
+    // same JSON through a temp file sends a byte-identical request body while
+    // keeping the call under a timeout with `kill_on_drop`.
+    let mut body_file = tempfile::NamedTempFile::new()
+        .context("Failed to create a temp file for the gh api request body")?;
+    {
+        use std::io::Write;
+        body_file
+            .write_all(json_body.as_bytes())
+            .context("Failed to write the gh api request body")?;
+        body_file
+            .flush()
+            .context("Failed to flush the gh api request body")?;
+    }
+    let body_path = body_file.path().to_string_lossy().into_owned();
+
     let mut cmd = Command::new("gh");
-    cmd.args(["api", "--method", "POST", &endpoint, "--input", "-"]);
-    cmd.stdin(std::process::Stdio::piped());
+    cmd.args(["api", "--method", "POST", &endpoint, "--input", &body_path]);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
-    let mut child = cmd.spawn().context("Failed to spawn gh api command")?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        let _ = stdin.write_all(json_body.as_bytes()).await;
-    }
-
-    let output = child.wait_with_output().await?;
+    let output = run_bounded(cmd, ExecClass::Api, "gh api POST pull request review").await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -126,7 +137,7 @@ async fn submit_fallback_review(repo: &str, pr_number: u64, review: &ReviewRespo
         &format!("body={}", full_body),
     ]);
 
-    let output = cmd.output().await?;
+    let output = run_bounded(cmd, ExecClass::Api, "gh api POST fallback review comment").await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("Fallback review comment failed: {}", stderr);

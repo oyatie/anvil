@@ -47,11 +47,14 @@ impl FixEngine {
         // 1. Rust project (Cargo.toml)
         if repo_dir.join("Cargo.toml").exists() {
             info!("Detected Rust crate; running `cargo check` and `cargo test`...");
-            let check_out = Command::new("cargo")
-                .current_dir(repo_dir)
-                .arg("check")
-                .output()
-                .await;
+            let mut check_cmd = Command::new("cargo");
+            check_cmd.current_dir(repo_dir).arg("check");
+            let check_out = crate::exec::run_bounded(
+                check_cmd,
+                crate::exec::ExecClass::Build,
+                "cargo check verification gate",
+            )
+            .await;
 
             // A spawn failure previously fell through this `if let` and reached
             // the `Ok(true)` at the end of the branch, so a missing cargo
@@ -68,11 +71,16 @@ impl FixEngine {
                 }
             }
 
-            let test_out = Command::new("cargo")
+            let mut test_cmd = Command::new("cargo");
+            test_cmd
                 .current_dir(repo_dir)
-                .args(["test", "--no-fail-fast"])
-                .output()
-                .await;
+                .args(["test", "--no-fail-fast"]);
+            let test_out = crate::exec::run_bounded(
+                test_cmd,
+                crate::exec::ExecClass::Build,
+                "cargo test verification gate",
+            )
+            .await;
 
             match test_out {
                 Ok(out) if out.status.success() => {}
@@ -91,16 +99,28 @@ impl FixEngine {
         // 2. Node/TypeScript project (package.json)
         if repo_dir.join("package.json").exists() {
             info!("Detected Node/TypeScript project; running tests...");
-            let npm_test = Command::new("npm")
+            let mut npm_cmd = Command::new("npm");
+            npm_cmd
                 .current_dir(repo_dir)
-                .args(["test", "--", "--passWithNoTests"])
-                .output()
-                .await;
+                .args(["test", "--", "--passWithNoTests"]);
+            let npm_test = crate::exec::run_bounded(
+                npm_cmd,
+                crate::exec::ExecClass::Build,
+                "npm test verification gate",
+            )
+            .await;
 
-            if let Ok(out) = npm_test {
-                if out.status.success() {
-                    info!("npm test PASSED");
-                    return Ok(true);
+            match npm_test {
+                Ok(out) => {
+                    if out.status.success() {
+                        info!("npm test PASSED");
+                        return Ok(true);
+                    }
+                }
+                // A gate that could not run (spawn failure or timeout) must not
+                // fall through to the `Ok(true)` at the end of this function.
+                Err(e) => {
+                    bail!("verification gate could not run `npm test`: {}", e);
                 }
             }
         }
@@ -108,16 +128,25 @@ impl FixEngine {
         // 3. Go project (go.mod)
         if repo_dir.join("go.mod").exists() {
             info!("Detected Go project; running `go test ./...`...");
-            let go_test = Command::new("go")
-                .current_dir(repo_dir)
-                .args(["test", "./..."])
-                .output()
-                .await;
+            let mut go_cmd = Command::new("go");
+            go_cmd.current_dir(repo_dir).args(["test", "./..."]);
+            let go_test = crate::exec::run_bounded(
+                go_cmd,
+                crate::exec::ExecClass::Build,
+                "go test verification gate",
+            )
+            .await;
 
-            if let Ok(out) = go_test {
-                if out.status.success() {
-                    info!("Go test gate PASSED");
-                    return Ok(true);
+            match go_test {
+                Ok(out) => {
+                    if out.status.success() {
+                        info!("Go test gate PASSED");
+                        return Ok(true);
+                    }
+                }
+                // Same rule as above: an unrunnable gate is not a passing gate.
+                Err(e) => {
+                    bail!("verification gate could not run `go test`: {}", e);
                 }
             }
         }
@@ -126,11 +155,14 @@ impl FixEngine {
     }
 
     pub async fn attempt_self_correction(&self, repo_dir: &Path) -> Result<()> {
-        let diff_out = Command::new("git")
-            .current_dir(repo_dir)
-            .args(["diff"])
-            .output()
-            .await?;
+        let mut diff_cmd = Command::new("git");
+        diff_cmd.current_dir(repo_dir).args(["diff"]);
+        let diff_out = crate::exec::run_bounded(
+            diff_cmd,
+            crate::exec::ExecClass::Quick,
+            "git diff for self-correction",
+        )
+        .await?;
         let diff_str = String::from_utf8_lossy(&diff_out.stdout);
 
         let prompt = format!(
@@ -155,7 +187,9 @@ impl FixEngine {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd.output().await.context("Failed to run agy command")?;
+        let output = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy fix prompt")
+            .await
+            .context("Failed to run agy command")?;
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 

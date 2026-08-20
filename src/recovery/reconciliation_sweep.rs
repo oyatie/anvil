@@ -143,20 +143,24 @@ impl OutageRecoveryReconciler {
 
     /// Fetches all open PRs using GitHub CLI
     async fn fetch_open_prs(&self, repo: &str) -> Result<Vec<OpenPrSummary>> {
-        let output = tokio::process::Command::new("gh")
-            .args([
-                "pr",
-                "list",
-                "--repo",
-                repo,
-                "--state",
-                "open",
-                "--json",
-                "number,title,headRefOid,headRefName,isDraft",
-            ])
-            .output()
-            .await
-            .context("Failed to execute gh pr list")?;
+        let mut list_cmd = tokio::process::Command::new("gh");
+        list_cmd.args([
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--json",
+            "number,title,headRefOid,headRefName,isDraft",
+        ]);
+        let output = crate::exec::run_bounded(
+            list_cmd,
+            crate::exec::ExecClass::Api,
+            "gh pr list (reconciliation sweep)",
+        )
+        .await
+        .context("Failed to execute gh pr list")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

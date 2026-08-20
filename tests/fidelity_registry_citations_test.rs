@@ -296,7 +296,8 @@ fn numeric_literals(text: &str) -> Vec<String> {
         while e > s && b[e - 1] == b'.' {
             e -= 1; // trailing sentence period is not part of the number
         }
-        let before_ok = s == 0 || !(is_ident_byte(b[s - 1]) || b[s - 1] == b'.' || b[s - 1] == b'-');
+        let before_ok =
+            s == 0 || !(is_ident_byte(b[s - 1]) || b[s - 1] == b'.' || b[s - 1] == b'-');
         let after_ok = e >= b.len() || !is_ident_byte(b[e]);
         if before_ok && after_ok && e > s {
             out.push(text[s..e].to_string());

@@ -207,8 +207,8 @@ fn guard_run_over_anvils_own_tree_does_not_fabricate_a_clean_pass() {
         .expect("guard evaluates Anvil's own tree");
 
     let s = report.summary.to_lowercase();
-    let claims_verified = report.is_clean
-        && (s.contains("verified") || s.contains("intact") || s.contains("100%"));
+    let claims_verified =
+        report.is_clean && (s.contains("verified") || s.contains("intact") || s.contains("100%"));
     let admits_unmeasured = s.contains("not measured")
         || s.contains("notmeasured")
         || s.contains("nothing to measure")

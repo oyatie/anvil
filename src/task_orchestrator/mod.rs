@@ -57,7 +57,11 @@ impl AutonomousTaskOrchestrator {
         let stages = self.sequencer.sequence_tasks(verified_tasks)?;
         let mut reports = Vec::new();
 
-        let base_branch = if repo.contains("oyatie") { "dev" } else { "main" };
+        let base_branch = if repo.contains("oyatie") {
+            "dev"
+        } else {
+            "main"
+        };
 
         // 4. Staged autonomous execution
         for stage in stages {
@@ -67,7 +71,10 @@ impl AutonomousTaskOrchestrator {
                 stage.tasks.len()
             );
             for task in stage.tasks {
-                let rep = self.fix_engine.execute_task(repo, &task, base_branch).await?;
+                let rep = self
+                    .fix_engine
+                    .execute_task(repo, &task, base_branch)
+                    .await?;
                 reports.push(rep);
             }
         }

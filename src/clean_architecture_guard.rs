@@ -161,7 +161,8 @@ fn classify_layer(file_path: &str) -> Option<ArchLayer> {
     {
         return Some(ArchLayer::Ports);
     }
-    if path.contains("/adapter") || path.ends_with("/adapters.rs") || path.ends_with("/adapter.rs") {
+    if path.contains("/adapter") || path.ends_with("/adapters.rs") || path.ends_with("/adapter.rs")
+    {
         return Some(ArchLayer::Adapters);
     }
     if path.contains("/facade/")
@@ -204,7 +205,10 @@ impl CleanArchitectureGuard {
         let scope = format!("source tree {}", root.display());
 
         if !root.is_dir() {
-            let reason = format!("source tree {} is not readable on this host", root.display());
+            let reason = format!(
+                "source tree {} is not readable on this host",
+                root.display()
+            );
             return Ok(CleanArchitectureReport {
                 is_clean: false,
                 violations: Vec::new(),

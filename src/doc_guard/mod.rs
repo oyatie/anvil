@@ -155,7 +155,13 @@ impl DocGuard {
         let changed_files_preview = if diff_ctx.changed_files.len() > 100 {
             format!(
                 "{}\n- ... and {} more files",
-                diff_ctx.changed_files.iter().take(100).cloned().collect::<Vec<_>>().join("\n- "),
+                diff_ctx
+                    .changed_files
+                    .iter()
+                    .take(100)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n- "),
                 diff_ctx.changed_files.len() - 100
             )
         } else {

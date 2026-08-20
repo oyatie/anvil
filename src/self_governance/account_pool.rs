@@ -22,8 +22,8 @@ pub struct ManagedAccount {
     pub account_id: String,
     pub provider: ModelProvider,
     pub auth_profile_or_key: Option<String>,
-    pub max_5hr_tokens: usize,
-    pub max_weekly_budget_usd: f64,
+    pub max_5hr_tokens: Option<usize>,
+    pub max_weekly_budget_usd: Option<f64>,
     pub usage_history: VecDeque<UsageRecord>,
     pub cooldown_until: Option<Instant>,
     pub last_leased_at: Instant,
@@ -35,12 +35,13 @@ pub struct AccountQuotaView {
     pub account_id: String,
     pub provider: String,
     pub used_5hr_tokens: usize,
-    pub max_5hr_tokens: usize,
-    pub pct_5hr_used: f64,
-    pub remaining_5hr_tokens: usize,
+    pub max_5hr_tokens: Option<usize>,
+    pub remaining_5hr_tokens: Option<usize>,
+    pub pct_5hr_used: Option<f64>,
     pub weekly_spent_usd: f64,
-    pub weekly_budget_usd: f64,
-    pub pct_weekly_spent: f64,
+    pub weekly_budget_usd: Option<f64>,
+    pub pct_weekly_spent: Option<f64>,
+    pub quota_description: String,
     pub is_active: bool,
     pub is_draining: bool,
     pub lifecycle_state: String,
@@ -80,94 +81,56 @@ impl AccountPoolManager {
     pub fn new() -> Self {
         let mut pools = HashMap::new();
 
-        // 1. Anthropic Claude Account Pool (Multi-Account Pooling)
-        let claude_accounts = vec![
-            Arc::new(RwLock::new(ManagedAccount {
-                account_id: "claude-pool-alpha".to_string(),
-                provider: ModelProvider::AnthropicClaudeCode,
-                auth_profile_or_key: Some("CLAUDE_ACCOUNT_ALPHA".to_string()),
-                max_5hr_tokens: 500_000,
-                max_weekly_budget_usd: 100.0,
-                usage_history: VecDeque::new(),
-                cooldown_until: None,
-                last_leased_at: Instant::now(),
-                is_draining: false,
-            })),
-            Arc::new(RwLock::new(ManagedAccount {
-                account_id: "claude-pool-beta".to_string(),
-                provider: ModelProvider::AnthropicClaudeCode,
-                auth_profile_or_key: Some("CLAUDE_ACCOUNT_BETA".to_string()),
-                max_5hr_tokens: 500_000,
-                max_weekly_budget_usd: 100.0,
-                usage_history: VecDeque::new(),
-                cooldown_until: None,
-                last_leased_at: Instant::now(),
-                is_draining: false,
-            })),
-        ];
+        // Authentic local CLI subscription accounts discovered from host environment
+        // 1. Anthropic Claude Code (Local logged-in CLI: ~/.claude)
+        let claude_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
+            account_id: "claude:cli-default".to_string(),
+            provider: ModelProvider::AnthropicClaudeCode,
+            auth_profile_or_key: Some("HOST_CLAUDE_CLI_AUTH".to_string()),
+            max_5hr_tokens: None,        // Uncapped CLI subscription
+            max_weekly_budget_usd: None, // Uncapped CLI subscription
+            usage_history: VecDeque::new(),
+            cooldown_until: None,
+            last_leased_at: Instant::now(),
+            is_draining: false,
+        }))];
         pools.insert(ModelProvider::AnthropicClaudeCode, claude_accounts);
 
-        // 2. OpenAI Codex Account Pool (Multi-Account Pooling)
-        let codex_accounts = vec![
-            Arc::new(RwLock::new(ManagedAccount {
-                account_id: "codex-pool-primary".to_string(),
-                provider: ModelProvider::OpenAiCodex,
-                auth_profile_or_key: Some("OPENAI_API_KEY_PRIMARY".to_string()),
-                max_5hr_tokens: 1_000_000,
-                max_weekly_budget_usd: 150.0,
-                usage_history: VecDeque::new(),
-                cooldown_until: None,
-                last_leased_at: Instant::now(),
-                is_draining: false,
-            })),
-            Arc::new(RwLock::new(ManagedAccount {
-                account_id: "codex-pool-secondary".to_string(),
-                provider: ModelProvider::OpenAiCodex,
-                auth_profile_or_key: Some("OPENAI_API_KEY_SECONDARY".to_string()),
-                max_5hr_tokens: 1_000_000,
-                max_weekly_budget_usd: 150.0,
-                usage_history: VecDeque::new(),
-                cooldown_until: None,
-                last_leased_at: Instant::now(),
-                is_draining: false,
-            })),
-        ];
+        // 2. OpenAI Codex (Local logged-in CLI: ~/.codex)
+        let codex_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
+            account_id: "codex:cli-default".to_string(),
+            provider: ModelProvider::OpenAiCodex,
+            auth_profile_or_key: Some("HOST_CODEX_CLI_AUTH".to_string()),
+            max_5hr_tokens: None,
+            max_weekly_budget_usd: None,
+            usage_history: VecDeque::new(),
+            cooldown_until: None,
+            last_leased_at: Instant::now(),
+            is_draining: false,
+        }))];
         pools.insert(ModelProvider::OpenAiCodex, codex_accounts);
 
-        // 3. Google Antigravity / Gemini Account Pool
-        let agy_accounts = vec![
-            Arc::new(RwLock::new(ManagedAccount {
-                account_id: "agy-pool-tier0".to_string(),
-                provider: ModelProvider::Antigravity,
-                auth_profile_or_key: Some("AGY_AUTH_PROFILE_DEFAULT".to_string()),
-                max_5hr_tokens: 2_000_000,
-                max_weekly_budget_usd: 200.0,
-                usage_history: VecDeque::new(),
-                cooldown_until: None,
-                last_leased_at: Instant::now(),
-                is_draining: false,
-            })),
-            Arc::new(RwLock::new(ManagedAccount {
-                account_id: "agy-pool-backup".to_string(),
-                provider: ModelProvider::Antigravity,
-                auth_profile_or_key: Some("AGY_AUTH_PROFILE_BACKUP".to_string()),
-                max_5hr_tokens: 2_000_000,
-                max_weekly_budget_usd: 200.0,
-                usage_history: VecDeque::new(),
-                cooldown_until: None,
-                last_leased_at: Instant::now(),
-                is_draining: false,
-            })),
-        ];
+        // 3. Google Antigravity / Gemini (Local logged-in CLI: agy)
+        let agy_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
+            account_id: "agy:cli-default".to_string(),
+            provider: ModelProvider::Antigravity,
+            auth_profile_or_key: Some("HOST_AGY_CLI_AUTH".to_string()),
+            max_5hr_tokens: None,
+            max_weekly_budget_usd: None,
+            usage_history: VecDeque::new(),
+            cooldown_until: None,
+            last_leased_at: Instant::now(),
+            is_draining: false,
+        }))];
         pools.insert(ModelProvider::Antigravity, agy_accounts);
 
-        // 4. Cursor Agent Account Pool
+        // 4. Cursor Agent (Local logged-in CLI: ~/.cursor)
         let cursor_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
-            account_id: "cursor-pool-main".to_string(),
+            account_id: "cursor:cli-default".to_string(),
             provider: ModelProvider::CursorAgent,
-            auth_profile_or_key: Some("CURSOR_AUTH_MAIN".to_string()),
-            max_5hr_tokens: 1_000_000,
-            max_weekly_budget_usd: 100.0,
+            auth_profile_or_key: Some("HOST_CURSOR_CLI_AUTH".to_string()),
+            max_5hr_tokens: None,
+            max_weekly_budget_usd: None,
             usage_history: VecDeque::new(),
             cooldown_until: None,
             last_leased_at: Instant::now(),
@@ -175,13 +138,13 @@ impl AccountPoolManager {
         }))];
         pools.insert(ModelProvider::CursorAgent, cursor_accounts);
 
-        // 5. xAI Grok Account Pool
+        // 5. xAI Grok (Local logged-in CLI: ~/.grok)
         let grok_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
-            account_id: "grok-pool-main".to_string(),
+            account_id: "grok:cli-default".to_string(),
             provider: ModelProvider::XAiGrok,
-            auth_profile_or_key: Some("XAI_GROK_API_KEY".to_string()),
-            max_5hr_tokens: 1_500_000,
-            max_weekly_budget_usd: 120.0,
+            auth_profile_or_key: Some("HOST_GROK_CLI_AUTH".to_string()),
+            max_5hr_tokens: None,
+            max_weekly_budget_usd: None,
             usage_history: VecDeque::new(),
             cooldown_until: None,
             last_leased_at: Instant::now(),
@@ -288,7 +251,12 @@ impl AccountPoolManager {
                                     .map(|r| r.tokens_consumed)
                                     .sum();
 
-                                if used_5hr < acc.max_5hr_tokens {
+                                let has_headroom = match acc.max_5hr_tokens {
+                                    Some(max) => used_5hr < max,
+                                    None => true, // Uncapped subscription
+                                };
+
+                                if has_headroom {
                                     acc.last_leased_at = now;
                                     // Extend prompt-cache affinity TTL by 5 minutes
                                     cache_guard.insert(
@@ -374,13 +342,15 @@ impl AccountPoolManager {
                 .map(|r| r.tokens_consumed)
                 .sum();
 
-            // Check if 5-hour quota exceeded
-            if tokens_5hr >= acc.max_5hr_tokens {
-                warn!(
-                    "Account {} reached 5-hour token ceiling ({}/{} tokens). Skipping.",
-                    acc.account_id, tokens_5hr, acc.max_5hr_tokens
-                );
-                continue;
+            // Check if 5-hour quota exceeded (if configured)
+            if let Some(max) = acc.max_5hr_tokens {
+                if tokens_5hr >= max {
+                    warn!(
+                        "Account {} reached 5-hour token ceiling ({}/{} tokens). Skipping.",
+                        acc.account_id, tokens_5hr, max
+                    );
+                    continue;
+                }
             }
 
             // Pick account with lowest 5-hour load, breaking ties with least recently leased
@@ -450,20 +420,44 @@ impl AccountPoolManager {
                         .map(|r| r.estimated_cost_usd)
                         .sum();
 
-                    let pct_5hr = (used_5hr as f64 / acc.max_5hr_tokens.max(1) as f64) * 100.0;
-                    let pct_weekly = (spent_weekly / acc.max_weekly_budget_usd.max(0.01)) * 100.0;
-                    let remaining_5hr = acc.max_5hr_tokens.saturating_sub(used_5hr);
+                    let spent_clean = spent_weekly.abs().max(0.0);
+
+                    let (pct_5hr, rem_5hr) = match acc.max_5hr_tokens {
+                        Some(max) => (
+                            Some((used_5hr as f64 / max.max(1) as f64) * 100.0),
+                            Some(max.saturating_sub(used_5hr)),
+                        ),
+                        None => (None, None),
+                    };
+
+                    let pct_weekly = acc
+                        .max_weekly_budget_usd
+                        .map(|b| (spent_clean / b.max(0.01)) * 100.0);
+
+                    let quota_desc = match (acc.max_5hr_tokens, acc.max_weekly_budget_usd) {
+                        (Some(max), Some(b)) => {
+                            format!("{:.0}k 5hr / ${:.0} wk", max as f64 / 1000.0, b)
+                        }
+                        (Some(max), None) => format!("{:.0}k 5hr / Uncapped", max as f64 / 1000.0),
+                        (None, Some(b)) => format!("Uncapped 5hr / ${:.0} wk", b),
+                        (None, None) => "Dynamic CLI Subscription (Uncapped)".to_string(),
+                    };
 
                     let cooldown_secs = acc
                         .cooldown_until
                         .map(|c| c.saturating_duration_since(Instant::now()).as_secs())
                         .unwrap_or(0);
 
+                    let is_exhausted = acc
+                        .max_5hr_tokens
+                        .map(|max| used_5hr >= max)
+                        .unwrap_or(false);
+
                     let state_str = if acc.is_draining {
                         "DRAINING".to_string()
                     } else if cooldown_secs > 0 {
                         format!("COOLDOWN ({}s)", cooldown_secs)
-                    } else if used_5hr >= acc.max_5hr_tokens {
+                    } else if is_exhausted {
                         "QUOTA_EXHAUSTED".to_string()
                     } else {
                         "ACTIVE".to_string()
@@ -474,14 +468,13 @@ impl AccountPoolManager {
                         provider: acc.provider.display_name().to_string(),
                         used_5hr_tokens: used_5hr,
                         max_5hr_tokens: acc.max_5hr_tokens,
+                        remaining_5hr_tokens: rem_5hr,
                         pct_5hr_used: pct_5hr,
-                        remaining_5hr_tokens: remaining_5hr,
-                        weekly_spent_usd: spent_weekly,
+                        weekly_spent_usd: spent_clean,
                         weekly_budget_usd: acc.max_weekly_budget_usd,
                         pct_weekly_spent: pct_weekly,
-                        is_active: !acc.is_draining
-                            && acc.cooldown_until.is_none()
-                            && used_5hr < acc.max_5hr_tokens,
+                        quota_description: quota_desc,
+                        is_active: !acc.is_draining && acc.cooldown_until.is_none() && !is_exhausted,
                         is_draining: acc.is_draining,
                         lifecycle_state: state_str,
                         cooldown_remaining_secs: cooldown_secs,
@@ -540,20 +533,44 @@ impl AccountPoolManager {
                     .map(|r| r.estimated_cost_usd)
                     .sum();
 
-                let pct_5hr = (used_5hr as f64 / acc.max_5hr_tokens.max(1) as f64) * 100.0;
-                let pct_weekly = (spent_weekly / acc.max_weekly_budget_usd.max(0.01)) * 100.0;
-                let remaining_5hr = acc.max_5hr_tokens.saturating_sub(used_5hr);
+                let spent_clean = spent_weekly.abs().max(0.0);
+
+                let (pct_5hr, rem_5hr) = match acc.max_5hr_tokens {
+                    Some(max) => (
+                        Some((used_5hr as f64 / max.max(1) as f64) * 100.0),
+                        Some(max.saturating_sub(used_5hr)),
+                    ),
+                    None => (None, None),
+                };
+
+                let pct_weekly = acc
+                    .max_weekly_budget_usd
+                    .map(|b| (spent_clean / b.max(0.01)) * 100.0);
+
+                let quota_desc = match (acc.max_5hr_tokens, acc.max_weekly_budget_usd) {
+                    (Some(max), Some(b)) => {
+                        format!("{:.0}k 5hr / ${:.0} wk", max as f64 / 1000.0, b)
+                    }
+                    (Some(max), None) => format!("{:.0}k 5hr / Uncapped", max as f64 / 1000.0),
+                    (None, Some(b)) => format!("Uncapped 5hr / ${:.0} wk", b),
+                    (None, None) => "Dynamic CLI Subscription (Uncapped)".to_string(),
+                };
 
                 let cooldown_secs = acc
                     .cooldown_until
                     .map(|c| c.saturating_duration_since(now).as_secs())
                     .unwrap_or(0);
 
+                let is_exhausted = acc
+                    .max_5hr_tokens
+                    .map(|max| used_5hr >= max)
+                    .unwrap_or(false);
+
                 let state_str = if acc.is_draining {
                     "DRAINING".to_string()
                 } else if cooldown_secs > 0 {
                     format!("COOLDOWN ({}s)", cooldown_secs)
-                } else if used_5hr >= acc.max_5hr_tokens {
+                } else if is_exhausted {
                     "QUOTA_EXHAUSTED".to_string()
                 } else {
                     "ACTIVE".to_string()
@@ -564,14 +581,13 @@ impl AccountPoolManager {
                     provider: acc.provider.display_name().to_string(),
                     used_5hr_tokens: used_5hr,
                     max_5hr_tokens: acc.max_5hr_tokens,
+                    remaining_5hr_tokens: rem_5hr,
                     pct_5hr_used: pct_5hr,
-                    remaining_5hr_tokens: remaining_5hr,
-                    weekly_spent_usd: spent_weekly,
+                    weekly_spent_usd: spent_clean,
                     weekly_budget_usd: acc.max_weekly_budget_usd,
                     pct_weekly_spent: pct_weekly,
-                    is_active: !acc.is_draining
-                        && acc.cooldown_until.is_none()
-                        && used_5hr < acc.max_5hr_tokens,
+                    quota_description: quota_desc,
+                    is_active: !acc.is_draining && acc.cooldown_until.is_none() && !is_exhausted,
                     is_draining: acc.is_draining,
                     lifecycle_state: state_str,
                     cooldown_remaining_secs: cooldown_secs,

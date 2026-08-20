@@ -220,25 +220,36 @@ impl LeptosDashboardRenderer {
                     )
                 };
 
+                let usage_5hr_html = match (acc.pct_5hr_used, acc.remaining_5hr_tokens) {
+                    (Some(pct), Some(rem)) => format!(
+                        r#"<div class="progress-bar-bg"><div class="progress-bar-fill" style="width: {:.1}%"></div></div>
+                        <span class="progress-text">{:.1}% ({}k rem)</span>"#,
+                        pct, pct, rem / 1000
+                    ),
+                    _ => format!(
+                        r#"<span class="progress-text">{} tokens • Uncapped CLI</span>"#,
+                        acc.used_5hr_tokens
+                    ),
+                };
+
+                let budget_html = match acc.weekly_budget_usd {
+                    Some(budget) => format!("${:.2} / ${:.2}", acc.weekly_spent_usd, budget),
+                    None => format!("${:.2} • Uncapped CLI", acc.weekly_spent_usd),
+                };
+
                 format!(
                     r#"<tr>
                         <td><strong>{}</strong></td>
                         <td><code>{}</code></td>
-                        <td>
-                            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: {:.1}%"></div></div>
-                            <span class="progress-text">{:.1}% ({}k rem)</span>
-                        </td>
-                        <td>${:.2} / ${:.2}</td>
+                        <td>{}</td>
+                        <td>{}</td>
                         <td>{}</td>
                         <td>{}</td>
                     </tr>"#,
                     acc.account_id,
                     acc.provider,
-                    acc.pct_5hr_used,
-                    acc.pct_5hr_used,
-                    acc.remaining_5hr_tokens / 1000,
-                    acc.weekly_spent_usd,
-                    acc.weekly_budget_usd,
+                    usage_5hr_html,
+                    budget_html,
                     status_badge,
                     action_button
                 )

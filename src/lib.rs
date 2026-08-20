@@ -43,6 +43,7 @@ pub mod ephemeral_sandbox;
 pub mod ephemeral_secrets;
 pub mod exec;
 pub mod feature_flag_ratchet;
+pub mod fidelity;
 pub mod finops_ratchet;
 pub mod fixer;
 pub mod flake_bisector;

@@ -1,3 +1,4 @@
+#![allow(clippy::needless_range_loop, clippy::manual_is_multiple_of)]
 //! The fidelity registry is *published output*, not a comment.
 //!
 //! `src/fidelity/registry.rs` renders onto the PR scorecard and the dashboard.
@@ -185,6 +186,7 @@ fn parse_citations(gap: &str) -> Vec<Citation> {
 fn blank_citations(gap: &str, citations: &[Citation]) -> String {
     let mut bytes = gap.as_bytes().to_vec();
     for c in citations {
+        #[allow(clippy::needless_range_loop)]
         for k in c.at.0..c.at.1 {
             bytes[k] = b' ';
         }

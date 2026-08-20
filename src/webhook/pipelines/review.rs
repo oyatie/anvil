@@ -2,8 +2,6 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::automated_canary::MetricDistribution;
-use crate::microbenchmark_ratchet::MicrobenchmarkSample;
 use crate::progressive_rollout::DeploymentRing;
 use crate::webhook::AppState;
 
@@ -308,18 +306,24 @@ pub async fn execute_pr_review(
         .deadlock_analyzer
         .evaluate_deadlock_invariants(repo, &diff_ctx.diff_content);
 
-    // 44. AutomatedCanaryAnalysis: Mann-Whitney U-test Statistical Verification
-    let aca_dist = MetricDistribution {
-        metric_name: "p99_latency_ms".to_string(),
-        baseline_samples: vec![10.0, 10.2, 9.9],
-        canary_samples: vec![10.1, 10.3, 10.0],
-    };
-    let aca_report = state.automated_canary.evaluate_canary(&aca_dist);
+    // 44. AutomatedCanaryAnalysis: Statistical Canary Verification
+    // No canary deployment is driven from here and no metrics endpoint is
+    // configured, so there are no distributions to compare. The gate reports
+    // NotMeasured naming the missing source rather than being handed samples
+    // written on this line, whose verdict would describe those samples and not
+    // the pull request.
+    let aca_report = state.automated_canary.evaluate_without_metrics_source();
 
     // 45. ProgressiveRingOrchestrator: 4-Ring Progressive Rollout Schedule
-    let ring_report = state
-        .progressive_rollout
-        .evaluate_ring_rollout(&DeploymentRing::Ring0Canary, aca_report.passed);
+    // Consumes the canary verdict. `is_acceptable()` is true for NotMeasured:
+    // an unqueried canary is not an unhealthy one, and halting every ring on
+    // absent telemetry would be a fabricated accusation. This gate therefore
+    // inherits the canary's lack of evidence; `automated_canary_status` in the
+    // fidelity registry records what is missing.
+    let ring_report = state.progressive_rollout.evaluate_ring_rollout(
+        &DeploymentRing::Ring0Canary,
+        aca_report.status.is_acceptable(),
+    );
 
     // 46. HermeticBuildValidator: Deterministic Bit-for-Bit Reproducibility
     let hermetic_report = state.hermetic_build.evaluate_hermetic_reproducibility(
@@ -345,19 +349,18 @@ pub async fn execute_pr_review(
         .inject_synthetic_chaos(&diff_ctx.diff_content);
 
     // 50. StackedDiffsOrchestrator: Multi-PR DAG Synchronization
-    let stacked_report = state.stacked_diffs.evaluate_stack_synchronization(&[]);
+    // No forge query enumerates the PRs stacked on this one, so the stack is
+    // unknown. Previously an empty slice literal was passed here, which is the
+    // same absence of information dressed as an evaluated stack.
+    let stacked_report = state.stacked_diffs.evaluate_without_stack_source();
 
     // 51. MicroBenchmarkRatchet: Sub-Microsecond Hotpath Criterion Ratchet
-    let microbench_sample = MicrobenchmarkSample {
-        benchmark_name: "hotpath_throughput".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 50.0,
-        p99_cpu_cycles_base: 100,
-        p99_cpu_cycles_head: 100,
-    };
+    // No criterion harness runs in this repository, so there is no base or head
+    // timing to ratchet. The sample that used to be written here compared a
+    // literal against itself.
     let microbench_report = state
         .microbenchmark_ratchet
-        .evaluate_benchmark_regression(&microbench_sample);
+        .evaluate_without_criterion_baseline();
 
     // 52. JitteredBackoffGuard: AWS Builders' Library Exponential Jitter & Storm Prevention Gate
     let jittered_report = state

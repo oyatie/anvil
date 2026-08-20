@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
@@ -194,7 +194,10 @@ pub async fn run_server(state: AppState) -> Result<()> {
         .fleet_observer
         .spawn_continuous_poller(state.config.watched_repos.clone());
 
-    let mut forward_children: Vec<Child> = Vec::new();
+    // Supervisor handles, not raw children: each task owns its `gh` child and
+    // respawns it across WebSocket drops. Aborting the task drops the child,
+    // which `kill_on_drop(true)` reaps -- so shutdown still leaves no orphans.
+    let mut forwarder_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     if state.config.auto_forward_webhooks {
         for repo in &state.config.watched_repos {
             let _ = state
@@ -212,51 +215,67 @@ pub async fn run_server(state: AppState) -> Result<()> {
             // HMAC verification rejects all of it — a daemon that looks healthy
             // and processes nothing. Verified live: all watched repos currently
             // show `secret_set: false` via `gh api repos/{r}/hooks`.
-            let mut fwd = Command::new("gh");
-            // Detach stdin from the operator's terminal.
+            // Supervised, not fire-and-forget.
             //
-            // These children previously inherited the pane's tty and the
-            // gh-webhook extension put it into raw mode (-opost, -isig) without
-            // restoring it. Two operator-visible failures resulted: log output
-            // staircased (LF with no CR, because -opost disables ONLCR), and
-            // Ctrl-C stopped working entirely (-isig disables INTR), so the
-            // daemon could only be stopped with SIGTERM.
-            //
-            // A process needs a tty file descriptor to call tcsetattr; denying
-            // stdin removes that handle while leaving stdout/stderr inherited so
-            // forwarder diagnostics still reach the log.
-            fwd.stdin(std::process::Stdio::null());
-            // `gh webhook forward` is a deliberately unbounded daemon child, so it
-            // cannot go through `run_bounded` (any ExecClass timeout would sever
-            // webhook delivery). It still gets the other half of I5: `kill_on_drop`
-            // so an aborted boot task reaps the forwarder instead of orphaning it.
-            fwd.kill_on_drop(true);
-            fwd.args([
-                "webhook",
-                "forward",
-                "--repo",
-                repo,
-                "--events",
-                "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group,issues,issue_comment",
-                "--url",
-                &target_url,
-            ]);
-            match state.config.webhook_secret.as_deref() {
-                Some(secret) => {
-                    fwd.args(["--secret", secret]);
-                }
-                None => warn!(
+            // The forwarder's WebSocket to webhook-forwarder.github.com drops
+            // routinely ("close 1006 (abnormal closure): unexpected EOF"). This
+            // child was previously pushed into a Vec and never looked at again,
+            // so a dropped socket ended webhook delivery for one repository
+            // silently -- observed as forwarder count falling 3 -> 2 within five
+            // minutes, and as 1h38m of uptime whose only output was telemetry.
+            let repo_owned = repo.to_string();
+            let secret_owned = state.config.webhook_secret.clone();
+            let url_owned = target_url.clone();
+            if secret_owned.is_none() {
+                warn!(
                     "GITHUB_WEBHOOK_SECRET is unset: forwarding {} with UNSIGNED deliveries. \
                      Signature verification cannot succeed until this is set.",
                     repo
-                ),
+                );
             }
-            let child = fwd.spawn();
-
-            match child {
-                Ok(c) => forward_children.push(c),
-                Err(e) => warn!("Could not start gh webhook forward for {}: {}", repo, e),
-            }
+            forwarder_tasks.push(tokio::spawn(async move {
+                let policy = crate::webhook::forwarder_supervisor::RestartPolicy::default();
+                crate::webhook::forwarder_supervisor::supervise(
+                    &repo_owned.clone(),
+                    &policy,
+                    || {
+                        let repo = repo_owned.clone();
+                        let secret = secret_owned.clone();
+                        let url = url_owned.clone();
+                        async move {
+                            let mut fwd = Command::new("gh");
+                            // Detach stdin from the operator's terminal.
+                            //
+                            // These children previously inherited the pane's tty and
+                            // the gh-webhook extension put it into raw mode (-opost,
+                            // -isig) without restoring it: log output staircased and
+                            // Ctrl-C stopped working. Denying stdin removes the tty
+                            // handle tcsetattr needs, while stdout/stderr stay
+                            // inherited so forwarder diagnostics still reach the log.
+                            fwd.stdin(std::process::Stdio::null());
+                            // Deliberately unbounded: any ExecClass timeout would
+                            // sever webhook delivery. It still takes kill_on_drop so
+                            // an aborted task reaps the child instead of orphaning it.
+                            fwd.kill_on_drop(true);
+                            fwd.args([
+                                "webhook",
+                                "forward",
+                                "--repo",
+                                &repo,
+                                "--events",
+                                "pull_request,pull_request_review,pull_request_review_comment,workflow_run,merge_group,issues,issue_comment",
+                                "--url",
+                                &url,
+                            ]);
+                            if let Some(sec) = secret.as_deref() {
+                                fwd.args(["--secret", sec]);
+                            }
+                            fwd.status().await.map(|st| st.code().unwrap_or(-1))
+                        }
+                    },
+                )
+                .await;
+            }));
         }
     }
 
@@ -298,8 +317,8 @@ pub async fn run_server(state: AppState) -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
-    for mut child in forward_children {
-        let _ = child.kill().await;
+    for task in forwarder_tasks {
+        task.abort();
     }
 
     info!("Oyatie Autonomous Engineering Pipeline gracefully shut down.");
@@ -336,8 +355,19 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
             if let Some(secret) = secret_clone.as_deref() {
                 cmd.args(["--secret", secret]);
             }
-            if let Err(e) = cmd.status().await {
-                error!("Webhook forwarder exited for {}: {}", repo_clone, e);
+            // See forwarder_supervisor: `status()` is Ok(status) when the child
+            // ran and died, so an Err-only check made every real forwarder death
+            // silent. Report the exit either way.
+            match cmd.status().await {
+                Ok(st) => error!(
+                    "Webhook forwarder exited for {} with code {}",
+                    repo_clone,
+                    st.code().unwrap_or(-1)
+                ),
+                Err(e) => error!(
+                    "Webhook forwarder for {} could not be spawned: {}",
+                    repo_clone, e
+                ),
             }
         });
         tasks.push(task);

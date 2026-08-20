@@ -141,7 +141,16 @@ impl Fixer {
             self.engine.attempt_self_correction(&repo_dir).await?;
             let retest_ok = self.engine.run_test_verification_gate(&repo_dir).await?;
             if !retest_ok {
-                warn!("Self-correction did not fully pass tests. Proceeding with caution.");
+                // Previously this only warned "Proceeding with caution" and then
+                // committed and pushed anyway, so the verification gate never
+                // actually gated anything. AI-authored changes that fail the
+                // local suite must not reach the PR branch.
+                warn!(
+                    "Verification gate still failing for {}#{} after self-correction; \
+                     abandoning fix without pushing.",
+                    repo, pr_number
+                );
+                return Ok(None);
             }
         }
 

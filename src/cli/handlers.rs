@@ -402,7 +402,14 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
             let res = state
                 .attestation_guard
-                .stamp_lane_receipt(&repo_dir, &repo, pr, &meta.head_ref_oid)
+                .stamp_lane_receipt(
+                    &repo_dir,
+                    &repo,
+                    pr,
+                    &meta.head_ref_oid,
+                    crate::attestation_guard::AttestationGuard::VERDICT_PENDING,
+                    Vec::new(),
+                )
                 .await?;
             println!(
                 "\n🔏 AttestationGuard Result: {}\nPath: {:?}\n",

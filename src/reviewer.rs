@@ -28,17 +28,25 @@ fn default_side() -> String {
     "RIGHT".to_string()
 }
 
+/// Verdict emitted when the model's response could not be parsed at all.
+///
+/// This is NOT a review outcome the model can choose; it is the harness
+/// reporting that no review was obtained. `evaluator.rs` maps it to a blocking
+/// gate (invariant I1: absent evidence is never a pass).
+pub const VERDICT_ERRORED: &str = "ERRORED";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewResponse {
     pub summary: String,
-    #[serde(default = "default_verdict")]
-    pub verdict: String, // "COMMENT", "APPROVE", "REQUEST_CHANGES"
+    /// "APPROVE" | "COMMENT" | "REQUEST_CHANGES", or `VERDICT_ERRORED` when the
+    /// harness could not parse a response.
+    ///
+    /// Deliberately NOT `#[serde(default)]`: a response omitting `verdict` is a
+    /// parse failure, not an implicit pass. That default was one hop in the
+    /// chain that let a garbage model response merge a PR.
+    pub verdict: String,
     #[serde(default)]
     pub comments: Vec<InlineReviewComment>,
-}
-
-fn default_verdict() -> String {
-    "COMMENT".to_string()
 }
 
 pub struct Reviewer {
@@ -165,13 +173,22 @@ impl Reviewer {
         match serde_json::from_str::<ReviewResponse>(&json_candidate) {
             Ok(resp) => Ok(resp),
             Err(err) => {
+                // Previously this returned verdict "COMMENT", which evaluator.rs
+                // treats as acceptable — so an unparseable response (a refusal,
+                // an error string, truncated output, an E2BIG failure) certified
+                // the PR and enlisted it in the merge queue. It now reports
+                // ERRORED, which blocks. The scorecard still posts, carrying the
+                // raw output, so the author sees why the review failed.
                 warn!(
-                    "Failed to directly parse ReviewResponse JSON: {}. Attempting fallback extraction.",
-                    err
+                    "Could not parse ReviewResponse JSON: {}. Reporting verdict {} (blocking).",
+                    err, VERDICT_ERRORED
                 );
                 Ok(ReviewResponse {
-                    summary: raw_output.to_string(),
-                    verdict: "COMMENT".to_string(),
+                    summary: format!(
+                        "AI review could not be parsed and did not produce a verdict.\n\nParse error: {}\n\nRaw model output:\n{}",
+                        err, raw_output
+                    ),
+                    verdict: VERDICT_ERRORED.to_string(),
                     comments: Vec::new(),
                 })
             }
@@ -215,5 +232,76 @@ mod tests {
         let text = "{\"summary\":\"Good\",\"verdict\":\"APPROVE\",\"comments\":[]}";
         let extracted = extract_json_block(text);
         assert_eq!(extracted, text);
+    }
+
+    fn reviewer() -> Reviewer {
+        Reviewer::new(ModelExecutionConfig::default(), None)
+    }
+
+    /// The headline regression: an unparseable model response must NOT yield a
+    /// verdict that certifies. Before this fix every one of these returned
+    /// "COMMENT", which evaluator.rs accepted, which enlisted the PR.
+    #[test]
+    fn unparseable_responses_report_errored_not_comment() {
+        let garbage = [
+            "I cannot help with that request.",
+            "",
+            "error: agy: command not found",
+            "Usage: claude [OPTIONS] --print <PROMPT>",
+            "{\"summary\": \"truncated...",
+        ];
+        for raw in garbage {
+            let resp = reviewer()
+                .parse_review_response(raw)
+                .expect("parse must not error out");
+            assert_eq!(
+                resp.verdict, VERDICT_ERRORED,
+                "unparseable input {:?} must report ERRORED, got {:?}",
+                raw, resp.verdict
+            );
+            assert_ne!(resp.verdict, "COMMENT", "input {:?} must not pass", raw);
+        }
+    }
+
+    /// A response omitting `verdict` is a parse failure, not an implicit pass.
+    /// This was the second hop in the same chain.
+    #[test]
+    fn missing_verdict_field_is_not_an_implicit_pass() {
+        let resp = reviewer()
+            .parse_review_response("{\"summary\":\"looks fine\",\"comments\":[]}")
+            .expect("parse must not error out");
+        assert_eq!(resp.verdict, VERDICT_ERRORED);
+    }
+
+    #[test]
+    fn well_formed_responses_still_parse_normally() {
+        for (raw, want) in [
+            (
+                "{\"summary\":\"ok\",\"verdict\":\"APPROVE\",\"comments\":[]}",
+                "APPROVE",
+            ),
+            (
+                "{\"summary\":\"ok\",\"verdict\":\"COMMENT\",\"comments\":[]}",
+                "COMMENT",
+            ),
+            (
+                "{\"summary\":\"no\",\"verdict\":\"REQUEST_CHANGES\",\"comments\":[]}",
+                "REQUEST_CHANGES",
+            ),
+        ] {
+            let resp = reviewer().parse_review_response(raw).expect("parses");
+            assert_eq!(resp.verdict, want);
+        }
+    }
+
+    /// The errored summary must carry the raw output so the scorecard explains
+    /// the failure rather than silently showing nothing.
+    #[test]
+    fn errored_summary_preserves_raw_output_for_the_author() {
+        let resp = reviewer()
+            .parse_review_response("agy exited with status 127")
+            .expect("parses");
+        assert!(resp.summary.contains("agy exited with status 127"));
+        assert!(resp.comments.is_empty());
     }
 }

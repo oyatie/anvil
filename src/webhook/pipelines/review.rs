@@ -421,7 +421,14 @@ pub async fn execute_pr_review(
     // 65. AttestationGuard: Cryptographic Provenance Receipt Stamper
     let attestation_report = state
         .attestation_guard
-        .stamp_lane_receipt(&repo_dir, repo, pr_number, head_sha)
+        .stamp_lane_receipt(
+            &repo_dir,
+            repo,
+            pr_number,
+            head_sha,
+            crate::attestation_guard::AttestationGuard::VERDICT_PENDING,
+            Vec::new(),
+        )
         .await?;
 
     // Stage and commit ONLY substantive domain policy changes (NEVER push attestation receipts in a loop)
@@ -532,6 +539,43 @@ pub async fn execute_pr_review(
         true,
         &review_resp.verdict,
     )?;
+
+    // Re-stamp the provenance receipt with the verdict that was actually
+    // computed. The first stamp above records only that the receipt mechanism
+    // works; it deliberately carries PENDING_CERTIFICATION because at that
+    // point no gate has run. Invariant I2: never report a value you did not
+    // measure.
+    let final_verdict = if cert_report.is_admissible() {
+        "CERTIFIED_READY"
+    } else if !cert_report.unmeasured_gates.is_empty() {
+        "BLOCKED_UNMEASURED"
+    } else {
+        "BLOCKED_NOT_CERTIFIED"
+    };
+    let verified_gates: Vec<String> = cert_report
+        .all_statuses()
+        .iter()
+        .filter(|s| matches!(s, crate::pre_merge_guard::GateStatus::Passed))
+        .enumerate()
+        .map(|(i, _)| format!("gate-{}", i))
+        .collect();
+    if let Err(e) = state
+        .attestation_guard
+        .stamp_lane_receipt(
+            &repo_dir,
+            repo,
+            pr_number,
+            head_sha,
+            final_verdict,
+            verified_gates,
+        )
+        .await
+    {
+        warn!(
+            "Could not finalize attestation receipt for {}#{}: {}",
+            repo, pr_number, e
+        );
+    }
 
     // Post or Update Certification Matrix in-place (Zero Clutter)
     state

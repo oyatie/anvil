@@ -53,10 +53,18 @@ impl FixEngine {
                 .output()
                 .await;
 
-            if let Ok(out) = check_out {
-                if !out.status.success() {
+            // A spawn failure previously fell through this `if let` and reached
+            // the `Ok(true)` at the end of the branch, so a missing cargo
+            // reported "verification gate PASSED". Invariant I1: a gate that
+            // could not run must never pass.
+            match check_out {
+                Ok(out) if out.status.success() => {}
+                Ok(_) => {
                     warn!("cargo check failed during verification gate");
                     return Ok(false);
+                }
+                Err(e) => {
+                    bail!("verification gate could not run `cargo check`: {}", e);
                 }
             }
 
@@ -66,10 +74,14 @@ impl FixEngine {
                 .output()
                 .await;
 
-            if let Ok(out) = test_out {
-                if !out.status.success() {
+            match test_out {
+                Ok(out) if out.status.success() => {}
+                Ok(_) => {
                     warn!("cargo test failed during verification gate");
                     return Ok(false);
+                }
+                Err(e) => {
+                    bail!("verification gate could not run `cargo test`: {}", e);
                 }
             }
             info!("Cargo verification gate PASSED");

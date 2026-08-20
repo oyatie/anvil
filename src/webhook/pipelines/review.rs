@@ -455,6 +455,11 @@ pub async fn execute_pr_review(
         .await
         .context("Failed to stage auto-synced documentation & cedar policies")?;
         if !add_out.status.success() {
+            // Roll back the reviewed-SHA stamp so this PR is retried rather than
+            // stranded: the stamp happens ~380 lines above, and the early-exit
+            // guard would otherwise skip every later webhook for this SHA.
+            state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+
             anyhow::bail!(
                 "git add -A failed while staging auto-synced governance files on PR #{}: {}",
                 pr_number,
@@ -502,6 +507,11 @@ pub async fn execute_pr_review(
                     modified_files, pr_number
                 );
             } else {
+                // Roll back the reviewed-SHA stamp so this PR is retried rather than
+                // stranded: the stamp happens ~380 lines above, and the early-exit
+                // guard would otherwise skip every later webhook for this SHA.
+                state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+
                 anyhow::bail!(
                     "git commit failed for auto-synced governance files on PR #{}: {} {}",
                     pr_number,

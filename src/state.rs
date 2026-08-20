@@ -135,6 +135,40 @@ impl StateManager {
         Ok(updated)
     }
 
+    /// Clears the reviewed-SHA stamp so the pull request is re-reviewed.
+    ///
+    /// `update_pr_state` stamps `last_reviewed_head_sha` early in the pipeline,
+    /// and the early-exit guard in the review pipeline skips any webhook whose
+    /// head SHA matches it. A pipeline that aborts *after* stamping therefore
+    /// strands the PR: it is never retried, because every later delivery for
+    /// that SHA is treated as already reviewed.
+    ///
+    /// The merge decision stays safe -- no certification is posted, so branch
+    /// protection still blocks -- but the PR silently stops progressing until a
+    /// new commit lands. Abort paths call this so a transient failure costs a
+    /// retry rather than the whole review.
+    pub async fn clear_reviewed_sha(&self, repo: &str, pr_number: u64) {
+        let key = Self::key(repo, pr_number);
+        let states = {
+            let mut states = self.states.write().await;
+            match states.get_mut(&key) {
+                Some(entry) => entry.last_reviewed_head_sha.clear(),
+                None => return,
+            }
+            states.clone()
+        };
+        // Best-effort durability: if the checkpoint fails the in-memory clear
+        // still allows a retry within this process lifetime.
+        if let Err(e) = self.atomic_checkpoint(&states).await {
+            tracing::warn!(
+                "Could not persist reviewed-SHA rollback for {}#{}: {}",
+                repo,
+                pr_number,
+                e
+            );
+        }
+    }
+
     pub async fn record_certification(
         &self,
         repo: &str,
@@ -199,4 +233,74 @@ impl StateManager {
 
 fn chrono_iso_now() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod rollback_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn clearing_the_reviewed_sha_allows_the_pr_to_be_retried() {
+        let tmp = tempdir().unwrap();
+        let sm = StateManager::load(tmp.path()).await.unwrap();
+
+        sm.update_pr_state(
+            "oyatie/anvil",
+            42,
+            "sha-abc".to_string(),
+            Some("APPROVE".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            sm.get_pr_state("oyatie/anvil", 42)
+                .await
+                .unwrap()
+                .last_reviewed_head_sha,
+            "sha-abc"
+        );
+
+        // A pipeline abort after stamping must not strand the PR: the guard in
+        // the review pipeline skips any webhook whose head SHA matches the
+        // stamp, so the stamp has to be released.
+        sm.clear_reviewed_sha("oyatie/anvil", 42).await;
+        assert_ne!(
+            sm.get_pr_state("oyatie/anvil", 42)
+                .await
+                .unwrap()
+                .last_reviewed_head_sha,
+            "sha-abc",
+            "the SHA must no longer match, or the retry is skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_rollback_survives_a_restart() {
+        let tmp = tempdir().unwrap();
+        {
+            let sm = StateManager::load(tmp.path()).await.unwrap();
+            sm.update_pr_state("oyatie/anvil", 7, "sha-xyz".to_string(), None)
+                .await
+                .unwrap();
+            sm.clear_reviewed_sha("oyatie/anvil", 7).await;
+        }
+        let reloaded = StateManager::load(tmp.path()).await.unwrap();
+        assert_ne!(
+            reloaded
+                .get_pr_state("oyatie/anvil", 7)
+                .await
+                .unwrap()
+                .last_reviewed_head_sha,
+            "sha-xyz"
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_an_unknown_pr_is_a_no_op() {
+        let tmp = tempdir().unwrap();
+        let sm = StateManager::load(tmp.path()).await.unwrap();
+        sm.clear_reviewed_sha("oyatie/anvil", 999).await;
+        assert!(sm.get_pr_state("oyatie/anvil", 999).await.is_none());
+    }
 }

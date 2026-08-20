@@ -6,10 +6,9 @@
 //! literals — one annotated in a source comment as comfortably inside the
 //! per-push limit — and ran the regression budget over it. The PR duration and
 //! the trunk baseline were both invented, so their ratio was fixed at compile
-//! time: the budget
-//! could not be exceeded on any pull request. The summary then published those
-//! same literals as a second count and a dollar figure, which a reader has no
-//! way to distinguish from a reading off the CI provider (I2).
+//! time: the budget could not be exceeded on any pull request. The summary then
+//! published those same literals as a second count and a dollar figure, which a
+//! reader has no way to distinguish from a reading off the CI provider (I2).
 //!
 //! # What is here now
 //!

@@ -212,10 +212,16 @@ impl PreMergeGuard {
         };
 
         // 7. Clean Architecture
-        let clean_arch_status = if clean_arch_report.is_clean {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(clean_arch_report.summary.clone())
+        // A run that classified no layered file measured nothing: reporting it
+        // as Passed would be absent evidence dressed as a pass (invariant I1),
+        // and reporting it as Failed would be a fabricated accusation.
+        let clean_arch_status = match clean_arch_report.measurement.not_measured_reason() {
+            Some(reason) => GateStatus::NotMeasured {
+                gate_id: "clean_arch".to_string(),
+                reason: reason.to_string(),
+            },
+            None if clean_arch_report.is_clean => GateStatus::Passed,
+            None => GateStatus::Failed(clean_arch_report.summary.clone()),
         };
 
         // 8. Monorepo Guard

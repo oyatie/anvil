@@ -66,15 +66,21 @@ impl QueueHealer {
             .await?;
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
-        // 1. Fetch latest main and checkout PR branch
-        let mut fetch_main_cmd = Command::new("git");
-        fetch_main_cmd
+        let base_branch = if meta.base_ref_name.trim().is_empty() {
+            "dev"
+        } else {
+            &meta.base_ref_name
+        };
+
+        // 1. Fetch latest base branch and checkout PR branch
+        let mut fetch_base_cmd = Command::new("git");
+        fetch_base_cmd
             .current_dir(&repo_dir)
-            .args(["fetch", "origin", "main", "--prune"]);
+            .args(["fetch", "origin", base_branch, "--prune"]);
         let _ = crate::exec::run_bounded(
-            fetch_main_cmd,
+            fetch_base_cmd,
             crate::exec::ExecClass::Vcs,
-            "git fetch origin main (queue healer)",
+            "git fetch origin base (queue healer)",
         )
         .await;
 
@@ -104,19 +110,19 @@ impl QueueHealer {
         )
         .await;
 
-        // 2. Speculatively merge origin/main into the PR branch
+        // 2. Speculatively merge origin/<base_branch> into the PR branch
         info!(
-            "Speculatively merging origin/main into {} for {}#{}...",
-            branch_name, repo, pr_number
+            "Speculatively merging origin/{} into {} for {}#{}...",
+            base_branch, branch_name, repo, pr_number
         );
         let mut merge_cmd = Command::new("git");
         merge_cmd
             .current_dir(&repo_dir)
-            .args(["merge", "origin/main", "--no-edit"]);
+            .args(["merge", &format!("origin/{}", base_branch), "--no-edit"]);
         let merge_out = crate::exec::run_bounded(
             merge_cmd,
             crate::exec::ExecClass::Vcs,
-            "git merge origin/main (queue healer)",
+            "git merge origin/base (queue healer)",
         )
         .await?;
 

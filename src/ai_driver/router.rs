@@ -29,6 +29,69 @@ pub async fn run_with_prompt_on_stdin(
     crate::exec::run_bounded_with_stdin(cmd, prompt, limit, what).await
 }
 
+/// Wraps a prompt in one line of agy's NDJSON stream protocol.
+///
+/// agy is the one provider with no plain "read the prompt from stdin"
+/// spelling: `--print` is a flag that TAKES a value, so omitting the value
+/// makes Go's flag parser swallow the next flag as the prompt and treat
+/// everything after it as positional -- which silently drops
+/// `--dangerously-skip-permissions` and makes the run fail on a permission
+/// check. Its stream protocol is the supported stdin channel, verified
+/// against the installed CLI:
+///
+/// ```text
+/// {"event":"user","message":{"content":"..."}}
+/// ```
+fn agy_stream_input(prompt: &str) -> String {
+    let message = serde_json::json!({
+        "event": "user",
+        "message": { "content": prompt },
+    });
+    format!("{message}\n")
+}
+
+/// Pulls the final response out of agy's NDJSON event stream.
+///
+/// `--input-format stream-json` requires `--output-format stream-json`, so the
+/// answer arrives as a `result` event rather than as plain stdout.
+///
+/// A stream with no `result` event, or one whose result is not `SUCCESS`, is an
+/// error -- never an empty successful review. An empty string here would reach
+/// `reviewer::parse_review_response` as unparseable output, and absent evidence
+/// must not be mistaken for a measurement (invariant I1).
+fn agy_stream_response(stdout: &str) -> Result<String> {
+    let mut failure: Option<String> = None;
+
+    for line in stdout.lines() {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        let Some(result) = event.get("result") else {
+            continue;
+        };
+
+        if result.get("status").and_then(|s| s.as_str()) == Some("SUCCESS") {
+            return Ok(result
+                .get("response")
+                .and_then(|r| r.as_str())
+                .unwrap_or_default()
+                .to_string());
+        }
+        failure = Some(
+            result
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("no error was reported")
+                .to_string(),
+        );
+    }
+
+    match failure {
+        Some(error) => bail!("agy reported a failed turn: {}", error),
+        None => bail!("agy emitted no result event, so no response was obtained"),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SubscriptionExecutor {
     account_pool: Arc<AccountPoolManager>,
@@ -368,8 +431,12 @@ impl SubscriptionExecutor {
             .await;
 
         let mut cmd = Command::new("grok");
-        // No `--prompt` argument: the prompt is written to STDIN below.
-        cmd.args(["--model", model]);
+        // grok takes its single-turn prompt as a positional argument or from a
+        // file. `/dev/stdin` is the file that IS the pipe, so the prompt still
+        // travels on STDIN and argv stays a fixed dozen bytes. Verified against
+        // the installed CLI. (The previous `--prompt <text>` was not a flag
+        // this CLI has at all.)
+        cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
 
         let account_id = match &leased {
             Ok(acc_arc) => {
@@ -444,9 +511,15 @@ impl SubscriptionExecutor {
             .await;
 
         let mut cmd = Command::new("agy");
-        // No positional prompt: it is written to STDIN below.
+        // `--print ""` keeps the flag parser happy while the real prompt
+        // arrives on STDIN as a stream-json message; see `agy_stream_input`.
         cmd.args([
             "--print",
+            "",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
             "--effort",
             &config.reasoning_effort,
             "--dangerously-skip-permissions",
@@ -485,7 +558,7 @@ impl SubscriptionExecutor {
         // actually bounds the call (invariant I5).
         let output = run_with_prompt_on_stdin(
             cmd,
-            prompt,
+            &agy_stream_input(prompt),
             std::time::Duration::from_secs(config.print_timeout_secs),
             "agy subscription CLI",
         )
@@ -505,15 +578,18 @@ impl SubscriptionExecutor {
             }
         }
 
+        let response = agy_stream_response(&stdout_str)
+            .map_err(|e| anyhow::anyhow!("{}; agy stderr: {}", e, stderr_str.trim()))?;
+
         // Record token usage in pool
-        let tokens = ((prompt.len() + stdout_str.len()) as f64 / 3.8).ceil() as usize;
+        let tokens = ((prompt.len() + response.len()) as f64 / 3.8).ceil() as usize;
         let cost_usd = (tokens as f64 / 1_000_000.0) * 1.50;
         let _ = self
             .account_pool
             .record_spend(&account_id, model, tokens, cost_usd)
             .await;
 
-        Ok(stdout_str)
+        Ok(response)
     }
 
     /// Evaluates prompt using Multi-Model Ensemble across Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash subscriptions

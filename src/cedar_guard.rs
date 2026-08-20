@@ -116,6 +116,23 @@ impl CedarGuard {
         diff_ctx: &PrDiffContext,
         pr_title: &str,
     ) -> Result<CedarPolicyEvaluation> {
+        let changed_files_preview = if diff_ctx.changed_files.len() > 100 {
+            format!(
+                "{}\n- ... and {} more files",
+                diff_ctx.changed_files.iter().take(100).cloned().collect::<Vec<_>>().join("\n- "),
+                diff_ctx.changed_files.len() - 100
+            )
+        } else {
+            diff_ctx.changed_files.join("\n- ")
+        };
+
+        let diff_content_bounded = if diff_ctx.diff_content.chars().count() > 50_000 {
+            let truncated: String = diff_ctx.diff_content.chars().take(50_000).collect();
+            format!("{truncated}\n\n[... remaining diff truncated for cedar evaluation ...]")
+        } else {
+            diff_ctx.diff_content.clone()
+        };
+
         let prompt = format!(
             r#####"You are Oyatie's Principal IAM & Cedar Policy Architect. Evaluate whether new or modified routes/actions in PR #{pr_number} ("{pr_title}") on `{repo}` are covered by AWS Cedar policy rules.
 
@@ -151,8 +168,8 @@ Note: If compliant, output `{{"is_cedar_compliant": true, "missing_policies_summ
             repo = repo,
             pr_number = diff_ctx.pr_number,
             pr_title = pr_title,
-            changed_files = diff_ctx.changed_files.join("\n- "),
-            diff_content = diff_ctx.diff_content
+            changed_files = changed_files_preview,
+            diff_content = diff_content_bounded
         );
 
         let output = self.run_agy_prompt(&prompt, repo_dir).await?;

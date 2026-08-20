@@ -293,7 +293,7 @@ pub async fn drain_handler(State(_state): State<AppState>) -> impl IntoResponse 
     info!("👋 [Blue/Green Handover] Graceful drain requested via /api/drain. Initiating zero-loss retirement...");
 
     tokio::spawn(async move {
-        // Allow in-flight requests to complete within 5 seconds
+        // Allow in-flight requests to complete within 3 seconds
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         info!(
             "👋 [Blue/Green Handover] In-flight jobs finished. Retiring legacy instance cleanly."
@@ -308,4 +308,110 @@ pub async fn drain_handler(State(_state): State<AppState>) -> impl IntoResponse 
             message: "Graceful drain initiated. Retiring in 3 seconds.".to_string(),
         }),
     )
+}
+
+pub async fn add_account_pool_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<crate::self_governance::AddAccountPayload>,
+) -> impl IntoResponse {
+    info!(
+        "Adding new account '{}' to pool via REST API...",
+        payload.account_id
+    );
+
+    let provider = crate::ai_driver::provider::ModelProvider::from_str_name(&payload.provider);
+    let account = crate::self_governance::ManagedAccount {
+        account_id: payload.account_id.clone(),
+        provider,
+        auth_profile_or_key: payload.auth_profile_or_key,
+        max_5hr_tokens: payload.max_5hr_tokens.unwrap_or(1_000_000),
+        max_weekly_budget_usd: payload.max_weekly_budget_usd.unwrap_or(100.0),
+        usage_history: std::collections::VecDeque::new(),
+        cooldown_until: None,
+        last_leased_at: std::time::Instant::now(),
+        is_draining: false,
+    };
+
+    match state
+        .self_governor
+        .quota
+        .account_pool
+        .add_account(account)
+        .await
+    {
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(ApiResponse {
+                success: true,
+                message: format!("Account '{}' registered in pool", payload.account_id),
+            }),
+        ),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                message: format!("Failed to register account: {}", e),
+            }),
+        ),
+    }
+}
+
+pub async fn drain_account_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<crate::self_governance::DrainAccountPayload>,
+) -> impl IntoResponse {
+    info!("Draining account '{}' via REST API...", payload.account_id);
+
+    match state
+        .self_governor
+        .quota
+        .account_pool
+        .drain_account(&payload.account_id)
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(ApiResponse {
+                success: true,
+                message: format!("Account '{}' is now draining", payload.account_id),
+            }),
+        ),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse {
+                success: false,
+                message: format!("Failed to drain account: {}", e),
+            }),
+        ),
+    }
+}
+
+pub async fn resume_account_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<crate::self_governance::DrainAccountPayload>,
+) -> impl IntoResponse {
+    info!("Resuming account '{}' via REST API...", payload.account_id);
+
+    match state
+        .self_governor
+        .quota
+        .account_pool
+        .resume_account(&payload.account_id)
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(ApiResponse {
+                success: true,
+                message: format!("Account '{}' resumed to active", payload.account_id),
+            }),
+        ),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse {
+                success: false,
+                message: format!("Failed to resume account: {}", e),
+            }),
+        ),
+    }
 }

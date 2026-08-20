@@ -3,7 +3,10 @@ pub mod process_registry;
 pub mod quota_enforcer;
 pub mod resource_reaper;
 
-pub use account_pool::{AccountPoolManager, AccountQuotaView, ManagedAccount, UsageRecord};
+pub use account_pool::{
+    AccountPoolManager, AccountQuotaView, AddAccountPayload, DrainAccountPayload, ManagedAccount,
+    UsageRecord,
+};
 pub use process_registry::{ProcessRecord, ProcessRegistry};
 pub use quota_enforcer::{QuotaBudgetReport, QuotaEnforcer};
 pub use resource_reaper::{AutonomousResourceReaper, GarbageCollectionReport};

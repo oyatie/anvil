@@ -27,6 +27,7 @@ pub struct ManagedAccount {
     pub usage_history: VecDeque<UsageRecord>,
     pub cooldown_until: Option<Instant>,
     pub last_leased_at: Instant,
+    pub is_draining: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,14 +42,32 @@ pub struct AccountQuotaView {
     pub weekly_budget_usd: f64,
     pub pct_weekly_spent: f64,
     pub is_active: bool,
+    pub is_draining: bool,
+    pub lifecycle_state: String,
     pub cooldown_remaining_secs: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddAccountPayload {
+    pub account_id: String,
+    pub provider: String,
+    pub auth_profile_or_key: Option<String>,
+    pub max_5hr_tokens: Option<usize>,
+    pub max_weekly_budget_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrainAccountPayload {
+    pub account_id: String,
+}
+
 pub type AccountPoolMap = HashMap<ModelProvider, Vec<Arc<RwLock<ManagedAccount>>>>;
+pub type AffinityCacheMap = HashMap<String, (String, Instant)>; // affinity_key -> (account_id, expires_at)
 
 #[derive(Debug, Clone)]
 pub struct AccountPoolManager {
     pools: Arc<RwLock<AccountPoolMap>>,
+    affinity_cache: Arc<RwLock<AffinityCacheMap>>,
 }
 
 impl Default for AccountPoolManager {
@@ -72,6 +91,7 @@ impl AccountPoolManager {
                 usage_history: VecDeque::new(),
                 cooldown_until: None,
                 last_leased_at: Instant::now(),
+                is_draining: false,
             })),
             Arc::new(RwLock::new(ManagedAccount {
                 account_id: "claude-pool-beta".to_string(),
@@ -82,6 +102,7 @@ impl AccountPoolManager {
                 usage_history: VecDeque::new(),
                 cooldown_until: None,
                 last_leased_at: Instant::now(),
+                is_draining: false,
             })),
         ];
         pools.insert(ModelProvider::AnthropicClaudeCode, claude_accounts);
@@ -97,6 +118,7 @@ impl AccountPoolManager {
                 usage_history: VecDeque::new(),
                 cooldown_until: None,
                 last_leased_at: Instant::now(),
+                is_draining: false,
             })),
             Arc::new(RwLock::new(ManagedAccount {
                 account_id: "codex-pool-secondary".to_string(),
@@ -107,11 +129,12 @@ impl AccountPoolManager {
                 usage_history: VecDeque::new(),
                 cooldown_until: None,
                 last_leased_at: Instant::now(),
+                is_draining: false,
             })),
         ];
         pools.insert(ModelProvider::OpenAiCodex, codex_accounts);
 
-        // 3. Antigravity / Gemini Account Pool
+        // 3. Google Antigravity / Gemini Account Pool
         let agy_accounts = vec![
             Arc::new(RwLock::new(ManagedAccount {
                 account_id: "agy-pool-tier0".to_string(),
@@ -122,6 +145,7 @@ impl AccountPoolManager {
                 usage_history: VecDeque::new(),
                 cooldown_until: None,
                 last_leased_at: Instant::now(),
+                is_draining: false,
             })),
             Arc::new(RwLock::new(ManagedAccount {
                 account_id: "agy-pool-backup".to_string(),
@@ -132,13 +156,169 @@ impl AccountPoolManager {
                 usage_history: VecDeque::new(),
                 cooldown_until: None,
                 last_leased_at: Instant::now(),
+                is_draining: false,
             })),
         ];
         pools.insert(ModelProvider::Antigravity, agy_accounts);
 
+        // 4. Cursor Agent Account Pool
+        let cursor_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
+            account_id: "cursor-pool-main".to_string(),
+            provider: ModelProvider::CursorAgent,
+            auth_profile_or_key: Some("CURSOR_AUTH_MAIN".to_string()),
+            max_5hr_tokens: 1_000_000,
+            max_weekly_budget_usd: 100.0,
+            usage_history: VecDeque::new(),
+            cooldown_until: None,
+            last_leased_at: Instant::now(),
+            is_draining: false,
+        }))];
+        pools.insert(ModelProvider::CursorAgent, cursor_accounts);
+
+        // 5. xAI Grok Account Pool
+        let grok_accounts = vec![Arc::new(RwLock::new(ManagedAccount {
+            account_id: "grok-pool-main".to_string(),
+            provider: ModelProvider::XAiGrok,
+            auth_profile_or_key: Some("XAI_GROK_API_KEY".to_string()),
+            max_5hr_tokens: 1_500_000,
+            max_weekly_budget_usd: 120.0,
+            usage_history: VecDeque::new(),
+            cooldown_until: None,
+            last_leased_at: Instant::now(),
+            is_draining: false,
+        }))];
+        pools.insert(ModelProvider::XAiGrok, grok_accounts);
+
         Self {
             pools: Arc::new(RwLock::new(pools)),
+            affinity_cache: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Dynamically registers a new managed account into the pool
+    pub async fn add_account(&self, account: ManagedAccount) -> Result<()> {
+        let provider = account.provider.clone();
+        let account_id = account.account_id.clone();
+        let mut guard = self.pools.write().await;
+
+        let entry = guard.entry(provider).or_default();
+        // Check if account_id already exists
+        for existing in entry.iter() {
+            if existing.read().await.account_id == account_id {
+                bail!("Account ID '{}' already exists in pool", account_id);
+            }
+        }
+
+        info!(
+            "➕ [Account Pool] Registered new account '{}' for provider {:?}",
+            account_id, account.provider
+        );
+        entry.push(Arc::new(RwLock::new(account)));
+        Ok(())
+    }
+
+    /// Marks an account into Graceful Draining mode
+    pub async fn drain_account(&self, account_id: &str) -> Result<()> {
+        let guard = self.pools.read().await;
+        for accounts in guard.values() {
+            for acc_arc in accounts {
+                let mut acc = acc_arc.write().await;
+                if acc.account_id == account_id {
+                    acc.is_draining = true;
+                    info!(
+                        "👋 [Account Pool] Account '{}' marked as DRAINING.",
+                        account_id
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        bail!("Account '{}' not found in any pool", account_id)
+    }
+
+    /// Resumes a drained account back into Active service
+    pub async fn resume_account(&self, account_id: &str) -> Result<()> {
+        let guard = self.pools.read().await;
+        for accounts in guard.values() {
+            for acc_arc in accounts {
+                let mut acc = acc_arc.write().await;
+                if acc.account_id == account_id {
+                    acc.is_draining = false;
+                    acc.cooldown_until = None;
+                    info!(
+                        "🟢 [Account Pool] Account '{}' resumed to ACTIVE.",
+                        account_id
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        bail!("Account '{}' not found in any pool", account_id)
+    }
+
+    /// Leases an account with context-aware prompt-cache affinity
+    pub async fn lease_account_with_affinity(
+        &self,
+        provider: ModelProvider,
+        context_affinity_key: Option<&str>,
+    ) -> Result<Arc<RwLock<ManagedAccount>>> {
+        let now = Instant::now();
+        let utc_now = Utc::now();
+        let five_hours_ago = utc_now - ChronoDuration::hours(5);
+
+        // 1. Check prompt-cache affinity table
+        if let Some(key) = context_affinity_key {
+            let mut cache_guard = self.affinity_cache.write().await;
+            if let Some((acc_id, expires_at)) = cache_guard.get(key) {
+                if now < *expires_at {
+                    // Try to find this exact account
+                    let pool_guard = self.pools.read().await;
+                    if let Some(accounts) = pool_guard.get(&provider) {
+                        for acc_arc in accounts {
+                            let mut acc = acc_arc.write().await;
+                            if acc.account_id == *acc_id
+                                && !acc.is_draining
+                                && (acc.cooldown_until.is_none()
+                                    || now >= acc.cooldown_until.unwrap())
+                            {
+                                let used_5hr: usize = acc
+                                    .usage_history
+                                    .iter()
+                                    .filter(|r| r.timestamp >= five_hours_ago)
+                                    .map(|r| r.tokens_consumed)
+                                    .sum();
+
+                                if used_5hr < acc.max_5hr_tokens {
+                                    acc.last_leased_at = now;
+                                    // Extend prompt-cache affinity TTL by 5 minutes
+                                    cache_guard.insert(
+                                        key.to_string(),
+                                        (acc.account_id.clone(), now + Duration::from_secs(300)),
+                                    );
+                                    info!(
+                                        "⚡ [Prompt Cache Hit] Routed request to warm affinity account '{}' for key '{}'",
+                                        acc.account_id, key
+                                    );
+                                    return Ok(Arc::clone(acc_arc));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Standard Least-Loaded Leasing
+        let leased = self.lease_account(provider).await?;
+
+        // 3. Record new affinity mapping if key provided
+        if let Some(key) = context_affinity_key {
+            let acc_id = leased.read().await.account_id.clone();
+            let mut cache_guard = self.affinity_cache.write().await;
+            cache_guard.insert(key.to_string(), (acc_id, now + Duration::from_secs(300)));
+        }
+
+        Ok(leased)
     }
 
     /// Leases the healthiest, least-loaded account in the provider's pool
@@ -163,6 +343,11 @@ impl AccountPoolManager {
 
         for acc_arc in accounts {
             let mut acc = acc_arc.write().await;
+
+            // Skip draining accounts
+            if acc.is_draining {
+                continue;
+            }
 
             // Check if cooldown expired
             if let Some(cooldown) = acc.cooldown_until {
@@ -218,7 +403,7 @@ impl AccountPoolManager {
             Ok(Arc::clone(&selected_acc))
         } else {
             bail!(
-                "All accounts in pool for provider {:?} are currently rate-limited or quota-exhausted",
+                "All accounts in pool for provider {:?} are currently rate-limited, draining, or quota-exhausted",
                 provider
             )
         }
@@ -274,6 +459,16 @@ impl AccountPoolManager {
                         .map(|c| c.saturating_duration_since(Instant::now()).as_secs())
                         .unwrap_or(0);
 
+                    let state_str = if acc.is_draining {
+                        "DRAINING".to_string()
+                    } else if cooldown_secs > 0 {
+                        format!("COOLDOWN ({}s)", cooldown_secs)
+                    } else if used_5hr >= acc.max_5hr_tokens {
+                        "QUOTA_EXHAUSTED".to_string()
+                    } else {
+                        "ACTIVE".to_string()
+                    };
+
                     return Ok(AccountQuotaView {
                         account_id: acc.account_id.clone(),
                         provider: acc.provider.display_name().to_string(),
@@ -284,7 +479,11 @@ impl AccountPoolManager {
                         weekly_spent_usd: spent_weekly,
                         weekly_budget_usd: acc.max_weekly_budget_usd,
                         pct_weekly_spent: pct_weekly,
-                        is_active: acc.cooldown_until.is_none() && used_5hr < acc.max_5hr_tokens,
+                        is_active: !acc.is_draining
+                            && acc.cooldown_until.is_none()
+                            && used_5hr < acc.max_5hr_tokens,
+                        is_draining: acc.is_draining,
+                        lifecycle_state: state_str,
                         cooldown_remaining_secs: cooldown_secs,
                     });
                 }
@@ -350,6 +549,16 @@ impl AccountPoolManager {
                     .map(|c| c.saturating_duration_since(now).as_secs())
                     .unwrap_or(0);
 
+                let state_str = if acc.is_draining {
+                    "DRAINING".to_string()
+                } else if cooldown_secs > 0 {
+                    format!("COOLDOWN ({}s)", cooldown_secs)
+                } else if used_5hr >= acc.max_5hr_tokens {
+                    "QUOTA_EXHAUSTED".to_string()
+                } else {
+                    "ACTIVE".to_string()
+                };
+
                 views.push(AccountQuotaView {
                     account_id: acc.account_id.clone(),
                     provider: acc.provider.display_name().to_string(),
@@ -360,7 +569,11 @@ impl AccountPoolManager {
                     weekly_spent_usd: spent_weekly,
                     weekly_budget_usd: acc.max_weekly_budget_usd,
                     pct_weekly_spent: pct_weekly,
-                    is_active: acc.cooldown_until.is_none() && used_5hr < acc.max_5hr_tokens,
+                    is_active: !acc.is_draining
+                        && acc.cooldown_until.is_none()
+                        && used_5hr < acc.max_5hr_tokens,
+                    is_draining: acc.is_draining,
+                    lifecycle_state: state_str,
                     cooldown_remaining_secs: cooldown_secs,
                 });
             }

@@ -1,6 +1,7 @@
 use anvil::ai_driver::provider::ModelProvider;
-use anvil::self_governance::account_pool::AccountPoolManager;
-use std::time::Duration;
+use anvil::self_governance::account_pool::{AccountPoolManager, ManagedAccount};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 #[tokio::test]
 async fn test_multi_account_pool_least_loaded_leasing() {
@@ -73,7 +74,88 @@ async fn test_multi_horizon_5hr_and_weekly_accounting() {
     assert_eq!(quota.weekly_spent_usd, 3.75);
     assert!(quota.is_active);
 
-    // Verify status views
+    // Verify status views (2 Claude, 2 Codex, 2 AGY, 1 Cursor, 1 Grok = 8 accounts)
     let views = pool.get_pool_status_views().await;
-    assert_eq!(views.len(), 6); // 2 Claude, 2 Codex, 2 AGY
+    assert_eq!(views.len(), 8);
+}
+
+#[tokio::test]
+async fn test_dynamic_account_addition_and_drain() {
+    let pool = AccountPoolManager::new();
+
+    // Add new dynamic account to pool
+    let new_acc = ManagedAccount {
+        account_id: "claude-dynamic-gamma".to_string(),
+        provider: ModelProvider::AnthropicClaudeCode,
+        auth_profile_or_key: Some("CLAUDE_GAMMA_KEY".to_string()),
+        max_5hr_tokens: 1_000_000,
+        max_weekly_budget_usd: 250.0,
+        usage_history: VecDeque::new(),
+        cooldown_until: None,
+        last_leased_at: Instant::now(),
+        is_draining: false,
+    };
+
+    pool.add_account(new_acc).await.unwrap();
+
+    // Verify account registered
+    let views = pool.get_pool_status_views().await;
+    assert!(views.iter().any(|v| v.account_id == "claude-dynamic-gamma"));
+
+    // Drain account
+    pool.drain_account("claude-dynamic-gamma").await.unwrap();
+    let views_draining = pool.get_pool_status_views().await;
+    let gamma_view = views_draining
+        .iter()
+        .find(|v| v.account_id == "claude-dynamic-gamma")
+        .unwrap();
+    assert!(gamma_view.is_draining);
+    assert_eq!(gamma_view.lifecycle_state, "DRAINING");
+
+    // Resume account
+    pool.resume_account("claude-dynamic-gamma").await.unwrap();
+    let views_resumed = pool.get_pool_status_views().await;
+    let gamma_resumed = views_resumed
+        .iter()
+        .find(|v| v.account_id == "claude-dynamic-gamma")
+        .unwrap();
+    assert!(!gamma_resumed.is_draining);
+    assert_eq!(gamma_resumed.lifecycle_state, "ACTIVE");
+}
+
+#[tokio::test]
+async fn test_context_cache_affinity_leasing() {
+    let pool = AccountPoolManager::new();
+
+    // 1. Lease account with context affinity key
+    let affinity_key = "repo:oyatie/oyatie#pr-2158";
+    let acc1 = pool
+        .lease_account_with_affinity(ModelProvider::AnthropicClaudeCode, Some(affinity_key))
+        .await
+        .unwrap();
+    let acc1_id = acc1.read().await.account_id.clone();
+
+    // Record spend on acc1 so it has higher load than acc2
+    pool.record_spend(&acc1_id, "claude-opus-5", 200_000, 6.0)
+        .await
+        .unwrap();
+
+    // 2. Next lease with the SAME affinity key should route to the SAME account despite higher load (prompt cache hit!)
+    let acc2 = pool
+        .lease_account_with_affinity(ModelProvider::AnthropicClaudeCode, Some(affinity_key))
+        .await
+        .unwrap();
+    let acc2_id = acc2.read().await.account_id.clone();
+    assert_eq!(acc1_id, acc2_id);
+
+    // 3. Lease with a DIFFERENT affinity key should choose the lower loaded account
+    let other_acc = pool
+        .lease_account_with_affinity(
+            ModelProvider::AnthropicClaudeCode,
+            Some("repo:oyatie/console#pr-836"),
+        )
+        .await
+        .unwrap();
+    let other_id = other_acc.read().await.account_id.clone();
+    assert_ne!(acc1_id, other_id);
 }

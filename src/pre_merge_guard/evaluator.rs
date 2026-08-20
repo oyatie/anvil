@@ -240,14 +240,11 @@ impl PreMergeGuard {
         };
 
         // 11. Differential Coverage
-        let coverage_status = if coverage_report.is_sufficient {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(format!(
-                "Coverage {:.1}% is below requirement",
-                coverage_report.estimated_diff_coverage_percent
-            ))
-        };
+        // Read the gate's own verdict. Rebuilding it from `is_sufficient` here
+        // discarded `NotMeasured` and formatted `f64::NAN` into the accusation
+        // "Coverage NaN% is below requirement" -- a fabricated failure published on
+        // every PR that adds code without coverage evidence.
+        let coverage_status = coverage_report.gate_status();
 
         // 12. Rust Skills Guard (Upstream 380 Rust Rules)
         let rust_skills_status = if rust_skills_report.is_idiomatic {
@@ -264,11 +261,9 @@ impl PreMergeGuard {
         };
 
         // 14. OpenSLO & Error Budget Burn Rate
-        let slo_status = if slo_report.is_compliant {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(slo_report.summary.clone())
-        };
+        // `is_compliant` is true when nothing was measured, so rebuilding from it
+        // published absent evidence as `Passed` -- the exact inversion I1 forbids.
+        let slo_status = slo_report.status.clone();
 
         // 15. Living ADR Drift Ratchet
         let adr_status = if adr_report.is_compliant {
@@ -341,11 +336,7 @@ impl PreMergeGuard {
         };
 
         // 25. Live Cluster Readback & Drift Auditor
-        let cluster_audit_status = if cluster_audit_report.is_synchronized {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(cluster_audit_report.summary.clone())
-        };
+        let cluster_audit_status = cluster_audit_report.status.clone();
 
         // 26. Database Expand-Contract Lifecycle
         let migration_orch_status = if migration_orch_report.is_ordered {
@@ -355,11 +346,7 @@ impl PreMergeGuard {
         };
 
         // 27. CI Wallclock & Compute Cost Ratchet
-        let ci_wallclock_status = if ci_wallclock_report.is_acceptable {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(ci_wallclock_report.summary.clone())
-        };
+        let ci_wallclock_status = ci_wallclock_report.status.clone();
 
         // 28. DAG Predictive Test Selection
         let predictive_test_status = if predictive_test_report.is_optimized {
@@ -376,11 +363,7 @@ impl PreMergeGuard {
         };
 
         // 30. Remote Sccache Cache Alignment
-        let remote_cache_status = if remote_cache_report.is_cache_aligned {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(remote_cache_report.summary.clone())
-        };
+        let remote_cache_status = remote_cache_report.status.clone();
 
         // 31. Runner SKU Tiering
         let runner_economics_status = if runner_economics_report.is_cost_optimal {
@@ -418,11 +401,7 @@ impl PreMergeGuard {
         };
 
         // 36. Production Dark-Traffic Shadow Replay
-        let shadow_traffic_status = if shadow_traffic_report.is_verified {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(shadow_traffic_report.summary.clone())
-        };
+        let shadow_traffic_status = shadow_traffic_report.status.clone();
 
         // 37. Zero-Unresolved-Comments Review Gate
         let unresolved_review_status = if unresolved_review_report.is_clean {

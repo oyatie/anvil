@@ -150,7 +150,36 @@ pub async fn run_server(state: AppState) -> Result<()> {
     }
 
     let app = create_router(state);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    // Production Hyperscaler Socket Binding: SO_REUSEADDR and SO_REUSEPORT
+    // Enables zero-downtime, zero-error Blue/Green process handover and parallel socket listening
+    let domain = if addr.is_ipv6() {
+        socket2::Domain::IPV6
+    } else {
+        socket2::Domain::IPV4
+    };
+    let socket = socket2::Socket::new(domain, socket2::Type::STREAM, Some(socket2::Protocol::TCP))
+        .context("Failed to create socket")?;
+    socket
+        .set_reuse_address(true)
+        .context("Failed to set SO_REUSEADDR")?;
+    #[cfg(unix)]
+    {
+        let _ = socket.set_reuse_port(true);
+    }
+    socket
+        .set_nonblocking(true)
+        .context("Failed to set nonblocking")?;
+    socket
+        .bind(&addr.into())
+        .context(format!("Failed to bind socket to {}", addr))?;
+    socket
+        .listen(1024)
+        .context("Failed to listen on socket backlog")?;
+
+    let std_listener: std::net::TcpListener = socket.into();
+    let listener = tokio::net::TcpListener::from_std(std_listener)
+        .context("Failed to convert socket to Tokio TcpListener")?;
 
     info!("Listening for webhooks at http://{}/webhook", addr);
 

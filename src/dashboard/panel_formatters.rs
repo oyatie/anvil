@@ -1,3 +1,4 @@
+use crate::dashboard::escape::{html as esc, html_truncated as esc_trunc};
 use crate::dashboard::ssr_renderer::DashboardStateView;
 
 pub fn build_repo_cards(state: &DashboardStateView) -> String {
@@ -34,7 +35,11 @@ pub fn build_repo_cards(state: &DashboardStateView) -> String {
                         <div class="dag-node node-prod"><span class="dag-label">Production</span><code>{}</code></div>
                     </div>
                 </div>"#,
-                r.name, r.health_badge, r.open_prs, r.lead_time_hours, r.deploy_frequency_per_day,
+                esc(&r.name),
+                esc(&r.health_badge),
+                r.open_prs,
+                r.lead_time_hours,
+                r.deploy_frequency_per_day,
                 dev_sha, stg_sha, cnr_sha, prd_sha
             )
         })
@@ -67,7 +72,10 @@ pub fn build_merge_train_rows(state: &DashboardStateView) -> String {
                             <span class="progress-text">{}/{} Gates</span>
                         </div>
                     </div>"#,
-                    t.repo, t.pr_number, t.title, t.state,
+                    esc(&t.repo),
+                    t.pr_number,
+                    esc_trunc(&t.title, 160),
+                    esc(&t.state),
                     t.speculative_base, t.head_sha,
                     (t.gates_completed as f64 / t.total_gates.max(1) as f64 * 100.0) as usize,
                     t.gates_completed, t.total_gates
@@ -120,12 +128,12 @@ pub fn build_account_quota_rows(state: &DashboardStateView) -> String {
             let action_button = if acc.is_draining {
                 format!(
                     r#"<button class="btn-action btn-resume" onclick="resumeAccount('{}')">Resume</button>"#,
-                    acc.account_id
+                    esc(&acc.account_id)
                 )
             } else {
                 format!(
                     r#"<button class="btn-action btn-drain" onclick="drainAccount('{}')">Drain</button>"#,
-                    acc.account_id
+                    esc(&acc.account_id)
                 )
             };
 
@@ -155,7 +163,7 @@ pub fn build_account_quota_rows(state: &DashboardStateView) -> String {
                     <td>{}</td>
                     <td>{}</td>
                 </tr>"#,
-                acc.account_id,
+                esc(&acc.account_id),
                 acc.provider,
                 usage_5hr_html,
                 budget_html,
@@ -216,7 +224,11 @@ pub fn build_activity_rows(state: &DashboardStateView) -> String {
                     <td>{}</td>
                     <td><span class="badge badge-healthy">{}</span></td>
                 </tr>"#,
-                act.timestamp, act.repo, act.entity, act.action, act.status
+                esc(&act.timestamp),
+                esc(&act.repo),
+                esc(&act.entity),
+                esc_trunc(&act.action, 200),
+                esc(&act.status)
             )
         })
         .collect::<Vec<_>>()

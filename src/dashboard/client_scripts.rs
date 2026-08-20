@@ -22,14 +22,29 @@ pub fn get_client_scripts() -> &'static str {
         }
 
         function initFleetSSE() {
-            const eventSource = new EventSource('/events');
-            eventSource.addEventListener('fleet_update', function(e) {
+            const eventSource = new EventSource('/api/events/fleet');
+            eventSource.addEventListener('fleet_event', function(e) {
                 try {
                     const event = JSON.parse(e.data);
                     const tableBody = document.querySelector('#activity-tbody');
                     if (tableBody) {
+                        // Built with textContent, never innerHTML: event.title and
+                        // event.repo are GitHub-controlled, and this page shares an
+                        // origin with the /api/* control surface.
                         const row = document.createElement('tr');
-                        row.innerHTML = `<td>${event.timestamp_utc}</td><td><code>${event.repo}</code></td><td><strong>${event.entity_id}</strong></td><td>${event.title}</td><td><span class="badge badge-healthy">${event.status}</span></td>`;
+                        const cell = (text, wrapper, cls) => {
+                            const td = document.createElement('td');
+                            const host = wrapper ? document.createElement(wrapper) : td;
+                            if (cls) host.className = cls;
+                            host.textContent = text == null ? '' : String(text);
+                            if (wrapper) td.appendChild(host);
+                            return td;
+                        };
+                        row.appendChild(cell(event.timestamp_utc));
+                        row.appendChild(cell(event.repo, 'code'));
+                        row.appendChild(cell(event.entity_id, 'strong'));
+                        row.appendChild(cell(event.title));
+                        row.appendChild(cell(event.status, 'span', 'badge badge-healthy'));
                         tableBody.insertBefore(row, tableBody.firstChild);
                     }
                     fetchDashboardState();
@@ -69,7 +84,7 @@ pub fn get_client_scripts() -> &'static str {
                         auth_type: authType,
                         oauth_token: oauthToken || null,
                         config_dir: configDir || null,
-                        auth_profile_or_key: oauthToken || null,
+                        auth_profile_or_key: null,
                         max_5hr_tokens: max5hr || 1000000,
                         max_weekly_budget_usd: weeklyBudget || 100.0
                     })

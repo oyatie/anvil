@@ -3,6 +3,7 @@ pub mod deathloop_detector;
 pub mod process_registry;
 pub mod quota_enforcer;
 pub mod resource_reaper;
+pub mod worktree_lease;
 
 pub use account_pool::{
     AccountPoolManager, AccountQuotaView, AddAccountPayload, AuthType, DrainAccountPayload,
@@ -12,6 +13,7 @@ pub use deathloop_detector::{DeathloopDetector, DeathloopVerdict};
 pub use process_registry::{ProcessRecord, ProcessRegistry};
 pub use quota_enforcer::{QuotaBudgetReport, QuotaEnforcer};
 pub use resource_reaper::{AutonomousResourceReaper, GarbageCollectionReport};
+pub use worktree_lease::{LeaseStore, LeaseVerdict, WorktreeLease};
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,8 +62,20 @@ impl SelfGovernor {
                     governor.registry.complete_task(&task.task_id).await;
                 }
 
-                // 2. Perform periodic resource and worktree garbage collection
-                let _ = governor.reaper.run_sweep(None).await;
+                // 2. Perform periodic resource garbage collection.
+                //
+                // `run_sweep` takes no repo argument: the previous signature
+                // was `run_sweep(Option<&Path>)` and this call site passed
+                // `None`, which skipped the entire worktree path ~8,640 times
+                // a day. The set of worktrees under consideration now comes
+                // from a lease store instead.
+                //
+                // The governor's reaper is built with
+                // `AutonomousResourceReaper::default()`, which carries NO lease
+                // store, so worktree reclaim stays OFF on this cadence. Arming
+                // it means constructing the reaper with `with_lease_store` and
+                // is a deliberate, separate decision.
+                let _ = governor.reaper.run_sweep().await;
             }
         });
     }

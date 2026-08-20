@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use std::sync::Arc;
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use anvil::adr_drift_ratchet::AdrDriftRatchet;
@@ -74,7 +75,7 @@ use anvil::remote_cache_optimizer::RemoteCacheOptimizer;
 use anvil::replay_harness::DeterministicReplayHarness;
 use anvil::review_memory::ReviewMemoryEngine;
 use anvil::reviewer::Reviewer;
-use anvil::rust_skills_guard::RustSkillsGuard;
+use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::schema_evolution::SchemaEvolutionRatchet;
 use anvil::semantic_abi_ratchet::SemanticAbiRatchet;
 use anvil::shadow_traffic_harness::ShadowTrafficHarness;
@@ -122,11 +123,27 @@ async fn main() -> Result<()> {
     let cell_isolation_guard = Arc::new(CellIsolationGuard::new());
     let supply_chain_guard = Arc::new(SupplyChainGuard::new());
     let clean_arch_guard = Arc::new(CleanArchitectureGuard::new());
+    // Turn the Clean Architecture guard inward before it is ever pointed at
+    // another repository's PR. Anvil applies this standard to everyone; the
+    // result of applying it to Anvil itself is recorded at boot, whatever it
+    // says. Today it says NotMeasured — Anvil has no core/ports/adapters/facade
+    // layering — and that finding is emitted rather than suppressed.
+    match clean_arch_guard.self_conformance() {
+        Ok(self_report) => {
+            info!(
+                "Clean Architecture self-conformance ({}): {}",
+                self_report.scope, self_report.summary
+            );
+        }
+        Err(e) => {
+            warn!("Clean Architecture self-conformance could not run: {e}");
+        }
+    }
     let monorepo_guard = Arc::new(MonorepoGuard::new());
     let debt_shrink_guard = Arc::new(DebtShrinkGuard::new());
     let modularization_guard = Arc::new(ModularizationGuard::new());
     let coverage_guard = Arc::new(CoverageGuard::new());
-    let rust_skills_guard = Arc::new(RustSkillsGuard::new(&config.data_dir));
+    let rust_language_policy = Arc::new(RustLanguagePolicy::new(&config.data_dir));
     let kani_guard = Arc::new(KaniGuard::new());
     let slo_canary_guard = Arc::new(SloCanaryGuard::new());
     let adr_drift_ratchet = Arc::new(AdrDriftRatchet::new());
@@ -212,6 +229,19 @@ async fn main() -> Result<()> {
         telemetry_store.clone(),
     ));
     let broadcaster = Arc::new(anvil::webhook::sse::FleetEventBroadcaster::new());
+    let verifier = Arc::new(anvil::task_orchestrator::SourceDocVerifier::new());
+    let sequencer = Arc::new(anvil::task_orchestrator::TaskDagSequencer::new());
+    let fix_engine = Arc::new(anvil::task_orchestrator::AutonomousFixEngine::new(
+        git_mgr.clone(),
+        github_client.clone(),
+        Arc::new(anvil::ai_driver::SubscriptionExecutor::with_pool(Arc::new(
+            self_governor.quota.account_pool.clone(),
+        ))),
+        self_governor.deathloop.clone(),
+    ));
+    let task_orchestrator = Arc::new(anvil::task_orchestrator::AutonomousTaskOrchestrator::new(
+        verifier, sequencer, fix_engine,
+    ));
 
     let app_state = AppState {
         config: config.clone(),
@@ -229,7 +259,7 @@ async fn main() -> Result<()> {
         debt_shrink_guard: debt_shrink_guard.clone(),
         modularization_guard: modularization_guard.clone(),
         coverage_guard: coverage_guard.clone(),
-        rust_skills_guard: rust_skills_guard.clone(),
+        rust_language_policy: rust_language_policy.clone(),
         kani_guard: kani_guard.clone(),
         slo_canary_guard: slo_canary_guard.clone(),
         adr_drift_ratchet: adr_drift_ratchet.clone(),
@@ -302,6 +332,7 @@ async fn main() -> Result<()> {
         broadcaster,
         telemetry_store,
         fleet_observer,
+        task_orchestrator,
     };
 
     let res = handle_cli(app_state).await;

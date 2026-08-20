@@ -1,16 +1,48 @@
 use axum::{
+    body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use tracing::{error, info};
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
+use tracing::{error, info, warn};
 
 use super::pipelines::execute_pr_review;
 use super::{ApiResponse, AppState};
 use crate::fixer::ReviewFeedbackItem;
 use crate::queue_healer::QueueHealer;
+
+/// Verifies GitHub X-Hub-Signature-256 HMAC in constant time to prevent timing attacks
+pub fn verify_github_hmac(secret: &str, raw_bytes: &[u8], signature_header: Option<&str>) -> bool {
+    let signature = match signature_header {
+        Some(sig) => sig,
+        None => return false,
+    };
+
+    let expected_hex = match signature.strip_prefix("sha256=") {
+        Some(hex) => hex,
+        None => signature,
+    };
+
+    let expected_bytes = match hex::decode(expected_hex) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+
+    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    mac.update(raw_bytes);
+    let result = mac.finalize().into_bytes();
+
+    result.as_slice().ct_eq(&expected_bytes).into()
+}
 
 #[derive(Deserialize, Debug)]
 pub struct GitHubWebhookPayload {
@@ -38,6 +70,12 @@ pub struct WebhookCommitRef {
     pub sha: String,
     #[serde(rename = "ref")]
     pub branch_ref: String,
+    /// Present on pull_request payloads. Comparing head.repo to base.repo is the
+    /// payload-side equivalent of `isCrossRepository`: it identifies a fork PR,
+    /// whose head branch name must never be used as a push target against the
+    /// base repository. See github::fork_guard.
+    #[serde(default)]
+    pub repo: Option<WebhookRepository>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -88,8 +126,76 @@ pub struct WebhookRepository {
 pub async fn webhook_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<GitHubWebhookPayload>,
+    body_bytes: Bytes,
 ) -> impl IntoResponse {
+    // 1. Constant-time HMAC-SHA256 verification (Zero-Trust Ingress Security).
+    //
+    // ENFORCING. This ran in observe mode until the relay question was settled
+    // empirically: it was not established that the original X-Hub-Signature-256
+    // survives `gh webhook forward`'s relay through webhook-forwarder.github.com,
+    // and enforcing on an assumption would have produced a daemon that boots,
+    // reports healthy, and silently rejects every delivery.
+    //
+    // Evidence for promotion, measured on live traffic rather than assumed:
+    // `gh api repos/{r}/hooks` showed secret_set flip false -> true on all three
+    // watched repositories once `--secret` was passed to the forwarder, and six
+    // consecutive real deliveries logged signature_present=true
+    // signature_valid=true. The signature does survive the relay.
+    //
+    // A delivery signed with GITHUB_WEBHOOK_SECRET_PREVIOUS is still accepted so
+    // a secret rotation does not drop in-flight deliveries; see config.rs.
+    match &state.config.webhook_secret {
+        Some(secret) => {
+            let sig = headers
+                .get("x-hub-signature-256")
+                .and_then(|v| v.to_str().ok());
+            let matched_primary = verify_github_hmac(secret, &body_bytes, sig);
+            let matched_previous = !matched_primary
+                && state
+                    .config
+                    .webhook_secret_previous
+                    .as_deref()
+                    .is_some_and(|prev| verify_github_hmac(prev, &body_bytes, sig));
+
+            if matched_previous {
+                warn!(
+                    "[Webhook Ingress] delivery verified against GITHUB_WEBHOOK_SECRET_PREVIOUS; \
+                     rotation is in progress. Clear the previous secret once deliveries stop matching it."
+                );
+            }
+
+            if !(matched_primary || matched_previous) {
+                warn!(
+                    "🚨 [Webhook Ingress] rejecting delivery: signature_present={} signature_valid=false",
+                    sig.is_some()
+                );
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ApiResponse {
+                        success: false,
+                        message: "Invalid or missing X-Hub-Signature-256 signature".to_string(),
+                    }),
+                );
+            }
+        }
+        None => {
+            // Unauthenticated ingress drives clone -> AI -> commit -> push with
+            // attacker-chosen fields. Refusing is the only safe response; the
+            // daemon also refuses to boot without the secret (config.rs).
+            warn!(
+                "🚨 [Webhook Ingress] rejecting delivery: GITHUB_WEBHOOK_SECRET is not configured, \
+                 so no delivery can be authenticated."
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ApiResponse {
+                    success: false,
+                    message: "Webhook signature verification is not configured".to_string(),
+                }),
+            );
+        }
+    }
+
     let event_type = headers
         .get("x-github-event")
         .and_then(|v| v.to_str().ok())
@@ -106,6 +212,19 @@ pub async fn webhook_handler(
             }),
         );
     }
+
+    let payload: GitHubWebhookPayload = match serde_json::from_slice(&body_bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse {
+                    success: false,
+                    message: format!("Invalid JSON payload: {}", e),
+                }),
+            );
+        }
+    };
 
     let repo_name = payload
         .repository
@@ -261,6 +380,17 @@ pub async fn webhook_handler(
             let pr_number = pr.number;
             let head_branch = pr.head.branch_ref.clone();
             let head_sha = pr.head.sha.clone();
+            // Fork detection from the payload: differing head/base repositories
+            // is the equivalent of `isCrossRepository`. Unknown (either side
+            // absent) is treated as cross-repo -- absent evidence must not
+            // authorise a push (invariant I1). See github::fork_guard.
+            let is_cross_repository = match (
+                pr.head.repo.as_ref().map(|r| r.full_name.as_str()),
+                pr.base.repo.as_ref().map(|r| r.full_name.as_str()),
+            ) {
+                (Some(h), Some(b)) => !h.eq_ignore_ascii_case(b),
+                _ => true,
+            };
 
             tokio::spawn(async move {
                 let _ = state_clone
@@ -270,6 +400,7 @@ pub async fn webhook_handler(
                         pr_number,
                         &head_branch,
                         &head_sha,
+                        is_cross_repository,
                         &[feedback_item],
                     )
                     .await;
@@ -371,4 +502,57 @@ pub async fn webhook_handler(
             message: format!("Ignored event: {}/{}", event_type, action),
         }),
     )
+}
+
+#[cfg(test)]
+mod hmac_tests {
+    use super::*;
+    use hmac::Mac;
+
+    fn sign(secret: &str, body: &[u8]) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body);
+        format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+    }
+
+    #[test]
+    fn accepts_a_correctly_signed_body() {
+        let body = br#"{"action":"opened"}"#;
+        assert!(verify_github_hmac(
+            "s3cr3t",
+            body,
+            Some(&sign("s3cr3t", body))
+        ));
+    }
+
+    #[test]
+    fn rejects_wrong_secret_missing_header_and_tampered_body() {
+        let body = br#"{"action":"opened"}"#;
+        let sig = sign("s3cr3t", body);
+        assert!(!verify_github_hmac("other", body, Some(&sig)));
+        assert!(!verify_github_hmac("s3cr3t", body, None));
+        assert!(!verify_github_hmac(
+            "s3cr3t",
+            br#"{"action":"closed"}"#,
+            Some(&sig)
+        ));
+        assert!(!verify_github_hmac("s3cr3t", body, Some("sha256=zzzz")));
+        assert!(!verify_github_hmac("s3cr3t", body, Some("")));
+    }
+
+    /// The rotation window: a delivery signed with the OLD secret must still
+    /// verify while GITHUB_WEBHOOK_SECRET_PREVIOUS is set, and must stop
+    /// verifying once it is cleared. This is what makes rotation lossless.
+    #[test]
+    fn rotation_window_accepts_old_signatures_then_stops() {
+        let body = br#"{"action":"synchronize"}"#;
+        let old_sig = sign("old-secret", body);
+
+        // New secret alone does not accept an old-signed delivery.
+        assert!(!verify_github_hmac("new-secret", body, Some(&old_sig)));
+        // The previous secret does -- this is the fallback the handler consults.
+        assert!(verify_github_hmac("old-secret", body, Some(&old_sig)));
+        // After the window closes, the old signature is refused.
+        assert!(!verify_github_hmac("unrelated", body, Some(&old_sig)));
+    }
 }

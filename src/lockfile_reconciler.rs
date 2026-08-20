@@ -33,42 +33,60 @@ impl LockfileReconciler {
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
         // Checkout PR branch
-        let _ = Command::new("git")
-            .current_dir(&repo_dir)
-            .args([
-                "fetch",
-                "origin",
-                &format!("pull/{}/head", pr_number),
-                "--force",
-            ])
-            .output()
-            .await;
+        let mut fetch_cmd = Command::new("git");
+        fetch_cmd.current_dir(&repo_dir).args([
+            "fetch",
+            "origin",
+            &format!("pull/{}/head", pr_number),
+            "--force",
+        ]);
+        let _ = crate::exec::run_bounded(
+            fetch_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git fetch pull head (lockfile reconciler)",
+        )
+        .await;
 
         let branch_name = format!("pr-{}", pr_number);
-        let _ = Command::new("git")
+        let mut checkout_cmd = Command::new("git");
+        checkout_cmd
             .current_dir(&repo_dir)
-            .args(["checkout", "-B", &branch_name, "FETCH_HEAD"])
-            .output()
-            .await;
+            .args(["checkout", "-B", &branch_name, "FETCH_HEAD"]);
+        let _ = crate::exec::run_bounded(
+            checkout_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git checkout -B (lockfile reconciler)",
+        )
+        .await;
 
         // 1. Rust Cargo lockfile reconciliation
         if repo_dir.join("Cargo.toml").exists() {
             info!("Reconciling Cargo.lock in {:?}", repo_dir);
-            let _ = Command::new("cargo")
-                .current_dir(&repo_dir)
-                .args(["check", "--quiet"])
-                .output()
-                .await;
+            let mut cargo_cmd = Command::new("cargo");
+            cargo_cmd.current_dir(&repo_dir).args(["check", "--quiet"]);
+            let _ = crate::exec::run_bounded(
+                cargo_cmd,
+                crate::exec::ExecClass::Build,
+                "cargo check --quiet (lockfile reconciler)",
+            )
+            .await;
         }
 
         // 2. Node.js package-lock reconciliation
         if repo_dir.join("package.json").exists() {
             info!("Reconciling package-lock.json in {:?}", repo_dir);
-            let _ = Command::new("npm")
-                .current_dir(&repo_dir)
-                .args(["install", "--package-lock-only", "--ignore-scripts"])
-                .output()
-                .await;
+            let mut npm_cmd = Command::new("npm");
+            npm_cmd.current_dir(&repo_dir).args([
+                "install",
+                "--package-lock-only",
+                "--ignore-scripts",
+            ]);
+            let _ = crate::exec::run_bounded(
+                npm_cmd,
+                crate::exec::ExecClass::Build,
+                "npm install --package-lock-only",
+            )
+            .await;
         }
 
         // 3. Truth Ledgers & Documentation Manifests
@@ -76,30 +94,45 @@ impl LockfileReconciler {
             repo_dir.join("scripts/console/generate-documentation-manifest.mjs");
         if doc_manifest_script.exists() {
             info!("Reconciling documentation manifest in {:?}", repo_dir);
-            let _ = Command::new("node")
+            let mut node_cmd = Command::new("node");
+            node_cmd
                 .current_dir(&repo_dir)
-                .arg("scripts/console/generate-documentation-manifest.mjs")
-                .output()
-                .await;
+                .arg("scripts/console/generate-documentation-manifest.mjs");
+            let _ = crate::exec::run_bounded(
+                node_cmd,
+                crate::exec::ExecClass::Build,
+                "node generate-documentation-manifest.mjs",
+            )
+            .await;
         }
 
         let adr_index_script = repo_dir.join("scripts/console/generate-adr-index.mjs");
         if adr_index_script.exists() {
             info!("Reconciling ADR index in {:?}", repo_dir);
-            let _ = Command::new("node")
+            let mut node_cmd = Command::new("node");
+            node_cmd
                 .current_dir(&repo_dir)
-                .arg("scripts/console/generate-adr-index.mjs")
-                .output()
-                .await;
+                .arg("scripts/console/generate-adr-index.mjs");
+            let _ = crate::exec::run_bounded(
+                node_cmd,
+                crate::exec::ExecClass::Build,
+                "node generate-adr-index.mjs",
+            )
+            .await;
         }
 
         // 4. Check for modified files
-        let status_out = Command::new("git")
+        let mut status_cmd = Command::new("git");
+        status_cmd
             .current_dir(&repo_dir)
-            .args(["status", "--porcelain"])
-            .output()
-            .await
-            .context("Failed to check git status")?;
+            .args(["status", "--porcelain"]);
+        let status_out = crate::exec::run_bounded(
+            status_cmd,
+            crate::exec::ExecClass::Quick,
+            "git status --porcelain (lockfile reconciler)",
+        )
+        .await
+        .context("Failed to check git status")?;
 
         let modified_lines = String::from_utf8_lossy(&status_out.stdout);
         let reconciled_files: Vec<String> = modified_lines
@@ -122,29 +155,44 @@ impl LockfileReconciler {
         );
 
         for file in &reconciled_files {
-            let _ = Command::new("git")
-                .current_dir(&repo_dir)
-                .args(["add", file])
-                .output()
-                .await;
+            let mut add_cmd = Command::new("git");
+            add_cmd.current_dir(&repo_dir).args(["add", file]);
+            let _ = crate::exec::run_bounded(
+                add_cmd,
+                crate::exec::ExecClass::Quick,
+                "git add (lockfile reconciler)",
+            )
+            .await;
         }
 
         let commit_msg = format!(
             "chore(deps): auto-reconcile lockfiles and documentation ledgers on PR #{}",
             pr_number
         );
-        let _ = Command::new("git")
+        let mut commit_cmd = Command::new("git");
+        commit_cmd
             .current_dir(&repo_dir)
-            .args(["commit", "-m", &commit_msg])
-            .output()
-            .await;
+            .args(["commit", "-m", &commit_msg]);
+        let _ = crate::exec::run_bounded(
+            commit_cmd,
+            crate::exec::ExecClass::Quick,
+            "git commit (lockfile reconciler)",
+        )
+        .await;
 
+        // Never push to a branch that belongs to a fork; see github::fork_guard.
+        crate::github::fork_guard::ensure_push_allowed(repo, pr_number, meta.is_cross_repository)?;
         let push_target = format!("HEAD:{}", meta.head_ref_name);
-        let push_out = Command::new("git")
+        let mut push_cmd = Command::new("git");
+        push_cmd
             .current_dir(&repo_dir)
-            .args(["push", "origin", &push_target])
-            .output()
-            .await?;
+            .args(["push", "origin", &push_target]);
+        let push_out = crate::exec::run_bounded(
+            push_cmd,
+            crate::exec::ExecClass::Vcs,
+            "git push (lockfile reconciler)",
+        )
+        .await?;
 
         if push_out.status.success() {
             info!(

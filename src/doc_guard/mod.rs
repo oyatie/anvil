@@ -27,7 +27,18 @@ pub struct DocGuardReport {
     pub is_sufficient: bool,
     pub files_created_or_updated: Vec<String>,
     pub summary: String,
+    /// Set when the guard could not obtain a judgement at all (spawn failure,
+    /// timeout, unparseable response). Distinct from `is_sufficient: false`,
+    /// which is a real adverse finding.
+    ///
+    /// Invariant I1: absent evidence is never a pass — but nor is it a
+    /// fabricated accusation, so this maps to `GateStatus::Errored`.
+    pub errored: Option<String>,
 }
+
+/// An xhigh-effort model call cannot reliably complete in 20 seconds, which is
+/// what the previous limit was; every timeout became a silent pass.
+const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 pub struct DocGuard {
     agy_effort: String,
@@ -62,6 +73,7 @@ impl DocGuard {
                     {
                         warn!("DocGuard frontmatter violation: {}", err);
                         return Ok(DocGuardReport {
+                            errored: None,
                             is_sufficient: false,
                             files_created_or_updated: Vec::new(),
                             summary: format!("❌ Frontmatter & SSOT validation failed: {}", err),
@@ -71,10 +83,30 @@ impl DocGuard {
             }
         }
 
-        // Step 2: Analyze semantic documentation parity
-        let eval = self
+        // Step 2: Analyze semantic documentation parity.
+        //
+        // A probe failure is reported as `errored`, not propagated: the rest of
+        // the gate matrix must still run and the scorecard must still post.
+        // It maps to GateStatus::Errored, which blocks (invariant I1) without
+        // claiming the documentation is actually deficient.
+        let eval = match self
             .evaluate_doc_parity(repo, repo_dir, diff_ctx, pr_title, pr_body)
-            .await?;
+            .await
+        {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(
+                    "Doc parity probe could not produce a judgement for {}#{}: {}",
+                    repo, diff_ctx.pr_number, e
+                );
+                return Ok(DocGuardReport {
+                    errored: Some(e.to_string()),
+                    is_sufficient: false,
+                    files_created_or_updated: Vec::new(),
+                    summary: format!("Documentation parity could not be evaluated: {}", e),
+                });
+            }
+        };
 
         if eval.is_doc_sufficient {
             info!(
@@ -82,9 +114,10 @@ impl DocGuard {
                 repo, diff_ctx.pr_number
             );
             return Ok(DocGuardReport {
+                            errored: None,
                 is_sufficient: true,
                 files_created_or_updated: Vec::new(),
-                summary: "Documentation and SSOT frontmatters are fully compliant with hyperscaler standards.".to_string(),
+                summary: "Documentation and SSOT frontmatters satisfy the required fields and parity rules.".to_string(),
             });
         }
 
@@ -104,6 +137,7 @@ impl DocGuard {
         );
 
         Ok(DocGuardReport {
+            errored: None,
             is_sufficient: true,
             files_created_or_updated: updated_files,
             summary,
@@ -113,11 +147,34 @@ impl DocGuard {
     async fn evaluate_doc_parity(
         &self,
         repo: &str,
-        _repo_dir: &Path,
+        repo_dir: &Path,
         diff_ctx: &PrDiffContext,
         pr_title: &str,
         pr_body: &str,
     ) -> Result<DocParityEvaluation> {
+        let changed_files_preview = if diff_ctx.changed_files.len() > 100 {
+            format!(
+                "{}\n- ... and {} more files",
+                diff_ctx
+                    .changed_files
+                    .iter()
+                    .take(100)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n- "),
+                diff_ctx.changed_files.len() - 100
+            )
+        } else {
+            diff_ctx.changed_files.join("\n- ")
+        };
+
+        let diff_content_bounded = if diff_ctx.diff_content.chars().count() > 50_000 {
+            let truncated: String = diff_ctx.diff_content.chars().take(50_000).collect();
+            format!("{truncated}\n\n[... remaining diff truncated for doc evaluation ...]")
+        } else {
+            diff_ctx.diff_content.clone()
+        };
+
         let prompt = format!(
             r#####"You are Oyatie's Principal Documentation Architect. Evaluate whether this Pull Request on `{repo}` has sufficient documentation parity or if documentation must be updated.
 
@@ -161,12 +218,13 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             } else {
                 pr_body
             },
-            changed_files = diff_ctx.changed_files.join("\n- "),
-            diff_content = diff_ctx.diff_content
+            changed_files = changed_files_preview,
+            diff_content = diff_content_bounded
         );
 
         let target = format!("{}#{}", repo, diff_ctx.pr_number);
         let agy_effort = self.agy_effort.clone();
+        let repo_dir_owned = repo_dir.to_path_buf();
         let prompt_clone = prompt.clone();
 
         crate::watchdog::PipelineWatchdog::run_with_watchdog(
@@ -175,11 +233,38 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             std::time::Duration::from_secs(30),
             move || async move {
                 let mut cmd = Command::new("agy");
-                cmd.args(["prompt", "--effort", &agy_effort, "--raw", &prompt_clone]);
-                cmd.kill_on_drop(true);
+                // Match the invocation form used by every other agy call site
+                // (`--print <prompt> --effort <e>`); the previous
+                // `prompt --raw` form was unique to this guard.
+                cmd.args([
+                    "--print",
+                    &prompt_clone,
+                    "--effort",
+                    &agy_effort,
+                    // Required for agy to read the repository at all. Omitting it
+                    // in the Phase 0a rewrite made every doc-parity probe fail
+                    // with "permission check failed for command", which the
+                    // fail-closed change then surfaced as a blocked gate --
+                    // correctly, but for a reason this code introduced.
+                    //
+                    // This probe only READS, so a scoped read-only agy mode would
+                    // be the right long-term fix; passing the blanket flag here
+                    // widens the S5 surface by one more call site.
+                    "--dangerously-skip-permissions",
+                ]);
+                // Run inside the repository under review. Previously unset, so
+                // this probe executed in anvil's own working directory and
+                // judged the wrong tree.
+                cmd.current_dir(&repo_dir_owned);
 
-                match tokio::time::timeout(std::time::Duration::from_secs(20), cmd.output()).await {
-                    Ok(Ok(output)) if output.status.success() => {
+                match crate::exec::run_bounded_for(
+                    cmd,
+                    DOC_PARITY_PROBE_TIMEOUT,
+                    "doc parity probe",
+                )
+                .await
+                {
+                    Ok(output) if output.status.success() => {
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         if let Some(json_str) = extract_json_block(&stdout) {
                             if let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
@@ -187,29 +272,32 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                                 return Ok(eval);
                             }
                         }
-                        Ok(DocParityEvaluation {
-                            is_doc_sufficient: true,
-                            missing_doc_summary: None,
-                            doc_files_to_update: Vec::new(),
-                            suggested_adr_title: None,
-                        })
+                        // Ran successfully but produced nothing parseable: we
+                        // have no judgement, so we must not claim sufficiency.
+                        anyhow::bail!(
+                            "doc parity probe returned no parseable evaluation (stdout {} bytes)",
+                            stdout.len()
+                        )
                     }
-                    _ => Ok(DocParityEvaluation {
-                        is_doc_sufficient: true,
-                        missing_doc_summary: None,
-                        doc_files_to_update: Vec::new(),
-                        suggested_adr_title: None,
-                    }),
+                    Ok(output) => anyhow::bail!(
+                        "doc parity probe exited with status {}: {}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ),
+                    // `run_bounded_for` already distinguishes "failed to run"
+                    // from "timed out" in its message, and both stay errors.
+                    Err(e) => Err(e),
                 }
             },
-            |_err| {
-                // Deterministic local fallback
-                Ok(DocParityEvaluation {
-                    is_doc_sufficient: true,
-                    missing_doc_summary: None,
-                    doc_files_to_update: Vec::new(),
-                    suggested_adr_title: None,
-                })
+            |err| {
+                // No deterministic local fallback exists for doc parity, so the
+                // watchdog path must report the failure rather than manufacture
+                // a pass. This arm previously returned is_doc_sufficient: true,
+                // which made gate 1 unfailable.
+                Err(anyhow::anyhow!(
+                    "doc parity probe supervision failed: {}",
+                    err
+                ))
             },
         )
         .await

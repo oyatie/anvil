@@ -28,7 +28,10 @@ impl KaniProofRunner {
     pub async fn run_kani_proofs(&self, repo_dir: &Path) -> Result<Vec<KaniProofReport>> {
         info!("Checking for Kani model checker in {}", repo_dir.display());
 
-        let which_out = Command::new("which").arg("kani").output().await;
+        let mut which_cmd = Command::new("which");
+        which_cmd.arg("kani");
+        let which_out =
+            crate::exec::run_bounded(which_cmd, crate::exec::ExecClass::Quick, "which kani").await;
 
         let has_kani = which_out.map(|o| o.status.success()).unwrap_or(false);
 
@@ -41,11 +44,16 @@ impl KaniProofRunner {
             }]);
         }
 
-        let output = Command::new("cargo")
+        let mut kani_cmd = Command::new("cargo");
+        kani_cmd
             .current_dir(repo_dir)
-            .args(["kani", "--output-format", "terse"])
-            .output()
-            .await;
+            .args(["kani", "--output-format", "terse"]);
+        let output = crate::exec::run_bounded(
+            kani_cmd,
+            crate::exec::ExecClass::Build,
+            "cargo kani --output-format terse",
+        )
+        .await;
 
         match output {
             Ok(out) if out.status.success() => Ok(vec![KaniProofReport {
@@ -61,10 +69,14 @@ impl KaniProofRunner {
                     execution_time_ms: 120,
                 }])
             }
-            Err(_) => Ok(vec![KaniProofReport {
-                proof_name: "fallback_static".to_string(),
-                status: "VERIFIED_STATIC".to_string(),
-                execution_time_ms: 1,
+            // Fail closed: kani was detected above, so a run that never
+            // completed (spawn failure or the build-class timeout) proved
+            // nothing. Reporting VERIFIED_STATIC here turned a killed proof run
+            // into a pass.
+            Err(e) => Ok(vec![KaniProofReport {
+                proof_name: "workspace_kani_proofs".to_string(),
+                status: format!("FAILED: {}", e),
+                execution_time_ms: 0,
             }]),
         }
     }

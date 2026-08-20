@@ -41,7 +41,7 @@ impl HyperscalerConsensusGuard {
         diff_ctx: &PrDiffContext,
     ) -> HyperscalerConsensusReport {
         info!(
-            "Evaluating Multi-Hyperscaler Consensus on PR #{} ('Would AWS/GCP/Meta/Azure/OCI approve?')...",
+            "Evaluating unbounded-queue and blocking-call conformance on PR #{}...",
             diff_ctx.pr_number
         );
 
@@ -192,11 +192,10 @@ impl HyperscalerConsensusGuard {
         let approved_count = provider_reviews.iter().filter(|r| r.is_approved).count();
 
         let summary = if is_unanimously_approved {
-            "✅ UNANIMOUS APPROVAL (5/5 Hyperscalers Approved: AWS, GCP, Meta, Azure, OCI)"
-                .to_string()
+            "✅ UNANIMOUS APPROVAL (5/5 review lenses approved)".to_string()
         } else {
             format!(
-                "❌ CONSENSUS REJECTED ({}/5 Hyperscalers Approved; {} Rejected)",
+                "❌ CONSENSUS REJECTED ({}/5 review lenses approved; {} rejected)",
                 approved_count,
                 5 - approved_count
             )
@@ -236,7 +235,7 @@ mod tests {
 
         assert!(report.is_unanimously_approved);
         assert_eq!(report.provider_reviews.len(), 5);
-        assert!(report.summary.contains("5/5 Hyperscalers Approved"));
+        assert!(report.summary.contains("5/5 review lenses approved"));
     }
 
     #[test]

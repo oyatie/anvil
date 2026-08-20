@@ -1,24 +1,52 @@
+//! Dark-traffic shadow replay — the harness that mirrored no traffic.
+//!
+//! # What was here
+//!
+//! `evaluate_shadow_verification` built a `ShadowTrafficMetrics` out of four
+//! literals — a sample size, a payload parity, a status-code parity and a
+//! latency delta — and handed it to a comparator whose thresholds those literals
+//! cleared by construction. The published summary then named the sample size, so
+//! a reader was told how many requests had been compared when none had been
+//! sent. Naming a sample that was never drawn is the most persuasive form of the
+//! defect: the number carries its own apparent provenance (I2).
+//!
+//! # What is here now
+//!
+//! No metrics are fabricated. Without traffic mirroring infrastructure and a
+//! replay target there is nothing to compare, so the gate reports
+//! `GateStatus::NotMeasured` naming both missing pieces. It does not report a
+//! parity failure: no response diverged, because no response was ever produced.
+//!
+//! `TrafficMirrorComparator` is retained and still exported. It is an honest
+//! computation over caller-supplied metrics and is the seam a real mirror plugs
+//! into; only the caller that supplied itself is deleted.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::pre_merge_guard::GateStatus;
 
 pub mod traffic_mirror;
 pub use traffic_mirror::{ShadowTrafficMetrics, TrafficMirrorComparator};
 
+/// The infrastructure that must exist before response parity can be compared.
+const MISSING_TRAFFIC_MIRROR: &str =
+    "no traffic mirror and no replay target are configured, so no production \
+     requests were sampled and no responses were compared";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShadowTrafficReport {
+    pub status: GateStatus,
+    /// Whether shadow parity was established. False while unmeasured: an
+    /// un-mirrored deployment cannot be asserted to behave identically.
     pub is_verified: bool,
-    pub payload_parity: f64,
-    pub status_parity: f64,
     pub summary: String,
 }
 
-pub struct ShadowTrafficHarness {
-    comparator: TrafficMirrorComparator,
-}
+pub struct ShadowTrafficHarness;
 
 impl Default for ShadowTrafficHarness {
     fn default() -> Self {
@@ -28,35 +56,28 @@ impl Default for ShadowTrafficHarness {
 
 impl ShadowTrafficHarness {
     pub fn new() -> Self {
-        let comparator = TrafficMirrorComparator::new();
-        Self { comparator }
+        Self
     }
 
-    /// 100% Deterministic evaluation of dark-traffic shadow replay parity
+    /// Reports shadow replay parity as unmeasured; see the module docs.
     pub fn evaluate_shadow_verification(
         &self,
         _repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<ShadowTrafficReport> {
         info!(
-            "Running ShadowTrafficHarness (Deterministic Dark-Traffic Mirror Parity) on {}#{}...",
+            "Running ShadowTrafficHarness (no mirror or replay target configured) on {}#{}...",
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let baseline = ShadowTrafficMetrics {
-            sampled_requests: 5000,
-            payload_parity_pct: 99.98,
-            status_code_parity_pct: 100.0,
-            latency_delta_pct: 0.8,
-        };
-
-        let result = self.comparator.evaluate_shadow_parity(&baseline);
-        let summary = result.details;
+        let summary = format!("➖ NOT MEASURED ({})", MISSING_TRAFFIC_MIRROR);
 
         Ok(ShadowTrafficReport {
-            is_verified: result.is_parity_satisfied,
-            payload_parity: baseline.payload_parity_pct,
-            status_parity: baseline.status_code_parity_pct,
+            status: GateStatus::NotMeasured {
+                gate_id: "shadow_traffic_status".to_string(),
+                reason: MISSING_TRAFFIC_MIRROR.to_string(),
+            },
+            is_verified: false,
             summary,
         })
     }
@@ -67,7 +88,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_shadow_harness_nominal() {
+    fn no_mirror_means_no_sample_size_and_no_parity() {
+        // Replaces `test_shadow_harness_nominal`, which asserted `rep.is_verified`
+        // over metrics the same function had just written down.
         let harness = ShadowTrafficHarness::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/console".to_string(),
@@ -84,7 +107,15 @@ mod tests {
 
         let rep = harness
             .evaluate_shadow_verification(Path::new("."), &diff_ctx)
-            .unwrap();
-        assert!(rep.is_verified);
+            .expect("gate runs");
+        assert_eq!(
+            rep.status.unmeasured_gate_id(),
+            Some("shadow_traffic_status")
+        );
+        assert!(
+            !rep.summary.to_lowercase().contains("verified"),
+            "{}",
+            rep.summary
+        );
     }
 }

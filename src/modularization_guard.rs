@@ -108,7 +108,7 @@ impl ModularizationGuard {
 
         let is_modular = oversized_files.is_empty();
         let summary = if is_modular {
-            "Hyperscaler modularization & directory depth verified: files are strictly bounded within 100-300 lines and adhere to the category-aware depth envelope.".to_string()
+            "Module size and directory depth verified: files are strictly bounded within 100-300 lines and adhere to the category-aware depth envelope.".to_string()
         } else {
             format!(
                 "Modularization & depth findings ({} violations): {}",

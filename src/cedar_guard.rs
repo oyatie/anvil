@@ -116,6 +116,29 @@ impl CedarGuard {
         diff_ctx: &PrDiffContext,
         pr_title: &str,
     ) -> Result<CedarPolicyEvaluation> {
+        let changed_files_preview = if diff_ctx.changed_files.len() > 100 {
+            format!(
+                "{}\n- ... and {} more files",
+                diff_ctx
+                    .changed_files
+                    .iter()
+                    .take(100)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n- "),
+                diff_ctx.changed_files.len() - 100
+            )
+        } else {
+            diff_ctx.changed_files.join("\n- ")
+        };
+
+        let diff_content_bounded = if diff_ctx.diff_content.chars().count() > 50_000 {
+            let truncated: String = diff_ctx.diff_content.chars().take(50_000).collect();
+            format!("{truncated}\n\n[... remaining diff truncated for cedar evaluation ...]")
+        } else {
+            diff_ctx.diff_content.clone()
+        };
+
         let prompt = format!(
             r#####"You are Oyatie's Principal IAM & Cedar Policy Architect. Evaluate whether new or modified routes/actions in PR #{pr_number} ("{pr_title}") on `{repo}` are covered by AWS Cedar policy rules.
 
@@ -151,8 +174,8 @@ Note: If compliant, output `{{"is_cedar_compliant": true, "missing_policies_summ
             repo = repo,
             pr_number = diff_ctx.pr_number,
             pr_title = pr_title,
-            changed_files = diff_ctx.changed_files.join("\n- "),
-            diff_content = diff_ctx.diff_content
+            changed_files = changed_files_preview,
+            diff_content = diff_content_bounded
         );
 
         let output = self.run_agy_prompt(&prompt, repo_dir).await?;
@@ -215,11 +238,16 @@ Write the policy files directly to the workspace now."#####,
         let _ = self.run_agy_prompt(&prompt, repo_dir).await?;
 
         // Check for created or modified .cedar files
-        let status_out = Command::new("git")
+        let mut status_cmd = Command::new("git");
+        status_cmd
             .current_dir(repo_dir)
-            .args(["status", "--porcelain"])
-            .output()
-            .await?;
+            .args(["status", "--porcelain"]);
+        let status_out = crate::exec::run_bounded(
+            status_cmd,
+            crate::exec::ExecClass::Quick,
+            "git status --porcelain (cedar guard)",
+        )
+        .await?;
 
         let modified: Vec<String> = String::from_utf8_lossy(&status_out.stdout)
             .lines()
@@ -247,7 +275,10 @@ Write the policy files directly to the workspace now."#####,
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd.output().await.context("Failed to run agy command")?;
+        let output =
+            crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy (cedar guard)")
+                .await
+                .context("Failed to run agy command")?;
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 

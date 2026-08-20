@@ -13,6 +13,13 @@ pub struct Config {
     pub auto_forward_webhooks: bool,
     pub ai_provider: ModelProvider,
     pub specific_model: Option<String>,
+    pub webhook_secret: Option<String>,
+    /// Previous webhook secret, honoured during a rotation window.
+    ///
+    /// GitHub signs a delivery with whichever secret the hook held when the
+    /// delivery was created. During rotation, in-flight deliveries still carry
+    /// the old signature, so verifying against only the new secret drops them.
+    pub webhook_secret_previous: Option<String>,
 }
 
 impl Config {
@@ -61,6 +68,12 @@ impl Config {
         let ai_provider_str = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "agy".to_string());
         let ai_provider = ModelProvider::from_str_name(&ai_provider_str);
         let specific_model = std::env::var("AI_MODEL").ok();
+        let webhook_secret = std::env::var("GITHUB_WEBHOOK_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let webhook_secret_previous = std::env::var("GITHUB_WEBHOOK_SECRET_PREVIOUS")
+            .ok()
+            .filter(|s| !s.is_empty());
 
         Self {
             host,
@@ -73,6 +86,8 @@ impl Config {
             auto_forward_webhooks,
             ai_provider,
             specific_model,
+            webhook_secret,
+            webhook_secret_previous,
         }
     }
 

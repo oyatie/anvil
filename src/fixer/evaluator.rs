@@ -132,7 +132,9 @@ async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<Strin
         "--dangerously-skip-permissions",
     ]);
     cmd.current_dir(working_dir);
-    let output = cmd.output().await.context("Failed to run agy")?;
+    let output = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy evaluation")
+        .await
+        .context("Failed to run agy")?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 

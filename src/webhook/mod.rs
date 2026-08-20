@@ -1,5 +1,8 @@
+pub mod admin_auth;
+pub mod forwarder_supervisor;
 pub mod manual_handlers;
 pub mod pipelines;
+pub mod repo_guard;
 pub mod sse;
 pub mod webhook_handlers;
 
@@ -7,6 +10,8 @@ use std::sync::Arc;
 
 use axum::{routing::post, Router};
 use serde::{Deserialize, Serialize};
+
+use admin_auth::admin_guarded;
 
 use crate::adr_drift_ratchet::AdrDriftRatchet;
 use crate::api_contract_guard::ApiContractGuard;
@@ -75,7 +80,7 @@ use crate::remote_cache_optimizer::RemoteCacheOptimizer;
 use crate::replay_harness::DeterministicReplayHarness;
 use crate::review_memory::ReviewMemoryEngine;
 use crate::reviewer::Reviewer;
-use crate::rust_skills_guard::RustSkillsGuard;
+use crate::rust_language_policy::RustLanguagePolicy;
 use crate::schema_evolution::SchemaEvolutionRatchet;
 use crate::semantic_abi_ratchet::SemanticAbiRatchet;
 use crate::shadow_traffic_harness::ShadowTrafficHarness;
@@ -113,7 +118,7 @@ pub struct AppState {
     pub debt_shrink_guard: Arc<DebtShrinkGuard>,
     pub modularization_guard: Arc<ModularizationGuard>,
     pub coverage_guard: Arc<CoverageGuard>,
-    pub rust_skills_guard: Arc<RustSkillsGuard>,
+    pub rust_language_policy: Arc<RustLanguagePolicy>,
     pub kani_guard: Arc<KaniGuard>,
     pub slo_canary_guard: Arc<SloCanaryGuard>,
     pub adr_drift_ratchet: Arc<AdrDriftRatchet>,
@@ -186,6 +191,7 @@ pub struct AppState {
     pub broadcaster: Arc<crate::webhook::sse::FleetEventBroadcaster>,
     pub telemetry_store: Arc<crate::telemetry_store::TelemetryStore>,
     pub fleet_observer: Arc<crate::fleet_observer::FleetObserver>,
+    pub task_orchestrator: Arc<crate::task_orchestrator::AutonomousTaskOrchestrator>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -214,6 +220,25 @@ pub async fn metrics_handler(
 }
 
 /// Constructs the Axum HTTP router with webhook ingress, healthz probes, and on-demand API endpoints.
+///
+/// # Authentication
+///
+/// Every `/api/*` route is registered through [`admin_guarded`], which runs the
+/// admin check before the handler sees the request. On a loopback bind that
+/// check allows everything; on any other bind it requires
+/// `X-Anvil-Admin-Token` to match `ANVIL_ADMIN_TOKEN`, and refuses with 403 if
+/// no token is configured at all (invariant I1).
+///
+/// Two routes are deliberately NOT guarded:
+///   - `/healthz`, the Kubernetes liveness probe, and `/metrics`, the
+///     Prometheus scrape target. Both are pulled by infrastructure that cannot
+///     present a token; guarding them makes the pod look unhealthy and gets the
+///     whole check disabled.
+///   - `/webhook`, which authenticates differently and more strongly: it
+///     verifies the GitHub HMAC signature over the request body.
+///
+/// The dashboard at `/` and `/dashboard` is HTML only; every byte of data it
+/// renders arrives through the guarded `/api/dashboard/state`.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route(
@@ -226,23 +251,48 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/api/dashboard/state",
-            axum::routing::get(crate::dashboard::dashboard_state_api_handler),
+            axum::routing::get(admin_guarded(crate::dashboard::dashboard_state_api_handler)),
         )
         .route(
             "/api/events/fleet",
-            axum::routing::get(crate::webhook::sse::sse_fleet_stream_handler),
+            axum::routing::get(admin_guarded(crate::webhook::sse::sse_fleet_stream_handler)),
         )
         .route("/healthz", axum::routing::get(healthz_handler))
         .route("/metrics", axum::routing::get(metrics_handler))
         .route("/webhook", post(webhook_handler))
-        .route("/api/review", post(manual_review_handler))
-        .route("/api/fix", post(manual_fix_handler))
-        .route("/api/certify", post(manual_certify_handler))
-        .route("/api/triage", post(manual_triage_handler))
-        .route("/api/enlist", post(manual_enlist_handler))
-        .route("/api/heal-queue", post(manual_heal_queue_handler))
-        .route("/api/reconcile", post(manual_reconcile_handler))
-        .route("/api/drain", post(manual_handlers::drain_handler))
+        .route("/api/review", post(admin_guarded(manual_review_handler)))
+        .route("/api/fix", post(admin_guarded(manual_fix_handler)))
+        .route("/api/certify", post(admin_guarded(manual_certify_handler)))
+        .route("/api/triage", post(admin_guarded(manual_triage_handler)))
+        .route("/api/enlist", post(admin_guarded(manual_enlist_handler)))
+        .route(
+            "/api/heal-queue",
+            post(admin_guarded(manual_heal_queue_handler)),
+        )
+        .route(
+            "/api/reconcile",
+            post(admin_guarded(manual_reconcile_handler)),
+        )
+        .route(
+            "/api/tasks/sweep",
+            post(admin_guarded(manual_handlers::task_sweep_handler)),
+        )
+        .route(
+            "/api/drain",
+            post(admin_guarded(manual_handlers::drain_handler)),
+        )
+        .route(
+            "/api/accounts/pool",
+            post(admin_guarded(manual_handlers::add_account_pool_handler)),
+        )
+        .route(
+            "/api/accounts/drain",
+            post(admin_guarded(manual_handlers::drain_account_handler)),
+        )
+        .route(
+            "/api/accounts/resume",
+            post(admin_guarded(manual_handlers::resume_account_handler)),
+        )
         .with_state(state)
 }
 

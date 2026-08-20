@@ -1,3 +1,15 @@
+//! The 68-row certification table.
+//!
+//! No longer what Anvil publishes on a pull request: the scorecard comment is
+//! rendered by `crate::publish::scorecard::render`, which reports findings only
+//! and counts the passes instead of listing them. This table put sixty-odd
+//! `PASSED` rows above the two or three that needed action.
+//!
+//! Kept because it still has callers:
+//!   - `crate::pre_merge_guard::evaluator` populates
+//!     `PreMergeCertificationReport::summary_markdown` from it;
+//!   - `tests/red_green_gates_test.rs` asserts against its output.
+
 use super::GateStatus;
 
 pub struct MatrixRenderer;
@@ -83,7 +95,7 @@ impl MatrixRenderer {
 
         format!(
             r###"<!-- ANVIL_SCORECARD_RECEIPT -->
-### 🛡️ Oyatie Hyperscale Full-Lifecycle Quality & GitOps Matrix (70 Gates)
+### Full-lifecycle quality and GitOps matrix
 
 | Quality Gate | Status | Details |
 |---|---|---|
@@ -150,7 +162,7 @@ impl MatrixRenderer {
 | **💥 AST Chaos Mutation Test Adequacy** | {} | Critical branches verified against surviving mutants |
 | **🚩 Feature Flag & Dead Branch Lifecycle** | {} | Zero stale or dead toggle fallback branches |
 | **⚡ Micro-Benchmark & Latency Ratchet** | {} | Hot paths within +3% latency & zero-leak budget |
-| **🔏 Cryptographic Provenance Attestation** | {} | Stamped verification receipts in .cursor/receipts |
+| **🔏 Cryptographic Provenance Attestation** | {} | Stamped verification receipts in .anvil/receipts |
 | **🔐 Secret & Credential Scan** | {} | Deep entropy scan for leaked credentials |
 | **🔄 Schema & Migration Compatibility** | {} | Zero destructive breakages across cell nodes |
 | **⚡ Concurrency, Perf & Flake Guard** | {} | Bounded execution and flake-resistant timings |
@@ -159,7 +171,7 @@ impl MatrixRenderer {
 ---
 **Verdict**: {}
 
-*🤖 Certified by Oyatie Anvil*"###,
+*🤖 [Certified] by Oyatie Anvil*"###,
             doc_status.badge(),
             cedar_status.badge(),
             compliance_status.badge(),

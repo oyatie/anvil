@@ -225,7 +225,7 @@ impl UpstreamRegulatorySync {
                 rule_id: "INTERNAL_OYATIE_TENANT_ISOLATION_ADR_014".to_string(),
                 scope: GeographicScope::InternalCorporatePolicy,
                 level: RegulatoryLevel::InternalStandard,
-                statute_or_policy_name: "Oyatie Enterprise Architecture Decision Record (ADR-014)".to_string(),
+                statute_or_policy_name: "Oyatie Architecture Decision Record (ADR-014)".to_string(),
                 citation: "ADR-014 §3.1 (Strict Multi-Tenant Cell Boundary)".to_string(),
                 temporal: TemporalValidity {
                     enacted_date: "2025-01-01".to_string(),

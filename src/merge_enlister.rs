@@ -40,10 +40,13 @@ impl MergeEnlister {
             "--squash",
         ]);
 
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to run gh pr merge --auto")?;
+        let output = crate::exec::run_bounded(
+            cmd,
+            crate::exec::ExecClass::Api,
+            "gh pr merge --auto --squash",
+        )
+        .await
+        .context("Failed to run gh pr merge --auto")?;
 
         if output.status.success() {
             info!(
@@ -72,7 +75,12 @@ impl MergeEnlister {
             "--merge",
         ]);
 
-        let retry_out = retry_cmd.output().await?;
+        let retry_out = crate::exec::run_bounded(
+            retry_cmd,
+            crate::exec::ExecClass::Api,
+            "gh pr merge --auto --merge",
+        )
+        .await?;
         if retry_out.status.success() {
             info!(
                 "Successfully enlisted {}#{} into Merge Queue (standard merge)",
@@ -114,21 +122,30 @@ impl MergeEnlister {
             .await?;
 
         // Step 1: Check GitHub Review Decision using structured JSON parsing
-        let check_cmd = Command::new("gh")
-            .args([
-                "pr",
-                "view",
-                &pr_number.to_string(),
-                "--repo",
-                repo,
-                "--json",
-                "reviewDecision,reviews",
-            ])
-            .output()
-            .await;
+        let mut check_cmd = Command::new("gh");
+        check_cmd.args([
+            "pr",
+            "view",
+            &pr_number.to_string(),
+            "--repo",
+            repo,
+            "--json",
+            "reviewDecision,reviews",
+        ]);
+        // Fail closed: this is the CHANGES_REQUESTED check that gates merge
+        // queue admission. Swallowing a timeout here left `needs_approval` at
+        // its default and walked straight past a blocking review verdict.
+        let check_out = crate::exec::run_bounded(
+            check_cmd,
+            crate::exec::ExecClass::Api,
+            "gh pr view (review decision)",
+        )
+        .await
+        .context("Failed to read PR review decision before merge queue admission")?;
 
         let mut needs_approval = true;
-        if let Ok(out) = check_cmd {
+        {
+            let out = check_out;
             if out.status.success() {
                 if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                     if let Some(decision) = val.get("reviewDecision").and_then(|d| d.as_str()) {
@@ -193,7 +210,7 @@ impl MergeEnlister {
                 repo, pr_number
             );
             let approval = ReviewResponse {
-                summary: "### 🟢 Pre-Merge Quality Approval\n\nAll automated review, documentation parity, clean architecture, and hyperscale safety gates have passed with 100% compliance. Certified for merge queue admission.".to_string(),
+                summary: "### 🟢 Pre-Merge Quality Approval\n\nAll automated review, documentation parity, clean architecture, and safety gates have passed with 100% compliance. Certified for merge queue admission.".to_string(),
                 verdict: "APPROVE".to_string(),
                 comments: Vec::new(),
             };
@@ -239,25 +256,29 @@ impl MergeEnlister {
                     "## 📋 Scope Summary\n\
                     - **Target Branch**: `{}`\n\
                     - **Head SHA**: `{}`\n\n\
-                    ---\n*🤖 Reconciled by Oyatie Anvil*",
+                    ---\n*🤖 [Reconciled] by Oyatie Anvil*",
                     meta.base_ref_name, meta.head_ref_oid
                 )
             } else {
                 current_body.to_string()
             };
 
-            let _ = Command::new("gh")
-                .args([
-                    "pr",
-                    "edit",
-                    &pr_number.to_string(),
-                    "--repo",
-                    repo,
-                    "--body",
-                    &updated_body,
-                ])
-                .output()
-                .await;
+            let mut edit_cmd = Command::new("gh");
+            edit_cmd.args([
+                "pr",
+                "edit",
+                &pr_number.to_string(),
+                "--repo",
+                repo,
+                "--body",
+                &updated_body,
+            ]);
+            let _ = crate::exec::run_bounded(
+                edit_cmd,
+                crate::exec::ExecClass::Api,
+                "gh pr edit (scope reconciliation)",
+            )
+            .await;
         }
 
         Ok(())
@@ -265,7 +286,7 @@ impl MergeEnlister {
 
     async fn post_enlistment_note(&self, repo: &str, pr_number: u64, strategy: &str) -> Result<()> {
         let note = format!(
-            "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n---\n*🤖 Enlisted by Oyatie Anvil*\n",
+            "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n---\n*🤖 [Enlisted] by Oyatie Anvil*\n",
             strategy
         );
         self.github_client

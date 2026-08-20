@@ -2,8 +2,6 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::automated_canary::MetricDistribution;
-use crate::microbenchmark_ratchet::MicrobenchmarkSample;
 use crate::progressive_rollout::DeploymentRing;
 use crate::webhook::AppState;
 
@@ -20,13 +18,17 @@ pub async fn execute_pr_review(
     force: bool,
 ) -> Result<()> {
     info!(
-        "Executing AI Code Review & 70-Gate Hyperscale Pipeline for {}#{}...",
-        repo, pr_number
+        "Executing AI code review and {}-gate certification for {}#{}...",
+        crate::pre_merge_guard::report::TOTAL_GATES,
+        repo,
+        pr_number
     );
 
     // Acquire exclusive per-PR lock to prevent TOCTOU race conditions from rapid webhook bursts
     let pr_lock = state.state_mgr.acquire_pr_lock(repo, pr_number).await;
     let _guard = pr_lock.lock().await;
+
+    let pipeline_start = std::time::Instant::now();
 
     let state_entry = state.state_mgr.get_pr_state(repo, pr_number).await;
     let prev_sha = state_entry
@@ -150,9 +152,9 @@ pub async fn execute_pr_review(
         .coverage_guard
         .evaluate_diff_coverage(&repo_dir, &diff_ctx)?;
 
-    // 13. RustSkillsGuard: 380 Upstream Rust 2024 Edition Rules
+    // 13. RustLanguagePolicy: 380 Upstream Rust 2024 Edition Rules
     let rust_skills_report = state
-        .rust_skills_guard
+        .rust_language_policy
         .evaluate_rust_quality(&repo_dir, &diff_ctx)?;
 
     // 14. KaniGuard: Mathematical Formal Model Checking & Unsafe Invariant Verification
@@ -306,18 +308,24 @@ pub async fn execute_pr_review(
         .deadlock_analyzer
         .evaluate_deadlock_invariants(repo, &diff_ctx.diff_content);
 
-    // 44. AutomatedCanaryAnalysis: Mann-Whitney U-test Statistical Verification
-    let aca_dist = MetricDistribution {
-        metric_name: "p99_latency_ms".to_string(),
-        baseline_samples: vec![10.0, 10.2, 9.9],
-        canary_samples: vec![10.1, 10.3, 10.0],
-    };
-    let aca_report = state.automated_canary.evaluate_canary(&aca_dist);
+    // 44. AutomatedCanaryAnalysis: Statistical Canary Verification
+    // No canary deployment is driven from here and no metrics endpoint is
+    // configured, so there are no distributions to compare. The gate reports
+    // NotMeasured naming the missing source rather than being handed samples
+    // written on this line, whose verdict would describe those samples and not
+    // the pull request.
+    let aca_report = state.automated_canary.evaluate_without_metrics_source();
 
     // 45. ProgressiveRingOrchestrator: 4-Ring Progressive Rollout Schedule
-    let ring_report = state
-        .progressive_rollout
-        .evaluate_ring_rollout(&DeploymentRing::Ring0Canary, aca_report.passed);
+    // Consumes the canary verdict. `is_acceptable()` is true for NotMeasured:
+    // an unqueried canary is not an unhealthy one, and halting every ring on
+    // absent telemetry would be a fabricated accusation. This gate therefore
+    // inherits the canary's lack of evidence; `automated_canary_status` in the
+    // fidelity registry records what is missing.
+    let ring_report = state.progressive_rollout.evaluate_ring_rollout(
+        &DeploymentRing::Ring0Canary,
+        aca_report.status.is_acceptable(),
+    );
 
     // 46. HermeticBuildValidator: Deterministic Bit-for-Bit Reproducibility
     let hermetic_report = state.hermetic_build.evaluate_hermetic_reproducibility(
@@ -343,19 +351,18 @@ pub async fn execute_pr_review(
         .inject_synthetic_chaos(&diff_ctx.diff_content);
 
     // 50. StackedDiffsOrchestrator: Multi-PR DAG Synchronization
-    let stacked_report = state.stacked_diffs.evaluate_stack_synchronization(&[]);
+    // No forge query enumerates the PRs stacked on this one, so the stack is
+    // unknown. Previously an empty slice literal was passed here, which is the
+    // same absence of information dressed as an evaluated stack.
+    let stacked_report = state.stacked_diffs.evaluate_without_stack_source();
 
     // 51. MicroBenchmarkRatchet: Sub-Microsecond Hotpath Criterion Ratchet
-    let microbench_sample = MicrobenchmarkSample {
-        benchmark_name: "hotpath_throughput".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 50.0,
-        p99_cpu_cycles_base: 100,
-        p99_cpu_cycles_head: 100,
-    };
+    // No criterion harness runs in this repository, so there is no base or head
+    // timing to ratchet. The sample that used to be written here compared a
+    // literal against itself.
     let microbench_report = state
         .microbenchmark_ratchet
-        .evaluate_benchmark_regression(&microbench_sample);
+        .evaluate_without_criterion_baseline();
 
     // 52. JitteredBackoffGuard: AWS Builders' Library Exponential Jitter & Storm Prevention Gate
     let jittered_report = state
@@ -419,7 +426,14 @@ pub async fn execute_pr_review(
     // 65. AttestationGuard: Cryptographic Provenance Receipt Stamper
     let attestation_report = state
         .attestation_guard
-        .stamp_lane_receipt(&repo_dir, repo, pr_number, head_sha)
+        .stamp_lane_receipt(
+            &repo_dir,
+            repo,
+            pr_number,
+            head_sha,
+            crate::attestation_guard::AttestationGuard::VERDICT_PENDING,
+            Vec::new(),
+        )
         .await?;
 
     // Stage and commit ONLY substantive domain policy changes (NEVER push attestation receipts in a loop)
@@ -433,11 +447,30 @@ pub async fn execute_pr_review(
             "Domain guards generated real updates: {:?}. Committing & pushing...",
             modified_files
         );
-        let _ = Command::new("git")
-            .current_dir(&repo_dir)
-            .args(["add", "-A"])
-            .output()
-            .await;
+        // Staging is bounded and fails CLOSED: a hang, a spawn failure or a non-zero
+        // exit aborts the review instead of letting the pipeline certify a PR whose
+        // auto-synced governance files were never actually committed.
+        let mut add_cmd = Command::new("git");
+        add_cmd.current_dir(&repo_dir).args(["add", "-A"]);
+        let add_out = crate::exec::run_bounded(
+            add_cmd,
+            crate::exec::ExecClass::Quick,
+            "git add -A for domain guard auto-sync",
+        )
+        .await
+        .context("Failed to stage auto-synced documentation & cedar policies")?;
+        if !add_out.status.success() {
+            // Roll back the reviewed-SHA stamp so this PR is retried rather than
+            // stranded: the stamp happens ~380 lines above, and the early-exit
+            // guard would otherwise skip every later webhook for this SHA.
+            state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+
+            anyhow::bail!(
+                "git add -A failed while staging auto-synced governance files on PR #{}: {}",
+                pr_number,
+                String::from_utf8_lossy(&add_out.stderr).trim()
+            );
+        }
 
         let commit_msg = format!(
             "chore(governance): [skip review] auto-sync documentation & cedar policies on PR #{}\n\n\
@@ -446,21 +479,55 @@ pub async fn execute_pr_review(
             *🤖 Certified by Oyatie Anvil*",
             pr_number
         );
-        let _ = Command::new("git")
+        let mut commit_cmd = Command::new("git");
+        commit_cmd
             .current_dir(&repo_dir)
-            .args(["commit", "-m", &commit_msg])
-            .output()
-            .await;
+            .args(["commit", "-m", &commit_msg]);
+        let commit_out = crate::exec::run_bounded(
+            commit_cmd,
+            crate::exec::ExecClass::Quick,
+            "git commit for domain guard auto-sync",
+        )
+        .await
+        .context("Failed to commit auto-synced documentation & cedar policies")?;
 
-        // Auto-synced documentation & policies are staged and committed locally for gate verification
-        // Pushes are directed to the PR head branch rather than base_branch trunk
-        info!(
-            "Auto-synced documentation & policies committed locally on PR #{} for certification.",
-            pr_number
-        );
+        if commit_out.status.success() {
+            // Auto-synced documentation & policies are staged and committed locally for gate verification
+            // Pushes are directed to the PR head branch rather than base_branch trunk
+            info!(
+                "Auto-synced documentation & policies committed locally on PR #{} for certification.",
+                pr_number
+            );
+        } else {
+            let stdout = String::from_utf8_lossy(&commit_out.stdout);
+            let stderr = String::from_utf8_lossy(&commit_out.stderr);
+            let empty_commit = ["nothing to commit", "no changes added to commit"]
+                .iter()
+                .any(|needle| stdout.contains(needle) || stderr.contains(needle));
+            if empty_commit {
+                // Benign no-op: the guards rewrote files to content git already has.
+                // Nothing was lost, so the review may continue.
+                warn!(
+                    "Domain guards reported updates {:?} on PR #{}, but git had nothing to commit; the working tree already matched HEAD.",
+                    modified_files, pr_number
+                );
+            } else {
+                // Roll back the reviewed-SHA stamp so this PR is retried rather than
+                // stranded: the stamp happens ~380 lines above, and the early-exit
+                // guard would otherwise skip every later webhook for this SHA.
+                state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+
+                anyhow::bail!(
+                    "git commit failed for auto-synced governance files on PR #{}: {} {}",
+                    pr_number,
+                    stdout.trim(),
+                    stderr.trim()
+                );
+            }
+        }
     }
 
-    // Evaluate full Pre-Merge, GitOps, CI Velocity & Security Certification Matrix (70 gates)
+    // Evaluate the full pre-merge, GitOps, CI-velocity and security certification matrix
     let cert_report = state.pre_merge_guard.evaluate_pre_merge_gates(
         &diff_ctx,
         &doc_report,
@@ -531,14 +598,51 @@ pub async fn execute_pr_review(
         &review_resp.verdict,
     )?;
 
-    // Post or Update Certification Matrix in-place (Zero Clutter)
+    // Re-stamp the provenance receipt with the verdict that was actually
+    // computed. The first stamp above records only that the receipt mechanism
+    // works; it deliberately carries PENDING_CERTIFICATION because at that
+    // point no gate has run. Invariant I2: never report a value you did not
+    // measure.
+    let final_verdict = if cert_report.is_admissible() {
+        "CERTIFIED_READY"
+    } else if !cert_report.unmeasured_gates.is_empty() {
+        "BLOCKED_UNMEASURED"
+    } else {
+        "BLOCKED_NOT_CERTIFIED"
+    };
+    let verified_gates: Vec<String> = cert_report
+        .all_statuses()
+        .iter()
+        .filter(|s| matches!(s, crate::pre_merge_guard::GateStatus::Passed))
+        .enumerate()
+        .map(|(i, _)| format!("gate-{}", i))
+        .collect();
+    if let Err(e) = state
+        .attestation_guard
+        .stamp_lane_receipt(
+            &repo_dir,
+            repo,
+            pr_number,
+            head_sha,
+            final_verdict,
+            verified_gates,
+        )
+        .await
+    {
+        warn!(
+            "Could not finalize attestation receipt for {}#{}: {}",
+            repo, pr_number, e
+        );
+    }
+
+    // Post or amend the scorecard in place, keyed on its marker (Zero Clutter).
     state
         .github_client
         .upsert_pr_comment(
             repo,
             pr_number,
             "<!-- ANVIL_SCORECARD_RECEIPT -->",
-            &cert_report.summary_markdown,
+            &scorecard_comment(&cert_report),
         )
         .await?;
 
@@ -547,8 +651,98 @@ pub async fn execute_pr_review(
         repo, pr_number, cert_report.is_certified_ready
     );
 
-    // If 100% Certified Ready, autonomously enlist into GitHub Merge Queue!
-    if cert_report.is_certified_ready {
+    let duration_secs = pipeline_start.elapsed().as_secs();
+    let estimated_tokens = ((diff_ctx.diff_content.len() + 2000) as f64 / 3.8).ceil() as usize;
+    let _ = state
+        .self_governor
+        .quota
+        .record_model_spend("gemini-3.7-flash", estimated_tokens);
+
+    // Real counts, computed from the gate statuses. These were hardcoded as
+    // (70, 0) / (69, 1), so every failing PR was recorded as exactly one failed
+    // gate no matter how many actually failed -- which is why the accumulated
+    // telemetry showed ~95% of PRs "stuck at 69/70". That was the constant, not
+    // a measurement (invariant I2).
+    let (gates_passed, gates_failed) = cert_report.gate_counts();
+
+    // Record WHICH gates failed, not just how many. `record_gate_failure` and
+    // GateFailureRecord already existed but had no callers, so the gate_failures
+    // sink in telemetry_journal.json has been empty for its whole life -- leaving
+    // no failure taxonomy to act on.
+    for (gate_name, status) in cert_report.named_statuses() {
+        let reason = match status {
+            crate::pre_merge_guard::GateStatus::Failed(r) => Some(r.clone()),
+            crate::pre_merge_guard::GateStatus::Errored(r) => Some(format!("ERRORED: {}", r)),
+            crate::pre_merge_guard::GateStatus::NotMeasured { reason, .. } => {
+                Some(format!("NOT_MEASURED: {}", reason))
+            }
+            _ => None,
+        };
+        if let Some(failure_reason) = reason {
+            state
+                .telemetry_store
+                .record_gate_failure(crate::telemetry_store::GateFailureRecord {
+                    repo: repo.to_string(),
+                    pr_number,
+                    gate_name: gate_name.to_string(),
+                    failure_reason,
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+        }
+    }
+
+    state
+        .telemetry_store
+        .record_pr_event(crate::telemetry_store::FleetPrRecord {
+            repo: repo.to_string(),
+            pr_number,
+            title: title.to_string(),
+            author: "git-author".to_string(),
+            head_sha: head_sha.to_string(),
+            review_verdict: review_resp.verdict.clone(),
+            gates_passed,
+            gates_failed,
+            duration_seconds: duration_secs,
+            is_certified: cert_report.is_certified_ready,
+            recorded_at: chrono::Utc::now(),
+        })
+        .await;
+
+    state
+        .broadcaster
+        .broadcast_event(crate::webhook::sse::FleetEventMessage {
+            event_type: "pr_review_certified".to_string(),
+            repo: repo.to_string(),
+            entity_id: format!("PR #{}", pr_number),
+            title: format!(
+                "{} ({}/{} gates)",
+                title,
+                gates_passed,
+                crate::pre_merge_guard::report::TOTAL_GATES
+            ),
+            status: if cert_report.is_certified_ready {
+                "CERTIFIED".to_string()
+            } else {
+                "BLOCKED".to_string()
+            },
+            timestamp_utc: chrono::Utc::now().to_rfc3339(),
+            payload_json: None,
+        });
+
+    // Enlist only when certified AND every gate actually produced a measurement.
+    // `is_admissible()` is deliberately stricter than `is_certified_ready`:
+    // invariant I1 — absent evidence must never merge.
+    if !cert_report.unmeasured_gates.is_empty() {
+        warn!(
+            "PR {}#{} withheld from merge queue: {} gate(s) produced no measurement: {}",
+            repo,
+            pr_number,
+            cert_report.unmeasured_gates.len(),
+            cert_report.unmeasured_gates.join(", ")
+        );
+    }
+    if cert_report.is_admissible() {
         info!(
             "PR {}#{} is 100% Certified. Autonomously enlisting in Merge Queue...",
             repo, pr_number
@@ -563,4 +757,19 @@ pub async fn execute_pr_review(
     }
 
     Ok(())
+}
+
+/// The body published under the scorecard marker.
+///
+/// Delegates to `crate::publish::scorecard::render`: findings only, passing
+/// gates counted rather than enumerated, marker first and signature last. The
+/// 68-row matrix `evaluator.rs` still stores in `summary_markdown` is no longer
+/// what gets posted -- sixty-odd `PASSED` rows buried the two or three that
+/// needed action.
+///
+/// Kept as a named function rather than an inline call so the upsert call site
+/// names the renderer at the argument position, which is what the wiring test
+/// asserts against (I22: enforced by mechanism, not by convention).
+pub fn scorecard_comment(report: &crate::pre_merge_guard::PreMergeCertificationReport) -> String {
+    crate::publish::scorecard::render(report)
 }

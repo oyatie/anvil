@@ -112,10 +112,14 @@ impl ProcessRegistry {
                     "🛑 [Process Registry] Killing orphaned OS process PID {} for '{}'",
                     pid, task_id
                 );
-                let _ = tokio::process::Command::new("kill")
-                    .args(["-9", &pid.to_string()])
-                    .output()
-                    .await;
+                let mut kill_cmd = tokio::process::Command::new("kill");
+                kill_cmd.args(["-9", &pid.to_string()]);
+                let _ = crate::exec::run_bounded(
+                    kill_cmd,
+                    crate::exec::ExecClass::Quick,
+                    "kill -9 (orphaned process)",
+                )
+                .await;
             }
         }
     }

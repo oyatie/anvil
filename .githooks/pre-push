@@ -1,0 +1,22 @@
+#!/bin/bash
+# Refuses to push a tree that does not compile.
+#
+# A workflow agent pushed a branch whose main.rs called a method that did not
+# exist; it stayed broken for hours because nothing between the edit and the
+# remote checked. The instruction "do not push a broken tree" was in the
+# agent's prompt and did not prevent it. This does.
+#
+# Bypass with --no-verify only when you mean to push a known-broken tree.
+set -uo pipefail
+
+if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
+command -v cargo >/dev/null 2>&1 || exit 0
+[ -f Cargo.toml ] || exit 0
+
+echo "[pre-push] checking the tree compiles..."
+if ! cargo check --all-targets --quiet 2>&1 | tail -20; then
+    echo "[pre-push] REFUSED: the tree does not compile."
+    echo "           Pushing a non-compiling branch wastes every downstream reader's time."
+    exit 1
+fi
+exit 0

@@ -47,6 +47,26 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: Some("a reachable Prometheus or OpenTelemetry endpoint"),
     },
     GateFidelity {
+        gate_id: "trace_status",
+        aspiration: "Verify that W3C trace context is propagated across every async boundary a change \
+                     introduces, so a request's spans stay one trace.",
+        reference: "W3C Trace Context; OpenTelemetry context propagation; tracing-futures `Instrument`",
+        fidelity: Fidelity::Heuristic,
+        gap: "Runs no tracing runtime and resolves no types. It text-scans the added and retained lines \
+              of Rust chunks for a call whose final path segment is `spawn`, `spawn_blocking` or \
+              `spawn_local` and whose argument list is not empty (trace_context_guard/span_tracker.rs:14-23), \
+              then asks whether `.instrument(` appears inside the parenthesised region that call opens \
+              (trace_context_guard/span_tracker.rs:62-107). So it cannot tell whether the span attached \
+              is the right one, and it cannot see a boundary crossed by a call it cannot name that way -- \
+              an imported or aliased spawn, a runtime handle's method, or a task started by code this \
+              diff does not touch. Only the first such call on a line is inspected, and block comments \
+              are not modelled. A diff crossing no boundary it can see publishes `NOTHING TO MEASURE` \
+              (trace_context_guard/mod.rs:69-72) and passes, following the `NothingToMeasure` precedent \
+              (coverage_guard.rs:139) rather than the SLO gate's absent-source one -- a choice left open \
+              for the owner in tests/trace_gate_claims_only_what_it_measured_test.rs.",
+        blocked_on: None,
+    },
+    GateFidelity {
         gate_id: "remote_cache_status",
         aspiration: "Report the real distributed build-cache hit rate and ratchet it upward.",
         reference: "Bazel/Buck2 remote execution CAS statistics",

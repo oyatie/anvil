@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::info;
 
+pub mod osv_stream;
 pub mod slsa_attestation;
+pub use osv_stream::{OsvAdvisoryStream, OsvVulnerability};
 pub use slsa_attestation::{SlsaAttestor, SlsaProvenanceBundle};
 
 use crate::git_manager::PrDiffContext;
@@ -20,6 +22,12 @@ pub struct SupplyChainReport {
 
 pub struct SupplyChainGuard {
     attestor: SlsaAttestor,
+}
+
+impl Default for SupplyChainGuard {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SupplyChainGuard {
@@ -64,10 +72,8 @@ impl SupplyChainGuard {
             for (pattern, desc) in banned_patterns {
                 if let Ok(re) = Regex::new(pattern) {
                     for line in diff_ctx.diff_content.lines() {
-                        if line.starts_with('+') && !line.starts_with("+++") {
-                            if re.is_match(line) {
-                                banned_detected.push(format!("{}: {}", desc, line[1..].trim()));
-                            }
+                        if line.starts_with('+') && !line.starts_with("+++") && re.is_match(line) {
+                            banned_detected.push(format!("{}: {}", desc, line[1..].trim()));
                         }
                     }
                 }

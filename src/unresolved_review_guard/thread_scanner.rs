@@ -11,6 +11,12 @@ pub struct UnresolvedReviewThread {
 
 pub struct ThreadScanner;
 
+impl Default for ThreadScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ThreadScanner {
     pub fn new() -> Self {
         Self

@@ -11,6 +11,12 @@ pub struct SecurityAdvisory {
 
 pub struct AdvisoryListener;
 
+impl Default for AdvisoryListener {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdvisoryListener {
     pub fn new() -> Self {
         Self

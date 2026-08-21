@@ -19,6 +19,12 @@ pub struct EarlyExitCascadeGuard {
     prober: FastChecksProber,
 }
 
+impl Default for EarlyExitCascadeGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EarlyExitCascadeGuard {
     pub fn new() -> Self {
         let prober = FastChecksProber::new();

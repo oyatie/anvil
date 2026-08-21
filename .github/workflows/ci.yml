@@ -2,33 +2,86 @@ name: anvil-ci
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, staging, canary, production]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, staging, canary, production]
   merge_group:
     types: [checks_requested]
 
 jobs:
-  fast-checks:
-    name: fast-checks
-    runs-on: ubuntu-latest
+  fmt:
+    name: fmt
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
-          components: rustfmt, clippy
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
+          toolchain: "1.97.1"
+          components: rustfmt
       - name: Format Check
         run: cargo fmt --all -- --check
 
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+      - name: Install nextest
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532
+        with:
+          tool: nextest
+      - name: Rust Cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: anvil-test-${{ matrix.os }}
+          cache-workspace-crates: "true"
       - name: Clippy Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo nextest run --all-targets --locked --profile ci
 
-      - name: Run Test Suite
-        run: cargo test --lib --bins -- --nocapture
+  # Rulesets still require the `fast-checks` context. This job is the fan-in:
+  # fmt + both native test legs. Same pattern as oya-ci-required.
+  fast-checks:
+    name: fast-checks
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [fmt, test]
+    steps:
+      - name: Fan-in
+        run: |
+          [ "${{ needs.fmt.result }}" = "success" ] && [ "${{ needs.test.result }}" = "success" ]
+
+  # Post-submit / pre-deployment: the binary `scripts/start.sh` deploys.
+  # Not a merge-queue gate — release profile is a different rustc than nextest.
+  release:
+    name: release-build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+      - name: Rust Cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: anvil-release
+          cache-workspace-crates: "true"
+      - name: Release artifact
+        run: cargo build --release --locked

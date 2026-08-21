@@ -20,6 +20,12 @@ pub struct LocalInnerLoopProbe {
     validator: FastValidator,
 }
 
+impl Default for LocalInnerLoopProbe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalInnerLoopProbe {
     pub fn new() -> Self {
         let validator = FastValidator::new();

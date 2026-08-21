@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod circuit_breaker;
-pub use circuit_breaker::{CanaryCircuitBreaker, CanaryMetricsSnapshot, CircuitBreakerDecision};
+pub use circuit_breaker::{CanaryCircuitBreaker, CanaryMetricsSnapshot};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanaryRolloutReport {
@@ -18,6 +18,12 @@ pub struct CanaryRolloutReport {
 
 pub struct CanaryRolloutGuard {
     breaker: CanaryCircuitBreaker,
+}
+
+impl Default for CanaryRolloutGuard {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CanaryRolloutGuard {

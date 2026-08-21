@@ -10,6 +10,12 @@ pub struct SandboxInstance {
 
 pub struct SandboxPool;
 
+impl Default for SandboxPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SandboxPool {
     pub fn new() -> Self {
         Self
@@ -17,7 +23,7 @@ impl SandboxPool {
 
     /// 100% Deterministic allocation of isolated, ephemeral micro-sandboxes
     pub fn allocate_ephemeral_sandbox(&self, test_suite_name: &str) -> SandboxInstance {
-        let sandbox_id = format!("sandbox-{}", &test_suite_name.replace("::", "-"));
+        let sandbox_id = format!("sandbox-{}", test_suite_name.replace("::", "-"));
         SandboxInstance {
             sandbox_id,
             port_bindings: vec![18080, 15432],

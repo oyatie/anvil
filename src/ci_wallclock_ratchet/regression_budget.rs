@@ -28,6 +28,12 @@ pub struct RegressionDecision {
 
 pub struct RegressionBudgetEvaluator;
 
+impl Default for RegressionBudgetEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegressionBudgetEvaluator {
     pub fn new() -> Self {
         Self
@@ -100,14 +106,18 @@ impl RegressionBudgetEvaluator {
                 format!(
                     "⚠️ CI Wallclock/Cost increased by +{:.1}% (+{}s). Feature may be justified, but {} efficiency optimization(s) identified to recover wallclock.",
                     wallclock_delta_pct,
-                    snapshot.pr_wallclock_seconds.saturating_sub(snapshot.trunk_baseline_seconds),
+                    snapshot
+                        .pr_wallclock_seconds
+                        .saturating_sub(snapshot.trunk_baseline_seconds),
                     suggestions.len()
                 )
             } else {
                 format!(
                     "⚠️ CI Wallclock increased by +{:.1}% (+{}s). If functionally necessary, attach an approved Living ADR justification.",
                     wallclock_delta_pct,
-                    snapshot.pr_wallclock_seconds.saturating_sub(snapshot.trunk_baseline_seconds)
+                    snapshot
+                        .pr_wallclock_seconds
+                        .saturating_sub(snapshot.trunk_baseline_seconds)
                 )
             };
 

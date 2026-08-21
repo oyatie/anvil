@@ -8,6 +8,12 @@ pub struct FastPreflightFinding {
 
 pub struct FastChecksProber;
 
+impl Default for FastChecksProber {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FastChecksProber {
     pub fn new() -> Self {
         Self

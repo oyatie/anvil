@@ -187,6 +187,53 @@
 //!      moment, plus any third-party crate that is not on a short pure-text
 //!      list. It is exercised on thirty-eight paths, both sides, before it is
 //!      trusted.
+//!  15. **Whitespace on the marker line is pinned on the PASSING side.** Every
+//!      marker literal is exactly terminated and `as_eol` only ever appends
+//!      `\r`, so before `MARKER_PADDINGS` no must-pass body anywhere carried
+//!      `## Done when   ` or `**Done when** `. That is property (13)'s defect
+//!      class left open for the character next to `\r`, and the file's own CRLF
+//!      commentary steered an implementer at the narrow fix
+//!      (`trim_end_matches('\r')`) rather than a full trim. Review verified it:
+//!      a `heading_text` that trims only `\r` passes all 84 marker fixtures
+//!      under both line endings and then reports BOTH artifacts missing from a
+//!      complete, well-written body whose author left a space after the
+//!      heading, or used markdown's two-trailing-spaces line-break idiom. The
+//!      marker family now runs the whole cross-product over trailing, leading
+//!      and surrounding whitespace, with the empty and deferred mirrors under
+//!      each, and the inline family runs the extra space after the colon.
+//!  16. **A body need not end in a newline.** Every must-pass body used to,
+//!      without exception; the unterminated shape appeared only in
+//!      `awkward_bodies`, which is entirely on the failing side, and whose own
+//!      comment records that GitHub bodies routinely have no trailing newline.
+//!      That is property (9) applied to the line ending: a shape pinned only
+//!      among must-fail inputs can be rejected on sight, invisibly. `let nl =
+//!      rest.find('\n')?` is an ordinary way to read the line a marker sits on
+//!      and returns `None` exactly when the marker line ends the body.
+//!      `a_body_that_does_not_end_in_a_newline_is_still_the_artifact` puts the
+//!      shape on the passing side in both orders, both line endings and the
+//!      inline form, with the emptied mirrors under each.
+//!  17. **The wiring guards judge what happens to the measurement's INPUT and
+//!      to its RESULT, not only what survives the call's deletion.**
+//!      `unmeasured_alternatives_in` cuts the whole `judge(..)` expression out
+//!      before it looks, so it was blind on both sides of the call.
+//!      `judge(&diff_ctx.pr_body[..2000.min(..)])` reinstates the truncation
+//!      that (1) exists to close, one layer up where `judge` stays perfectly
+//!      correct; `judge(&diff_ctx.pr_body).softened()`, mapping `Failed` onto
+//!      the acceptable `Warning`, certifies every change from one method call
+//!      to the right of both the conditional and the reassignment guards.
+//!      `truncated_argument` and `post_processing_after` close them, and
+//!      `assignments_to` now reads a write to the field on ANY receiver
+//!      (`report.product_bar_status = ..`, the idiom report.rs already uses for
+//!      a neighbour) rather than only a bare-identifier reassignment. The
+//!      determinism scan reads every file the gate's code can live in —
+//!      `product_bar*.rs` plus a `product_bar/` directory — because scanning
+//!      one hardcoded path made the whole property escapable by moving the
+//!      parser into a sibling module, and `without_string_literals` no longer
+//!      blanks the rest of the file out from under that scan when it meets a
+//!      `'"'` char literal or a raw string ending in a backslash. Every one of
+//!      those rules is exercised on both sides in
+//!      `assert_the_wiring_parsers_read_a_real_wiring`, because a guard that
+//!      misreads a correct wiring is worse than no guard.
 //!
 //! Character count and byte count are also deliberately decoupled: the Korean
 //! fixtures are short in characters and long in bytes, so a heuristic in either
@@ -510,6 +557,42 @@ const PROBLEM_MARKERS: &[&str] = &[
     "**Problem**",
 ];
 
+/// Ordinary whitespace around a marker line, which every marker fixture used to
+/// be free of.
+///
+/// # Why this exists
+///
+/// Every literal in `DONE_WHEN_MARKERS` and `PROBLEM_MARKERS` is exactly
+/// terminated, and `as_eol` only ever appends `\r`, so before this constant no
+/// body anywhere in this file that had to PASS carried `## Done when   ` or
+/// `**Done when** `. That is the same defect class the marker family closes for
+/// `\r`, left open for the character next to it — and the file's own CRLF
+/// commentary steers an implementer straight at the narrow fix
+/// (`trim_end_matches('\r')`) rather than at a full trim. Review verified it
+/// against a working reference:
+///
+/// ```text
+/// let l = line.trim_start().trim_end_matches('\r');
+/// if let Some(rest) = l.strip_prefix("**") {
+///     return rest.strip_suffix("**");          // false for "**Done when** "
+/// }
+/// Some(l.trim_start_matches('#').trim_start().trim_end_matches(':'))
+/// ```
+///
+/// That handles `\r`, passes all 84 marker fixtures under both line endings,
+/// and then reports BOTH artifacts missing from a complete, well-written body
+/// whose author left a space after the heading — or who used markdown's
+/// two-trailing-spaces line-break idiom, which is invisible in every editor
+/// there is. The accusation it produces is not invisible.
+///
+/// Leading whitespace is here for the same reason and is markdown in its own
+/// right: an ATX heading may be indented up to three spaces.
+const MARKER_PADDINGS: [fn(&str) -> String; 3] = [
+    |m| format!("{m}  "),
+    |m| format!("  {m}"),
+    |m| format!("  {m}  "),
+];
+
 /// Headings an author writes for a third section, at every depth and weight
 /// markdown allows. A body with three sections is the commonest filled-in
 /// template there is, and until this suite carried one no fixture falsified the
@@ -610,6 +693,52 @@ fn as_eol(body: &str, eol: Eol) -> String {
         Eol::Lf => body.to_string(),
         Eol::Crlf => body.replace('\n', "\r\n"),
     }
+}
+
+/// `body` with its final line terminator removed, asserting that it had one.
+///
+/// # Why the passing side needs this shape
+///
+/// Every body this suite required to PASS ended with `\n`, without exception —
+/// `body_with`, `problem_only`, `bar_only`, `long_body_with_bar_at_the_end` and
+/// every inline `format!` in the marker, boundary and CRLF families all
+/// terminated their final section. The unterminated shape appeared only in
+/// `awkward_bodies`, which is entirely on the failing side, and that fixture's
+/// own comment states the fact that makes the asymmetry fatal: GitHub bodies
+/// routinely have no trailing newline.
+///
+/// This is the defect this file already names for the checkbox, the pointer and
+/// the template comment (module-doc property 9): a shape pinned only among
+/// must-fail inputs can be rejected on sight, and the rejection is invisible.
+/// Review verified it against a working reference:
+///
+/// ```text
+/// fn inline_after_marker<'a>(body: &'a str, at: usize, marker: &str) -> Option<&'a str> {
+///     let rest = &body[at + marker.len()..];
+///     let nl = rest.find('\n')?;      // None when the marker line ends the body
+///     Some(&rest[..nl])
+/// }
+/// ```
+///
+/// A `?` on `find('\n')` is an entirely ordinary way to read the line a marker
+/// sits on. It is green across all 84 marker fixtures and both inline-colon
+/// families, because each of them ends `…{INLINE_BAR}\n` — and it reports a
+/// missing acceptance bar for the shape the GitHub API returns for the majority
+/// of pull request bodies.
+fn unterminated(body: &str) -> String {
+    let stripped = body.strip_suffix('\n').unwrap_or(body);
+    let stripped = stripped.strip_suffix('\r').unwrap_or(stripped);
+    assert_ne!(
+        stripped, body,
+        "fixture invariant: this body was already unterminated, so stripping its \
+         terminator is not the shape this family means to run"
+    );
+    assert!(
+        !stripped.ends_with('\n') && !stripped.ends_with('\r'),
+        "fixture invariant: the body must end in something other than a line \
+         terminator, or the family stops testing the unterminated shape. Got {stripped:?}"
+    );
+    stripped.to_string()
 }
 
 /// The marker spelling these fixtures commit to. See the module docs: the
@@ -1174,6 +1303,21 @@ fn the_same_two_words_are_the_marker_however_the_author_formats_them() {
     // entirely ordinary way to write the extractor. Under LF alone this whole
     // cross-product is green for a gate that rejects the same complete artifact
     // the moment it is typed into the GitHub web UI.
+    for pad in MARKER_PADDINGS {
+        let padded = pad("## Done when");
+        assert_ne!(
+            padded, "## Done when",
+            "fixture invariant: a padding must actually change the marker line, or the \
+             whitespace family is the plain family run twice"
+        );
+        assert_eq!(
+            padded.trim(),
+            "## Done when",
+            "fixture invariant: a padding must add whitespace and nothing else, or this \
+             family stops being about whitespace"
+        );
+    }
+
     for eol in BOTH_EOLS {
         for problem_marker in PROBLEM_MARKERS {
             for done_when_marker in DONE_WHEN_MARKERS {
@@ -1186,6 +1330,49 @@ fn the_same_two_words_are_the_marker_however_the_author_formats_them() {
                         "a complete Product artifact under {problem_marker:?} and \
                          {done_when_marker:?}, {eol:?}"
                     ),
+                );
+            }
+        }
+
+        // THE SAME MARKERS WITH ORDINARY WHITESPACE ON THE LINE. See
+        // `MARKER_PADDINGS`: every marker literal above is exactly terminated
+        // and `as_eol` only ever appends `\r`, so a trailing space — markdown's
+        // own line-break idiom, and what anyone who lines up their headings
+        // types — was pinned nowhere on the passing side. A `heading_text` that
+        // trims `\r` and nothing else passes all 84 fixtures above and then
+        // reports BOTH artifacts missing from a complete, well-written body.
+        for pad in MARKER_PADDINGS {
+            for problem_marker in PROBLEM_MARKERS {
+                for done_when_marker in DONE_WHEN_MARKERS {
+                    let (p, d) = (pad(problem_marker), pad(done_when_marker));
+                    expect_passed(
+                        &as_eol(&format!("{p}\n\n{PROBLEM}\n\n{d}\n\n{BAR}\n"), eol),
+                        &format!("a complete Product artifact under {p:?} and {d:?}, {eol:?}"),
+                    );
+                }
+            }
+
+            // The empty and deferred mirrors under each padding, so widening
+            // the recognition cannot itself become a fail-open.
+            for done_when_marker in DONE_WHEN_MARKERS {
+                let d = pad(done_when_marker);
+                expect_missing(
+                    &as_eol(&format!("## Problem\n\n{PROBLEM}\n\n{d}\n\n"), eol),
+                    &[Artifact::DoneWhenBar],
+                    &format!("{d:?} with nothing under it, {eol:?}"),
+                );
+                expect_missing(
+                    &as_eol(&format!("## Problem\n\n{PROBLEM}\n\n{d}\nTBD\n"), eol),
+                    &[Artifact::DoneWhenBar],
+                    &format!("a deferral on the line directly under {d:?}, {eol:?}"),
+                );
+            }
+            for problem_marker in PROBLEM_MARKERS {
+                let p = pad(problem_marker);
+                expect_missing(
+                    &as_eol(&format!("{p}\n\n\n## Done when\n\n{BAR}\n"), eol),
+                    &[Artifact::WrittenProblem],
+                    &format!("{p:?} with nothing under it, {eol:?}"),
                 );
             }
         }
@@ -1265,6 +1452,38 @@ fn the_same_two_words_are_the_marker_however_the_author_formats_them() {
             );
         }
 
+        // AND THE SAME WHITESPACE AFTER THE COLON. `## Done when:  p99 < 5ms`
+        // is the inline family's version of the trailing-space hole above: an
+        // extractor that takes the marker line's remainder verbatim and then
+        // compares it, or one that splits on a single space, reads the bar as
+        // absent from a line that states one.
+        for done_when_marker in DONE_WHEN_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            expect_passed(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker}  {INLINE_BAR}\n"),
+                    eol,
+                ),
+                &format!("a bar two spaces after {done_when_marker:?}, {eol:?}"),
+            );
+            expect_missing(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker}  TBD\n"),
+                    eol,
+                ),
+                &[Artifact::DoneWhenBar],
+                &format!("a deferral two spaces after {done_when_marker:?}, {eol:?}"),
+            );
+        }
+        for problem_marker in PROBLEM_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            expect_passed(
+                &as_eol(
+                    &format!("{problem_marker}  {INLINE_PROBLEM}\n\n## Done when\n\n{BAR}\n"),
+                    eol,
+                ),
+                &format!("a problem two spaces after {problem_marker:?}, {eol:?}"),
+            );
+        }
+
         // The mirrors for both widenings, so neither can fail open. A marker
         // whose content starts on the next line still has to be judged on that
         // content, and a marker with a deferral on its own line is a deferral.
@@ -1310,6 +1529,85 @@ fn the_same_two_words_are_the_marker_however_the_author_formats_them() {
                 ),
                 &[Artifact::WrittenProblem],
                 &format!("{problem_marker:?} with nothing under it, {eol:?}"),
+            );
+        }
+    }
+}
+
+#[test]
+fn a_body_that_does_not_end_in_a_newline_is_still_the_artifact() {
+    // The shape the GitHub API returns for the majority of pull request bodies,
+    // and until this test the whole passing side of this file was terminated —
+    // `body_with`, `bar_only`, `long_body_with_bar_at_the_end` and every inline
+    // `format!` in the marker, boundary and CRLF families. The unterminated
+    // shape appeared only among must-fail inputs, in `awkward_bodies`, whose own
+    // comment says GitHub bodies routinely have no trailing newline. A shape
+    // pinned only on the failing side can be rejected on sight and the rejection
+    // is invisible — module-doc property (9), applied to the line ending.
+    //
+    // `let nl = rest.find('\n')?;` is an entirely ordinary way to read the line
+    // a marker sits on, and it returns None exactly when the marker line ends
+    // the body. See `unterminated`.
+    for eol in BOTH_EOLS {
+        expect_passed(
+            &unterminated(&as_eol(&body_with(PROBLEM, BAR), eol)),
+            &format!("a complete artifact, problem first, with no trailing newline, {eol:?}"),
+        );
+        expect_passed(
+            &unterminated(&as_eol(&body_with(PROBLEM, MULTILINE_BAR), eol)),
+            &format!(
+                "a complete artifact whose last line is the last criterion of a \
+                 multi-line bar, with no trailing newline, {eol:?}"
+            ),
+        );
+        expect_passed(
+            &unterminated(&as_eol(
+                &format!("## Done when\n\n{BAR}\n\n## Problem\n\n{PROBLEM}\n"),
+                eol,
+            )),
+            &format!("a complete artifact, done-when first, with no trailing newline, {eol:?}"),
+        );
+
+        // The inline form, where the marker line itself is the last line of the
+        // body and there is no `\n` after it at all.
+        for done_when_marker in DONE_WHEN_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            expect_passed(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker} {INLINE_BAR}"),
+                    eol,
+                ),
+                &format!(
+                    "a bar written on the {done_when_marker:?} line, which is the last \
+                     line of the body, {eol:?}"
+                ),
+            );
+        }
+
+        // The mirrors: the same bodies with the last section emptied or
+        // deferred, still unterminated, so widening the passing side here
+        // cannot itself become a fail-open. A marker that ends the body has
+        // nothing under it, and that is exactly what an empty heading is.
+        expect_missing(
+            &as_eol(&format!("## Problem\n\n{PROBLEM}\n\n## Done when"), eol),
+            &[Artifact::DoneWhenBar],
+            &format!("a done-when marker as the unterminated last line of the body, {eol:?}"),
+        );
+        expect_missing(
+            &as_eol(&format!("## Done when\n\n{BAR}\n\n## Problem"), eol),
+            &[Artifact::WrittenProblem],
+            &format!("a problem marker as the unterminated last line of the body, {eol:?}"),
+        );
+        for done_when_marker in DONE_WHEN_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            expect_missing(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker} TBD"),
+                    eol,
+                ),
+                &[Artifact::DoneWhenBar],
+                &format!(
+                    "a deferral on the {done_when_marker:?} line, which is the last \
+                     line of the body, {eol:?}"
+                ),
             );
         }
     }
@@ -3151,20 +3449,45 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         );
     }
 
-    let src = without_line_comments(&source("src/pre_merge_guard/product_bar.rs"));
+    // EVERY FILE THE GATE'S CODE CAN LIVE IN, not one hardcoded path. Scanning
+    // `product_bar.rs` alone made the whole property escapable by moving the
+    // parser into a sibling module — see `product_bar_sources` — while the
+    // behavioural half above stayed green, because it only proves two calls in
+    // one process agree and a file does not change between them.
+    let sources = product_bar_sources();
+    assert!(
+        !sources.is_empty(),
+        "no file matches src/pre_merge_guard/product_bar*.rs and there is no \
+         src/pre_merge_guard/product_bar/ directory, so this scan has nothing to read \
+         and the determinism property is vacuous. A guard that answers 'clean' without \
+         looking at anything is worse than no guard"
+    );
+    assert!(
+        sources.iter().any(|(rel, _)| {
+            rel.ends_with("pre_merge_guard/product_bar.rs")
+                || rel.ends_with("pre_merge_guard/product_bar/mod.rs")
+        }),
+        "the module this suite imports `judge` and `missing_artifacts` from is not \
+         among the files this scan enumerated, so the scan is reading something other \
+         than the gate. Found: {:?}",
+        sources.iter().map(|(rel, _)| rel).collect::<Vec<_>>()
+    );
 
-    for line in src.lines() {
-        let trimmed = line.trim();
-        for path in imported_paths(trimmed) {
-            if let Some(reason) = impure_import(&path) {
-                panic!(
-                    "src/pre_merge_guard/product_bar.rs imports {trimmed:?}, which \
-                     reaches {path:?} — {reason}. The Product artifact is authored on \
-                     the change under review and nowhere else: a gate that reads a \
-                     file, an environment variable, a clock or the network is both a \
-                     flake this suite could not attribute and a second source of truth \
-                     for what the author wrote"
-                );
+    for (rel, raw) in &sources {
+        let src = without_line_comments(raw);
+        for line in src.lines() {
+            let trimmed = line.trim();
+            for path in imported_paths(trimmed) {
+                if let Some(reason) = impure_import(&path) {
+                    panic!(
+                        "{rel} imports {trimmed:?}, which reaches {path:?} — {reason}. \
+                         The Product artifact is authored on the change under review \
+                         and nowhere else: a gate that reads a file, an environment \
+                         variable, a clock or the network is both a flake this suite \
+                         could not attribute and a second source of truth for what the \
+                         author wrote"
+                    );
+                }
             }
         }
     }
@@ -3177,6 +3500,14 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     // legitimately contain, and failing the gate for its prose would be a guard
     // misreading what it guards. The parser is exercised first, on the shapes
     // that separate a string from the code around it.
+    // The last three cases are the ones that matter most, and none of them was
+    // covered before: the parser toggled on any `"`, so a `'"'` char literal
+    // left it stuck open, and it treated `\` as an escape inside a raw string,
+    // so `r"C:\"` swallowed its own terminator. Either one blanks the entire
+    // remainder of the file, which turns this sweep — the only guard that
+    // catches `std::fs::read_to_string(..)` reached without a `use` line — into
+    // a silent no-op. A blanking parser that can disable the guard it feeds is
+    // the guard-misreads-what-it-guards failure, at its worst.
     for (line, want) in [
         (
             r#"let msg = "Command"; std::process::Command::new("git")"#,
@@ -3187,6 +3518,20 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
             r#"let m = "            "; let t = Instant::now();"#,
         ),
         ("let x = 1;", "let x = 1;"),
+        // A lifetime is not a char literal.
+        (
+            r#"fn f<'a>(s: &'a str) -> &'a str { s }"#,
+            r#"fn f<'a>(s: &'a str) -> &'a str { s }"#,
+        ),
+        (r#"r"\\""#, r#"r"  ""#),
+        (r##"r#"a \" b"#"##, r##"r#"      "#"##),
+        (r#"if c == '"' {"#, "if c == ' ' {"),
+        // And the whole point: the code AFTER a raw string and a char literal
+        // is still visible to the sweep.
+        (
+            r##"let q = '"'; let raw = r"C:\"; std::fs::read_to_string(p)"##,
+            r##"let q = ' '; let raw = r"   "; std::fs::read_to_string(p)"##,
+        ),
     ] {
         assert_eq!(
             without_string_literals(line),
@@ -3203,33 +3548,34 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     // spellings. `::io::` and `::net::` are spelled with both separators so that
     // an ordinary identifier ending in those two letters (`Ratio::new`) is not
     // mistaken for a syscall.
-    let src = without_string_literals(&src);
-    for forbidden in [
-        "env!",
-        "option_env!",
-        "include_str!",
-        "include_bytes!",
-        "File::open",
-        "fs::",
-        "env::",
-        "process::",
-        "thread::",
-        "mpsc",
-        "::io::",
-        "::net::",
-        "Command",
-        "::var(",
-        "SystemTime",
-        "Instant",
-        "reqwest",
-        "tokio",
-    ] {
-        assert!(
-            !src.contains(forbidden),
-            "src/pre_merge_guard/product_bar.rs reaches for {forbidden}. The gate's \
-             verdict must be a function of the one string it was handed and nothing \
-             else"
-        );
+    for (rel, raw) in &sources {
+        let src = without_string_literals(&without_line_comments(raw));
+        for forbidden in [
+            "env!",
+            "option_env!",
+            "include_str!",
+            "include_bytes!",
+            "File::open",
+            "fs::",
+            "env::",
+            "process::",
+            "thread::",
+            "mpsc",
+            "::io::",
+            "::net::",
+            "Command",
+            "::var(",
+            "SystemTime",
+            "Instant",
+            "reqwest",
+            "tokio",
+        ] {
+            assert!(
+                !src.contains(forbidden),
+                "{rel} reaches for {forbidden}. The gate's verdict must be a function \
+                 of the one string it was handed and nothing else"
+            );
+        }
     }
 }
 
@@ -3389,44 +3735,230 @@ fn without_line_comments(src: &str) -> String {
         .join("\n")
 }
 
-/// `src` with the contents of every double-quoted string literal blanked out.
+/// Every source file the Product gate's own code can be reached from, as
+/// (path relative to the crate root, source text).
+///
+/// `src/pre_merge_guard/product_bar*.rs` plus everything under a
+/// `src/pre_merge_guard/product_bar/` directory, so a gate split across a
+/// module and its siblings is scanned whole.
+///
+/// # Why this is an enumeration and not a path
+///
+/// The determinism scan used to read exactly one file,
+/// `src/pre_merge_guard/product_bar.rs`, and the behavioural half of that test
+/// only proves two calls in one process agree — which a gate that reads a file
+/// satisfies trivially, because the file does not change between the two calls.
+/// So the whole property was escapable by moving the parser one module over:
+///
+/// ```text
+/// // src/pre_merge_guard/product_bar.rs — passes the old scan unchanged
+/// use super::product_bar_parse;                  // impure_import -> None
+/// pub fn judge(pr_body: &str) -> GateStatus { product_bar_parse::judge(pr_body) }
+///
+/// // src/pre_merge_guard/product_bar_parse.rs — never scanned
+/// use std::fs;
+/// fn deferrals() -> Vec<String> { fs::read_to_string("config/deferrals.txt")… }
+/// ```
+///
+/// That is precisely the defect the test's own comment names — "a gate that
+/// loaded its deferral vocabulary from a config file would satisfy every
+/// behavioural assertion in this file and still be non-deterministic" — and
+/// splitting a several-hundred-line markdown parser into its own module is an
+/// ordinary thing to do, not an evasion. The enumeration is asserted non-empty
+/// at the call site, so a rename cannot make the guard vacuous instead.
+fn product_bar_sources() -> Vec<(String, String)> {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let guard_dir = manifest.join("src/pre_merge_guard");
+
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let entries =
+        std::fs::read_dir(&guard_dir).unwrap_or_else(|e| panic!("{}: {e}", guard_dir.display()));
+    for entry in entries {
+        let path = entry.expect("a readable directory entry").path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if path.is_dir() {
+            if name == "product_bar" {
+                collect_rust_sources(&path, &mut files);
+            }
+        } else if name.starts_with("product_bar") && name.ends_with(".rs") {
+            files.push(path);
+        }
+    }
+    files.sort();
+
+    files
+        .into_iter()
+        .map(|path| {
+            let rel = path
+                .strip_prefix(&manifest)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            (rel, text)
+        })
+        .collect()
+}
+
+/// Every `.rs` file under `dir`, recursively.
+fn collect_rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("a readable directory entry").path();
+        if path.is_dir() {
+            collect_rust_sources(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// `src` with the contents of every string literal, raw string literal and
+/// character literal blanked out — the delimiters left in place, and one blank
+/// per character so nothing shifts.
 ///
 /// Used only for the forbidden-substring sweep in
 /// `the_verdict_depends_on_nothing_but_the_change_it_was_handed`. That sweep
 /// bans `"Command"`, `"Instant"` and `"::var("` as *reaches for I/O*, and a
 /// failure message that happened to contain one of those words would have
 /// failed the test for a reason unrelated to determinism — the gate's own
-/// author-facing prose is not a syscall. Code cannot hide inside a string
-/// literal, so blanking them costs the sweep nothing.
+/// author-facing prose is not a syscall. Code cannot hide inside a literal, so
+/// blanking them costs the sweep nothing.
+///
+/// # Why it knows about char literals and raw strings
+///
+/// The previous revision toggled `in_string` on any `"` and treated `\` as an
+/// escape everywhere inside one. Both are wrong in the direction that silently
+/// DISABLES the sweep rather than tightening it:
+///
+///   * a `'"'` char literal — which any hand-rolled character parser in this
+///     repository is liable to contain — flips the toggle on and never flips it
+///     back, so every line below it is blanked;
+///   * a raw string ending in an odd number of backslashes (`r"C:\"`) had its
+///     closing quote consumed as an escaped character, with the same effect.
+///
+/// The sweep is the only guard that catches `std::env::var(..)` or
+/// `std::fs::read_to_string(..)` reached without a `use` line, so a blanking
+/// parser that can silently blank the rest of the file out from under it turns
+/// that guard into a no-op — the guard-misreads-what-it-guards failure this
+/// file calls worse than no guard at all. Lifetimes (`&'a str`, `'static`,
+/// `'_`) are not char literals and are left alone.
 fn without_string_literals(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
     let mut out = String::with_capacity(src.len());
-    let mut in_string = false;
-    let mut escaped = false;
-    for c in src.chars() {
-        if !in_string {
-            out.push(c);
-            in_string = c == '"';
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        // A raw string: r"…", r#"…"#, br##"…"##. Backslash is not an escape
+        // inside one, and the terminator is a quote followed by as many `#` as
+        // the opener carried.
+        if let Some((hashes, open)) = raw_string_opener(&chars, i) {
+            for c in &chars[i..=open] {
+                out.push(*c);
+            }
+            let mut j = open + 1;
+            while j < chars.len() && !raw_string_closes_at(&chars, j, hashes) {
+                out.push(if chars[j] == '\n' { '\n' } else { ' ' });
+                j += 1;
+            }
+            if j >= chars.len() {
+                return out;
+            }
+            for c in &chars[j..=j + hashes] {
+                out.push(*c);
+            }
+            i = j + hashes + 1;
             continue;
         }
-        if escaped {
-            escaped = false;
-            out.push(' ');
+
+        // A char literal: 'x', '\n', '\u{200b}' — but never a lifetime.
+        if chars[i] == '\'' {
+            if let Some(close) = char_literal_close(&chars, i) {
+                out.push('\'');
+                for _ in i + 1..close {
+                    out.push(' ');
+                }
+                out.push('\'');
+                i = close + 1;
+                continue;
+            }
+        }
+
+        // An ordinary string literal.
+        if chars[i] == '"' {
+            out.push('"');
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] != '"' {
+                if chars[j] == '\\' {
+                    out.push(' ');
+                    if let Some(next) = chars.get(j + 1) {
+                        out.push(if *next == '\n' { '\n' } else { ' ' });
+                    }
+                    j += 2;
+                    continue;
+                }
+                out.push(if chars[j] == '\n' { '\n' } else { ' ' });
+                j += 1;
+            }
+            if j >= chars.len() {
+                return out;
+            }
+            out.push('"');
+            i = j + 1;
             continue;
         }
-        match c {
-            '\\' => {
-                escaped = true;
-                out.push(' ');
-            }
-            '"' => {
-                in_string = false;
-                out.push('"');
-            }
-            '\n' => out.push('\n'),
-            _ => out.push(' '),
-        }
+
+        out.push(chars[i]);
+        i += 1;
     }
     out
+}
+
+/// `(hash count, index of the opening quote)` when a raw string literal starts
+/// at `i`, and `None` otherwise. The `r` must open a token, so the `r` in `for`
+/// is not mistaken for one.
+fn raw_string_opener(chars: &[char], i: usize) -> Option<(usize, usize)> {
+    if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+        return None;
+    }
+    let mut k = i;
+    if chars.get(k) == Some(&'b') {
+        k += 1;
+    }
+    if chars.get(k) != Some(&'r') {
+        return None;
+    }
+    k += 1;
+    let first_hash = k;
+    while chars.get(k) == Some(&'#') {
+        k += 1;
+    }
+    if chars.get(k) != Some(&'"') {
+        return None;
+    }
+    Some((k - first_hash, k))
+}
+
+/// Whether the raw string opened with `hashes` hashes terminates at `j`.
+fn raw_string_closes_at(chars: &[char], j: usize, hashes: usize) -> bool {
+    chars[j] == '"' && (1..=hashes).all(|h| chars.get(j + h) == Some(&'#'))
+}
+
+/// The index of the quote that closes the char literal starting at `i`, or
+/// `None` when the `'` opens a lifetime rather than a literal.
+fn char_literal_close(chars: &[char], i: usize) -> Option<usize> {
+    match chars.get(i + 1)? {
+        // '\n', '\'', '\\', '\u{feff}' — the escape is short, and the closing
+        // quote is the next one.
+        '\\' => (i + 2..chars.len().min(i + 14)).find(|k| chars[*k] == '\''),
+        // 'x'. Anything else opened by a `'` is a lifetime.
+        _ if chars.get(i + 2) == Some(&'\'') => Some(i + 2),
+        _ => None,
+    }
 }
 
 /// Every crate path a `use` line reaches, with a grouped import expanded into
@@ -3665,7 +4197,7 @@ fn is_a_product_bar_judge_call(src: &str, expr: &str) -> bool {
 /// `judge(` counts too — but only when `src` actually imports it, so an
 /// unrelated gate's `judge` appearing in the evaluator later cannot turn these
 /// tests red for a reason that has nothing to do with the Product seat.
-fn product_bar_judge_calls(src: &str) -> Vec<(Option<String>, String)> {
+fn product_bar_judge_calls(src: &str) -> Vec<JudgeCall> {
     let mut anchors: Vec<&str> = vec!["product_bar::judge("];
     if imports_product_bar_judge(src) {
         anchors.push("judge(");
@@ -3679,13 +4211,27 @@ fn product_bar_judge_calls(src: &str) -> Vec<(Option<String>, String)> {
     out
 }
 
+/// One call to product_bar's `judge`.
+///
+/// `tail` is what the source does with the value the instant the call closes,
+/// and it is carried because cutting the call expression out — which is how
+/// `unmeasured_alternatives_in` reads a statement — also cuts out everything
+/// the residue could have told us about what is done TO the result. See
+/// `post_processing_after`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct JudgeCall {
+    /// `Some(name)` when the call is the initialiser of `let name = `.
+    binding: Option<String>,
+    /// The text between the call's parentheses.
+    args: String,
+    /// The text immediately after the call's closing paren, truncated to the
+    /// handful of characters this file asks a question of.
+    tail: String,
+}
+
 /// The calls whose `(` follows `anchor`, skipping opening parens already
 /// claimed by an earlier (more specific) anchor.
-fn calls_at_anchor(
-    src: &str,
-    anchor: &str,
-    seen: &mut BTreeSet<usize>,
-) -> Vec<(Option<String>, String)> {
+fn calls_at_anchor(src: &str, anchor: &str, seen: &mut BTreeSet<usize>) -> Vec<JudgeCall> {
     let mut out = Vec::new();
     let mut from = 0usize;
     while let Some(i) = src[from..].find(anchor) {
@@ -3711,10 +4257,11 @@ fn calls_at_anchor(
             }
         }
         if let Some(end) = end {
-            out.push((
-                let_binding_before(&src[..start]),
-                src[open + 1..end].to_string(),
-            ));
+            out.push(JudgeCall {
+                binding: let_binding_before(&src[..start]),
+                args: src[open + 1..end].to_string(),
+                tail: src[end + 1..].chars().take(40).collect(),
+            });
         }
         from = open + 1;
     }
@@ -3849,6 +4396,33 @@ fn binding_statement(src: &str, name: &str) -> Option<String> {
 /// GateStatus::Passed` is not mistaken for a write, because a guard that
 /// misreads a correct implementation and reports it as the defect it does not
 /// have is worse than no guard.
+///
+/// # Why the receiver does not matter
+///
+/// A previous revision matched only when the whole left-hand side trimmed to
+/// the bare identifier, so it saw `product_bar_status = …` and never saw
+/// `report.product_bar_status = …` — the same fail-open, written onto the field
+/// instead of onto the binding, and one the evaluator's own neighbours already
+/// spell that way (`src/pre_merge_guard/report.rs` writes
+/// `r.test_suite_status = GateStatus::Errored(…)`). Review verified it against
+/// a working reference gate: inserting
+///
+/// ```text
+/// if pr_body.is_empty() {
+///     report.product_bar_status = GateStatus::Passed;
+/// }
+/// ```
+///
+/// immediately before `report.seal();` was rustfmt-clean, passed every test in
+/// this file and every other test in the repository, and certified the Product
+/// seat for every change opened with an empty body. The guard worked for
+/// exactly one of the two spellings of one fail-open.
+///
+/// So the question is asked of the PATH: any left-hand side ending in
+/// `.product_bar_status`, on any receiver (`report.`, `r.`, `self.`), is a
+/// write to the field. A struct-literal line (`product_bar_status,` or
+/// `product_bar_status: product_bar::judge(pr_body),`) carries no `=` at all
+/// and is not one, and neither is a comparison.
 fn assignments_to(src: &str, name: &str) -> Vec<String> {
     src.lines()
         .filter(|line| {
@@ -3864,10 +4438,26 @@ fn assignments_to(src: &str, name: &str) -> Vec<String> {
             if lhs.ends_with(['!', '<', '>', '+', '-', '*', '/', '%', '&', '|', '^']) {
                 return false;
             }
-            lhs.trim() == name
+            writes_to(lhs, name)
         })
         .map(|l| l.trim().to_string())
         .collect()
+}
+
+/// Whether the left-hand side `lhs` writes `name`: the bare binding, or `name`
+/// as the last segment of a field path on any receiver.
+fn writes_to(lhs: &str, name: &str) -> bool {
+    let lhs = lhs.trim();
+    if lhs == name {
+        return true;
+    }
+    let Some(receiver) = lhs.strip_suffix(&format!(".{name}")) else {
+        return false;
+    };
+    !receiver.is_empty()
+        && receiver
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '*')
 }
 
 /// `text` with every product_bar `judge(..)` call expression cut out of it.
@@ -3942,6 +4532,146 @@ fn unmeasured_alternatives_in(src: &str, statement: &str) -> Vec<&'static str> {
         .copied()
         .filter(|marker| residue.contains(marker))
         .collect()
+}
+
+/// Argument syntax that hands the gate LESS than the whole change body.
+///
+/// Every one of these slices, skips or shortens the text before `judge` ever
+/// sees it, and each is an ordinary thing to write.
+const TRUNCATING_TOKENS: &[&str] = &[
+    "[",
+    "..",
+    ".lines(",
+    ".take(",
+    ".chars(",
+    ".truncate",
+    ".get(",
+];
+
+/// Method calls that hand the callee the same text in a different type, or with
+/// surrounding whitespace removed. None of them can drop the middle or the end
+/// of a body, which is the only thing the argument rule is about, so rejecting
+/// them would be forbidding a spelling rather than an effect.
+const WHOLE_VALUE_ADAPTERS: &[&str] = &[
+    "as_deref",
+    "as_ref",
+    "as_str",
+    "clone",
+    "into",
+    "to_owned",
+    "to_string",
+    "trim",
+    "trim_end",
+    "trim_start",
+];
+
+/// Why `arg` is not the whole change body — or `None` when it is a plain path
+/// to it, with at most a leading `&`.
+///
+/// # Why the argument is inspected at all
+///
+/// `unmeasured_alternatives_in` cuts the entire `judge(..)` call expression out
+/// of the statement before looking at what is left, so it is blind to what was
+/// done to the call's INPUT. The whole point of
+/// `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact` — two kilobytes
+/// of background, with fixture invariants demanding the marker sit past byte
+/// 1500 and line 25 — is reinstated one layer up by
+///
+/// ```text
+/// let product_bar_status =
+///     product_bar::judge(&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())]);
+/// ```
+///
+/// The argument still contains "body". The residue is `let product_bar_status =
+/// ;` and holds no alternative. Nothing is reassigned. `judge` itself stays
+/// perfectly correct, so every behavioural assertion in this file is green —
+/// and every author who writes a long, careful pull request is told they wrote
+/// no acceptance bar. `judge(&diff_ctx.pr_body.lines().take(40).collect::<String>())`
+/// is the same defect in the other unit.
+fn truncated_argument(arg: &str) -> Option<String> {
+    for token in TRUNCATING_TOKENS {
+        if arg.contains(token) {
+            return Some(format!(
+                "it carries {token:?}, which slices, skips or shortens the body before \
+                 the gate ever sees it"
+            ));
+        }
+    }
+
+    let mut expr = arg.trim();
+    while let Some(rest) = expr
+        .strip_prefix('&')
+        .or_else(|| expr.strip_prefix('*'))
+        .or_else(|| expr.strip_prefix("mut "))
+    {
+        expr = rest.trim_start();
+    }
+
+    loop {
+        if is_plain_path(expr) {
+            return None;
+        }
+        let Some(head) = expr.strip_suffix("()") else {
+            break;
+        };
+        let Some(dot) = head.rfind('.') else {
+            break;
+        };
+        if !WHOLE_VALUE_ADAPTERS.contains(&&head[dot + 1..]) {
+            break;
+        }
+        expr = head[..dot].trim_end();
+    }
+
+    Some(format!(
+        "{expr:?} is not a plain path to the change's body. The argument must be the \
+         identifier or field access itself — `pr_body`, `&diff_ctx.pr_body` — possibly \
+         through one of {WHOLE_VALUE_ADAPTERS:?}, none of which can drop any of the text"
+    ))
+}
+
+/// Whether `expr` is a bare identifier or a field access: `pr_body`,
+/// `diff_ctx.pr_body`, `self.pr_body`.
+fn is_plain_path(expr: &str) -> bool {
+    !expr.is_empty()
+        && !expr.starts_with('.')
+        && !expr.ends_with('.')
+        && expr
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ':')
+}
+
+/// The character chained onto a `judge(..)` call, or `None` when the verdict is
+/// used exactly as it comes.
+///
+/// # Why the closing paren is inspected at all
+///
+/// Cutting the call expression out to look at the residue also cuts out
+/// everything the residue could have caught about what is done TO the result:
+///
+/// ```text
+/// let product_bar_status = product_bar::judge(&diff_ctx.pr_body).softened();
+/// ```
+///
+/// where `softened()` maps `Failed(m)` onto `Warning(m)` — the "soft launch so
+/// we do not break open pull requests" change an engineer writes on day one.
+/// `Warning` is `is_acceptable()`, so every change certifies the Product seat.
+/// The residue holds `.softened();` and none of `UNMEASURED_ALTERNATIVES`; the
+/// field is bound to a judge call; nothing else looks. That is the exact
+/// fail-open the conditional and reassignment guards were built for, one method
+/// call to the right of both of them. `.or(..)` and `.map(..)` are the same
+/// shape.
+///
+/// A verdict used as it comes is followed by `;` (a `let`), `,` (a struct
+/// literal field) or `)` (an argument). Anything else is something happening to
+/// the measurement between `judge` and the field.
+fn post_processing_after(tail: &str) -> Option<char> {
+    let next = tail.trim_start().chars().next()?;
+    if matches!(next, ';' | ',' | ')') {
+        None
+    } else {
+        Some(next)
+    }
 }
 
 /// Whether the `let` that binds `ident` in `src` BUILDS the change-under-review
@@ -4059,13 +4789,50 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
          in TOTAL_GATES, and blocks no pull request"
     );
 
-    for (_, args) in &calls {
+    for call in &calls {
+        let args = &call.args;
         assert!(
             args.contains("body"),
             "the Product gate must be judged over the change's own body, which is \
              where the written problem and the done-when bar are authored; got \
              judge({args})"
         );
+
+        // AND THE WHOLE OF IT. The residue check below cuts the judge call out
+        // before it looks, so it is blind to what was done to the call's INPUT.
+        // `judge(&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())])` still
+        // names the body, still leaves an empty residue, still binds the field
+        // to a judge call — and reinstates the truncation that
+        // `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact` exists to
+        // close, one layer up where no behavioural test can see it.
+        if let Some(defect) = truncated_argument(args) {
+            panic!(
+                "the Product gate is handed less than the change's body: \
+                 judge({args}) — {defect}. A bar written at the far end of a long \
+                 pull request is still the artifact, so a gate that reads a prefix of \
+                 the body tells every author of a long, careful change that they wrote \
+                 no acceptance bar. `judge` stays perfectly correct while it does it, \
+                 which is why no behavioural test in this file can catch it"
+            );
+        }
+
+        // AND THE VERDICT IS USED AS IT COMES. Cutting the call out also cuts
+        // out what is done to its RESULT: `judge(&diff_ctx.pr_body).softened()`,
+        // mapping Failed onto Warning, leaves a residue holding none of
+        // UNMEASURED_ALTERNATIVES and certifies every change, because Warning is
+        // `is_acceptable()`.
+        if let Some(chained) = post_processing_after(&call.tail) {
+            panic!(
+                "something is chained onto the Product gate's verdict: {chained:?} \
+                 follows judge({args}) in the evaluator. Nothing may sit between the \
+                 measurement and the field — `.softened()`, `.or(..)` and `.map(..)` \
+                 all map Failed onto a status `is_acceptable()` returns true for, so \
+                 every change certifies the Product seat while every behavioural test \
+                 in this file stays green. If a change legitimately passes, say so in \
+                 `judge`, where \
+                 a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured can see it"
+            );
+        }
     }
 
     // Binding the field to the call, not merely to the absence of a literal. A
@@ -4075,7 +4842,7 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
     // `product_bar_status: doc_parity_status.clone(),`. Both are caught here:
     // the initialiser must be the judge call itself, or an identifier a `let`
     // bound to one.
-    let bindings: Vec<String> = calls.iter().filter_map(|(b, _)| b.clone()).collect();
+    let bindings: Vec<String> = calls.iter().filter_map(|c| c.binding.clone()).collect();
     let initialisers = struct_field_initialisers(&src, "product_bar_status");
     assert!(
         !initialisers.is_empty(),
@@ -4149,21 +4916,28 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
         // an empty body certifies the Product seat as NotMeasured — which is
         // `a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured`
         // reinstated at the one seam no behavioural test reaches.
-        if !is_a_product_bar_judge_call(&src, init) {
-            let bound = leading_ident(init);
-            let overwrites = assignments_to(&src, &bound);
-            assert!(
-                overwrites.is_empty(),
-                "product_bar_status is measured and then written over: {overwrites:?} \
-                 assign to {bound:?} after the let that binds it to the judge call. The \
-                 field's value must be the measurement, full stop — a later branch that \
-                 substitutes NotMeasured (or Passed, or Warning) for a body the gate \
-                 found nothing in certifies every change whose author wrote nothing, \
-                 which is the one case this seat exists for. If the body can \
-                 legitimately be absent, say so in `judge`, where \
-                 a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured can see it"
-            );
+        // The field itself, unconditionally — the shorthand initialiser is not
+        // the only route to it. `report.product_bar_status = GateStatus::Passed;`
+        // placed before `report.seal()` is the same fail-open written onto the
+        // field instead of onto the binding, it is the idiom report.rs already
+        // uses (`r.test_suite_status = GateStatus::Errored(..)`), and review
+        // verified it passes every other test in this repository.
+        let mut overwrites = assignments_to(&src, "product_bar_status");
+        let bound = leading_ident(init);
+        if !is_a_product_bar_judge_call(&src, init) && bound != "product_bar_status" {
+            overwrites.extend(assignments_to(&src, &bound));
         }
+        assert!(
+            overwrites.is_empty(),
+            "product_bar_status is measured and then written over: {overwrites:?} \
+             assign to the Product seat's status after it is bound to the judge call. \
+             The field's value must be the measurement, full stop — a later branch \
+             that substitutes NotMeasured (or Passed, or Warning) for a body the gate \
+             found nothing in certifies every change whose author wrote nothing, \
+             which is the one case this seat exists for. If the body can \
+             legitimately be absent, say so in `judge`, where \
+             a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured can see it"
+        );
     }
 }
 
@@ -4326,13 +5100,17 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
     // not see a `judge` belonging to some other module.
     let imported = "use super::product_bar::judge;\n\
                     let product_bar_status = judge(pr_body);\n";
+    let found = product_bar_judge_calls(imported);
     assert_eq!(
-        product_bar_judge_calls(imported),
-        vec![(
-            Some("product_bar_status".to_string()),
-            "pr_body".to_string()
-        )],
-        "an imported judge call is as correct as a qualified one and must be found"
+        found.len(),
+        1,
+        "an imported judge call is as correct as a qualified one and must be found \
+         exactly once; got {found:?}"
+    );
+    assert_eq!(
+        (found[0].binding.as_deref(), found[0].args.as_str()),
+        (Some("product_bar_status"), "pr_body"),
+        "the call finder misread the imported call: {found:?}"
     );
 
     let foreign = "let shape_status = shape::judge(outcome);\n";
@@ -4342,13 +5120,16 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
     );
 
     let qualified = "let product_bar_status = super::product_bar::judge(pr_body);\n";
+    let found = product_bar_judge_calls(qualified);
     assert_eq!(
-        product_bar_judge_calls(qualified),
-        vec![(
-            Some("product_bar_status".to_string()),
-            "pr_body".to_string()
-        )],
-        "a qualified call must be found exactly once, not twice"
+        found.len(),
+        1,
+        "a qualified call must be found exactly once, not twice; got {found:?}"
+    );
+    assert_eq!(
+        (found[0].binding.as_deref(), found[0].args.as_str()),
+        (Some("product_bar_status"), "pr_body"),
+        "the call finder misread the qualified call: {found:?}"
     );
 
     // The struct-field reader, which is what lets the body reach the gate
@@ -4549,10 +5330,35 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         assignments_to(reassigned, "product_bar_status")
     );
 
-    // And the mirror, so the new check cannot fail a correct wiring for its
+    // THE SAME FAIL-OPEN WRITTEN ONTO THE FIELD RATHER THAN ONTO THE BINDING,
+    // which the previous revision could not see at all: it matched only when
+    // the whole left-hand side trimmed to the bare identifier. Review verified
+    // the hole against a working reference gate — `report.product_bar_status =
+    // GateStatus::Passed;` before `report.seal();` was rustfmt-clean, passed
+    // every test in this file and every other test in the repository, and
+    // certified the Product seat for every change opened with an empty body.
+    // report.rs already writes exactly this shape for a neighbouring gate.
+    for onto_the_field in [
+        "    report.product_bar_status = GateStatus::Passed;\n",
+        "    r.product_bar_status = GateStatus::Warning(\"soft launch\".to_string());\n",
+        "        self.product_bar_status = neighbour.clone();\n",
+    ] {
+        assert_eq!(
+            assignments_to(onto_the_field, "product_bar_status").len(),
+            1,
+            "a write onto the report's own field is the same fail-open as a write onto \
+             the binding, and the receiver does not change that: {onto_the_field:?} was \
+             read as {:?}",
+            assignments_to(onto_the_field, "product_bar_status")
+        );
+    }
+
+    // And the mirror, so the widened check cannot fail a correct wiring for its
     // spelling. A plain `let`, an annotated `let`, a `let mut` that is never
-    // written over, and a comparison are all correct and none of them is an
-    // overwrite.
+    // written over, a struct-literal field in both its shorthand and its
+    // labelled form, and a comparison on any receiver are all correct, and none
+    // of them is an overwrite. Widening the guard without these is a licence to
+    // fabricate an accusation against the one wiring this file asks for.
     for clean in [
         straight,
         annotated,
@@ -4560,13 +5366,127 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         "if product_bar_status == GateStatus::Passed {\n",
         "    product_bar_status != GateStatus::Passed\n",
         "let product_bar_status: GateStatus = product_bar::judge(&diff_ctx.pr_body);\n",
+        "            product_bar_status,\n",
+        "            product_bar_status: product_bar::judge(pr_body),\n",
+        "            product_bar_status: product_bar::judge(&diff_ctx.pr_body),\n",
+        "if report.product_bar_status == GateStatus::Passed {\n",
+        "    report.product_bar_status != GateStatus::Passed\n",
+        "    let carried = report.product_bar_status.clone();\n",
     ] {
         assert_eq!(
             assignments_to(clean, "product_bar_status"),
             Vec::<String>::new(),
-            "assignments_to saw a write in {clean:?}, which introduces or merely reads \
-             the binding. A guard that misreads a correct wiring and reports it as the \
-             defect it does not have is worse than no guard"
+            "assignments_to saw a write in {clean:?}, which introduces, initialises or \
+             merely reads the field. A guard that misreads a correct wiring and reports \
+             it as the defect it does not have is worse than no guard"
+        );
+    }
+
+    // THE ARGUMENT RULE. `unmeasured_alternatives_in` cuts the whole judge call
+    // out before it looks at the statement, so nothing else in these guards can
+    // see what was done to the call's INPUT — and truncating the input is how
+    // `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact` gets
+    // reinstated one layer up, with `judge` left perfectly correct. Both sides,
+    // because a rule that rejected `&diff_ctx.pr_body` would fail the very
+    // wiring this file spent two rounds making legal.
+    for (arg, truncating) in [
+        ("pr_body", false),
+        ("&pr_body", false),
+        ("diff_ctx.pr_body", false),
+        ("&diff_ctx.pr_body", false),
+        ("&self.pr_body", false),
+        ("pr_body.as_str()", false),
+        ("&diff_ctx.pr_body.clone()", false),
+        ("pr_body.trim()", false),
+        ("&pr_body[..450]", true),
+        (
+            "&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())]",
+            true,
+        ),
+        (
+            "&diff_ctx.pr_body.lines().take(40).collect::<String>()",
+            true,
+        ),
+        ("pr_body.chars().take(2000).collect::<String>()", true),
+        ("pr_body.get(..1500).unwrap_or(pr_body)", true),
+        ("&mut truncate_body(pr_body)", true),
+    ] {
+        assert_eq!(
+            truncated_argument(arg).is_some(),
+            truncating,
+            "truncated_argument({arg:?}) misjudged the argument. A rule that calls a \
+             plain path a truncation accuses a correct wiring of the one defect it does \
+             not have; one that calls a slice a plain path lets \
+             `judge(&body[..2000])` through, and every author of a long, careful pull \
+             request is then told they wrote no acceptance bar"
+        );
+    }
+
+    // THE CHAINING RULE. Cutting the call out also cuts out everything the
+    // residue could have caught about what is done to the RESULT, and
+    // `.softened()` mapping Failed onto Warning certifies every change while
+    // every behavioural test in this file stays green.
+    for (tail, chained) in [
+        (";", None),
+        (",", None),
+        (")", None),
+        ("  ;\n", None),
+        (",\n            unmeasured_gates: Vec::new(),", None),
+        (".softened();", Some('.')),
+        (".or(GateStatus::Passed),", Some('.')),
+        (".map(soften);", Some('.')),
+    ] {
+        assert_eq!(
+            post_processing_after(tail),
+            chained,
+            "post_processing_after({tail:?}) misjudged what the source does with the \
+             verdict the instant the call closes"
+        );
+    }
+
+    // And both new rules end to end, over whole wirings — the three correct
+    // spellings this file promises an implementer, and the two fail-opens the
+    // rules exist for.
+    for (wiring, clean) in [
+        (
+            "let product_bar_status = product_bar::judge(pr_body);\n",
+            true,
+        ),
+        (
+            "let product_bar_status = product_bar::judge(&diff_ctx.pr_body);\n",
+            true,
+        ),
+        (
+            "let product_bar_status: GateStatus = product_bar::judge(&diff_ctx.pr_body);\n",
+            true,
+        ),
+        (
+            "            product_bar_status: product_bar::judge(&diff_ctx.pr_body),\n",
+            true,
+        ),
+        (
+            "let product_bar_status =\n    \
+             product_bar::judge(&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())]);\n",
+            false,
+        ),
+        (
+            "let product_bar_status = product_bar::judge(&diff_ctx.pr_body).softened();\n",
+            false,
+        ),
+    ] {
+        let calls = product_bar_judge_calls(wiring);
+        assert_eq!(
+            calls.len(),
+            1,
+            "exactly one judge call in {wiring:?}; got {calls:?}"
+        );
+        let ok = truncated_argument(&calls[0].args).is_none()
+            && post_processing_after(&calls[0].tail).is_none();
+        assert_eq!(
+            ok, clean,
+            "the tightened wiring guards misjudged {wiring:?}: argument {:?}, tail \
+             {:?}",
+            calls[0].args, calls[0].tail
         );
     }
 }

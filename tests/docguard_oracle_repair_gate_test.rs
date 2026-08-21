@@ -26,16 +26,16 @@
 //! race against any other thread reading it, and a `cargo test` binary runs its
 //! cases in parallel threads.
 //!
-//! ## Why one `#[test]` and fifteen case functions
+//! ## Why one `#[test]` and sixteen case functions
 //!
 //! The environment mutation is only sound if nothing else in this process is
-//! running while it happens. Fifteen `#[test]` functions each neutralising
+//! running while it happens. Sixteen `#[test]` functions each neutralising
 //! `PATH` under a `Once` would still race the first mutation against every other
 //! case's `tempdir()` (which reads `TMPDIR`), which is precisely the race the
 //! three-binary split exists to avoid. One `#[test]` gives a single-threaded
 //! binary and makes the mutation sound by construction.
 //!
-//! The cost is that the fifteen behaviours share one test name, and it is paid
+//! The cost is that the sixteen behaviours share one test name, and it is paid
 //! down rather than hidden: each case is a named function with its own doc
 //! comment, they are run through `catch_unwind` so **one failure does not mask
 //! the others**, every case is reported individually as `ok` or `FAILED`, and the
@@ -55,11 +55,11 @@
 //! `tests/docguard_oracle_repair_test.rs`, because none of them can reach the
 //! probe at all.
 //!
-//! ## Four of the fifteen cases here are FENCES, not red evidence
+//! ## Five of the sixteen cases here are FENCES, not red evidence
 //!
 //! Every case in this binary is currently blocked at `with_probe_override`'s
-//! `todo!()` (`src/doc_guard/mod.rs:163`), so a run reports 15/15 failing. That
-//! number must not be read as fifteen behaviours failing against the three live
+//! `todo!()` (`src/doc_guard/mod.rs:163`), so a run reports 16/16 failing. That
+//! number must not be read as sixteen behaviours failing against the three live
 //! defects, and this file used to let it be read that way.
 //!
 //! Measured, not assumed: with ONLY the two scaffolding bodies filled in
@@ -67,12 +67,13 @@
 //! the `Probe::Overridden` arm in `evaluate_doc_parity` ->
 //! `return outcome.clone().map_err(anyhow::Error::msg)`) and nothing else
 //! touched — no defect repaired — this binary reports **11 failing on test-file
-//! assertion lines and these four passing**:
+//! assertion lines and these five passing**:
 //!
 //! * `a_probe_that_produced_no_judgement_is_errored_and_never_a_pass`
 //! * `a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do`
 //! * `a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate`
 //! * `published_drift_the_sync_could_not_repair_fails_anvils_own_gate`
+//! * `a_finding_the_gate_reached_before_the_probe_is_the_finding_it_reports`
 //!
 //! They are regression fences on arms of `ensure_documentation_parity` that are
 //! already CORRECT on `main` — the same category, and the same disclosure, that
@@ -105,10 +106,29 @@
 //!   announces the unrepaired page as a completed documentation update and
 //!   certifies. See `unrepairable_drift_page()` for why a fixture that reaches
 //!   this arm has to be built rather than merely written down.
+//! * The fifth is a fence of a different kind: it fences the ORDER of the gate's
+//!   own steps — the frontmatter check runs before the probe, so a diff that
+//!   violates it is reported as that finding and the probe's outcome is not
+//!   observable in the report at all. `main` already behaves this way, so it is
+//!   green from the moment the seam compiles. It is here because the two `Err`
+//!   fences above close the "override consulted too early" hole in only ONE of
+//!   its two placements: the README-on-disk assertion in the second of them
+//!   proves the override was not read BEFORE the corpus sync, and nothing
+//!   proved it was not read AFTER the sync but BEFORE the frontmatter loop —
+//!   which is the placement this header claims to have killed. The repair that
+//!   breaks it is an early `if let Probe::Overridden(Err(e)) = &self.probe`
+//!   return sitting between the corpus-sync match and the frontmatter loop.
+//!   MEASURED, not argued: with that mutant applied on top of the two
+//!   scaffolding bodies this binary reports 12 failing rather than 11, and the
+//!   one case that flips is this one — every other `Err`-arm assertion in all
+//!   four binaries is satisfied by the mutant. What the mutant costs is that no
+//!   test in any binary then reaches the real `Err(e) =>` arm at the
+//!   `evaluate_doc_parity` call site, which is the arm whose historical collapse
+//!   into `is_doc_sufficient: true` made gate 1 unfailable.
 //!
 //! Nothing about them needs to change; they are correctly aimed and correctly
-//! falsifiable. What was wrong was publishing "15/15 red" as behavioural red
-//! evidence when four of the fifteen prove only that the seam is unimplemented
+//! falsifiable. What was wrong was publishing "16/16 red" as behavioural red
+//! evidence when five of the sixteen prove only that the seam is unimplemented
 //! and then go green. On a branch whose subject is ADR-0002's honesty law, a
 //! published number that does not match the measurement is that same defect one
 //! level up.
@@ -157,11 +177,19 @@ const OWNED_PAGES: &[&str] = &[
 
 /// Pages in Anvil's own checkout that the corpus deliberately does **not** own.
 /// See the constant of the same name in `tests/docguard_oracle_repair_test.rs`
-/// for the wrong implementation this exists to kill — a sync that walks the
-/// checkout instead of enumerating the corpus reaches every owned page, passes
-/// every one-directional assertion in all four binaries, and rewrites Anvil's
-/// CHANGELOG and `docs/` notes on every one of its own pull requests.
-const NOT_OWNED_PAGES: &[&str] = &["CHANGELOG.md", "docs/notes/roadmap.md"];
+/// for the two wrong implementations these exist to kill, and for why each path
+/// is the one it is.
+///
+/// In short: a sync that WALKS the checkout instead of enumerating the corpus
+/// reaches every owned page, passes every one-directional assertion in all four
+/// binaries, and rewrites Anvil's CHANGELOG and `docs/` notes on every one of
+/// its own pull requests — that is what `CHANGELOG.md` and
+/// `docs/notes/roadmap.md` kill. A sync that SHALLOW-GLOBS the directories the
+/// corpus already lives in (`*.md` directly under `docs/`, plus the two ADR
+/// directories) survives both of those, because neither is enumerated by it —
+/// and `docs/runbook.md`, a sibling of `docs/doctrine.md` at the same depth in
+/// the same directory, is what kills that one.
+const NOT_OWNED_PAGES: &[&str] = &["CHANGELOG.md", "docs/notes/roadmap.md", "docs/runbook.md"];
 
 /// The reason a probe gives for judging a diff under-documented. Held as a
 /// constant so the assertions that it reaches `DocGuardReport::summary` pin
@@ -564,6 +592,160 @@ fn reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identica
     // paths that can read as a pass — the sufficient and insufficient probe
     // verdicts — are pinned in
     // `the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason`.
+}
+
+/// A finding the gate reached on its own, before any probe ran, is the finding
+/// it reports — and the probe's outcome is not observable in it at all.
+///
+/// # Why this case exists
+///
+/// The `Err`-arm cases in this binary
+/// (`a_probe_that_produced_no_judgement_is_errored_and_never_a_pass`,
+/// `a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do`)
+/// close the "override consulted too early" hole in only ONE of its two
+/// placements. The README-on-disk assertion in the second of those proves the
+/// override was not consulted BEFORE the corpus sync. Nothing in this binary
+/// proved it was not consulted AFTER the sync and BEFORE the frontmatter loop —
+/// and that second placement is exactly the one this file's header claims to
+/// have killed.
+///
+/// The wrong implementation, sitting in `ensure_documentation_parity`
+/// immediately after the corpus-sync match and before the
+/// `for file in &diff_ctx.changed_files` loop:
+///
+/// ```ignore
+/// if let Probe::Overridden(Err(e)) = &self.probe {
+///     return Ok(DocGuardReport {
+///         errored: Some(e.clone()),
+///         is_sufficient: false,
+///         files_created_or_updated: Vec::new(),
+///         summary: format!("Documentation parity could not be evaluated: {e}"),
+///     });
+/// }
+/// ```
+///
+/// Every `Err`-arm assertion in all four binaries is satisfied by it. The sync
+/// has already run, so `README.md` carries its repaired `TOTAL_GATES` claim;
+/// `errored` is `Some` and non-empty; `is_sufficient` is false; the summary
+/// carries the failure string; the file list is empty; the probe-seam binary's
+/// absolute `seam-sentinel:` check passes on both runs and the two runs agree.
+/// `reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identical`
+/// does not catch it either, because that case supplies `sufficient()`, so the
+/// early return is never taken there.
+///
+/// What it costs is the whole point. Under that wiring NO test in any binary
+/// ever reaches the real `Err(e) =>` arm at the `self.evaluate_doc_parity(..)`
+/// call site, nor `evaluate_doc_parity`'s own watchdog fallback. That arm is
+/// precisely the one whose historical collapse into `is_doc_sufficient: true`
+/// made gate 1 unfailable — the comment recording it is still in the source. An
+/// implementer who, while wiring the seam, reverts that fallback to
+/// `Ok(DocParityEvaluation { is_doc_sufficient: true, .. })` would ship an
+/// unfailable gate 1 with every gate case in this binary green, because the five
+/// `PROBE_FAILURES` never traverse it.
+///
+/// # What is asserted, and why it is behaviour rather than structure
+///
+/// The frontmatter check runs before the probe, so on a diff that violates it
+/// the gate has a finding of its own and never needs a judgement. The report
+/// must therefore BE that finding: not errored, adverse, carrying the
+/// validator's own message — and carrying no trace of the supplied probe
+/// outcome, because a probe that was never consulted cannot have said anything.
+///
+/// That is a statement about what the report IS, not about how it was built or
+/// where the override is read. It happens to be unsatisfiable by any wiring that
+/// consults the override earlier than the point the real probe runs, which is
+/// the requirement `with_probe_override`'s contract already states in prose and
+/// which nothing until now measured.
+fn a_finding_the_gate_reached_before_the_probe_is_the_finding_it_reports() {
+    // Anvil's OWN repository, so the corpus sync genuinely applies and the case
+    // cannot be satisfied by an ownership skip: every path this report could
+    // have taken is live.
+    let dir = tempdir().unwrap();
+    for owned in OWNED_PAGES {
+        write(&dir.path().join(owned), &already_honest_page());
+    }
+
+    // `already_honest_page()` above is deliberate: the sync has nothing to
+    // repair on it, so neither the drift arm nor the `Err` arm of the
+    // corpus-sync match can fire and the run reaches the frontmatter loop. The
+    // fence says so, rather than leaving it to be inferred.
+    let sync = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES)
+        .expect("fence: the fixture is readable, so the sync must succeed");
+    assert!(
+        sync.remaining_drift.is_empty(),
+        "fence: this case is about the frontmatter finding, so the corpus sync \
+         must not return first: {:?}",
+        sync.remaining_drift
+    );
+
+    let policy = "---\nstatus: active\ncanonical_authority: true\n---\n\n# Tenancy\n";
+    write(&dir.path().join("tenancy/policy.md"), policy);
+
+    // The validator's message is read from the validator, not written down here,
+    // so the assertion that it reaches the summary pins pass-through rather than
+    // wording — and doubles as the fence that the fixture still takes the
+    // frontmatter early-return path at all.
+    let violation =
+        FrontmatterValidator::validate_doc_frontmatter("tenancy/policy.md", policy, dir.path())
+            .expect_err(
+                "this case pins the report composed on the frontmatter early-return \
+                 path; the fixture no longer takes it",
+            );
+
+    // Every one of the five, not just the first: an implementation that reads
+    // the override early cannot be excused by the particular failure string it
+    // happened to be handed.
+    for failure in PROBE_FAILURES {
+        let report = run_gate(
+            probe_failed(failure),
+            ANVIL,
+            dir.path(),
+            &["tenancy/policy.md"],
+        );
+
+        assert!(
+            report.errored.is_none(),
+            "{failure:?}: the gate found a frontmatter violation on its own, before \
+             any probe was needed. That is a judgement, not absent evidence, and \
+             reporting it as Errored means the supplied probe outcome was consulted \
+             on a run that never had to ask for one: {:?}",
+            report.errored
+        );
+        assert!(
+            !report.is_sufficient,
+            "{failure:?}: the frontmatter violation is a real adverse finding: {}",
+            report.summary
+        );
+        assert!(
+            report.summary.contains(&violation),
+            "{failure:?}: the report must be the FRONTMATTER finding, so it must \
+             carry the validator's own message {violation:?}. A summary that says \
+             anything else is a report about a probe this run had no reason to \
+             consult: {}",
+            report.summary
+        );
+        assert!(
+            !report.summary.contains(*failure),
+            "{failure:?}: the frontmatter check returned before the probe ran, so \
+             the supplied probe outcome must not be observable in the report at \
+             all. Seeing it here means the override is read somewhere other than \
+             the point the real probe produces its judgement — which leaves the \
+             real `Err` arm at the `evaluate_doc_parity` call site, the arm whose \
+             collapse into `is_doc_sufficient: true` made gate 1 unfailable, \
+             untraversed by every case in this binary: {}",
+            report.summary
+        );
+    }
+
+    // Stated exclusion, so it is a decision rather than an omission:
+    // `files_created_or_updated` is NOT asserted here. The corpus sync had no
+    // work to do on this fixture, so whether the frontmatter early return
+    // reports the sync's (empty) rewrite list or an empty list of its own is not
+    // a distinction this fixture can draw, and inventing one would pin a
+    // composition detail rather than a behaviour. The requirement that an
+    // adverse finding never announces work it did not do is carried by
+    // `an_under_documented_diff_that_named_no_files_still_fails_the_gate` and by
+    // the two write-failure cases.
 }
 
 /// A skipped sync must be *stated* at the gate, on both probe verdicts, and it
@@ -1441,6 +1623,52 @@ fn an_under_documented_diff_that_stated_no_reason_still_fails_the_gate() {
          gate to publish an empty reason: {report:?}"
     );
 
+    // Non-emptiness alone is not enough, and the hole it leaves is the exact
+    // defect class its sibling
+    // `an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply`
+    // spends fifty lines forbidding, one file away. It permits a summary that
+    // PROMISES a reason and then gives none:
+    //
+    //     let summary = format!(
+    //         "Documentation is insufficient: {}",
+    //         eval.missing_doc_summary.clone().unwrap_or_default()
+    //     );
+    //
+    // With `missing_doc_summary: None` that yields
+    // `"Documentation is insufficient: "`. It is non-empty after `trim`, it is
+    // byte-different from the passing summary compared against below, and
+    // `an_under_documented_diff_does_not_pass_through_the_public_gate` never
+    // sees it because the reason IS present there — so the whole suite stays
+    // green while every contributor whose probe declines to explain itself gets
+    // a blocked scorecard row reading `Documentation is insufficient:` with
+    // nothing after the colon. A gate telling a pull request that something
+    // follows and then saying nothing is the same false and unactionable
+    // assurance as issue #27's silent pass, published on the failing side.
+    //
+    // So the two assertions the applied-sync summary already carries are applied
+    // to this report as well. They invent no wording — they say only that the
+    // sentence the implementation chose is FINISHED — and together they kill the
+    // whole `unwrap_or_default()` family on this path, exactly as they do on the
+    // other.
+    assert_eq!(
+        report.summary,
+        report.summary.trim_end(),
+        "the probe gave no reason, so the summary is complete as it stands and \
+         must not trail off into whitespace where an interpolated reason would \
+         have gone: {:?}",
+        report.summary
+    );
+    for dangling in [':', '-', '\u{2013}', '\u{2014}', '(', ',', ';'] {
+        assert!(
+            !report.summary.trim_end().ends_with(dangling),
+            "the probe declined to explain itself, so the summary must be a \
+             finished statement. Ending on {dangling:?} means the gate told this \
+             pull request that something followed — the reason the diff is \
+             under-documented — and then said nothing: {:?}",
+            report.summary
+        );
+    }
+
     // And it must at least be DISTINGUISHABLE from the pass it is not. Pinned as
     // a relation rather than as wording, so this suite does not invent the
     // words: the same probe verdict inverted produces the gate's passing
@@ -1791,6 +2019,10 @@ fn the_documentation_gate_is_pinned_with_no_agy_reachable_on_path() {
             reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identical,
         ),
         (
+            "a_finding_the_gate_reached_before_the_probe_is_the_finding_it_reports",
+            a_finding_the_gate_reached_before_the_probe_is_the_finding_it_reports,
+        ),
+        (
             "the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason",
             the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason,
         ),
@@ -1848,7 +2080,7 @@ fn the_documentation_gate_is_pinned_with_no_agy_reachable_on_path() {
         ),
     ];
 
-    // `catch_unwind` so that one red case does not hide the other fourteen: a
+    // `catch_unwind` so that one red case does not hide the other fifteen: a
     // run of this binary reports every behaviour that is failing, which is the
     // property a single aggregating test would otherwise cost.
     let mut failures: Vec<String> = Vec::new();

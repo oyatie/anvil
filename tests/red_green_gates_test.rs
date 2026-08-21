@@ -641,10 +641,18 @@ fn test_compliance_guard_green_tokenized_identifier() {
 #[test]
 fn test_trace_context_red_flag_uninstrumented_spawn() {
     let guard = TraceContextGuard::new();
-    // RED: Uninstrumented background async task loses W3C trace context
+    // RED: Uninstrumented background async task loses W3C trace context.
+    //
+    // The `@@` header is part of the fixture rather than of
+    // `create_test_diff_context`, which the other 34 rows share. Gate 17 now
+    // publishes the file and line of every boundary it accuses, and the hunk
+    // header is the only thing in a diff that says where its body sits; a chunk
+    // without one declares no position, and the gate reports no location it was
+    // not told. Every real diff carries the header, so only this fixture had to
+    // grow one.
     let bad_diff = create_test_diff_context(
         "src/background.rs",
-        "+ tokio::spawn(async move {\n+     process_background_task().await;\n+ });",
+        "@@ -20,3 +20,5 @@\n+ tokio::spawn(async move {\n+     process_background_task().await;\n+ });",
     );
     let report = guard
         .evaluate_trace_propagation(&PathBuf::from("."), &bad_diff)
@@ -658,10 +666,13 @@ fn test_trace_context_red_flag_uninstrumented_spawn() {
 #[test]
 fn test_trace_context_green_instrumented_span() {
     let guard = TraceContextGuard::new();
-    // GREEN: Instrumented span maintains W3C trace parentage
+    // GREEN: Instrumented span maintains W3C trace parentage. The header is
+    // here for the reason given on the red row above -- and without it this row
+    // passes by measuring nothing at all, which is the defect gate 17 was just
+    // rewritten to stop publishing.
     let good_diff = create_test_diff_context(
         "src/background.rs",
-        "+ tokio::spawn(async move {\n+     process_background_task().await;\n+ }.instrument(tracing::info_span!(\"process_background\")));",
+        "@@ -20,3 +20,5 @@\n+ tokio::spawn(async move {\n+     process_background_task().await;\n+ }.instrument(tracing::info_span!(\"process_background\")));",
     );
     let report = guard
         .evaluate_trace_propagation(&PathBuf::from("."), &good_diff)
@@ -669,6 +680,12 @@ fn test_trace_context_green_instrumented_span() {
     assert!(
         report.is_propagated,
         "Expected False Red prevention: Instrumented span must PASS"
+    );
+    assert_eq!(
+        report.tasks_scanned, 1,
+        "the boundary has to have been inspected for this row to mean \
+         anything: {}",
+        report.summary
     );
 }
 

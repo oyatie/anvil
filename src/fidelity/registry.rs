@@ -59,21 +59,32 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               argument list is not empty (trace_context_guard/span_tracker.rs:14-23), then asks whether \
               `.instrument(` or `.in_current_span(` appears anywhere inside the parenthesised region \
               that call opens, minus the regions the boundaries nested in it own \
-              (trace_context_guard/span_tracker.rs:97-125). Appearing in the region is not attachment: \
+              (trace_context_guard/span_tracker.rs:76-92). Appearing in the region is not attachment: \
               the call is not matched against the spawned future, so a span attached to some other \
               value inside the body reads as clean, and the gate can tell neither that the span is the \
               right one nor that it is attached to this task at all. The published sentence says what \
               is measured rather than the word attaches. A task instrumented at its definition by \
               `#[tracing::instrument]` has no such call at the spawn site and is reported detached \
-              (trace_context_guard/span_tracker.rs:26-38). A boundary whose parenthesis does not close \
-              within the hunks read is `unresolved`: not classified, not counted among the inspected, \
-              and not accused (trace_context_guard/span_tracker.rs:97-125). Only the first such call on \
-              a line is inspected. Block comments and `r#`-prefixed raw strings are not modelled, so a \
-              multi-line raw string is lexed as live code and a spawn written inside one is scanned as \
-              real (trace_context_guard/span_tracker.rs:230-244). It cannot see a boundary crossed by a \
-              call it cannot name that way -- a spawn imported under a different name, or a task \
-              started by code this diff does not touch. A diff crossing no boundary it can see records \
-              `NOTHING TO MEASURE` (trace_context_guard/mod.rs:82-99), but that string reaches no \
+              (trace_context_guard/span_tracker.rs:26-38). A region is bounded by the hunk the boundary \
+              opened in: the hunks of a file are disjoint windows onto it, so the scan runs once per \
+              hunk and a boundary whose parenthesis does not close inside its own hunk is `unresolved` \
+              -- not classified, not counted among the inspected, and not accused \
+              (trace_context_guard/mod.rs:56-66). Every boundary on a line is inspected, not merely the \
+              first (trace_context_guard/span_tracker.rs:108-113). Lexing is a line scanner with state \
+              carried across lines, blanking string literals, raw strings, character literals, line \
+              comments and block comments before anything counts a parenthesis \
+              (trace_context_guard/span_tracker.rs:200-224); its state starts at code at the top of \
+              every hunk, so a hunk whose first line is already inside a literal or a block comment is \
+              read as code until that literal closes, and a `'` that is neither a character literal nor \
+              a lifetime is read as a lifetime. An accusation names post-image lines derived from the \
+              `@@ -a,b +c,d @@` header (trace_context_guard/mod.rs:224-240) -- a chunk carrying no such \
+              header declares no position and is not read at all -- and it covers retained \
+              lines as well as added ones -- a region walk that skipped context lines could bound \
+              nothing -- so a named line may be one the change only carried past rather than wrote; the \
+              failing sentence says so. It cannot see a boundary crossed by a call it cannot name that \
+              way -- a spawn imported under a different name, or a task started by code this diff does \
+              not touch. A diff crossing no boundary it can see records \
+              `NOTHING TO MEASURE` (trace_context_guard/mod.rs:90-108), but that string reaches no \
               published surface: `trace_status` is rebuilt from a boolean and only the failing arm \
               carries a summary (pre_merge_guard/evaluator.rs:292-296), so the scorecard row \
               End-to-end span instrumentation across async tasks (pre_merge_guard/matrix.rs:102-105) \

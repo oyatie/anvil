@@ -84,6 +84,19 @@
 //! working perfectly underneath, and every pull request in the repository
 //! failed by gate 17 forever.
 //!
+//! One invariant *is* pinned across both nothing-in-scope routes, and it is the
+//! one that keeps the question open rather than answering it:
+//! `is_propagated || !detached_findings.is_empty()` -- a gate may not publish a
+//! blocking verdict against a diff it produced no finding against. `Passed`
+//! satisfies it. A future `NotMeasured` carried in a report field satisfies it,
+//! because that route does not mean "unmeasured" by setting the boolean false.
+//! What fails it is the one resolution that is not a resolution: encoding "not
+//! measured" as `is_propagated = false` because no report field was added.
+//! `evaluator.rs:292` reads that boolean and nothing else, so it publishes
+//! `Failed`, and gate 17 becomes a permanent block on every documentation-only
+//! pull request and every spawn-free Rust one -- the open question shipped as a
+//! merge block, with the suite green.
+//!
 //! ## 3. The scanner misses almost every spawn form, and miscounts the rest
 //!
 //! `SpanTracker::scan_detached_tasks` (`span_tracker.rs:28`) matches the single
@@ -104,6 +117,17 @@
 //! is not a boundary the gate inspected, and counting it inflates the very
 //! number section 1 forbids the gate to overstate.
 //!
+//! A fourth exclusion is cut from live source rather than written out, because
+//! it is the exact mirror of the `std::thread::spawn` false negative and the
+//! obvious widening walks into it. `\bspawn\w*\s*\(` -- the shortest way to
+//! pick up `spawn_blocking` -- also matches
+//! `self_governor.spawn_monitoring_daemon()` and
+//! `.spawn_continuous_poller(..)`, both live in `src/cli/server.rs`. Neither is
+//! a task boundary and neither will ever carry `.instrument(...)`, so that
+//! widening fails every pull request touching that file. The second takes
+//! arguments, so the empty-parens rule that saves `Command::spawn()` does not
+//! save it.
+//!
 //! The lookahead is pinned as a behaviour rather than as a constant. Every
 //! instrumented fixture in the first draft of this file put `.instrument(` two
 //! lines below its spawn, which pinned nothing beyond "the window reaches three
@@ -122,6 +146,17 @@
 //! file adds `Command::new(..).spawn()?` beside them and pins the count exactly,
 //! so a non-boundary cannot be counted merely because the file it sits in does
 //! contain real ones.
+//!
+//! Order matters as much as width, and pinning only width leaves the gate's
+//! subject unpinned. A fixture that always places the instrumented spawn first
+//! constrains how *far* a forward lookahead reaches and never what it is allowed
+//! to reach: a window of any width -- including an unbounded one -- clears a
+//! detached boundary with the span belonging to the *next* spawn below it, and
+//! publishes "each attaches a tracing span" over a real uninstrumented boundary
+//! that was counted and never measured. So the same two boundaries are pinned in
+//! both orderings. In the detached-first file the instrumented spawn sits close
+//! enough below that no narrowing rescues an implementation whose window does not
+//! stop at the boundary it is about.
 //!
 //! The detached side of the multi-line call form is pinned too
 //! (`a_multi_line_spawn_with_no_span_...`). Widening the window and *suppressing*
@@ -143,9 +178,22 @@
 //! any line whose first character is multi-byte -- and this corpus carries
 //! Korean in four Rust files, `src/compliance_guard/statutes.rs:5` among them.
 //! The gate reads text handed to it by a webhook, so a panic here takes the
-//! whole evaluation down with it. One fixture therefore carries a wholly empty
-//! line, a Korean comment lifted from that file, and a line with no diff prefix
-//! at all. `run()` unwraps, so a panic is a hard red.
+//! whole evaluation down with it.
+//!
+//! Placing those shapes *beside* a spawn does not reach the panic, and a fixture
+//! that does only that is a fixture that passes whether or not the code is
+//! correct. The natural optimisation is a `line.contains("spawn")` pre-filter in
+//! front of the classifier, and no hazardous line in an ordinary fixture says
+//! `spawn`, so the byte-slicing ships intact behind an accident of fixture
+//! composition. They are therefore placed where a scan has to read them: inside
+//! the body of a spawn whose span is attached below it, which a lookahead must
+//! walk end to end. One further line has no diff prefix at all, begins with a
+//! multi-byte character, *and* carries a spawn call, so no pre-filter can route
+//! around the classifier -- the raw-source shape
+//! `SpanTracker::scan_detached_tasks` is already called with in its own unit
+//! tests. That line attaches its own span, so it pins the panic without pinning
+//! whether an unprefixed line counts as a line the pull request ships. `run()`
+//! unwraps, so a panic is a hard red.
 //!
 //! ## Out of scope -- stated, rather than left ambiguous
 //!
@@ -154,14 +202,18 @@
 //!   does not is skipped) but was not in this lane's verified scope, and nothing
 //!   here asserts about it.
 //! - The CRLF half of `added_and_retained_lines_are_counted_but_removed_ones_are_not`
-//!   pins **only** a scanner that splits the diff on `'\n'` itself. `str::lines()`
-//!   strips a trailing `\r` before any matcher sees it, so against any
-//!   `.lines()`-based scanner -- which is what the shipping code uses -- an
-//!   `.instrument` regex closed with `$` and a `line.ends_with(");")` both survive
-//!   it. That is stated rather than claimed away: the assertions are cheap, they
-//!   do catch the `split('\n')` rewrite, and the one thing there that reaches
-//!   *every* implementation is the pin that no published snippet carries a `\r`,
-//!   because a snippet is built from the raw line whatever split produced it.
+//!   reaches less than a reader would assume, and it says so rather than
+//!   claiming otherwise. `str::lines()` strips a trailing `\r` before any matcher
+//!   sees it, and a snippet built with `.trim()` -- which the shipping code
+//!   already does -- strips it again. So against any `.lines()`-based *or*
+//!   trimming scanner every assertion in that block holds unconditionally,
+//!   whether or not its author ever thought about line endings; an earlier draft
+//!   of this file claimed the carriage-return assertion reached every
+//!   implementation, and it does not. What the block does bite is one plausible
+//!   pair: a scanner that splits the diff on `'\n'` itself *and* publishes the
+//!   raw line, where an end-anchored matcher or a `line.ends_with(");")`
+//!   reclassifies the hunk and the located set stops matching the LF run's. It is
+//!   kept for that pair and for no wider claim, and it costs one comparison.
 //! - A call whose callee is the bare identifier `spawn` (`use tokio::task::spawn;`
 //!   then `spawn(async move { .. })`) or an alias of it (`use tokio::task::spawn
 //!   as go;` then `go(..)`) is **not pinned in either direction**: flagging it
@@ -239,6 +291,27 @@ fn as_crlf(body: &str) -> String {
         .map(|l| format!("{l}\r"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Cuts a window of live source ending at the first line containing `needle`,
+/// together with `lead` lines above it for context. A fixture that is meant to
+/// be a statement about this repository has to be lifted out of it at test time,
+/// or it stops being one the moment the source moves.
+fn live_lines_ending_at(path: &str, needle: &str, lead: usize) -> String {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("{path} must be readable to build this fixture: {e}"));
+    let lines: Vec<&str> = source.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains(needle))
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture drawn from live source has rotted: {path} no longer \
+                 contains a line matching {needle:?}. Re-cut this fixture from a \
+                 live call site, or drop the row if none remains."
+            )
+        });
+    lines[at.saturating_sub(lead)..=at].join("\n")
 }
 
 /// The sentence the gate publishes when it inspected nothing at all, used as a
@@ -341,68 +414,50 @@ fn accusations_in(summary: &str) -> Vec<&'static str> {
 // -------------------------------------------------------------------------
 
 #[test]
-fn a_pull_request_with_no_rust_in_it_claims_no_instrumentation_was_verified() {
-    let report = run(&diff_of(&[(
-        "docs/adr/0002-honesty.md",
-        "+The published name must match the live measurement.",
-    )]));
-
-    assert_eq!(
-        report.tasks_scanned, 0,
-        "no async boundary exists in a Markdown-only diff"
-    );
-    assert!(
-        verification_claims_in(&report.summary).is_empty(),
-        "nothing was inspected, so the gate holds no evidence to claim; \
-         it published {:?} in: {}",
-        verification_claims_in(&report.summary),
-        report.summary
-    );
-}
-
-#[test]
-fn a_rust_pull_request_that_spawns_nothing_claims_no_instrumentation_was_verified() {
-    // The common case, and the one issue #14 understates: the diff IS Rust, so
-    // the chunk filter lets it through, and the gate still measures nothing
-    // because the file spawns no task.
-    let report = run(&diff_of(&[(
-        "src/compute.rs",
-        "+pub fn compute(rows: &[u32]) -> u32 {\n+    rows.iter().sum()\n+}",
-    )]));
-
-    assert_eq!(
-        report.tasks_scanned, 0,
-        "this diff crosses no async boundary"
-    );
-    assert!(
-        verification_claims_in(&report.summary).is_empty(),
-        "a Rust diff that spawns nothing was still not inspected for span \
-         instrumentation; the gate published {:?} in: {}",
-        verification_claims_in(&report.summary),
-        report.summary
-    );
-}
-
-#[test]
 fn a_gate_that_inspected_nothing_says_so_plainly_and_accuses_no_one() {
-    // Both halves of honest reporting, over both routes into an empty
-    // measurement. This test is deliberately silent on which GateStatus the
-    // nothing-in-scope case deserves: it passes whether the owner chooses
-    // NotMeasured (the slo_canary_guard precedent) or Passed (the
-    // coverage_guard precedent), because both precedents publish a sentence
-    // that satisfies exactly these two conditions.
+    // Both routes into an empty measurement, and every obligation that follows
+    // from one, in a single loop. The first route is the chunk filter, which is
+    // the case issue #14 files. The second is the one it understates and the one
+    // that fires far more often: a diff that is entirely Rust, so the filter lets
+    // it through, and that spawns no task, so the scan finds nothing to look at.
+    //
+    // This test is deliberately silent on which GateStatus the nothing-in-scope
+    // case deserves: it passes whether the owner chooses NotMeasured (the
+    // slo_canary_guard precedent) or Passed (the coverage_guard precedent),
+    // because both precedents publish a sentence satisfying every condition
+    // below. What it does pin is what the two precedents agree on, which is not
+    // a choice to make.
     for (label, files) in [
         (
             "a documentation-only pull request",
-            &[("README.md", "+Anvil is a pre-merge quality matrix.")][..],
+            &[(
+                "docs/adr/0002-honesty.md",
+                "+The published name must match the live measurement.",
+            )][..],
         ),
         (
             "a Rust pull request that spawns nothing",
-            &[("src/report.rs", "+pub const TOTAL: usize = 72;")][..],
+            &[(
+                "src/compute.rs",
+                "+pub fn compute(rows: &[u32]) -> u32 {\n+    rows.iter().sum()\n+}",
+            )][..],
         ),
     ] {
         let report = run(&diff_of(files));
 
+        assert_eq!(
+            report.tasks_scanned, 0,
+            "{label}: this diff crosses no async boundary, so there was nothing \
+             for the gate to inspect. Summary was: {}",
+            report.summary
+        );
+        assert!(
+            verification_claims_in(&report.summary).is_empty(),
+            "{label}: nothing was inspected, so the gate holds no evidence to \
+             claim; it published {:?} in: {}",
+            verification_claims_in(&report.summary),
+            report.summary
+        );
         assert!(
             discloses_that_nothing_was_inspected(&report.summary),
             "{label}: the reader must be told that no async boundary was \
@@ -421,6 +476,24 @@ fn a_gate_that_inspected_nothing_says_so_plainly_and_accuses_no_one() {
             "{label}: the gate reported {} finding(s) against a diff containing \
              no spawn at all",
             report.detached_findings.len()
+        );
+        // Which status this case deserves stays open. What is closed here is the
+        // route by which the open question ships as a permanent merge block.
+        // With no report field added, `is_propagated` is the only channel
+        // `src/pre_merge_guard/evaluator.rs:292` reads, so encoding "not
+        // measured" as `false` -- the one-token change
+        // `detached_findings.is_empty() && tasks_scanned > 0` -- publishes
+        // GateStatus::Failed against every diff that inspected nothing, while
+        // every sentence-level assertion above stays honest and green. Passed
+        // satisfies this assertion; a NotMeasured carried in its own field
+        // satisfies it; only the boolean overload does not.
+        assert!(
+            report.is_propagated || !report.detached_findings.is_empty(),
+            "{label}: the gate produced no finding against this diff and still \
+             reported it as not propagating trace context, which \
+             `evaluator.rs:292` publishes as a failed gate. A verdict that \
+             blocks a merge has to name what it blocks it for. Summary was: {}",
+            report.summary
         );
     }
 }
@@ -447,6 +520,22 @@ enum Expect {
 #[test]
 fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_clean() {
     use Expect::*;
+
+    // Cut from live source rather than written out, because this row is the
+    // mirror of the `std::thread::spawn` false negative and the shortest fix for
+    // that one walks straight into it. Widening the callee match to
+    // `\bspawn\w*\s*\(` picks up `spawn_blocking` and also picks up these two,
+    // which are ordinary methods that merely start with `spawn_`. Neither is a
+    // task boundary; neither will ever carry `.instrument(...)`; so that
+    // widening fails every pull request touching `src/cli/server.rs`. The second
+    // of the two matters more than the first, because it takes arguments and the
+    // empty-parens rule that saves `Command::spawn()` does not save it.
+    const LIVE_CALLERS: &str = "src/cli/server.rs";
+    let spawn_prefixed_methods = format!(
+        "{}\n{}",
+        live_lines_ending_at(LIVE_CALLERS, "spawn_monitoring_daemon", 1),
+        live_lines_ending_at(LIVE_CALLERS, "spawn_continuous_poller", 2),
+    );
 
     // The final column is the number of async boundaries the gate must report
     // having inspected in that fixture, pinned exactly rather than as `>= 1`:
@@ -533,6 +622,12 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             // Exactly what `span_tracker.rs` carries in its own source.
             "a spawn inside a string literal",
             "pub const SPAWN_NEEDLE: &str = \"tokio::spawn(\";",
+            NotABoundary,
+            0,
+        ),
+        (
+            "a method whose name merely begins with spawn_, live in this repository",
+            spawn_prefixed_methods.as_str(),
             NotABoundary,
             0,
         ),
@@ -647,6 +742,16 @@ fn a_file_that_instruments_one_spawn_and_forgets_the_other_reports_only_the_forg
     // boundaries. `tasks_scanned` is pinned exactly on both, so a non-boundary
     // cannot be counted merely because the file it sits in does contain real
     // ones -- the case an all-`Command` fixture cannot reach.
+    //
+    // The third file is the second one's ordering reversed, and it is here
+    // because the first two constrain only how far a forward lookahead reaches.
+    // With the instrumented spawn always first, a window of any width -- an
+    // unbounded one included -- classifies both files correctly while still
+    // clearing a detached boundary using the span that belongs to the next
+    // spawn below it. That is the same false-assurance sentence this lane
+    // exists to remove, pointed at a boundary that was counted and never
+    // measured, so the scope of the lookahead is pinned here as well as its
+    // width.
     const FILE: &str = "src/dispatch.rs";
     let cases: &[(&str, &str, usize)] = &[
         (
@@ -661,6 +766,16 @@ fn a_file_that_instruments_one_spawn_and_forgets_the_other_reports_only_the_forg
         (
             "the same, with a child process spawned alongside them",
             "pub async fn build_and_dispatch() -> std::io::Result<()> {\n    let mut child = std::process::Command::new(\"cargo\").spawn()?;\n    tokio::task::spawn(async move { with_span().await; }.instrument(tracing::info_span!(\"traced\")));\n    let _ = child.wait()?;\n    tokio::task::spawn_blocking(move || { no_span(); });\n    Ok(())\n}",
+            2,
+        ),
+        (
+            // The same two boundaries, detached first. The instrumented one
+            // follows close enough below that no *narrowing* of the window
+            // rescues an implementation whose window does not stop at the
+            // boundary it is about: the only way to report one finding here is
+            // to decide that a span belongs to the spawn that opened it.
+            "a detached spawn above an instrumented one",
+            "pub async fn dispatch() {\n    tokio::spawn(async move { no_span().await; });\n    let _ = settle().await;\n    tokio::spawn(\n        async move {\n            let a = load().await;\n            with_span(a).await;\n        }\n        .instrument(tracing::info_span!(\"traced\")),\n    );\n}",
             2,
         ),
     ];
@@ -699,6 +814,22 @@ fn a_file_that_instruments_one_spawn_and_forgets_the_other_reports_only_the_forg
             finding.file_path.contains("dispatch.rs"),
             "{label}: the finding must name the file it is in; got {:?}",
             finding.file_path
+        );
+        // The file, the line and the code locate the defect; `issue` is the only
+        // field that says what is wrong with the located line, and it is the
+        // sentence the author reads next to it. Left empty -- or filled with a
+        // restatement of the verdict -- the gate lands on the right line with a
+        // message that teaches nothing, which is the same false assurance one
+        // field over. No phrasing is required beyond naming the remedy.
+        let issue = finding.issue.to_lowercase();
+        assert!(
+            !issue.trim().is_empty() && (issue.contains("instrument") || issue.contains("span")),
+            "{label}: the finding at line {} says {:?}, which does not tell the \
+             author what to attach to the boundary it flagged. A locator with no \
+             remedy beside it sends a reviewer to the right line and leaves them \
+             to guess what the gate wanted.",
+            finding.line_number,
+            finding.issue
         );
         assert!(
             !report.is_propagated,
@@ -927,22 +1058,15 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
 
 #[test]
 fn a_pull_request_that_only_deletes_spawns_inspected_nothing_and_is_accused_of_nothing() {
-    // The hunk also carries the shapes that make a prefix classifier panic when
-    // it is written by byte-slicing: a wholly empty line (`&line[1..]` is out of
-    // range), a Korean comment lifted from `src/compliance_guard/statutes.rs:5`,
-    // and a line with no diff prefix at all whose first character is multi-byte
-    // (`split_at(1)` panics on it). That last shape is not decoration: the gate
-    // is handed webhook text it does not control, and
-    // `SpanTracker::scan_detached_tasks` is called with raw unprefixed source in
-    // its own unit tests. A panic here is a fail-open for the whole evaluation,
-    // and `run()` unwraps, so it is a hard red.
+    // One thing only: a hunk that removes an uninstrumented spawn and adds a
+    // comment in its place. The multi-byte and empty-line shapes that make a
+    // byte-slicing prefix classifier panic used to be stapled on here; they now
+    // live in `hazardous_lines_inside_a_scanned_body_are_classified_...`, where
+    // a scan is obliged to read them rather than merely pass them by.
     let body = "-    tokio::spawn(async move {\n\
                 -        work().await;\n\
                 -    });\n\
-                +    // the background worker was removed\n\
-                \n\
-                +    // Pipa,             // Personal Information Protection Act (개인정보 보호법)\n\
-                개인정보 보호법 §24의2";
+                +    // the background worker was removed";
 
     let report = run(&diff_of(&[("src/worker.rs", body)]));
 
@@ -968,12 +1092,81 @@ fn a_pull_request_that_only_deletes_spawns_inspected_nothing_and_is_accused_of_n
 }
 
 #[test]
+fn hazardous_lines_inside_a_scanned_body_are_classified_rather_than_crashing_the_gate() {
+    // A prefix classifier written by byte-slicing panics on two shapes: a wholly
+    // empty line (`&line[1..]` is out of range) and a line whose first character
+    // is multi-byte (`split_at(1)`). This corpus carries Korean in four Rust
+    // files, `src/compliance_guard/statutes.rs:5` among them, and the gate is
+    // handed webhook text it does not control, so a panic here takes the whole
+    // evaluation down.
+    //
+    // Placing those shapes beside a spawn does not reach the panic, which is why
+    // they are here and not in a fixture of their own. The natural optimisation
+    // is a `line.contains("spawn")` pre-filter in front of the classifier, and a
+    // hazardous line that does not say `spawn` never reaches it -- the byte
+    // slicing ships intact behind the composition of the fixture. So the empty
+    // line and the unprefixed Korean line sit *inside* the body of a spawn whose
+    // span is attached below them, which a lookahead has to walk end to end to
+    // reach: every line the window reads, it has to classify.
+    let instrumented_over_hazards = " pub async fn drain() {\n     tokio::spawn(\n         async move {\n\n             // 개인정보 보호법 §24의2 감사 로그 적재\n개인정보 보호법 §24의2\n             let a = load().await;\n             let b = transform(a).await;\n             publish(b).await;\n         }\n         .instrument(tracing::info_span!(\"drain\")),\n     );\n }";
+    let report = run(&diff_of(&[("src/worker.rs", instrumented_over_hazards)]));
+
+    assert!(
+        report.detached_findings.is_empty(),
+        "this boundary attaches its span below its body, and the body is where \
+         the hazardous lines are. The gate reported {} finding(s): {:?}, so it \
+         blocks a merge over a defect the author did not commit -- and a window \
+         that stops before the `.instrument(` is a window that never read the \
+         lines it would have had to classify. Summary was: {}",
+        report.detached_findings.len(),
+        report
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>(),
+        report.summary
+    );
+    assert_eq!(
+        report.tasks_scanned, 1,
+        "one async boundary is retained in this hunk. Summary was: {}",
+        report.summary
+    );
+
+    // The raw-source shape: no diff prefix at all, a multi-byte first character,
+    // and a spawn call on the line, so no `contains("spawn")` pre-filter can
+    // route around the classifier. `SpanTracker::scan_detached_tasks` is already
+    // called with unprefixed source in its own unit tests, so this is input the
+    // gate really sees. The call carries its own span, so what is pinned is the
+    // panic and not whether an unprefixed line counts as a line the pull request
+    // ships -- that question is left where the rest of the prefix rules are.
+    let unprefixed = run(&diff_of(&[(
+        "src/worker.rs",
+        "§ 감사: tokio::spawn(async move { audit().await; }.instrument(tracing::info_span!(\"audit\")));",
+    )]));
+    assert!(
+        unprefixed.detached_findings.is_empty(),
+        "this call attaches its span on the same line it opens on, so there is \
+         no detached boundary here under any reading of the missing prefix; the \
+         gate reported {:?}",
+        unprefixed
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn added_and_retained_lines_are_counted_but_removed_ones_are_not() {
     // One addition, one unchanged context line, one removal, and one further
     // addition that attaches no span. Three boundaries exist in the merged
     // file, not four, and exactly one of them is detached. The detached one is
-    // last so that no forward lookahead can reach a `.instrument(` above it and
-    // clear it for the wrong reason.
+    // last, which is a fact about this fixture rather than a strengthening of
+    // it: what constrains the *scope* of the lookahead, as against its width, is
+    // the reversed-order case in
+    // `a_file_that_instruments_one_spawn_and_forgets_the_other_...`, where a
+    // detached spawn sits above an instrumented one. Here the ordering only
+    // keeps this test about which lines were counted.
     let body = "+    tokio::spawn(async move { added().await; }.instrument(span()));\n     tokio::spawn(async move { kept().await; }.instrument(span()));\n-    tokio::spawn(async move { removed().await; }.instrument(span()));\n+    tokio::spawn(async move { no_span().await; });";
     let report = run(&diff_of(&[("src/worker.rs", body)]));
 
@@ -998,56 +1191,108 @@ fn added_and_retained_lines_are_counted_but_removed_ones_are_not() {
         report.summary
     );
 
-    // The identical hunk out of a CRLF-authored file. What this catches is
-    // narrower than it looks, and is stated rather than assumed: `str::lines()`
-    // strips a trailing `\r` before any matcher sees it, so against a
-    // `.lines()`-based scanner -- the shipping one, and the obvious rewrite --
-    // these two equalities hold whether or not the author ever thought about
-    // CRLF. They bite one implementation: a scanner that splits the diff on
-    // `'\n'` itself, where every body line arrives with a `\r` still attached
-    // and an end-anchored matcher or a `line.ends_with(");")` silently
-    // reclassifies all four. The counts are compared against the LF run rather
-    // than against literals so this stays a statement about line endings.
-    //
-    // The finding count now has a non-zero baseline, so CRLF that makes the
-    // gate *miss* the detached spawn fails here too, not just CRLF that makes
-    // it miscount.
+    // The identical hunk out of a CRLF-authored file, compared against the LF
+    // run rather than against literals. What this reaches is narrower than it
+    // looks, and it is stated rather than claimed away: `str::lines()` strips a
+    // trailing `\r` before any matcher sees it, and a snippet built with
+    // `.trim()` -- which the shipping code already does -- strips it again. So
+    // against any `.lines()`-based *or* trimming scanner everything below holds
+    // unconditionally, whether or not its author ever thought about line
+    // endings. What it does bite is one plausible pair: a scanner that splits
+    // the diff on `'\n'` itself *and* publishes the raw line, where an
+    // end-anchored matcher or a `line.ends_with(");")` reclassifies the hunk and
+    // the quoted text stops matching. Comparing the whole located set -- line
+    // number and snippet together -- rather than only its size is what makes
+    // that visible, and it is one comparison rather than three assertions.
     let crlf = run(&diff_of(&[("src/worker.rs", &as_crlf(body))]));
+    let located = |r: &TraceContextReport| {
+        let mut v: Vec<(usize, String)> = r
+            .detached_findings
+            .iter()
+            .map(|f| (f.line_number, f.snippet.clone()))
+            .collect();
+        v.sort();
+        v
+    };
 
     assert_eq!(
         crlf.tasks_scanned, report.tasks_scanned,
         "the line endings of the file an author happens to work in are not a \
-         property of their code; the CRLF hunk counted {} boundaries against \
-         {} for the identical LF hunk. Summary was: {}",
+         property of their code; the CRLF hunk counted {} boundaries against {} \
+         for the identical LF hunk. Summary was: {}",
         crlf.tasks_scanned, report.tasks_scanned, crlf.summary
     );
     assert_eq!(
-        crlf.detached_findings.len(),
-        report.detached_findings.len(),
-        "the same one spawn is detached under either line ending; the CRLF hunk \
-         produced {} finding(s) against {}. Summary was: {}",
-        crlf.detached_findings.len(),
-        report.detached_findings.len(),
-        crlf.summary
+        located(&crlf),
+        located(&report),
+        "the same one spawn is detached under either line ending, at the same \
+         line, quoted the same way. A located set that moves with the line \
+         endings is evidence the classifier was reading a character the author \
+         did not write -- and a carriage return published into a pull request \
+         comment renders as a broken line or a stray box."
     );
 
-    // This one does reach every implementation, `.lines()` included: a snippet
-    // is cut from the raw line whatever split produced it. A carriage return
-    // published into a pull request comment renders as a broken line or a
-    // stray box, and it is evidence that the classifier was reading a line
-    // that ends in a character the author did not write.
-    for report in [&report, &crlf] {
-        assert!(
-            report
-                .detached_findings
-                .iter()
-                .all(|f| !f.snippet.contains('\r')),
-            "a finding quoted a line with a carriage return still on it: {:?}",
-            report
-                .detached_findings
-                .iter()
-                .map(|f| f.snippet.clone())
-                .collect::<Vec<_>>()
-        );
-    }
+    // The lookahead reads lines too, and it has to classify them by the same
+    // rule as the counter. The single most on-topic defect this gate could have
+    // is a pull request that strips `.instrument(...)` off a spawn it keeps: the
+    // spawn survives as a context line, the span leaves on a `-` line, and a
+    // window that walks the raw hunk credits the retained boundary with a span
+    // that is on its way out. The inverse is pinned beside it so that the fix is
+    // "classify every line the window reads" and not "drop removed lines
+    // everywhere", which would report a spawn as detached in the very pull
+    // request that instruments it.
+    let span_stripped = run(&diff_of(&[(
+        "src/worker.rs",
+        " pub async fn dispatch() {\n     tokio::spawn(async move {\n         work().await;\n-    }.instrument(tracing::info_span!(\"worker\")));\n+    });\n }",
+    )]));
+
+    assert_eq!(
+        span_stripped.detached_findings.len(),
+        1,
+        "this pull request deletes the span from a spawn it keeps, which is the \
+         defect this gate exists for. The gate reported {} finding(s): {:?}. \
+         Zero means the lookahead read the `.instrument(` on the line being \
+         removed and published a clean verdict over a boundary that ships \
+         detached. Summary was: {}",
+        span_stripped.detached_findings.len(),
+        span_stripped
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>(),
+        span_stripped.summary
+    );
+    assert!(
+        span_stripped.detached_findings[0]
+            .snippet
+            .contains("spawn("),
+        "the finding must quote the retained spawn, not the line being deleted; \
+         got {:?}",
+        span_stripped.detached_findings[0].snippet
+    );
+    assert!(
+        !span_stripped.is_propagated,
+        "the boundary this pull request keeps attaches no span once the hunk is \
+         applied. Summary was: {}",
+        span_stripped.summary
+    );
+
+    let span_attached = run(&diff_of(&[(
+        "src/worker.rs",
+        " pub async fn dispatch() {\n     tokio::spawn(async move {\n         work().await;\n-    });\n+    }.instrument(tracing::info_span!(\"worker\")));\n }",
+    )]));
+
+    assert!(
+        span_attached.detached_findings.is_empty(),
+        "this is the pull request that attaches the span, so the window has to \
+         read the added line as part of what ships. The gate reported {:?}, \
+         which fails the author for making the fix the gate asked for. Summary \
+         was: {}",
+        span_attached
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>(),
+        span_attached.summary
+    );
 }

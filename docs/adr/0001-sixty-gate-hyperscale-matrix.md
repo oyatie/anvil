@@ -1,3 +1,14 @@
+---
+schema: hyperscaler.doc.v1
+title: "ADR-0001: Live-Corpus Pre-Merge Certification Matrix"
+doc_id: adr-0001
+category: adr
+status: active
+canonical_authority: true
+owner: "@jason931225"
+last_verified_at: "2026-08-21"
+---
+
 # ADR-0001: Live-Corpus Pre-Merge Certification Matrix
 
 ## Status

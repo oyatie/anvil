@@ -637,12 +637,14 @@ pub async fn execute_pr_review(
     } else {
         "BLOCKED_NOT_CERTIFIED"
     };
+    // Positional placeholders named nothing: the index came from a filtered
+    // list, so it did not even map back to a field. A receipt that cannot say
+    // which gates passed is not evidence.
     let verified_gates: Vec<String> = cert_report
-        .all_statuses()
-        .iter()
-        .filter(|s| matches!(s, crate::pre_merge_guard::report::GateStatus::Passed))
-        .enumerate()
-        .map(|(i, _)| format!("gate-{}", i))
+        .named_statuses()
+        .into_iter()
+        .filter(|(_, s)| matches!(s, crate::pre_merge_guard::GateStatus::Passed))
+        .map(|(name, _)| name.to_string())
         .collect();
     if let Err(e) = state
         .attestation_guard

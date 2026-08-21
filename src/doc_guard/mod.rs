@@ -50,6 +50,30 @@ impl DocGuard {
         Self { agy_effort }
     }
 
+    /// Constructs a guard whose doc-parity judgement is supplied directly
+    /// instead of being obtained by spawning the `agy` probe.
+    ///
+    /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
+    /// the implementer.
+    ///
+    /// Both of the behaviours the specification asks for on the far side of the
+    /// probe — issue #29's "a diff the probe judged insufficient does not yield
+    /// a sufficient report", and issue #27's "the gate's summary must state the
+    /// sync did not apply" — are only reachable through
+    /// `ensure_documentation_parity` after a model has run. Without a seam, the
+    /// only testable surface is a helper that nothing is obliged to call, and a
+    /// suite pinning it can go green over an entry point that was never fixed.
+    ///
+    /// The shape here (a constructor taking the evaluation) is one of several
+    /// that would serve; an injected trait object or a boxed async closure would
+    /// do as well, and the implementer may substitute either. What the tests
+    /// depend on is only that the public entry point can be driven with a known
+    /// judgement and without a model.
+    #[allow(unused_variables)]
+    pub fn with_probe_override(agy_effort: String, evaluation: DocParityEvaluation) -> Self {
+        todo!("supply the doc-parity judgement without spawning the agy probe")
+    }
+
     /// Evaluates documentation parity, frontmatter compliance, and auto-generates any missing docs or ADRs.
     ///
     /// Published gate-count claims are owned by `corpus_sync`. That pass is
@@ -398,6 +422,17 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
     }
 }
 
+fn extract_json_block(text: &str) -> Option<String> {
+    let re = Regex::new(r"```json\s*([\s\S]*?)\s*```").ok()?;
+    if let Some(caps) = re.captures(text) {
+        return caps.get(1).map(|m| m.as_str().to_string());
+    }
+    if text.trim().starts_with('{') && text.trim().ends_with('}') {
+        return Some(text.trim().to_string());
+    }
+    None
+}
+
 #[cfg(test)]
 mod insufficient_docs_tests {
     //! Issue #29: absent or failed evidence is never a pass.
@@ -459,6 +494,29 @@ mod insufficient_docs_tests {
              sufficiency. summary was: {}",
             report.summary
         );
+        // The complement of the failed-write case below. A judgement WAS
+        // obtained and the tempdir is writable, so this is a real adverse
+        // finding, not absent evidence. Collapsing it into Errored contradicts
+        // `DocGuardReport::errored`'s documented contract and would let an
+        // implementation that writes nothing, ever, satisfy the honesty tests.
+        assert!(
+            report.errored.is_none(),
+            "a judgement was obtained and the write was possible, so this is a \
+             finding and not absent evidence: {:?}",
+            report.errored
+        );
+        assert!(
+            dir.path().join("docs/reference/newly-public.md").exists(),
+            "the file the probe named does not exist and the directory is \
+             writable, so it must actually be written"
+        );
+        assert!(
+            report
+                .files_created_or_updated
+                .contains(&"docs/reference/newly-public.md".to_string()),
+            "the file that was written must be reported as created/updated: {:?}",
+            report.files_created_or_updated
+        );
     }
 
     #[tokio::test]
@@ -483,6 +541,21 @@ mod insufficient_docs_tests {
             .await;
 
         let after = std::fs::read_to_string(&readme).unwrap();
+
+        // Unconditional: whatever the guard decides to do about an existing
+        // file it was told to update, clobbering the contributor's prose is not
+        // one of the options. "Amending" by overwriting with a generated stub
+        // is the same vandalism class as issues #27 and #28.
+        assert!(
+            after.contains("# Watched"),
+            "the existing README's heading must survive: {after:?}"
+        );
+        assert!(
+            after.contains("Nothing here mentions newly_public."),
+            "the existing README's prose must survive: {after:?}"
+        );
+
+        // Two legitimate outcomes, and both have to be honest.
         if after == before {
             assert!(
                 !report.is_sufficient,
@@ -495,6 +568,14 @@ mod insufficient_docs_tests {
                     .files_created_or_updated
                     .contains(&"README.md".to_string()),
                 "README.md is byte-identical, so it must not be reported as updated: {:?}",
+                report.files_created_or_updated
+            );
+        } else {
+            assert!(
+                report
+                    .files_created_or_updated
+                    .contains(&"README.md".to_string()),
+                "README.md was amended, so it must be reported as updated: {:?}",
                 report.files_created_or_updated
             );
         }
@@ -539,15 +620,4 @@ mod insufficient_docs_tests {
             report.files_created_or_updated
         );
     }
-}
-
-fn extract_json_block(text: &str) -> Option<String> {
-    let re = Regex::new(r"```json\s*([\s\S]*?)\s*```").ok()?;
-    if let Some(caps) = re.captures(text) {
-        return caps.get(1).map(|m| m.as_str().to_string());
-    }
-    if text.trim().starts_with('{') && text.trim().ends_with('}') {
-        return Some(text.trim().to_string());
-    }
-    None
 }

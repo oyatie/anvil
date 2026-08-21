@@ -22,21 +22,28 @@ fn manifest() -> String {
     fs::read_to_string("Cargo.toml").expect("Cargo.toml")
 }
 
+/// Direct `[dependencies]` crate names from a Cargo manifest.
+///
+/// A missing or unreadable `[dependencies]` table is a failed ratchet, not an
+/// empty set. The previous line-scan returned `BTreeSet::new()` when it could
+/// not find the exact bytes `\n[dependencies]\n`, so a reformatted or
+/// CRLF-normalized manifest would pass `deps.len() <= CEILING` with zero crates.
+fn direct_dependencies_from(manifest: &str) -> BTreeSet<String> {
+    let value: toml::Value = manifest.parse().expect("Cargo.toml must parse as TOML");
+    let table = value
+        .get("dependencies")
+        .and_then(|v| v.as_table())
+        .unwrap_or_else(|| {
+            panic!(
+                "Cargo.toml has no [dependencies] table; an unreadable manifest \
+             must fail the ratchet, not pass with zero crates"
+            )
+        });
+    table.keys().cloned().collect()
+}
+
 fn direct_dependencies() -> BTreeSet<String> {
-    let m = manifest();
-    let start = match m.find("\n[dependencies]\n") {
-        Some(i) => i + "\n[dependencies]\n".len(),
-        None => return BTreeSet::new(),
-    };
-    let rest = &m[start..];
-    let end = rest.find("\n[").unwrap_or(rest.len());
-    rest[..end]
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
-        .filter_map(|l| l.split('=').next())
-        .map(|n| n.trim().to_string())
-        .filter(|n| !n.is_empty())
-        .collect()
+    direct_dependencies_from(&manifest())
 }
 
 #[test]
@@ -99,4 +106,18 @@ fn the_policy_is_the_same_one_oyatie_uses() {
         "deny.toml must record that it is adopted from oyatie, so a reader knows where \
          to change it first"
     );
+}
+
+#[test]
+fn a_reformatted_dependencies_table_is_still_counted() {
+    let deps = direct_dependencies_from(
+        "[package]\nname = \"x\"\n[dependencies]\nfoo = \"1\"\nbar = { version = \"2\" }\n",
+    );
+    assert_eq!(deps, BTreeSet::from(["bar".to_string(), "foo".to_string()]));
+}
+
+#[test]
+#[should_panic(expected = "no [dependencies] table")]
+fn a_manifest_without_dependencies_fails_the_ratchet() {
+    let _ = direct_dependencies_from("[package]\nname = \"x\"\n");
 }

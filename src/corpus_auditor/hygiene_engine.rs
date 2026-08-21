@@ -43,24 +43,11 @@ impl ContinuousHygieneEngine {
                 let mut updated_content = content.clone();
                 let mut changed = false;
 
-                // Update last_verified_at if frontmatter exists
-                if content.contains("last_verified_at:") {
-                    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-                    // replace date
-                    let lines: Vec<String> = updated_content
-                        .lines()
-                        .map(|l| {
-                            if l.trim_start().starts_with("last_verified_at:") {
-                                format!("last_verified_at: \"{}\"", today)
-                            } else {
-                                l.to_string()
-                            }
-                        })
-                        .collect();
-                    updated_content = lines.join("\n");
-                    changed = true;
-                }
-
+                // No `last_verified_at` restamp here. These files were selected
+                // BECAUSE they are dormant, and stamping today's date onto one
+                // verifies nothing -- it only stops the ledger reporting the
+                // staleness. Freshness is a claim; a batch that cannot check it
+                // must not publish it.
                 // Demote unauthorized SSOT if outside docs/
                 if !record.file_path.starts_with("docs/")
                     && !record.file_path.starts_with("contracts/")
@@ -115,5 +102,43 @@ mod tests {
         let report =
             ContinuousHygieneEngine::generate_maintenance_batch(dir.path(), 5, false).unwrap();
         assert!(report.summary.contains("Continuous Hygiene Batch"));
+    }
+
+    /// The batch picks files BECAUSE they are dormant. Restamping the date it
+    /// selected them on would make every dormant document look verified and
+    /// leave nothing for a staleness check to find.
+    ///
+    /// The fixture is backdated with `touch`, because dormancy is decided by
+    /// mtime: a file written during the test is fresh, so it is never selected
+    /// and the assertion would hold no matter what the batch does.
+    #[test]
+    fn a_dormant_document_is_not_restamped_as_freshly_verified() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+        let page = dir.path().join("docs/runbook.md");
+        std::fs::write(
+            &page,
+            "---\nlast_verified_at: \"2025-01-01\"\n---\n# Runbook\n",
+        )
+        .unwrap();
+        assert!(
+            std::process::Command::new("touch")
+                .args(["-t", "202401010000"])
+                .arg(&page)
+                .status()
+                .expect("touch")
+                .success(),
+            "could not backdate the fixture, so it would not be dormant"
+        );
+
+        ContinuousHygieneEngine::generate_maintenance_batch(dir.path(), 5, false).unwrap();
+
+        assert!(
+            std::fs::read_to_string(&page)
+                .unwrap()
+                .contains("2025-01-01"),
+            "the dormant date was rewritten, so the document now claims a verification \
+             that nobody performed"
+        );
     }
 }

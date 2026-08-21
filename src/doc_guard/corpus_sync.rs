@@ -234,4 +234,50 @@ mod tests {
             )),
         );
     }
+
+    /// The `include_str!` pins above name one page each, so a decision record
+    /// added later is owned by `collect_owned_pages` at runtime while no test
+    /// can see it. This walks the same directories the runtime walks.
+    #[test]
+    fn every_decision_record_is_owned_and_honest() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut checked = 0usize;
+
+        for dir in ADR_DIRS {
+            let full = root.join(dir);
+            if !full.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&full).expect("read decision-record directory") {
+                let path = entry.expect("decision-record entry").path();
+                if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                let page = std::fs::read_to_string(&path).expect("read decision record");
+
+                assert_published_page_has_no_count_drift(&rel, &page);
+
+                // FrontmatterValidator makes this mandatory under the decision
+                // directories, but it only ever sees files in a PR's diff. Absent
+                // this check, a record can sit on main for months and fail the
+                // next PR that touches it, for a defect that PR did not introduce.
+                assert!(
+                    page.trim_start().starts_with("---"),
+                    "{rel} carries no frontmatter; frontmatter is mandatory for \
+                     decision records, so the next PR touching it fails DocGuard"
+                );
+                checked += 1;
+            }
+        }
+
+        assert!(
+            checked > 0,
+            "no decision records found under {ADR_DIRS:?}; the walk is broken, not the corpus"
+        );
+    }
 }

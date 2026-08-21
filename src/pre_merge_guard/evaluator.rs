@@ -88,6 +88,8 @@ impl PreMergeGuard {
     pub fn evaluate_pre_merge_gates(
         &self,
         diff_ctx: &PrDiffContext,
+        pr_title: &str,
+        pr_body: &str,
         doc_report: &DocGuardReport,
         cedar_report: &CedarGuardReport,
         compliance_report: &ComplianceGuardReport,
@@ -689,6 +691,10 @@ impl PreMergeGuard {
 
         let shape_status = shape_gate_status(shape_outcome);
 
+        // The Product seat's artifact rides on the change under review, so this
+        // reads the same title and body the reviewer and DocGuard already get.
+        let product_bar_status = super::product_bar::judge(pr_title, pr_body);
+
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
             is_certified_ready: false,
@@ -764,6 +770,7 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
+            product_bar_status,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
         };

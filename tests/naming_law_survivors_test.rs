@@ -693,6 +693,7 @@ fn live_gate_count() -> usize {
         schema_compat_status: GateStatus::Passed,
         performance_concurrency_status: GateStatus::Passed,
         test_suite_status: GateStatus::Passed,
+        product_bar_status: GateStatus::Passed,
         unmeasured_gates: Vec::new(),
         summary_markdown: String::new(),
     };

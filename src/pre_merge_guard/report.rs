@@ -95,6 +95,12 @@ pub struct PreMergeCertificationReport {
     pub schema_compat_status: GateStatus,
     pub performance_concurrency_status: GateStatus,
     pub test_suite_status: GateStatus,
+    /// The Product seat's artifact on the change under review: a written
+    /// problem and a done-when acceptance bar (ADR-0002, Discover §1).
+    ///
+    /// Quality sign-off cannot sign off without it, so absence is the defect
+    /// rather than an unread measurement.
+    pub product_bar_status: GateStatus,
     /// Gate ids that reported `NotMeasured`. Non-empty means certification is
     /// incomplete even when `is_certified_ready` is true: the badge and the
     /// merge-admission decision are deliberately decoupled (invariant I1 —
@@ -402,6 +408,7 @@ impl PreMergeCertificationReport {
             schema_compat_status: nm("schema_compat_status"),
             performance_concurrency_status: nm("performance_concurrency_status"),
             test_suite_status: nm("test_suite_status"),
+            product_bar_status: nm("product_bar_status"),
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
         };
@@ -567,6 +574,7 @@ mod tests {
             schema_compat_status: GateStatus::Passed,
             performance_concurrency_status: GateStatus::Passed,
             test_suite_status: GateStatus::Passed,
+            product_bar_status: GateStatus::Passed,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
         }

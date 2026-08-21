@@ -74,6 +74,25 @@
 //!      section: a suite whose only passing bodies spelled the marker one exact
 //!      way admitted a gate that fails closed on nearly every real change,
 //!      which is the fabricated accusation at 100% incidence.
+//!   8. **Sections whose lines disagree are pinned, in both directions.** The
+//!      revision before this one was exhaustive on *single-content* sections —
+//!      all real, all deferral, all blank — and silent on mixed ones, so a gate
+//!      reading only the first non-blank line of a section passed every test
+//!      and then rejected a three-item bar whose first line was an empty
+//!      checkbox. It also passed a gate that rejected any section *containing*
+//!      an invisible character, which fails every artifact pasted out of a
+//!      document editor. Real content beside a deferral, beside an invisible
+//!      character and beside a colon-terminated lead-in are now all pinned as
+//!      passing, and the all-deferral counterparts as failing, so the rule the
+//!      suite means — strip what is not content, then judge what is left — is
+//!      the only rule that satisfies it.
+//!   9. **Every family that can be line-ending-sensitive runs over both.** The
+//!      boundary and marker families are where CRLF actually bites: a trailing
+//!      `\r` defeats the `ends_with` test that recognises `**Testing**`,
+//!      `Testing:` and `**Done when**`, and `body.split('\n')` instead of
+//!      `body.lines()` is an entirely ordinary way to write an extractor. Under
+//!      LF alone the headline defect this file exists to close stayed open in
+//!      the exact line endings the GitHub web UI submits.
 //!
 //! Character count and byte count are also deliberately decoupled: the Korean
 //! fixtures are short in characters and long in bytes, so a heuristic in either
@@ -160,6 +179,15 @@ const PROBLEM: &str = "The canary gate rebuilds its verdict from `passed`, which
 const BAR: &str = "An unqueried canary reports NotMeasured and withholds merge-queue admission; a \
      queried canary with divergent P99 reports Failed; the scorecard names which \
      of the two happened.";
+
+/// A real acceptance bar written the way most of them are written: as a list of
+/// separately checkable criteria. Multi-line on purpose — an extractor that
+/// takes only the first line after the marker, and one that takes only the
+/// first *non-blank* line, are two different wrong gates and this fixture is
+/// what several families below use to separate them.
+const MULTILINE_BAR: &str = "- `slo_status` is NotMeasured when no telemetry endpoint is configured\n\
+     - `is_admissible()` is false while any gate is NotMeasured\n\
+     - the posted scorecard names every unmeasured gate by id";
 
 /// A genuine problem statement that happens to be one line long. Paired with
 /// `SHORT_BAR` it is the smallest change that has still done Product's job, and
@@ -319,6 +347,22 @@ impl Eol {
     }
 }
 
+/// Both line endings, so a family can be written once and run over each.
+const BOTH_EOLS: [Eol; 2] = [Eol::Lf, Eol::Crlf];
+
+/// `body`, re-terminated for `eol`.
+///
+/// The fixtures below are written in LF and rewritten here rather than
+/// threading a separator through every `format!`, which is how the CRLF twins
+/// in `awkward_bodies` are built too. The two are the same string: none of
+/// these fixtures contains a `\r` of its own.
+fn as_eol(body: &str, eol: Eol) -> String {
+    match eol {
+        Eol::Lf => body.to_string(),
+        Eol::Crlf => body.replace('\n', "\r\n"),
+    }
+}
+
 /// The marker spelling these fixtures commit to. See the module docs: the
 /// behaviour under test is what sits under the headings, never the headings.
 fn body_with_eol(problem: &str, done_when: &str, eol: Eol) -> String {
@@ -382,7 +426,7 @@ fn case_shapes(stem: &str) -> Vec<String> {
 /// Derived rather than listed on purpose: an implementation that satisfies this
 /// set by enumeration has to enumerate several hundred strings it cannot read
 /// off this file, which is more work than normalising and comparing.
-fn derived_deferrals() -> Vec<String> {
+fn multiply(stems: &[&str]) -> Vec<String> {
     let trailers = ["", ".", "!", "?", ":", "...", " -"];
     let wrappers: [fn(&str) -> String; 4] = [
         |s| s.to_string(),
@@ -392,7 +436,7 @@ fn derived_deferrals() -> Vec<String> {
     ];
 
     let mut out: BTreeSet<String> = BTreeSet::new();
-    for stem in DEFERRAL_STEMS {
+    for stem in stems {
         for shape in case_shapes(stem) {
             for trailer in trailers {
                 let token = format!("{shape}{trailer}");
@@ -403,6 +447,22 @@ fn derived_deferrals() -> Vec<String> {
         }
     }
     out.into_iter().collect()
+}
+
+fn derived_deferrals() -> Vec<String> {
+    multiply(DEFERRAL_STEMS)
+}
+
+/// The phrase deferrals under the same multiplication.
+///
+/// Listing the four raw literals and nothing else left the whole family
+/// satisfiable by `PHRASES.contains(&section.trim())` — four strings copied
+/// straight off the constant. That gate then passes a done-when reading
+/// `"See the linked issue."` or `"- see the linked issues"`, which is the
+/// sentence-case-and-a-full-stop spelling a human actually types. Multiplying
+/// them out makes copying the table strictly more work than normalising.
+fn derived_phrase_deferrals() -> Vec<String> {
+    multiply(PHRASE_DEFERRALS)
 }
 
 /// Asserts the gate blocked, and returns the message it blocked with.
@@ -583,11 +643,8 @@ fn a_change_carrying_a_written_problem_and_a_done_when_bar_passes() {
 fn a_bar_written_as_measurable_criteria_passes() {
     // The bar is far more often a list than a sentence. A gate that only
     // accepts prose would push authors back to writing nothing.
-    let criteria = "- `slo_status` is NotMeasured when no telemetry endpoint is configured\n\
-                    - `is_admissible()` is false while any gate is NotMeasured\n\
-                    - the posted scorecard names every unmeasured gate by id";
     expect_passed(
-        &body_with(PROBLEM, criteria),
+        &body_with(PROBLEM, MULTILINE_BAR),
         "an acceptance bar expressed as checkable criteria is the artifact, not a \
          lesser form of it",
     );
@@ -664,33 +721,53 @@ fn the_same_two_words_are_the_marker_however_the_author_formats_them() {
     // Every marker below is the SAME TWO WORDS. Case, heading depth, a trailing
     // colon and a bold label are how markdown is written, not what it says.
     // Synonyms are not pinned here — which words announce a section stays open.
-    for problem_marker in PROBLEM_MARKERS {
+    //
+    // Run over both line endings, because the two are not the same test. Every
+    // marker here that a gate recognises with `ends_with` — `**Done when**`,
+    // `## Done when:` — is defeated by the trailing `\r` a browser-submitted
+    // body carries, and `body.split('\n')` instead of `body.lines()` is an
+    // entirely ordinary way to write the extractor. Under LF alone this whole
+    // cross-product is green for a gate that rejects the same complete artifact
+    // the moment it is typed into the GitHub web UI.
+    for eol in BOTH_EOLS {
+        for problem_marker in PROBLEM_MARKERS {
+            for done_when_marker in DONE_WHEN_MARKERS {
+                expect_passed(
+                    &as_eol(
+                        &format!("{problem_marker}\n\n{PROBLEM}\n\n{done_when_marker}\n\n{BAR}\n"),
+                        eol,
+                    ),
+                    &format!(
+                        "a complete Product artifact under {problem_marker:?} and \
+                         {done_when_marker:?}, {eol:?}"
+                    ),
+                );
+            }
+        }
+
+        // The mirror, so widening recognition cannot itself become a fail-open:
+        // an empty section under any of those spellings is still an empty
+        // section.
         for done_when_marker in DONE_WHEN_MARKERS {
-            expect_passed(
-                &format!("{problem_marker}\n\n{PROBLEM}\n\n{done_when_marker}\n\n{BAR}\n"),
-                &format!(
-                    "a complete Product artifact under {problem_marker:?} and \
-                     {done_when_marker:?}"
+            expect_missing(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker}\n\n"),
+                    eol,
                 ),
+                &[Artifact::DoneWhenBar],
+                &format!("{done_when_marker:?} with nothing under it, {eol:?}"),
             );
         }
-    }
-
-    // The mirror, so widening recognition cannot itself become a fail-open: an
-    // empty section under any of those spellings is still an empty section.
-    for done_when_marker in DONE_WHEN_MARKERS {
-        expect_missing(
-            &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker}\n\n"),
-            &[Artifact::DoneWhenBar],
-            &format!("{done_when_marker:?} with nothing under it"),
-        );
-    }
-    for problem_marker in PROBLEM_MARKERS {
-        expect_missing(
-            &format!("{problem_marker}\n\n\n## Done when\n\n{BAR}\n"),
-            &[Artifact::WrittenProblem],
-            &format!("{problem_marker:?} with nothing under it"),
-        );
+        for problem_marker in PROBLEM_MARKERS {
+            expect_missing(
+                &as_eol(
+                    &format!("{problem_marker}\n\n\n## Done when\n\n{BAR}\n"),
+                    eol,
+                ),
+                &[Artifact::WrittenProblem],
+                &format!("{problem_marker:?} with nothing under it, {eol:?}"),
+            );
+        }
     }
 }
 
@@ -701,31 +778,44 @@ fn a_third_section_after_the_artifacts_does_not_hide_them() {
     // the marker" — which reads a bar of zero length and fails every filled-in
     // template instead. The boundary has to be pinned in both directions or the
     // slicing behaviour stays unspecified in both.
-    let multiline_bar = "- `slo_status` is NotMeasured when no telemetry endpoint is configured\n\
-                         - `is_admissible()` is false while any gate is NotMeasured\n\
-                         - the posted scorecard names every unmeasured gate by id";
+    // Both line endings: `**Testing**` and `Testing:` are recognised by an
+    // `ends_with` test, which a trailing `\r` defeats, so under CRLF a gate can
+    // stop seeing the boundary entirely — and then a complete artifact whose
+    // bar is followed by testing notes is judged on a section it mis-sliced.
+    for eol in BOTH_EOLS {
+        for header in THIRD_SECTION_HEADERS {
+            let third = third_section(header);
 
-    for header in THIRD_SECTION_HEADERS {
-        let third = third_section(header);
+            expect_passed(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n\n{third}"),
+                    eol,
+                ),
+                &format!("a complete artifact followed by a section headed {header:?}, {eol:?}"),
+            );
 
-        expect_passed(
-            &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n\n{third}"),
-            &format!("a complete artifact followed by a section headed {header:?}"),
-        );
+            // A multi-line bar followed by a third section: an extractor that
+            // takes only the first line after the marker still sees a bar here,
+            // but one that takes nothing does not.
+            expect_passed(
+                &as_eol(
+                    &format!(
+                        "## Problem\n\n{PROBLEM}\n\n## Done when\n\n{MULTILINE_BAR}\n\n{third}"
+                    ),
+                    eol,
+                ),
+                &format!("a three-line bar followed by a section headed {header:?}, {eol:?}"),
+            );
 
-        // A multi-line bar followed by a third section: an extractor that takes
-        // only the first line after the marker still sees a bar here, but one
-        // that takes nothing does not.
-        expect_passed(
-            &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{multiline_bar}\n\n{third}"),
-            &format!("a three-line bar followed by a section headed {header:?}"),
-        );
-
-        // A third section wedged BETWEEN the two artifacts.
-        expect_passed(
-            &format!("## Problem\n\n{PROBLEM}\n\n{third}\n## Done when\n\n{BAR}\n"),
-            &format!("a section headed {header:?} between the problem and the bar"),
-        );
+            // A third section wedged BETWEEN the two artifacts.
+            expect_passed(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{third}\n## Done when\n\n{BAR}\n"),
+                    eol,
+                ),
+                &format!("a section headed {header:?} between the problem and the bar, {eol:?}"),
+            );
+        }
     }
 }
 
@@ -747,39 +837,59 @@ fn a_third_section_does_not_hide_an_empty_one() {
     // produce: Problem / Done when / Testing, with the middle one skipped. The
     // author wrote nothing under the heading; what a later section happens to
     // say is not their acceptance bar, however many words it is.
-    for header in THIRD_SECTION_HEADERS {
-        let third = third_section(header);
+    // Under BOTH line endings, because LF alone leaves this whole family green
+    // for a gate that fails open on the shape GitHub's web UI actually submits.
+    // `str::lines()` strips a trailing `\r` and `.trim()` eats it, so a gate
+    // that finds its boundary with `ends_with("**")` or `ends_with(':')` on
+    // `body.split('\n')` sees `**Testing**\r` and `Testing:\r` as ordinary prose
+    // — and then swallows the testing notes as the acceptance bar of an empty
+    // `## Done when`. That is the headline defect of this file, certified, in
+    // the exact line endings a browser produces.
+    for eol in BOTH_EOLS {
+        for header in THIRD_SECTION_HEADERS {
+            let third = third_section(header);
 
-        for filler in ["", "   ", "TBD", "- [ ]"] {
-            expect_missing(
-                &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{filler}\n\n{third}"),
-                &[Artifact::DoneWhenBar],
-                &format!(
-                    "a done-when section holding only {filler:?}, followed by a section \
-                     headed {header:?}"
-                ),
-            );
+            for filler in ["", "   ", "TBD", "- [ ]"] {
+                expect_missing(
+                    &as_eol(
+                        &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{filler}\n\n{third}"),
+                        eol,
+                    ),
+                    &[Artifact::DoneWhenBar],
+                    &format!(
+                        "a done-when section holding only {filler:?}, followed by a section \
+                         headed {header:?}, {eol:?}"
+                    ),
+                );
 
-            // The mirror, so the problem-side extractor is pinned the same way.
-            expect_missing(
-                &format!("## Problem\n\n{filler}\n\n{third}\n## Done when\n\n{BAR}\n"),
-                &[Artifact::WrittenProblem],
-                &format!(
-                    "a problem section holding only {filler:?}, followed by a section \
-                     headed {header:?}"
-                ),
-            );
+                // The mirror, so the problem-side extractor is pinned the same
+                // way.
+                expect_missing(
+                    &as_eol(
+                        &format!("## Problem\n\n{filler}\n\n{third}\n## Done when\n\n{BAR}\n"),
+                        eol,
+                    ),
+                    &[Artifact::WrittenProblem],
+                    &format!(
+                        "a problem section holding only {filler:?}, followed by a section \
+                         headed {header:?}, {eol:?}"
+                    ),
+                );
 
-            // Both empty, with the third section carrying all the prose in the
-            // body. Neither artifact exists; the body is not short.
-            expect_missing(
-                &format!("## Problem\n\n{filler}\n\n## Done when\n\n{filler}\n\n{third}"),
-                &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
-                &format!(
-                    "both sections holding only {filler:?}, with a section headed \
-                     {header:?} carrying the only prose in the body"
-                ),
-            );
+                // Both empty, with the third section carrying all the prose in
+                // the body. Neither artifact exists; the body is not short.
+                expect_missing(
+                    &as_eol(
+                        &format!("## Problem\n\n{filler}\n\n## Done when\n\n{filler}\n\n{third}"),
+                        eol,
+                    ),
+                    &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
+                    &format!(
+                        "both sections holding only {filler:?}, with a section headed \
+                         {header:?} carrying the only prose in the body, {eol:?}"
+                    ),
+                );
+            }
         }
     }
 }
@@ -1016,6 +1126,10 @@ fn a_deferral_fails_however_it_is_capitalised_punctuated_or_bulleted() {
 
 #[test]
 fn a_deferral_phrase_fails_even_though_it_shares_no_prefix_with_the_table() {
+    // The prefix-disjointness invariant holds of the raw phrases: nothing in
+    // PLACEHOLDERS reaches them by accident. It is asserted on the raw form
+    // only, because the bullet wrappers below deliberately give the derived
+    // forms the same two-character prefix as `"- "`.
     for phrase in PHRASE_DEFERRALS {
         for enumerated in PLACEHOLDERS {
             let n = enumerated.len().min(phrase.len()).min(3);
@@ -1026,7 +1140,59 @@ fn a_deferral_phrase_fails_even_though_it_shares_no_prefix_with_the_table() {
                  placeholder {enumerated:?}, or the table reaches it by accident"
             );
         }
-        assert_placeholder_fails_in_both_sections(phrase, "deferral phrase");
+    }
+
+    // Multiplied out, exactly as `DEFERRAL_STEMS` is. Listing four lowercase,
+    // unpunctuated, unbulleted literals made this family satisfiable by
+    // `PHRASES.contains(&section.trim())` — four strings copied off the
+    // constant — and that gate then returns Passed for `"See the linked
+    // issue."`, `"Same as above!"` and `"- see the linked issues"`. The English
+    // sentence a human types is not the literal a table holds.
+    let derived = derived_phrase_deferrals();
+    let novel = derived
+        .iter()
+        .filter(|d| !PHRASE_DEFERRALS.contains(&d.as_str()))
+        .count();
+    assert!(
+        novel > 200,
+        "fixture invariant: the derived phrase family must contain far more strings \
+         than PHRASE_DEFERRALS enumerates, or copying that table into the gate is \
+         still a complete implementation; got {novel} novel of {} derived",
+        derived.len()
+    );
+
+    for phrase in &derived {
+        assert_placeholder_fails_in_both_sections(phrase, "derived deferral phrase");
+    }
+}
+
+#[test]
+fn a_pointer_to_somewhere_else_is_not_the_artifact() {
+    // The product decision the phrase deferrals were standing in for, stated on
+    // the shape it actually takes. "The artifact lives on the change under
+    // review" means a section whose entire content is a reference to another
+    // place has not produced it: the reviewer, the auditor and the scorecard
+    // all read this body, and none of them follows the link.
+    //
+    // Pinned separately from the phrases because a bare URL and a bare issue
+    // reference share no English with any of them, and because they are the
+    // commonest form of this defect by a wide margin — an author who defers
+    // pastes a link far more often than they write a sentence about deferring.
+    //
+    // Listed in open_questions as a decision a human can veto: a shop that
+    // accepts "the bar is in the linked issue" wants this family deleted, not
+    // weakened.
+    let pointers = [
+        "https://example.invalid/issues/4192",
+        "See https://example.invalid/issues/4192",
+        "#4192",
+        "See #4192",
+        "- https://example.invalid/issues/4192",
+        "example.invalid/issues/4192",
+    ];
+
+    for pointer in pointers {
+        assert_placeholder_fails_in_both_sections(pointer, "a pointer to somewhere else");
     }
 }
 
@@ -1047,6 +1213,159 @@ fn a_section_that_is_blank_only_to_a_reader_fails() {
     for blank in UNICODE_BLANKS {
         assert_placeholder_fails_in_both_sections(blank, "invisible section");
     }
+
+    // THE MIRROR, and without it this family is satisfied by rejecting any
+    // section that contains one of these characters at all:
+    //
+    //     if section.chars().any(|c| matches!(c, '\u{200b}' | '\u{feff}' | …)) {
+    //         return false;
+    //     }
+    //
+    // That gate passes every assertion above and then reports both artifacts
+    // missing from a complete, well-written one whose only sin is a
+    // non-breaking space between two words — which is what every body pasted
+    // out of Notion, Google Docs or Confluence carries, and what a leading BOM
+    // adds to a body pasted out of a file. High incidence, and a fabricated
+    // accusation is the same defect as a false green pointed the other way.
+    //
+    // The rule these two halves state together is: strip the invisible
+    // characters, then judge what is left. Not: reject on sight.
+    let nbsp_problem = "Checkout p99 regressed to 40ms\u{00a0}after the cache change, and the \
+                        rollout path is now certified against a measurement that never happened.";
+    let zwsp_bar = "- p99 under 5ms on the\u{200b} checkout path\n\
+                    - the scorecard names the unqueried canary";
+    expect_passed(
+        &body_with(nbsp_problem, zwsp_bar),
+        "a complete artifact carrying a non-breaking space and a zero-width space \
+         inside real prose; an invisible character next to real content does not \
+         erase the content",
+    );
+
+    let bom_problem = format!("\u{feff}{PROBLEM}");
+    let bom_bar = format!("\u{feff}{BAR}");
+    expect_passed(
+        &body_with(&bom_problem, &bom_bar),
+        "a complete artifact whose sections open with a byte order mark, which is what \
+         a body pasted out of a file carries",
+    );
+
+    // And the ideographic and em spaces, which arrive from the same editors.
+    expect_passed(
+        &body_with(
+            &PROBLEM.replacen(' ', "\u{2003}", 1),
+            &BAR.replacen(' ', "\u{3000}", 1),
+        ),
+        "a complete artifact carrying an em space and an ideographic space inside real \
+         prose",
+    );
+}
+
+#[test]
+fn a_section_mixing_a_deferral_with_real_content_is_judged_on_the_real_content() {
+    // THE DECISION THIS TEST SETTLES. Until it existed, no fixture anywhere in
+    // this file had a section whose lines disagreed: every passing section led
+    // with real content on every line, and every failing section was a deferral
+    // on every line. So `substantive(section)` could legally collapse to
+    // `substantive(first non-blank line)` — and the mirror,
+    // `section.lines().any(substantive)`, was equally legal. The two disagree
+    // about a partially-filled checklist, which is one of the commonest real
+    // shapes there is, and the suite decided nothing while reading as though it
+    // had.
+    //
+    // The rule is `any`: a section is the artifact if anything in it is. An
+    // author who left the first checkbox blank and then wrote three checkable
+    // criteria under it has done Product's job, and failing them is a
+    // fabricated accusation over a stray character. The `first line` rule is
+    // rejected here explicitly, not left to the implementer.
+    let checkbox_then_bar = format!("- [ ]\n{MULTILINE_BAR}");
+    expect_passed(
+        &body_with(PROBLEM, &checkbox_then_bar),
+        "a partially-filled checklist: an empty checkbox above three real, checkable \
+         criteria is a bar, and reading only the first line of the section calls it a \
+         template paste",
+    );
+
+    // The same thing the other way up, so the rule is not "skip the first line"
+    // either.
+    expect_passed(
+        &body_with(PROBLEM, &format!("{MULTILINE_BAR}\n- [ ]")),
+        "three real criteria with an empty checkbox left at the bottom",
+    );
+
+    // The problem-side mirror, both ways up.
+    expect_passed(
+        &body_with(&format!("TBD\n\n{PROBLEM}"), BAR),
+        "a problem section that opens with a leftover TBD and then states the problem",
+    );
+    expect_passed(
+        &body_with(&format!("{PROBLEM}\n\nTBD"), BAR),
+        "a problem section that states the problem and then trails a leftover TBD",
+    );
+
+    // And the bound on `any`, so it cannot be satisfied by a stray word: a
+    // section several lines long, every line of which is a deferral, is still
+    // no artifact. This is the fully-unfilled checklist, which is a template
+    // paste however tall it is.
+    let all_deferral = "- [ ]\n- [ ]\n- [ ]\n\nTBD\n\nN/A\n\nWIP\n\n???";
+    assert!(
+        all_deferral
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count()
+            > 4,
+        "fixture invariant: this section has to be several lines long, or it stops \
+         separating `any(substantive)` from `substantive(whole section)`"
+    );
+    assert_placeholder_fails_in_both_sections(all_deferral, "an unfilled checklist");
+}
+
+#[test]
+fn a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary() {
+    // The bound on `THIRD_SECTION_HEADERS`'s `"Testing:"` entry.
+    //
+    // That entry requires a bare colon-terminated paragraph line to end the
+    // section above it, which is the strongest demand this file makes. Until
+    // this test existed nothing bounded how aggressive the resulting rule could
+    // be: no passing fixture anywhere carried a colon-terminated line INSIDE a
+    // section, so "any short line ending in a colon is a heading" satisfied the
+    // whole suite — and that gate then reports a missing bar for a done-when
+    // that opens `Acceptance:` above its bullets, and a missing problem for one
+    // that opens `Today:`. A lead-in ending in a colon is ordinary technical
+    // writing; the suite created the pressure to reject it and then never
+    // checked the consequence.
+    //
+    // What separates the two, in these fixtures and in real markdown, is the
+    // blank line: a heading is followed by one and a lead-in is not. That is
+    // the only difference the fixtures rely on, and it is listed in
+    // open_questions as the disambiguation a human may veto — by dropping
+    // `"Testing:"` from `THIRD_SECTION_HEADERS` instead, which leaves the other
+    // four closing the boundary hole.
+    let lead_in_bar = format!("Acceptance:\n{MULTILINE_BAR}");
+    let lead_in_problem = format!("Today:\n{PROBLEM}");
+
+    for eol in BOTH_EOLS {
+        expect_passed(
+            &as_eol(&body_with(PROBLEM, &lead_in_bar), eol),
+            &format!("a bar introduced by the lead-in line \"Acceptance:\", {eol:?}"),
+        );
+        expect_passed(
+            &as_eol(&body_with(&lead_in_problem, BAR), eol),
+            &format!("a problem introduced by the lead-in line \"Today:\", {eol:?}"),
+        );
+        expect_passed(
+            &as_eol(&body_with(&lead_in_problem, &lead_in_bar), eol),
+            &format!("both sections introduced by a colon-terminated lead-in, {eol:?}"),
+        );
+    }
+
+    // The mirror, so this cannot be satisfied by abandoning the boundary rule
+    // altogether: a colon-terminated line with nothing but a lead-in under it
+    // is still an empty section.
+    expect_missing(
+        &body_with(PROBLEM, "Acceptance:"),
+        &[Artifact::DoneWhenBar],
+        "a done-when section holding a lead-in line and nothing to lead in to",
+    );
 }
 
 #[test]
@@ -1263,6 +1582,31 @@ fn the_verdict_is_the_same_whether_the_body_uses_lf_or_crlf() {
             "a done-when heading with nothing under it",
             Box::new(|eol| body_with_eol(PROBLEM, "", eol)),
         ),
+        // The three cases above are all `##`-headed with no third section,
+        // which is the one shape where CRLF is harmless: `str::lines()` strips
+        // the `\r` and `.trim()` eats it, so even a hand-rolled `#` branch
+        // survives. The two below are the shapes that actually separate a gate
+        // that handles CRLF from one that does not.
+        (
+            "an empty done-when above a bold third section",
+            Box::new(|eol| {
+                as_eol(
+                    &format!(
+                        "## Problem\n\n{PROBLEM}\n\n## Done when\n\n\n**Testing**\n\n{THIRD_SECTION_BODY}\n"
+                    ),
+                    eol,
+                )
+            }),
+        ),
+        (
+            "a complete artifact under bold labels rather than hashes",
+            Box::new(|eol| {
+                as_eol(
+                    &format!("**Problem**\n\n{PROBLEM}\n\n**Done when**\n\n{BAR}\n"),
+                    eol,
+                )
+            }),
+        ),
     ];
 
     for (name, build) in &cases {
@@ -1281,12 +1625,39 @@ fn the_verdict_is_the_same_whether_the_body_uses_lf_or_crlf() {
         );
     }
 
-    // Without this, "Failed under both line endings" would satisfy the loop
-    // above and the gate could still reject every web-authored change.
+    // "Failed under both line endings" would satisfy the loop above, so the
+    // absolute verdicts are pinned too — in both directions, on the two shapes
+    // that separate a CRLF-aware gate from a CRLF-blind one.
     expect_passed(
         &body_with_eol(PROBLEM, BAR, Eol::Crlf),
         "a complete Product artifact typed into the GitHub web UI; rejecting it \
          blocks the majority of real pull requests",
+    );
+
+    // A complete artifact under bold labels, submitted from a browser. A gate
+    // that recognises `**Done when**` with `ends_with("**")` over
+    // `body.split('\n')` sees `**Done when**\r`, recognises nothing, and
+    // reports both artifacts missing from a body that carries both.
+    expect_passed(
+        &as_eol(
+            &format!("**Problem**\n\n{PROBLEM}\n\n**Done when**\n\n{BAR}\n"),
+            Eol::Crlf,
+        ),
+        "a complete Product artifact under bold labels, typed into the GitHub web UI",
+    );
+
+    // The mirror, and the one that fails open: an empty `## Done when` whose
+    // next section is `**Testing**`. The same CRLF-blind gate misses the
+    // boundary and certifies the testing notes as the acceptance bar.
+    expect_missing(
+        &as_eol(
+            &format!(
+                "## Problem\n\n{PROBLEM}\n\n## Done when\n\n\n**Testing**\n\n{THIRD_SECTION_BODY}\n"
+            ),
+            Eol::Crlf,
+        ),
+        &[Artifact::DoneWhenBar],
+        "an empty done-when above a bold third section, typed into the GitHub web UI",
     );
 }
 
@@ -1341,11 +1712,63 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     // there is no way to reach the filesystem without naming something outside
     // it. Widening the list is a deliberate act with a diff to argue about,
     // which is the point.
+    //
+    // The allowlist is a determinism rule, not a style rule, so it must admit
+    // every spelling that is deterministic. Two corrections review found:
+    //
+    //   * `regex` is a first-class dependency of this crate and the house idiom
+    //     for exactly this kind of marker parsing — src/cedar_guard.rs,
+    //     src/supply_chain_guard.rs, src/clean_architecture_guard.rs,
+    //     src/adr_drift_ratchet.rs and src/cell_isolation_guard.rs all open with
+    //     `use regex::Regex;`. A compiled regex is pure: it reads the string it
+    //     is handed and nothing else. Rejecting it turned a correct
+    //     implementation red for a reason this test's own stated property —
+    //     "a file, an environment variable, a clock or the network" — does not
+    //     cover, and told the implementer to edit a settled specification test
+    //     mid-implementation, which is the one thing this project's method
+    //     forbids.
+    //   * `use std::{cmp, fmt};` is how anyone brings in two std modules. The
+    //     group is expanded into its members and each member held to the list on
+    //     its own, so the ban on `std::{` is gone: it forbade a spelling, not an
+    //     effect.
+    //
+    // `pub use` is matched too. It re-exports exactly as far as `use` reaches,
+    // so leaving it unmatched was a hole in the guard.
+    // The allowlist is only as good as the parser that feeds it, so the parser
+    // is exercised before it is trusted — including the grouped form that used
+    // to be banned outright and the `pub use` form that used to walk past.
+    for (line, want) in [
+        ("use regex::Regex;", vec!["regex::Regex"]),
+        ("pub use regex::Regex;", vec!["regex::Regex"]),
+        ("use std::{cmp, fmt};", vec!["std::cmp", "std::fmt"]),
+        (
+            "use std::{collections::BTreeSet, fmt::Write};",
+            vec!["std::collections::BTreeSet", "std::fmt::Write"],
+        ),
+        ("use std::{env, fs};", vec!["std::env", "std::fs"]),
+        (
+            "use std::collections::{self, BTreeMap};",
+            vec!["std::collections", "std::collections::BTreeMap"],
+        ),
+        ("use super::GateStatus;", vec!["super::GateStatus"]),
+        ("let x = 1;", vec![]),
+        ("    // use std::fs;", vec![]),
+    ] {
+        assert_eq!(
+            imported_paths(line),
+            want.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            "imported_paths({line:?}) misread the import; an allowlist fed by a \
+             parser that cannot read a grouped or re-exported import either bans a \
+             correct implementation or lets the filesystem through"
+        );
+    }
+
     let src = without_line_comments(&source("src/pre_merge_guard/product_bar.rs"));
 
     const ALLOWED_IMPORTS: &[&str] = &[
         "super::",
         "crate::",
+        "regex",
         "std::borrow",
         "std::cmp",
         "std::collections",
@@ -1357,25 +1780,21 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     ];
     for line in src.lines() {
         let trimmed = line.trim();
-        let Some(path) = trimmed.strip_prefix("use ") else {
-            continue;
-        };
-        let path = path.trim().trim_start_matches("::");
-        assert!(
-            ALLOWED_IMPORTS.iter().any(|a| path.starts_with(a)),
-            "src/pre_merge_guard/product_bar.rs imports {trimmed:?}, which is outside \
-             the allowlist {ALLOWED_IMPORTS:?}. The Product artifact is authored on the \
-             change under review and nowhere else: a gate that reads a file, an \
-             environment variable, a clock or the network is both a flake this suite \
-             could not attribute and a second source of truth for what the author \
-             wrote. If this module genuinely needs something else, widen the list here \
-             and say why"
-        );
+        for path in imported_paths(trimmed) {
+            assert!(
+                ALLOWED_IMPORTS.iter().any(|a| path.starts_with(a)),
+                "src/pre_merge_guard/product_bar.rs imports {trimmed:?}, which reaches \
+                 {path:?} — outside the allowlist {ALLOWED_IMPORTS:?}. The Product \
+                 artifact is authored on the change under review and nowhere else: a \
+                 gate that reads a file, an environment variable, a clock or the \
+                 network is both a flake this suite could not attribute and a second \
+                 source of truth for what the author wrote"
+            );
+        }
     }
 
     // The things reachable without a `use` line at all.
     for forbidden in [
-        "std::{",
         "env!",
         "option_env!",
         "include_str!",
@@ -1525,9 +1944,13 @@ fn a_missing_product_bar_withholds_certification() {
 // worse than no guard, so each assertion below is anchored on the loosest
 // spelling that still carries the fact:
 //
-//   * the evaluator receives the change's **body** — the parameter may be named
-//     `pr_body`, `body`, or reached through a struct field, as long as the name
-//     says body;
+//   * the evaluator receives the change's **body** — either as a parameter
+//     whose name says body (`pr_body`, `body`), or as a field whose name says
+//     body on `PrDiffContext`, the change-under-review struct the evaluator
+//     already takes. Both are read, and the check is the claim: an earlier
+//     revision promised the struct route in this comment and then asserted a
+//     literal `"body"` inside the parameter list, so it failed a correct
+//     `diff_ctx.pr_body` wiring while accusing it of gating nothing;
 //   * `product_bar_status` is derived from a call to product_bar's `judge` —
 //     qualified (`product_bar::judge(...)`) or imported (`use
 //     super::product_bar::judge;` then `judge(...)`), directly or through a
@@ -1550,6 +1973,75 @@ fn without_line_comments(src: &str) -> String {
         .map(strip_line_comment)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Every crate path a `use` line reaches, with a grouped import expanded into
+/// its members: `use std::{cmp, fmt};` yields `std::cmp` and `std::fmt`, and
+/// `use std::{collections::BTreeSet, fmt::Write};` yields both of those.
+///
+/// Returns empty for a line that is not an import.
+///
+/// Expansion rather than a ban on braces: the property the allowlist enforces
+/// is that the verdict is a function of the string the gate was handed, and a
+/// grouped import reaches exactly the same modules a sequence of single imports
+/// would. `pub use` counts as an import for the same reason.
+fn imported_paths(line: &str) -> Vec<String> {
+    let t = line.trim();
+    let rest = t
+        .strip_prefix("pub use ")
+        .or_else(|| t.strip_prefix("use "))
+        .map(|r| r.trim().trim_end_matches(';').trim())
+        .map(|r| r.trim_start_matches("::"));
+    let Some(rest) = rest else {
+        return Vec::new();
+    };
+
+    let Some(open) = rest.find('{') else {
+        return vec![rest.to_string()];
+    };
+    let prefix = &rest[..open];
+    let Some(close) = rest.rfind('}') else {
+        return vec![rest.to_string()];
+    };
+    let inner = &rest[open + 1..close];
+
+    // Split the group on the commas that are not inside a nested group, then
+    // expand each member against the shared prefix. `self` re-imports the
+    // prefix itself.
+    let mut members: Vec<String> = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for c in inner.chars() {
+        match c {
+            '{' => {
+                depth += 1;
+                current.push(c);
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                current.push(c);
+            }
+            ',' if depth == 0 => members.push(std::mem::take(&mut current)),
+            _ => current.push(c),
+        }
+    }
+    members.push(current);
+
+    let mut out = Vec::new();
+    for member in members {
+        let member = member.trim();
+        if member.is_empty() {
+            continue;
+        }
+        if member == "self" {
+            out.push(prefix.trim_end_matches("::").to_string());
+        } else if member.contains('{') {
+            out.extend(imported_paths(&format!("use {prefix}{member};")));
+        } else {
+            out.push(format!("{prefix}{member}"));
+        }
+    }
+    out
 }
 
 /// One line, with any `//` comment on it dropped.
@@ -1714,6 +2206,82 @@ fn leading_ident(expr: &str) -> String {
         .collect()
 }
 
+/// The field names declared by `struct <name> { .. }` in `src`.
+///
+/// One level of braces, which is all a plain data struct has.
+fn struct_fields(src: &str, name: &str) -> Vec<String> {
+    let anchor = format!("struct {name} {{");
+    let Some(start) = src.find(&anchor) else {
+        return Vec::new();
+    };
+    let body = &src[start + anchor.len()..];
+    let end = body.find('}').unwrap_or(body.len());
+    body[..end]
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim().trim_start_matches("pub ").trim();
+            let colon = t.find(':')?;
+            let name = t[..colon].trim();
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Fields on `PrDiffContext` that carry text authored on the change.
+///
+/// `PrDiffContext` (src/git_manager/diff_context.rs) IS the change-under-review
+/// struct: repo, pr_number, base_sha, head_sha, diff_content, changed_files.
+/// The evaluator already receives it. Adding `pub pr_body: String` to it,
+/// populating it where the context is built, and judging `&diff_ctx.pr_body` is
+/// a correct, complete and arguably cleaner wiring than a sixty-ninth
+/// parameter — and the previous revision of the two guards below failed it,
+/// with a message accusing it of the precise defect it does not have. That is
+/// this file's own standard ("a wiring guard that misreads the wiring and then
+/// reports a correct implementation as broken is worse than no guard")
+/// violated by the guard that states it.
+///
+/// The fact these guards pin is that the body reaches the gate. Which of the
+/// two routes carries it is the implementer's to choose, so both are read.
+fn diff_context_body_fields() -> Vec<String> {
+    let src = without_line_comments(&source("src/git_manager/diff_context.rs"));
+    struct_fields(&src, "PrDiffContext")
+        .into_iter()
+        .filter(|f| f.contains("body"))
+        .collect()
+}
+
+/// The `let` statement that binds `name` in `src`, from the `let` to the `;`
+/// that closes it.
+///
+/// Used to ask what a call-site argument was built from: if the body rides on
+/// the change-under-review struct rather than on a parameter of its own, the
+/// pipeline's obligation is that the statement producing that struct was handed
+/// the body.
+fn binding_statement(src: &str, name: &str) -> Option<String> {
+    let mut from = 0usize;
+    while let Some(i) = src[from..].find("let ") {
+        let start = from + i;
+        let tail = &src[start + "let ".len()..];
+        let bound = tail
+            .trim_start()
+            .trim_start_matches("mut ")
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<String>();
+        if bound == name {
+            let end = tail.find(';').map(|e| start + "let ".len() + e + 1);
+            return Some(src[start..end.unwrap_or(src.len())].to_string());
+        }
+        from = start + "let ".len();
+    }
+    None
+}
+
 #[test]
 fn the_evaluator_receives_the_change_under_review() {
     let src = without_line_comments(&source("src/pre_merge_guard/evaluator.rs"));
@@ -1727,14 +2295,28 @@ fn the_evaluator_receives_the_change_under_review() {
     let signature = &tail[..end];
 
     // The fact, not the spelling: the evaluator has to be handed the text the
-    // Product artifact is written in. `pr_body`, `body`, or a field of a
-    // `ChangeUnderReview` struct all satisfy this; a gate cannot measure text
-    // the evaluator is never given, and a gate that measures nothing gates
-    // nothing.
+    // Product artifact is written in. A gate cannot measure text the evaluator
+    // is never given, and a gate that measures nothing gates nothing.
+    //
+    // Two routes carry that fact and this test accepts either. A parameter
+    // whose name says body is one. The other is a field whose name says body on
+    // `PrDiffContext` — the change-under-review struct the evaluator already
+    // receives — which is a correct, complete and arguably cleaner wiring than
+    // a sixty-ninth positional argument. The previous revision of this test
+    // promised that second route in a comment and then asserted the first, so
+    // it would have failed the cleaner implementation while accusing it of the
+    // one defect it does not have.
+    let named_parameter = signature.contains("body");
+    let body_fields = diff_context_body_fields();
+    let on_the_change_under_review = signature.contains("PrDiffContext") && !body_fields.is_empty();
+
     assert!(
-        signature.contains("body"),
+        named_parameter || on_the_change_under_review,
         "evaluate_pre_merge_gates never receives the change's body, which is where \
-         the written problem and the done-when bar are authored. Signature: \
+         the written problem and the done-when bar are authored. Hand it a parameter \
+         whose name says body, or put the body on PrDiffContext — the \
+         change-under-review struct this signature already takes — and either \
+         satisfies this. PrDiffContext body fields: {body_fields:?}. Signature: \
          {signature:?}"
     );
 }
@@ -1830,12 +2412,29 @@ fn the_review_pipeline_hands_the_evaluator_the_change_body() {
         .map(|l| l.trim().trim_end_matches(',').to_string())
         .collect();
 
+    // Same two routes as the test above, for the same reason. Either the
+    // pipeline hands the evaluator an argument that names the body, or the body
+    // rides on the change-under-review struct — in which case the pipeline's
+    // obligation is that the statement building that struct was handed the
+    // body, since a `PrDiffContext` with an empty `pr_body` gates exactly as
+    // much as no body at all.
+    let handed_directly = args.iter().any(|a| a.contains("body"));
+
+    let body_fields = diff_context_body_fields();
+    let built_from_the_body = !body_fields.is_empty()
+        && args.iter().any(|a| {
+            let ident = leading_ident(a.trim_start_matches('&').trim_start_matches("mut ").trim());
+            binding_statement(&src, &ident).is_some_and(|s| s.contains("body"))
+        });
+
     assert!(
-        args.iter().any(|a| a.contains("body")),
+        handed_directly || built_from_the_body,
         "the review pipeline never hands the evaluator the pull request body, which \
-         is where the written problem and the done-when bar are authored. The gate \
-         then has nothing to read, and a gate that reads nothing gates nothing: \
-         {args:?}"
+         is where the written problem and the done-when bar are authored. Pass it as \
+         an argument that names the body, or build the PrDiffContext from the body \
+         and pass that. The gate otherwise has nothing to read, and a gate that reads \
+         nothing gates nothing. Arguments: {args:?}. PrDiffContext body fields: \
+         {body_fields:?}"
     );
 }
 
@@ -1947,5 +2546,70 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
             "pr_body".to_string()
         )],
         "a qualified call must be found exactly once, not twice"
+    );
+
+    // The struct-field reader, which is what lets the body reach the gate
+    // through `PrDiffContext` instead of through a parameter of its own. It has
+    // to see a field that is there and not invent one that is not, or the
+    // widened guards above become either a no-op or a false accusation.
+    let decl = "#[derive(Debug, Clone)]\n\
+                pub struct PrDiffContext {\n\
+                \x20   pub repo: String,\n\
+                \x20   pub pr_number: u64,\n\
+                \x20   pub pr_body: String,\n\
+                \x20   pub diff_content: String,\n\
+                }\n";
+    assert_eq!(
+        struct_fields(decl, "PrDiffContext"),
+        vec!["repo", "pr_number", "pr_body", "diff_content"],
+        "struct_fields misread the change-under-review struct"
+    );
+    assert!(
+        struct_fields(decl, "SomeOtherStruct").is_empty(),
+        "struct_fields must find nothing for a struct that is not declared here"
+    );
+
+    // And it must be pointed at the real struct, not at a file that no longer
+    // declares it. `diff_context_body_fields()` returning nothing is how the
+    // guards above conclude "the body does not ride on the change-under-review
+    // struct", so a moved file or a renamed struct would quietly turn that
+    // branch into a permanent no — an answer the guard would give with no
+    // evidence behind it.
+    let real = struct_fields(
+        &without_line_comments(&source("src/git_manager/diff_context.rs")),
+        "PrDiffContext",
+    );
+    for field in ["repo", "pr_number", "diff_content", "changed_files"] {
+        assert!(
+            real.iter().any(|f| f == field),
+            "src/git_manager/diff_context.rs no longer declares PrDiffContext with a \
+             {field:?} field, so this file is not reading the change-under-review \
+             struct any more and the wiring guards' second route answers 'no' without \
+             looking. Found: {real:?}"
+        );
+    }
+
+    // The binding reader, which is what lets the pipeline satisfy its half by
+    // building the diff context from the body rather than passing it separately.
+    let pipeline = "    let repo_dir = state.git_mgr.ensure_repo_cloned(repo).await?;\n\
+                     \x20   let diff_ctx = state\n\
+                     \x20       .git_mgr\n\
+                     \x20       .prepare_pr_diff(repo, pr_number, base_sha, head_sha, body)\n\
+                     \x20       .await?;\n";
+    let bound = binding_statement(pipeline, "diff_ctx").expect("diff_ctx is bound by a let");
+    assert!(
+        bound.contains("prepare_pr_diff") && bound.contains("body") && bound.ends_with(';'),
+        "binding_statement read the wrong span for diff_ctx: {bound:?}"
+    );
+    assert!(
+        !binding_statement(pipeline, "repo_dir")
+            .expect("repo_dir is bound by a let")
+            .contains("prepare_pr_diff"),
+        "binding_statement must stop at the semicolon that closes the statement, or \
+         every binding looks like it was built from every later value"
+    );
+    assert!(
+        binding_statement(pipeline, "cert_report").is_none(),
+        "binding_statement must find nothing for an identifier no let binds"
     );
 }

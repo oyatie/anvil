@@ -306,7 +306,9 @@
 //! No gate is added, no report field is added, `TOTAL_GATES` is untouched.
 
 use anvil::git_manager::PrDiffContext;
+use anvil::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport};
 use anvil::trace_context_guard::{TraceContextGuard, TraceContextReport};
+use anvil::webhook::pipelines::review::scorecard_comment;
 use std::path::{Path, PathBuf};
 
 // -------------------------------------------------------------------------
@@ -1758,6 +1760,44 @@ fn the_sibling_propagation_form_is_recognised_and_a_thread_is_told_a_fix_that_co
          sends the author looking for an async fix that does not exist here. \
          The finding said: {advice:?}"
     );
+
+    // `tokio::task::spawn_blocking` is handed an `FnOnce() -> R` for the same
+    // reason, and gate 4 (`rust_language_policy/engine.rs`) actively instructs
+    // authors to move blocking calls onto it. A remedy decided by the substring
+    // `thread::spawn` alone hands every other closure-taking boundary the
+    // combinator that does not compile -- so gate 4 prescribes the form gate 17
+    // then blocks with a fix the compiler rejects.
+    let blocking = run(&diff_of(&[(
+        "src/dispatch.rs",
+        &as_added(
+            "pub async fn dispatch() {\n    tokio::task::spawn_blocking(move || {\n        heavy();\n    });\n}",
+        ),
+    )]));
+    assert_eq!(
+        blocking.detached_findings.len(),
+        1,
+        "the blocking task is a boundary that carries no span. Summary was: {}",
+        blocking.summary
+    );
+    let advice = blocking.detached_findings[0].issue.clone();
+    assert!(
+        !advice.contains(".instrument("),
+        "`spawn_blocking` takes an `FnOnce() -> R` and `Instrumented<F>` is not \
+         one, so the combinator does not compile here either. The gate told the \
+         author to write it anyway: {advice:?}"
+    );
+    assert!(
+        advice.to_lowercase().contains("enter"),
+        "having ruled out the combinator, the finding has to name the fix that \
+         does work -- entering the caller's span inside the closure. It said: \
+         {advice:?}"
+    );
+    assert!(
+        !advice.to_lowercase().contains("asynchronous task"),
+        "the work handed to `spawn_blocking` is a closure, not an asynchronous \
+         task; calling it one sends the author to an async fix that does not \
+         apply. The finding said: {advice:?}"
+    );
 }
 
 #[test]
@@ -2213,5 +2253,550 @@ fn an_accusation_says_the_line_it_names_may_be_one_the_change_only_kept() {
          introduced and goes looking through their own change for it. Summary \
          was: {}",
         report.summary
+    );
+}
+
+// -------------------------------------------------------------------------
+// 5. The verdict the guard reached is the verdict the reader is shown
+// -------------------------------------------------------------------------
+
+/// The scorecard body Anvil actually posts, for a certification report in which
+/// `trace_status` is whatever the guard decided and every other gate is left
+/// unmeasured.
+///
+/// The baseline matters: `publish::scorecard::render` enumerates findings and
+/// says nothing whatever about a gate it considers passing, so "the sentence
+/// reached a reader" is not a property of the string the guard composed. It is
+/// a property of the status the guard hands the evaluator, and it can only be
+/// observed by rendering.
+fn published_with_trace_status(status: &GateStatus) -> String {
+    let mut report = PreMergeCertificationReport::unmeasured(
+        "baseline for this fixture: only gate 17 is exercised here",
+    );
+    report.trace_status = status.clone();
+    report.seal();
+    scorecard_comment(&report)
+}
+
+/// The four diffs that reach the four arms of the guard's verdict, each with a
+/// short name for what it is.
+fn arm_fixtures() -> Vec<(&'static str, TraceContextReport)> {
+    vec![
+        (
+            "nothing-to-measure",
+            run(&diff_of(&[("src/plain.rs", "+pub const ROWS: usize = 3;")])),
+        ),
+        (
+            "clean",
+            run(&diff_of(&[(
+                "src/clean.rs",
+                &as_added(
+                    "pub async fn go() {\n    tokio::spawn(work().instrument(tracing::info_span!(\"w\")));\n}",
+                ),
+            )])),
+        ),
+        (
+            "detached",
+            run(&diff_of(&[(
+                "src/detached.rs",
+                &as_added(
+                    "pub async fn go() {\n    tokio::spawn(async move { work().await; });\n}",
+                ),
+            )])),
+        ),
+        (
+            "unresolved",
+            run(&diff_of(&[(
+                "src/unresolved.rs",
+                "+    tokio::spawn(async move {\n+        work().await;",
+            )])),
+        ),
+    ]
+}
+
+#[test]
+fn every_sentence_the_guard_composes_is_carried_by_the_status_it_hands_over() {
+    // The guard writes four sentences and the pipeline published one of them.
+    // `GateStatus::Passed` is a unit variant, so a status rebuilt downstream
+    // from `is_propagated` discards the other three before any reader sees
+    // them -- a gate formatting prose it knows is thrown away is the same
+    // unmeasured assurance this lane exists to remove, one layer up.
+    //
+    // What is pinned here is that the guard *decides* and the decision travels:
+    // whatever verdict it reached, the status it hands over carries the
+    // sentence it wrote, so no mapping downstream can drop it.
+    for (name, report) in arm_fixtures() {
+        let carried = match &report.status {
+            GateStatus::Passed | GateStatus::AutoUpdated => None,
+            GateStatus::Warning(s) | GateStatus::Failed(s) | GateStatus::Errored(s) => Some(s),
+            GateStatus::NotMeasured { reason, .. } => Some(reason),
+        };
+        if name == "clean" {
+            // A measurement that ran and found every boundary instrumented has
+            // nothing to report, and the scorecard's rule is findings only. It
+            // is the one arm entitled to be silent.
+            assert!(
+                matches!(report.status, GateStatus::Passed),
+                "a diff whose boundaries were inspected and carry spans is a \
+                 pass. The guard published {:?} with summary: {}",
+                report.status,
+                report.summary
+            );
+        } else {
+            assert_eq!(
+                carried,
+                Some(&report.summary),
+                "the {name} arm composed a sentence and handed over a status \
+                 that does not carry it. Status was {:?}; the sentence the \
+                 guard wrote was: {}",
+                report.status,
+                report.summary
+            );
+        }
+    }
+}
+
+#[test]
+fn a_diff_the_gate_found_no_boundary_in_says_so_on_the_scorecard() {
+    // The published claim issue #14 filed: a pull request that crosses no async
+    // boundary renders as a bare tick inside `Certified -- N/N gates passed`,
+    // one of which inspected nothing. The sentence that says nothing was
+    // inspected has to reach the surface the reviewer reads, not merely the
+    // struct field the evaluator drops.
+    let report = run(&diff_of(&[("src/plain.rs", "+pub const ROWS: usize = 3;")]));
+    let published = published_with_trace_status(&report.status);
+
+    assert!(
+        published.contains(&report.summary),
+        "the guard wrote {:?} and the scorecard published none of it:\n{published}",
+        report.summary
+    );
+    assert!(
+        published.contains("**trace**"),
+        "the row has to name the gate, or the reader cannot tell which of \
+         seventy-two inspected nothing:\n{published}"
+    );
+}
+
+#[test]
+fn a_boundary_the_gate_saw_and_could_not_judge_is_disclosed_rather_than_passed() {
+    // `unresolved` counts a boundary that was *there* and could not be
+    // classified -- its parenthesis closes outside the hunk that opened it.
+    // Routed to the same badge and the same status as "there was nothing to
+    // look at", an uninstrumented spawn a pull request adds ships green and
+    // undisclosed. The corpus keeps the two apart: `coverage_guard.rs` maps
+    // nothing-to-look-at to `Passed` and a thing it could not measure to
+    // `NotMeasured`.
+    let unresolved = run(&diff_of(&[(
+        "src/unresolved.rs",
+        "+    tokio::spawn(async move {\n+        work().await;",
+    )]));
+    let empty = run(&diff_of(&[("src/plain.rs", "+pub const ROWS: usize = 3;")]));
+
+    assert_ne!(
+        unresolved.status, empty.status,
+        "a boundary that was seen and could not be judged is not the same \
+         finding as a diff with no boundary in it, and the two must not reach \
+         the reader under one status. The sentences were {:?} and {:?}",
+        unresolved.summary, empty.summary
+    );
+    assert!(
+        !matches!(unresolved.status, GateStatus::Passed),
+        "the gate saw a task boundary and reached no verdict about it; \
+         publishing that as a pass is the false green this lane exists to \
+         close. Summary was: {}",
+        unresolved.summary
+    );
+
+    let published = published_with_trace_status(&unresolved.status);
+    assert!(
+        published.contains(&unresolved.summary),
+        "the count of boundaries the gate could not judge, and the reason, \
+         have to reach the surface the reviewer reads. The guard wrote {:?} \
+         and the scorecard published:\n{published}",
+        unresolved.summary
+    );
+    assert!(
+        numeric_tokens(&unresolved.summary).contains(&1),
+        "one boundary was seen and not judged, and the reader is owed that \
+         number. The numbers published were {:?}. Summary was: {}",
+        numeric_tokens(&unresolved.summary),
+        unresolved.summary
+    );
+}
+
+// -------------------------------------------------------------------------
+// 6. A location the gate publishes is a line the file has
+// -------------------------------------------------------------------------
+
+#[test]
+fn the_marker_git_writes_for_a_missing_final_newline_is_not_a_shipped_line() {
+    // `\ No newline at end of file` is written by git into the middle of a hunk
+    // whenever the pre-image's final line lacked a trailing newline and is
+    // being replaced. It is not a body line: it occupies no position in either
+    // image. Counted as one, every location after it in that hunk is published
+    // one too high -- and on a two-line post-image, past the end of the file.
+    //
+    // The author does nothing unusual to produce it, so this defeats the
+    // post-image guarantee on ordinary git output.
+    let replaced = "@@ -1,2 +1,2 @@\n\
+                    -old\n\
+                    \\ No newline at end of file\n\
+                    +new\n\
+                    +tokio::spawn(work());";
+    let report = run(&diff_of(&[("src/m.rs", replaced)]));
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "one boundary here attaches no span. Summary was: {}",
+        report.summary
+    );
+    assert_eq!(
+        report.detached_findings[0].line_number, 2,
+        "the post-image of this hunk is two lines -- `new`, then the spawn -- \
+         so the spawn is at line 2. A marker counted as a body line pushes \
+         every later location past the end of the file. Summary was: {}",
+        report.summary
+    );
+
+    let mid_hunk = "@@ -1,4 +1,5 @@\n\
+                     fn a() {}\n\
+                    \\ No newline at end of file\n\
+                    +fn b() {}\n\
+                     tokio::spawn(async move { work().await; });";
+    let report = run(&diff_of(&[("src/w.rs", mid_hunk)]));
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "one boundary here attaches no span. Summary was: {}",
+        report.summary
+    );
+    assert_eq!(
+        report.detached_findings[0].line_number, 3,
+        "two lines ship above the spawn, so it is at post-image line 3; the \
+         marker between them is not one of them. Summary was: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains("src/w.rs:3"),
+        "the sentence a reviewer reads carries the location, so it has to \
+         carry the right one. Summary was: {}",
+        report.summary
+    );
+}
+
+// -------------------------------------------------------------------------
+// 7. The gate reads every Rust chunk it was handed
+// -------------------------------------------------------------------------
+
+#[test]
+fn a_rust_body_that_contains_the_words_of_a_diff_header_is_still_read() {
+    // The chunk splitter cut the diff on the bare substring `diff --git`, which
+    // occurs in body text as readily as in a header. Everything after it in
+    // that file's diff lands in a fragment with no `+++ ` header, so the path
+    // is unreadable and the rest of the file is dropped without a word -- and
+    // the gate then publishes that it found no boundary.
+    //
+    // That is absent evidence rendered as a pass, the failure this lane exists
+    // to close, and it is a one-line evasion available to any author on a
+    // watched repository. A comment is enough.
+    let commented = "+    // context: diff --git a/x b/x\n\
+                     +    tokio::spawn(async move { evil().await; });";
+    let report = run(&diff_of(&[("src/fleet_probe.rs", commented)]));
+    assert_eq!(
+        report.tasks_scanned, 1,
+        "the hunk plainly contains one task boundary and the gate reported \
+         that it read none. Summary was: {}",
+        report.summary
+    );
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "that boundary attaches no span. Summary was: {}",
+        report.summary
+    );
+
+    // The same literal inside a string, which is how it reaches this
+    // repository's own test suite: `diff_of` above writes it on every fixture,
+    // so the gate was blind to the file pinning its behaviour.
+    let quoted = "+    let fixture = \"diff --git a/src/q.rs b/src/q.rs\";\n\
+                  +    tokio::spawn(async move { work().await; });";
+    let report = run(&diff_of(&[("tests/f.rs", quoted)]));
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "a Rust body quoting a diff header is still Rust. The gate reported {} \
+         finding(s) and published: {}",
+        report.detached_findings.len(),
+        report.summary
+    );
+}
+
+// -------------------------------------------------------------------------
+// 8. The sentence states the predicate the code evaluated
+// -------------------------------------------------------------------------
+
+#[test]
+fn the_failing_sentence_states_the_predicate_the_gate_actually_evaluated() {
+    // The scan diverts the text of a nested boundary into that boundary's own
+    // frame, so what it tests is "inside the region it opens, *minus the
+    // regions its nested boundaries own*". The published sentence dropped the
+    // qualifier and asserted the stronger claim -- on the one surface an author
+    // reads while looking straight at the `.instrument(` the sentence says is
+    // not there.
+    let nested = run(&diff_of(&[(
+        "src/y.rs",
+        "+tokio::spawn(async move { set.spawn(child().instrument(sp())); other().await; });",
+    )]));
+
+    assert_eq!(
+        nested.detached_findings.len(),
+        1,
+        "the outer task carries no span of its own; the inner one does. \
+         Summary was: {}",
+        nested.summary
+    );
+    assert!(
+        nested.summary.to_lowercase().contains("nest"),
+        "the reader is looking at an `.instrument(` inside the parentheses the \
+         accused line opens, and the sentence tells them there is none. It has \
+         to name the exclusion the code applies -- the regions of the \
+         boundaries nested inside this one. It said: {}",
+        nested.summary
+    );
+
+    // A sentence that reports one finding among one boundary and calls it
+    // "1 of 1 task boundaries" is a format string that never learned to count.
+    let single = run(&diff_of(&[(
+        "src/single.rs",
+        "+tokio::spawn(async move { work().await; });",
+    )]));
+    assert!(
+        !single.summary.contains("1 of 1 task boundaries"),
+        "one boundary is a boundary. Summary was: {}",
+        single.summary
+    );
+}
+
+// -------------------------------------------------------------------------
+// 9. Each boundary is told the fix for its own callee
+// -------------------------------------------------------------------------
+
+/// The two remedies a finding can carry, told apart by what they instruct.
+fn is_closure_remedy(issue: &str) -> bool {
+    !issue.contains(".instrument(") && issue.to_lowercase().contains("enter")
+}
+
+#[test]
+fn each_boundary_on_a_line_carries_the_remedy_for_its_own_callee() {
+    // The remedy was read off everything to the left of the call's parenthesis
+    // on the line, so for the second and later boundaries the prefix included
+    // the earlier calls and the kind was taken from the wrong callee. Both
+    // findings then carry one string, `remedies()` dedupes them to it, and the
+    // author of the async task is told to hold a span guard across an await --
+    // the anti-pattern -- while the advice that fits it is never published at
+    // all. A misattributed remedy that reaches the reader is worse than one
+    // nobody saw.
+    let orderings = [
+        "+let a = std::thread::spawn(move || work()); let b = tokio::spawn(async move { work().await; });",
+        "+let b = tokio::spawn(async move { work().await; }); let a = std::thread::spawn(move || work());",
+    ];
+    for body in orderings {
+        let report = run(&diff_of(&[("src/mixed.rs", body)]));
+        assert_eq!(
+            report.detached_findings.len(),
+            2,
+            "both calls on this line open a boundary and neither carries a \
+             span. Summary was: {}",
+            report.summary
+        );
+        let issues: Vec<String> = report
+            .detached_findings
+            .iter()
+            .map(|f| f.issue.clone())
+            .collect();
+        assert_eq!(
+            issues.iter().filter(|i| is_closure_remedy(i)).count(),
+            1,
+            "exactly one of these boundaries is handed a closure. The gate \
+             attributed: {issues:?}. Summary was: {}",
+            report.summary
+        );
+        assert_eq!(
+            issues.iter().filter(|i| i.contains(".instrument(")).count(),
+            1,
+            "exactly one of these boundaries is handed a future. The gate \
+             attributed: {issues:?}. Summary was: {}",
+            report.summary
+        );
+        for issue in &issues {
+            assert!(
+                report.summary.contains(issue),
+                "the gate worked out {issue:?} and published a sentence that \
+                 does not contain it: {}",
+                report.summary
+            );
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// 10. A definition is not a call
+// -------------------------------------------------------------------------
+
+#[test]
+fn a_declaration_named_spawn_is_not_a_call_that_opens_a_task() {
+    // The matcher is nominal, so `fn spawn(task: BoxFuture) {` reads as a call
+    // whose argument list is not empty and is accused. That matters
+    // operationally: the remedy for a fleet of detached boundaries is a wrapper
+    // that attaches the span, the obvious name for it is `spawn`, and its
+    // declaration line is the one place a span is actually attached.
+    for declaration in [
+        "+fn spawn(task: BoxFuture) {\n+    inner(task);\n+}",
+        "+pub async fn spawn(task: BoxFuture) {\n+    inner(task);\n+}",
+        "+trait Runtime {\n+    fn spawn(&self, f: BoxFuture);\n+}",
+    ] {
+        let report = run(&diff_of(&[("src/rt.rs", declaration)]));
+        assert_eq!(
+            report.tasks_scanned, 0,
+            "a definition is not a call and opens no task. The gate inspected \
+             {} in:\n{declaration}\nSummary was: {}",
+            report.tasks_scanned, report.summary
+        );
+        assert!(
+            report.detached_findings.is_empty(),
+            "nothing here is accused. The gate published: {}",
+            report.summary
+        );
+    }
+
+    // And the exclusion is of the declaration, not of the file: a call inside
+    // a function named `spawn` is still a call.
+    let wrapper = run(&diff_of(&[(
+        "src/rt.rs",
+        "+pub fn spawn(fut: F) {\n+    tokio::spawn(fut);\n+}",
+    )]));
+    assert_eq!(
+        wrapper.tasks_scanned, 1,
+        "the body of the wrapper spawns a task and that call is a boundary. \
+         Summary was: {}",
+        wrapper.summary
+    );
+}
+
+// -------------------------------------------------------------------------
+// 11. What the gate accuses wrongly is disclosed, not only what it misses
+// -------------------------------------------------------------------------
+
+/// The `trace_status` gap text, which this repository treats as the honesty
+/// surface for what a gate does not do.
+fn trace_gap() -> &'static str {
+    anvil::fidelity::registry::AUDITED_GATES
+        .iter()
+        .find(|g| g.gate_id == "trace_status")
+        .expect("gate 17 must be audited in the fidelity registry")
+        .gap
+}
+
+#[test]
+fn the_span_hoisted_out_of_the_call_is_accused_and_the_registry_says_so() {
+    // Building the future in steps and handing the binding to `spawn` is
+    // idiomatic and is the shape any non-trivial spawn takes. The span is
+    // attached outside the parenthesised region, so the region walk cannot see
+    // it and the boundary is reported detached -- a `Failed`, which blocks the
+    // merge. The registry disclosed only the direction that quietly passes.
+    let report = run(&diff_of(&[(
+        "src/hoisted.rs",
+        "+let fut = work().instrument(tracing::info_span!(\"w\"));\n+tokio::spawn(fut);",
+    )]));
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "this is the shape the gate gets wrong, and the fixture exists so the \
+         disclosure and the behaviour cannot drift apart. Summary was: {}",
+        report.summary
+    );
+    let gap = trace_gap().to_lowercase();
+    assert!(
+        gap.contains("attached before"),
+        "a gap section that lists only the direction which quietly passes, and \
+         omits the direction which blocks, understates the gate exactly where \
+         it costs the fleet. The gap said: {}",
+        trace_gap()
+    );
+}
+
+#[test]
+fn the_registry_says_the_matcher_is_nominal_and_has_no_allowlist() {
+    // Any non-empty call whose final path segment is `spawn`, `spawn_blocking`
+    // or `spawn_local` is treated as a task boundary: a thread pool, a process
+    // supervisor, an actor handle, a domain type of one's own. It is accused
+    // and it blocks, and there is no way to say otherwise.
+    let report = run(&diff_of(&[(
+        "src/p.rs",
+        "+let h = pool.spawn(job_description);",
+    )]));
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "the matcher cannot tell this from a runtime task; the fixture pins \
+         the behaviour the gap has to describe. Summary was: {}",
+        report.summary
+    );
+    let gap = trace_gap().to_lowercase();
+    assert!(
+        gap.contains("allowlist"),
+        "the gap enumerates the false negatives and never says the gate will \
+         fail a merge over a method that is not a task boundary at all. The \
+         gap said: {}",
+        trace_gap()
+    );
+}
+
+// -------------------------------------------------------------------------
+// 12. The region walk is linear in the text it was handed
+// -------------------------------------------------------------------------
+
+/// Deep enough that a per-character walk of the parenthesis stack is visibly
+/// quadratic, small enough that a linear one is instant. One line, so the cost
+/// measured is the region walk and not the diff parsing around it.
+const DEEP_NEST: usize = 40_000;
+
+/// Wall clock is a blunt instrument, so the margin is enormous rather than
+/// tight: the walk this pins runs in tens of milliseconds and the ceiling is
+/// three seconds. The shape it rejects took 16 s on this input in a debug
+/// build, so nothing between "linear" and "quadratic" is being split here.
+const LINEAR_CEILING: std::time::Duration = std::time::Duration::from_secs(3);
+
+#[test]
+fn the_region_walk_does_not_go_quadratic_on_webhook_supplied_text() {
+    // `diff_content` is `git diff` output for a pull request on a watched
+    // repository: attacker-controlled, and this gate applies no size cap where
+    // `cedar_guard.rs` and `doc_guard/mod.rs` bound theirs at 50,000 characters.
+    // Appending each character to the innermost open region by *searching* the
+    // stack for it costs O(depth) per character, so a single deeply nested line
+    // costs the reviewer daemon time quadratic in its depth -- and a file need
+    // not compile to be diffed and scanned.
+    let body = format!(
+        "+tokio::spawn({}x{});",
+        "g(".repeat(DEEP_NEST),
+        ")".repeat(DEEP_NEST)
+    );
+    let diff = diff_of(&[("src/deep.rs", &body)]);
+
+    let started = std::time::Instant::now();
+    let report = run(&diff);
+    let elapsed = started.elapsed();
+
+    assert_eq!(
+        report.tasks_scanned, 1,
+        "the fixture has to reach the walk it is measuring. Summary was: {}",
+        report.summary
+    );
+    assert!(
+        elapsed < LINEAR_CEILING,
+        "one line nested {DEEP_NEST} deep took {elapsed:?}, over a ceiling of \
+         {LINEAR_CEILING:?}. That is the signature of a per-character search of \
+         the parenthesis stack, and the input is webhook-supplied text."
     );
 }

@@ -4,6 +4,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod span_tracker;
 pub use span_tracker::{DetachedSpanFinding, SpanTracker};
@@ -14,6 +15,17 @@ pub struct TraceContextReport {
     pub tasks_scanned: usize,
     pub detached_findings: Vec<DetachedSpanFinding>,
     pub summary: String,
+    /// The verdict this guard reached, decided here and published unchanged.
+    ///
+    /// `src/slo_canary_guard/mod.rs` is the precedent: it builds its own
+    /// `GateStatus` and `evaluator.rs` clones it. The alternative -- handing the
+    /// evaluator a `bool` and letting it rebuild a two-valued status -- is the
+    /// channel through which three of the four sentences this guard composes
+    /// were lost, because `GateStatus::Passed` carries no string and
+    /// `publish::scorecard::render` prints nothing for it. A gate that formats a
+    /// sentence it knows is discarded is publishing the same unmeasured
+    /// assurance it exists to remove.
+    pub status: GateStatus,
 }
 
 pub struct TraceContextGuard {
@@ -47,8 +59,7 @@ impl TraceContextGuard {
         let mut tasks_scanned = 0;
         let mut unresolved = 0;
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            let lines: Vec<&str> = file_diff.lines().collect();
+        for lines in file_chunks(&diff_ctx.diff_content) {
             let Some(path) = rust_path_of(&lines) else {
                 continue;
             };
@@ -87,48 +98,97 @@ impl TraceContextGuard {
             )
         };
 
-        let summary = if tasks_scanned == 0 && unresolved == 0 {
-            // Nothing crossed a task boundary, so there is nothing to have a
-            // view about, and the gate says exactly that rather than publishing
-            // the word "verified" over a measurement it never took. The status
-            // stays `Passed` -- see `src/coverage_guard.rs`, where a diff adding
-            // no coverable line is `NothingToMeasure` and passes, rather than
-            // `src/slo_canary_guard/mod.rs`, where a telemetry source that
-            // should have been there was absent. This is the first kind: the
-            // measurement is complete and it is empty.
-            format!(
-                "➖ NOTHING TO MEASURE (no task boundary in {SCOPE}; lines outside those hunks \
-                 were not read)"
-            )
-        } else if tasks_scanned == 0 {
-            format!(
-                "➖ NOTHING TO MEASURE ({unresolved} task boundar{} in {SCOPE} open{s} in them and \
-                 close{s} outside them, so none was classified)",
-                if one { "y" } else { "ies" },
-                s = if one { "s" } else { "" }
-            )
-        } else if is_propagated {
-            format!(
-                "✅ PASSED ({tasks_scanned} task boundar{} inspected in {SCOPE}; an \
-                 `.instrument(...)` or `.in_current_span()` call appears inside the region each \
-                 one opens{outside})",
-                if tasks_scanned == 1 { "y" } else { "ies" }
-            )
-        } else {
+        let (status, summary) = if !is_propagated {
             // The gate reads the lines this change adds *and the ones it
             // keeps*, because a region walk that skipped context lines could
             // bound nothing. So a location it names may be a line the author
             // only carried past, and the sentence says so rather than sending
             // them looking through their own edit for it.
-            format!(
-                "❌ FAILED ({} of {tasks_scanned} task boundaries inspected in {SCOPE} drop \
+            //
+            // The qualifier on the predicate is not decoration. `SpanTracker`
+            // diverts the text of a nested boundary into that boundary's own
+            // frame, so what it tested is "inside the region it opens, minus
+            // the regions its nested boundaries own". Dropped, the sentence
+            // asserts something stronger than the code measured -- on the one
+            // surface an author reads while looking straight at the
+            // `.instrument(` it says is not there.
+            let summary = format!(
+                "❌ FAILED ({} of {tasks_scanned} task boundar{} inspected in {SCOPE} drop \
                  distributed tracing context: no `.instrument(...)` or `.in_current_span()` call \
-                 appears inside the region they open{outside}) at {} -- a line named here may be \
-                 one this change retained rather than one it wrote. {}",
+                 appears inside the region they open, outside the regions of the boundaries nested \
+                 in them{outside}) at {} -- a line named here may be one this change retained \
+                 rather than one it wrote. {}",
                 detached_findings.len(),
+                if tasks_scanned == 1 { "y" } else { "ies" },
                 located(&detached_findings),
                 remedies(&detached_findings)
+            );
+            (GateStatus::Failed(summary.clone()), summary)
+        } else if unresolved > 0 {
+            // A boundary that was *there* and could not be classified is not an
+            // empty measurement. `src/coverage_guard.rs:139` maps
+            // `NothingToMeasure` -- there was nothing to look at -- to `Passed`,
+            // and a thing that was there and could not be measured to
+            // `NotMeasured`; `src/slo_canary_guard/mod.rs` does the same. Routed
+            // to the first shape, an uninstrumented spawn a pull request adds
+            // ships green and undisclosed. `NotMeasured` publishes the count and
+            // the reason and blocks merge-queue admission via
+            // `PreMergeCertificationReport::is_admissible` (invariant I1),
+            // without accusing the pull request of a defect.
+            let inspected = if tasks_scanned == 0 {
+                String::new()
+            } else {
+                format!(
+                    "; {tasks_scanned} further boundar{} in them {} inspected and cleared",
+                    if tasks_scanned == 1 { "y" } else { "ies" },
+                    if tasks_scanned == 1 { "was" } else { "were" }
+                )
+            };
+            let summary = format!(
+                "➖ NOT MEASURED ({unresolved} task boundar{} in {SCOPE} open{s} in them and \
+                 close{s} outside them, so {} seen and not judged{inspected})",
+                if one { "y" } else { "ies" },
+                if one { "it was" } else { "they were" },
+                s = if one { "s" } else { "" }
+            );
+            (
+                GateStatus::NotMeasured {
+                    gate_id: "trace_status".to_string(),
+                    reason: summary.clone(),
+                },
+                summary,
             )
+        } else if tasks_scanned == 0 {
+            // Nothing crossed a task boundary, so there is nothing to have a
+            // view about, and the gate says exactly that rather than publishing
+            // the word "verified" over a measurement it never took.
+            //
+            // `Warning` rather than `Passed`: `Passed` is a unit variant, so the
+            // sentence would be discarded before any reader saw it, and the
+            // scorecard would render the row as a bare tick counted in
+            // "N/N gates passed" -- the claim issue #14 filed. `Warning` is
+            // `is_acceptable()`, so it neither blocks the merge queue nor
+            // accuses this change of anything; it does not follow
+            // `src/slo_canary_guard/mod.rs` into `NotMeasured`, because a diff
+            // that crosses no boundary is not absent evidence -- the evidence is
+            // complete and it is empty.
+            let summary = format!(
+                "➖ NOTHING TO MEASURE (no task boundary in {SCOPE}; lines outside those hunks \
+                 were not read)"
+            );
+            (GateStatus::Warning(summary.clone()), summary)
+        } else {
+            // Boundaries were inspected, every region was established, and every
+            // one carries a span. This is the one arm entitled to be silent: the
+            // scorecard enumerates findings and counts passes, and there is no
+            // finding here.
+            let summary = format!(
+                "✅ PASSED ({tasks_scanned} task boundar{} inspected in {SCOPE}; an \
+                 `.instrument(...)` or `.in_current_span()` call appears inside the region each \
+                 one opens, outside the regions of the boundaries nested in it)",
+                if tasks_scanned == 1 { "y" } else { "ies" }
+            );
+            (GateStatus::Passed, summary)
         };
 
         Ok(TraceContextReport {
@@ -136,6 +196,7 @@ impl TraceContextGuard {
             tasks_scanned,
             detached_findings,
             summary,
+            status,
         })
     }
 }
@@ -146,7 +207,7 @@ const LOCATIONS_IN_SUMMARY: usize = 3;
 /// `file:line` for the first few findings, in post-image coordinates.
 ///
 /// `summary` is the only field of this report that reaches a published surface:
-/// `src/pre_merge_guard/evaluator.rs` clones it into `GateStatus::Failed` and
+/// it is the string the status carries, and `src/pre_merge_guard/evaluator.rs`
 /// drops `detached_findings` on the floor. Without the locations folded in, an
 /// author is told a count and nothing else -- not which file, not which line,
 /// and not that the spawn may be a context line their change only retained.
@@ -171,11 +232,12 @@ fn located(findings: &[DetachedSpanFinding]) -> String {
 /// Every distinct remedy the findings carry, in the order they first appear.
 ///
 /// `DetachedSpanFinding::issue` says what to do about the kind of boundary it
-/// found -- a thread is told to enter the caller's span inside its closure,
-/// because `.instrument(...)` on an `FnOnce()` does not compile. Left in the
-/// finding it would never be read: nothing renders `detached_findings`. There
-/// are two of these strings and a diff rarely reaches both, so they are folded
-/// in whole rather than summarised.
+/// found -- a closure-taking one is told to enter the caller's span inside the
+/// closure, because the `Instrument` combinator does not apply to an `FnOnce()`.
+/// Left in the finding it would never be read: nothing renders
+/// `detached_findings`. There are two of these strings, and a line carrying one
+/// of each has to publish both, so they are folded in whole rather than
+/// summarised.
 fn remedies(findings: &[DetachedSpanFinding]) -> String {
     let mut out: Vec<&str> = Vec::new();
     for finding in findings {
@@ -184,6 +246,33 @@ fn remedies(findings: &[DetachedSpanFinding]) -> String {
         }
     }
     out.join(" ")
+}
+
+/// The diff, cut into one chunk of lines per file it touches.
+///
+/// Anchored at a line boundary. Split on the bare substring `diff --git`, a
+/// Rust file whose own body contains those words -- a one-line comment, a
+/// string literal, a fixture in this repository's own suite -- is cut in two,
+/// and the tail carries no `+++ ` header, so [`rust_path_of`] returns `None` and
+/// the rest of that file is dropped without a word. The gate then publishes that
+/// it found no boundary in a hunk that plainly contains one: absent evidence
+/// rendered as a pass, which is the failure this gate exists to close, and a
+/// one-line evasion available to any author on a watched repository.
+///
+/// Every body line of a diff carries a `+`, `-` or space prefix, so no body line
+/// can begin with the separator and no real chunk can be missed.
+fn file_chunks(diff: &str) -> Vec<Vec<&str>> {
+    let mut chunks: Vec<Vec<&str>> = Vec::new();
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") || chunks.is_empty() {
+            chunks.push(Vec::new());
+        }
+        chunks
+            .last_mut()
+            .expect("a chunk is open before any line is read")
+            .push(line);
+    }
+    chunks
 }
 
 /// The post-image path of a diff chunk, when it is a Rust file.
@@ -233,7 +322,14 @@ fn shipped_lines<'a>(lines: &[&'a str]) -> Vec<Vec<(usize, &'a str)>> {
         }
         // Anything before the first `@@` is header, not body.
         let Some(next) = at.as_mut() else { continue };
-        if line.starts_with('-') {
+        // A removed line is not code the author ships. Nor is the marker
+        // `\ No newline at end of file`: git writes it mid-hunk whenever the
+        // pre-image's final line lacked a trailing newline and is being
+        // replaced, it occupies no position in either image, and numbering it
+        // pushes every later location in that hunk one line up -- past the end
+        // of the file, on a short post-image -- and hands its own text to the
+        // scanner as live code.
+        if line.starts_with('-') || line.starts_with('\\') {
             continue;
         }
         // Never sliced by byte: a line may be empty, and this corpus carries

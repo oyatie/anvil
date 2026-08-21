@@ -131,6 +131,31 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     println!("move plan written to {}", p.display());
                 }
             }
+            crate::cli::args::ShapeAction::Deliver {
+                repo_dir,
+                max,
+                spec_override,
+                allow_same_repo,
+            } => {
+                let label = repo_dir
+                    .canonicalize()
+                    .ok()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                    .unwrap_or_default();
+                let req = crate::change_delivery::facade::deliver::DeliverRequest {
+                    repo_dir,
+                    repo: label,
+                    max,
+                    spec_override,
+                    allow_same_repo,
+                };
+                let (runs, shards, policy) =
+                    crate::change_delivery::facade::deliver::deliver_dry_run(&req).await?;
+                print!(
+                    "{}",
+                    crate::change_delivery::facade::deliver::render(&runs, shards.len(), &policy)
+                );
+            }
             crate::cli::args::ShapeAction::Ratchet {
                 repo_dir,
                 base_ref,

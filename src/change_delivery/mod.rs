@@ -7,6 +7,7 @@
 //! decision here (what goes in a shard, whether a diff is pure, whether a
 //! shard may be enlisted) is testable without a repository or a network.
 
+pub mod adapters;
 pub mod core;
 pub mod facade;
 pub mod ports;

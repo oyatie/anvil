@@ -2,6 +2,7 @@
 
 pub mod evaluator;
 pub mod matrix;
+pub mod product_bar;
 pub mod report;
 pub mod scanner;
 

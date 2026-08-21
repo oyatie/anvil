@@ -556,6 +556,8 @@ pub async fn execute_pr_review(
 
     let cert_report = state.pre_merge_guard.evaluate_pre_merge_gates(
         &diff_ctx,
+        title,
+        body,
         &doc_report,
         &cedar_report,
         &compliance_report,

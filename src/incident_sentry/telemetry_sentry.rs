@@ -17,6 +17,12 @@ pub struct IncidentSentryDecision {
 
 pub struct TelemetrySentry;
 
+impl Default for TelemetrySentry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TelemetrySentry {
     pub fn new() -> Self {
         Self
@@ -37,7 +43,10 @@ impl TelemetrySentry {
                 should_emergency_revert: true,
                 notice: format!(
                     "🚨 CRITICAL PRODUCTION SLO BREACH: error_rate={:.2}%, p99={}ms, panics={}. Auto-triggering emergency git revert of commit {}.",
-                    signals.error_rate_pct, signals.p99_latency_ms, signals.panic_count_last_5m, signals.deployed_commit_sha
+                    signals.error_rate_pct,
+                    signals.p99_latency_ms,
+                    signals.panic_count_last_5m,
+                    signals.deployed_commit_sha
                 ),
             }
         } else {

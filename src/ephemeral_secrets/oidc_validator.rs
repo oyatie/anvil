@@ -11,6 +11,12 @@ pub struct SecretPolicyFinding {
 
 pub struct OidcPolicyValidator;
 
+impl Default for OidcPolicyValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OidcPolicyValidator {
     pub fn new() -> Self {
         Self

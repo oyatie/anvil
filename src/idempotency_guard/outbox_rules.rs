@@ -11,6 +11,12 @@ pub struct IdempotencyFinding {
 
 pub struct OutboxRulesEngine;
 
+impl Default for OutboxRulesEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutboxRulesEngine {
     pub fn new() -> Self {
         Self

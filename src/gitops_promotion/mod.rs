@@ -6,7 +6,12 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod digest_pinner;
+pub mod environment_pipeline;
+
 pub use digest_pinner::{DigestPinFinding, DigestPinner};
+pub use environment_pipeline::{
+    DeploymentEnvironment, EnvironmentPromotionGateResult, EnvironmentPromotionPolicy,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitOpsPromotionReport {
@@ -17,6 +22,12 @@ pub struct GitOpsPromotionReport {
 
 pub struct GitOpsPromotionEngine {
     pinner: DigestPinner,
+}
+
+impl Default for GitOpsPromotionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GitOpsPromotionEngine {
@@ -52,10 +63,10 @@ impl GitOpsPromotionEngine {
 
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "manifest.yaml".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let findings = self.pinner.scan_unpinned_images(&current_file, file_diff);

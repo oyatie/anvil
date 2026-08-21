@@ -22,6 +22,12 @@ pub struct ModularizationReport {
 
 pub struct ModularizationGuard;
 
+impl Default for ModularizationGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModularizationGuard {
     pub fn new() -> Self {
         Self
@@ -44,7 +50,7 @@ impl ModularizationGuard {
         let mut line_count = 0;
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
                 if !current_file.is_empty() && line_count > MAX_RECOMMENDED_LINES {
                     oversized_files.push(OversizedFileFinding {
                         file_path: current_file.clone(),
@@ -52,7 +58,7 @@ impl ModularizationGuard {
                         recommendation: format!("File exceeds {} lines; decompose into cohesive submodules or domain components.", MAX_RECOMMENDED_LINES),
                     });
                 }
-                current_file = line[6..].trim().to_string();
+                current_file = stripped.trim().to_string();
                 line_count = 0;
                 continue;
             }
@@ -70,16 +76,46 @@ impl ModularizationGuard {
             });
         }
 
+        // Check category-aware directory depth envelope for all changed files
+        for file in &diff_ctx.changed_files {
+            let depth = file.split('/').count();
+            let (category, max_depth) = if file.starts_with("docs/") {
+                ("docs", 3)
+            } else if file.starts_with("contracts/") {
+                ("contracts", 4)
+            } else if file.contains("tests/fixtures") || file.contains("fixtures/") {
+                ("fixtures", 7)
+            } else if file.starts_with("infra/")
+                || file.starts_with("iac/")
+                || file.starts_with("k8s/")
+            {
+                ("infrastructure", 6)
+            } else {
+                ("production_code", 5)
+            };
+
+            if depth > max_depth {
+                oversized_files.push(OversizedFileFinding {
+                    file_path: file.clone(),
+                    line_count: depth,
+                    recommendation: format!(
+                        "Directory depth {} exceeds maximum allowed limit of {} for category '{}'. Flatten module structure.",
+                        depth, max_depth, category
+                    ),
+                });
+            }
+        }
+
         let is_modular = oversized_files.is_empty();
         let summary = if is_modular {
-            "Hyperscaler modularization verified: all modified files are strictly bounded within 100-300 lines.".to_string()
+            "Module size and directory depth verified: files are strictly bounded within 100-300 lines and adhere to the category-aware depth envelope.".to_string()
         } else {
             format!(
-                "Modularization findings ({} oversized files): {}",
+                "Modularization & depth findings ({} violations): {}",
                 oversized_files.len(),
                 oversized_files
                     .iter()
-                    .map(|f| format!("{}: {} lines", f.file_path, f.line_count))
+                    .map(|f| format!("{}: {}", f.file_path, f.recommendation))
                     .collect::<Vec<_>>()
                     .join("; ")
             )

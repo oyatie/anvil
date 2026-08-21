@@ -175,9 +175,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Verify documentation parity with the change, and amend affected documents.",
         reference: "docs-as-code; Google g3doc",
         fidelity: Fidelity::Partial,
-        gap: "Now fails closed after the Phase 0a fix, and creates missing ADRs. It cannot AMEND an existing \
-              document: generate_and_write_docs writes only when a file does not exist \
-              (doc_guard/mod.rs:306-328).",
+        gap: "Fails closed, creates missing ADRs, and corpus_sync amends owned pages so published \
+              gate counts match TOTAL_GATES. generate_and_write_docs still writes only when a file \
+              does not exist (doc_guard/mod.rs:350-375); it does not rewrite existing documents.",
         blocked_on: None,
     },
     GateFidelity {

@@ -269,6 +269,16 @@ pub async fn run_server(state: AppState) -> Result<()> {
                         let secret = secret_owned.clone();
                         let url = url_owned.clone();
                         async move {
+                            // A hook left by a forwarder that died uncleanly
+                            // 422s every respawn until it is removed.
+                            if let Err(e) =
+                                crate::webhook::forwarder_supervisor::remove_stale_forwarder_hooks(
+                                    &repo,
+                                )
+                                .await
+                            {
+                                warn!("stale-hook cleanup for {repo} noticed: {e}");
+                            }
                             let mut fwd = Command::new("gh");
                             // Detach stdin from the operator's terminal.
                             //

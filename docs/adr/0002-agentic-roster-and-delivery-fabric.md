@@ -5,7 +5,7 @@ Accepted (Jason, 2026-08-21). Implementation is in flight. This page is the lock
 
 ## Schema
 Achieves: Anvil is the full hyperscaler product lifecycle, agentic. Not only the PR review / certify / enlist / heal loop.
-Origin: Long-horizon practice at Google, AWS, Meta, Netflix, Azure, plus Jason's corrections (product ownership, Legal as it-legal fabric, design-system ownership).
+Origin: Long-horizon practice at Google, AWS, Meta, Netflix, Azure, plus Jason's corrections (product ownership, Legal as it-legal fabric, design-system ownership, dogfood closed loop).
 Rule: A seat is a job, an artifact, and a fail-closed measurement. A gate named after a team is not representation. Published names must match live measurement. NotMeasured and Errored are honest reporting, not a pass. Do not rename down or drop a gate to make the corpus look clean.
 Ensure: Existing design pages (ADR, spec, plan, contracts, milestones) are drafted and kept honest. Stale, contradictory, or non-hyperscale pages are repaired or fail closed.
 Overturn-When: Jason cuts a seat, or a measurement proves a named job is already owned by another seat without shallow wrapping.
@@ -69,11 +69,33 @@ No DevOps seat. That work is Builder tools plus Production. Quality sign-off is 
 19. Capacity / FinOps. Job: unit cost and capacity. Artifact: cost / carbon / runner numbers. Today: finops, carbon_compute, runner_economics.
 20. Support. Job: reproduce a customer failure and feed Product. Artifact: repro that closed a loop. Today: nothing.
 
+## Dogfood (closed loop)
+Fleet is the whole oyatie org. No other public repo exists as of 2026-08-21:
+- `oyatie/oyatie`
+- `oyatie/console`
+- `oyatie/anvil`
+
+Anvil is a watched product, not an exemption. The same loop runs on every watched repo.
+
+Allowlist: `WATCHED_REPOS`. Code default in `src/config.rs` is the three. README intro lists the three. README `.env` example drops Anvil. That is a lie. Published config must match the live allowlist. A string in the default is not proof the loop ran.
+
+Loop (same path, every watched repo):
+1. Intake: GitHub webhook (`pull_request`, `issue_comment`, `workflow_run`) while `serve` is up, or CLI (`review`, `fix`, `certify`, `triage`, `enlist`, `heal-queue`, `reconcile`). CLI is the same loop, not a bypass.
+2. Review: 16-lens adversarial review posted on the PR.
+3. Certify: live `TOTAL_GATES`. `is_admissible()` is certified and every gate measured. NotMeasured and Errored block. Scorecard is posted and amended in place.
+4. Close the shortfall: `fix` and `heal-queue` on that same PR.
+5. Enlist: if `is_admissible()`, Anvil enlists. Manager does not merge or approve.
+6. Feed Product: Observability, Support repros, and Research results become the next Discover bet. That is the closed loop. Discover and Support are still uninstrumented. Naming the feed is not claiming those seats exist.
+
+Runtime: standing path is `cargo run -- serve` plus webhooks on the three. Do not start the daemon, serve process, or webhooks unless Jason asks. Until then, manager drives Anvil and fleet PRs through the CLI of this loop first. A cloud agent is only for when that loop is stuck.
+
+Dogfood is proven when a PR on that repo actually went through review → certify → (fix/heal if needed) → enlist or honest block, and the scorecard matches the live corpus. It is not proven because README says "Anvil reviews its own pull requests."
+
 ## What needs to be done (sequence)
 Do not add twenty named gates. Give each hole a real artifact and a measurement. A seat is not done while its measurement is NotMeasured.
 
-1. Close DocGuard. Published docs match `TOTAL_GATES` or the gate fails. In flight: [PR #12](https://github.com/oyatie/anvil/pull/12) (`fix/docguard-honest-corpus`). rustfmt fix pushed (`21948e9`). Do not merge until Jason reviews. [PR #11](https://github.com/oyatie/anvil/pull/11) is Copilot plan-only theater. Close it. Do not treat it as the close.
-2. Self-loop. `oyatie/anvil` is not on `WATCHED_REPOS`. Anvil does not yet run its own rules on this repo as a standing loop. That is the next shortfall after DocGuard. Do not start the daemon unless asked.
+1. Close DocGuard. Published docs match `TOTAL_GATES` or the gate fails. In flight: [PR #12](https://github.com/oyatie/anvil/pull/12) (`fix/docguard-honest-corpus`). rustfmt fix pushed (`21948e9`). Do not merge until Jason reviews. [PR #11](https://github.com/oyatie/anvil/pull/11) is Copilot plan-only theater. Close it. Do not treat it as the close. README `.env` must list `oyatie/anvil` with the other two.
+2. Prove dogfood. A real PR on each watched repo, including Anvil, goes through this loop. Serve stays off until asked. CLI is enough to prove it. Do not claim self-loop from the config default.
 3. Architecture pages. ADR-0001 filename still says sixty-gate on purpose (founding name). Live count is `TOTAL_GATES`. Keep founding names historical. Repair doctrine and this ADR if they drift.
 4. Legal seat. Encode the it-legal fabric as schema + fail-closed measurement. Do not ship a `legal_status` rename of `compliance_status`.
 5. Discover seats. Product done-when, Program plan, Research result, UX evidence, Data science eval. Quality sign-off must fail if Product's bar is missing.
@@ -84,6 +106,7 @@ Do not add twenty named gates. Give each hole a real artifact and a measurement.
 - Live corpus on main: `TOTAL_GATES = 68`. PR #10 claims 70 after two new fields. Count authority is the field list, not this sentence.
 - Cloud agent cannot launch: Cursor GitHub app is not installed on `oyatie/anvil`. Fixes go through the GitHub connector until that is installed.
 - Manager weekday watch: 8:32 America/New_York.
+- Enlist lock: Anvil enlists when admissible. Manager does not merge or approve.
 
 ## What this page is not
-Not a legal opinion. Not a claim that Discover or Support exist. Not permission to merge.
+Not a legal opinion. Not a claim that Discover or Support exist. Not permission to merge. Not permission to start the daemon. Not a claim that dogfood already ran.

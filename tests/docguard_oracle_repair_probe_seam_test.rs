@@ -1,12 +1,12 @@
 //! The probe seam's own contract: the override is a stored value, and it may
 //! never fall through to a real `agy` spawn.
 //!
-//! `tests/docguard_oracle_repair_test.rs` claims, in its own header, that
-//! routing every gate case through `DocGuard::with_probe_override` makes an
-//! `agy` spawn "structurally unreachable rather than merely unlikely". Nothing
-//! in that binary enforces it, because every case there constructs a fresh guard
-//! and calls the gate exactly once — which is precisely what makes a one-shot
-//! slot indistinguishable from a stored value.
+//! `tests/docguard_oracle_repair_gate_test.rs` drives every other gate case, and
+//! every one of them constructs a fresh guard and calls the gate exactly once —
+//! which is precisely what makes a one-shot slot indistinguishable from a stored
+//! value. That binary empties `PATH` so a fall-through spawn cannot reach a
+//! model; it does not, and cannot, say anything about the override surviving a
+//! second call.
 //!
 //! ## Why this is a separate binary
 //!
@@ -19,7 +19,7 @@
 //! 120-second `run_bounded_for` budget, from inside `cargo test`.
 //!
 //! A test whose detection mechanism is the act it forbids is the same shape the
-//! main suite criticises in
+//! gate suite criticises in
 //! `reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identical`:
 //! a breach detected only after the model has already run. It also makes the
 //! outcome depend on things that have nothing to do with the behaviour — whether
@@ -30,10 +30,30 @@
 //!
 //! So `PATH` is emptied before the gate runs. A fall-through spawn then fails in
 //! microseconds with "No such file or directory" instead of invoking a model,
-//! and the assertions below still see exactly what they were written to see: two
-//! runs of one guard that do not agree. Mutating the environment is a data race
-//! in a parallel test binary, which is why this case is alone in its own — the
-//! same reason `tests/docguard_oracle_repair_self_repo_test.rs` is.
+//! and the assertions below still see exactly what they were written to see.
+//! Mutating the environment is a data race in a parallel test binary, which is
+//! why this case is alone in its own — the same reason
+//! `tests/docguard_oracle_repair_self_repo_test.rs` is, and the same reason
+//! `tests/docguard_oracle_repair_gate_test.rs` runs its fourteen cases from a
+//! single `#[test]`.
+//!
+//! ## Agreement is not the assertion; the stored value is
+//!
+//! An earlier version of this case asserted only that the two runs agreed —
+//! `first.is_sufficient == second.is_sufficient`, and the same for `errored` and
+//! `summary`. That was vacuous against the one implementation this file exists
+//! to catch. An override that is stored and never consulted
+//! (`Probe::Overridden(_) => "low".to_string()`, falling through to the spawn on
+//! every call) makes both runs identical: both spawn, both fail the same way,
+//! both come back `is_sufficient: false` with the same `errored` and the same
+//! `summary`. All three relational assertions passed it.
+//!
+//! So each outcome now carries an ABSOLUTE check, applied to both runs, that
+//! only the stored value can satisfy: the supplied verdict on the two `Ok` arms,
+//! and on the `Err` arm the `seam-sentinel:` string in `PROBE_FAILURE`, which is
+//! deliberately unproducible by any real spawn. The agreement assertions stay,
+//! because they are what catches the *other* mistake — an override that answers
+//! once and then stops.
 //!
 //! ## The second closure, which needs no test
 //!
@@ -61,14 +81,24 @@ use tempfile::tempdir;
 
 const ANVIL: &str = "oyatie/anvil";
 
-/// Mirrors `MISSING_REASON` in the main suite.
+/// Mirrors `MISSING_REASON` in the gate suite.
 const MISSING_REASON: &str = "newly_public is a new public API with no reference page";
 
-/// Mirrors `PROBE_FAILURES[0]` in the main suite: a probe that never ran.
-const PROBE_FAILURE: &str =
-    "failed to run doc parity probe: No such file or directory (os error 2)";
+/// A probe failure that **no real spawn can produce**, deliberately.
+///
+/// It used to mirror `PROBE_FAILURES[0]` in the gate suite
+/// ("failed to run doc parity probe: No such file or directory (os error 2)"),
+/// which was a latent trap: `run_bounded_for` really does emit
+/// "doc parity probe failed to run: No such file or directory (os error 2)" —
+/// the same words in a different order — so a live ENOENT from the emptied
+/// `PATH` was one wording change away from being indistinguishable from the
+/// stored value. The `seam-sentinel:` prefix removes that possibility: nothing
+/// but `with_probe_override` can put this string into a report, so an assertion
+/// that the report carries it can only be satisfied by the STORED outcome having
+/// been consulted.
+const PROBE_FAILURE: &str = "seam-sentinel: the doc parity probe outcome was supplied by the test";
 
-/// Mirrors `already_honest_page()` in the main suite: a page with nothing at all
+/// Mirrors `already_honest_page()` in the gate suite: a page with nothing at all
 /// for the corpus sync to do, so neither run can change the checkout and any
 /// difference between the two reports is the seam's.
 fn already_honest_page() -> String {
@@ -131,7 +161,7 @@ fn probe_failed(reason: &str) -> Result<DocParityEvaluation, String> {
 /// Drives the public gate **twice on one guard**, so an override that empties
 /// after the first read is observable.
 ///
-/// Every helper in the main suite constructs a fresh guard per call, which is
+/// Every helper in the gate suite constructs a fresh guard per call, which is
 /// exactly what makes a one-shot override indistinguishable from a stored one.
 fn run_gate_twice(
     outcome: Result<DocParityEvaluation, String>,
@@ -158,7 +188,7 @@ fn run_gate_twice(
 fn the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate() {
     // SAFETY: this binary contains exactly one test, so no other thread of this
     // process is running while the environment is mutated. That is also the
-    // reason the case lives here instead of in the main suite.
+    // reason the case lives here instead of in the gate suite.
     //
     // The empty directory is the point: `Command::new("agy")` resolves through
     // `PATH`, so with `PATH` pointing at a directory containing nothing, a
@@ -170,9 +200,23 @@ fn the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate() {
         std::env::set_var("PATH", empty.path());
     }
 
-    // Pinned behaviourally rather than structurally: two runs of the same guard
-    // must produce the same judgement, the same evidence status, and the same
-    // account of both. Nothing here inspects how the override is stored.
+    // Pinned behaviourally rather than structurally, in two layers, because
+    // agreement alone is not enough.
+    //
+    // The ABSOLUTE layer (`check`, applied to both runs) says what each run must
+    // have come back with. It is the layer that catches the single
+    // implementation this binary's header says it exists to catch: an override
+    // that is stored and never consulted —
+    // `Probe::Overridden(_) => "low".to_string()`, falling straight through to
+    // the real spawn on every call. That mutation makes both runs identical
+    // (both spawn, both fail the same way), so a suite of `first == second`
+    // assertions passes it unchanged. Every absolute assertion below is written
+    // so that only the STORED outcome can satisfy it: the two `Ok` arms require
+    // the supplied verdict, and the `Err` arm requires the `seam-sentinel:`
+    // string, which no spawn can emit.
+    //
+    // The RELATIONAL layer says the two runs agree, which is what catches an
+    // override that answers once and then stops answering.
     //
     // The fixture is `already_honest_page()` on Anvil's own README: the sync
     // applies and has nothing to rewrite, so the second run starts from a
@@ -182,18 +226,86 @@ fn the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate() {
     // three names a file, so neither run writes anything either.
     let page = already_honest_page();
 
-    for (label, outcome) in [
-        ("sufficient", sufficient()),
+    type Check = Box<dyn Fn(&DocGuardReport, &str)>;
+    let cases: Vec<(&str, Result<DocParityEvaluation, String>, Check)> = vec![
+        (
+            "sufficient",
+            sufficient(),
+            Box::new(|report: &DocGuardReport, run: &str| {
+                assert!(
+                    report.is_sufficient,
+                    "sufficient/{run}: the supplied outcome judged this diff \
+                     documented, the sync has nothing to do to this page and the \
+                     changed file carries no frontmatter, so the report must come \
+                     back sufficient. An implementation that stores the override and \
+                     never reads it falls through to the spawn `PATH` has been \
+                     emptied of, reports is_sufficient: false, and still agrees with \
+                     itself on both runs. got: {report:?}"
+                );
+                assert!(
+                    report.errored.is_none(),
+                    "sufficient/{run}: a judgement was supplied and nothing failed, so \
+                     nothing is absent evidence. got: {report:?}"
+                );
+            }),
+        ),
         (
             "insufficient",
             insufficient(Some(MISSING_REASON), &[] as &[&str]),
+            Box::new(|report: &DocGuardReport, run: &str| {
+                assert!(
+                    !report.is_sufficient,
+                    "insufficient/{run}: the supplied outcome judged this diff \
+                     under-documented. got: {report:?}"
+                );
+                assert!(
+                    report.summary.contains(MISSING_REASON),
+                    "insufficient/{run}: the supplied finding must reach the report, \
+                     which is the only way to tell the stored outcome apart from a \
+                     verdict the gate produced some other way. got: {report:?}"
+                );
+                assert!(
+                    report.errored.is_none(),
+                    "insufficient/{run}: a judgement was supplied, so this is an \
+                     adverse finding and not absent evidence. got: {report:?}"
+                );
+            }),
         ),
-        ("probe failed", probe_failed(PROBE_FAILURE)),
-    ] {
+        (
+            "probe failed",
+            probe_failed(PROBE_FAILURE),
+            Box::new(|report: &DocGuardReport, run: &str| {
+                let errored = report.errored.as_deref().unwrap_or_else(|| {
+                    panic!(
+                        "probe failed/{run}: the supplied outcome was a probe that \
+                         produced no judgement, which is Errored. got: {report:?}"
+                    )
+                });
+                assert!(
+                    errored.contains(PROBE_FAILURE),
+                    "probe failed/{run}: {PROBE_FAILURE:?} is a sentinel no spawn can \
+                     emit, so requiring it here is the assertion that can only be \
+                     satisfied by the STORED outcome. A report carrying anything else \
+                     — an ENOENT from the emptied `PATH`, for instance — is a run that \
+                     never consulted the override. got: {report:?}"
+                );
+                assert!(
+                    !report.is_sufficient,
+                    "probe failed/{run}: no judgement was produced, so the diff cannot \
+                     have been judged documented. got: {report:?}"
+                );
+            }),
+        ),
+    ];
+
+    for (label, outcome, check) in cases {
         let dir = tempdir().unwrap();
         write(&dir.path().join("README.md"), &page);
 
         let (first, second) = run_gate_twice(outcome, ANVIL, dir.path(), &["src/lib.rs"]);
+
+        check(&first, "first run");
+        check(&second, "second run");
 
         assert_eq!(
             std::fs::read_to_string(dir.path().join("README.md")).unwrap(),

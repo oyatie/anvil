@@ -65,14 +65,23 @@ const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_
 ///   return on every call. There is no "override exhausted" condition for an
 ///   implementer to handle, because there is no way to spell one.
 ///
-/// Do not widen this to carry an `Option`, and do not add a third arm meaning
+/// Do not widen this to carry an `Option`, and do not add an arm meaning
 /// "used up". `the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate`
 /// pins the behaviour; this type is what stops the mistake from compiling.
+///
+/// `SuppliedOutput` is a third arm and it is not an exception to any of the
+/// above: it is a stored value too, answered on every call too, and it has no
+/// empty state either. It exists because `Overridden` supplies the outcome
+/// `evaluate_doc_parity` *returns*, which means an overridden run never runs the
+/// code that DECIDES what to return. See `with_probe_output_override`.
 pub enum Probe {
     /// Spawn the real `agy` probe at this effort level.
     Live(String),
     /// Return this outcome, on every call, without spawning anything.
     Overridden(Result<DocParityEvaluation, String>),
+    /// Classify this completed probe run, on every call, without spawning
+    /// anything — through the same classification a real run is put through.
+    SuppliedOutput(std::process::Output),
 }
 
 pub struct DocGuard {
@@ -161,6 +170,62 @@ impl DocGuard {
         outcome: Result<DocParityEvaluation, String>,
     ) -> Self {
         todo!("supply the doc-parity probe outcome without spawning the agy probe")
+    }
+
+    /// Constructs a guard whose doc-parity probe *ran and produced this output*,
+    /// instead of spawning `agy` to produce it.
+    ///
+    /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
+    /// the implementer.
+    ///
+    /// # Why this exists alongside `with_probe_override`
+    ///
+    /// `with_probe_override` supplies what `evaluate_doc_parity` RETURNS. That
+    /// is the right seam for everything on the far side of the judgement, and it
+    /// is the seam every gate case uses. But it also means an overridden run
+    /// never executes the code that DECIDES whether a probe run produced a
+    /// judgement at all, so every `Err` the suite consumes is a string a test
+    /// wrote rather than one the product produced. The arm whose historical
+    /// collapse into `is_doc_sufficient: true` made gate 1 unfailable is the arm
+    /// that decides, and a suite that only ever consumes hand-written `Err`s
+    /// leaves exactly that arm unguarded.
+    ///
+    /// So this seam supplies the probe run's OUTPUT — exit status, stdout,
+    /// stderr — and stops there. Everything after it is production code:
+    ///
+    /// * the supplied output is handed to `classify_probe_output`, the same
+    ///   function the live call site hands a real `run_bounded_for` result to,
+    ///   and the one whose behaviour `tests/docguard_oracle_repair_test.rs` pins
+    ///   directly;
+    /// * that classification runs INSIDE the watchdog-supervised probe closure,
+    ///   so an `Err` out of it reaches `run_with_watchdog`'s fallback exactly as
+    ///   a real probe's would, and the report the gate composes is the report a
+    ///   real run of that shape composes.
+    ///
+    /// # Contract
+    ///
+    /// This signature is pinned by `tests/docguard_oracle_repair_gate_test.rs`
+    /// (`the_supplied_probe_output_is_classified_by_the_exported_classifier`).
+    /// The requirement is behavioural and it is asserted as such: whatever
+    /// `classify_probe_output` returns for a given `(status, stdout, stderr)`,
+    /// the gate's report for a guard built from that same output must agree with
+    /// it — the verdict on the `Ok` arm, and the error's own text carried into
+    /// `DocGuardReport::errored` on the `Err` arm. A second, private copy of the
+    /// classification inside the probe closure therefore cannot diverge from the
+    /// exported one without failing, which is the same protection
+    /// `a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator`
+    /// gives `doc_parity_status`.
+    ///
+    /// Like `Probe::Overridden`, the output is a **stored value, not a slot that
+    /// empties**: there is no state in which spawning `agy` becomes legal again.
+    ///
+    /// The body stays `todo!()` until the implementer wires it, for the same
+    /// reason `with_probe_override`'s does: a seam that stores the output
+    /// without anything consulting it would make a live `agy` spawn reachable
+    /// from the suite, and panicking at construction makes that impossible.
+    #[allow(unused_variables)]
+    pub fn with_probe_output_override(agy_effort: String, output: std::process::Output) -> Self {
+        todo!("classify a supplied doc-parity probe output without spawning the agy probe")
     }
 
     /// Evaluates documentation parity, frontmatter compliance, and auto-generates any missing docs or ADRs.
@@ -391,6 +456,12 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             Probe::Overridden(_) => {
                 todo!("return the stored probe outcome instead of spawning `agy`")
             }
+            Probe::SuppliedOutput(_) => {
+                todo!(
+                    "classify the stored probe output with `classify_probe_output`, inside \
+                     the watchdog-supervised closure below, instead of spawning `agy`"
+                )
+            }
         };
         let repo_dir_owned = repo_dir.to_path_buf();
         let prompt_clone = prompt.clone();
@@ -434,40 +505,21 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                 )
                 .await
                 {
-                    Ok(output) if output.status.success() => {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        if let Some(json_str) = extract_json_block(&stdout)
-                            && let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
-                        {
-                            return Ok(eval);
-                        }
-                        // Ran successfully but produced nothing parseable: we
-                        // have no judgement, so we must not claim sufficiency.
-                        anyhow::bail!(
-                            "doc parity probe returned no parseable evaluation (stdout {} bytes)",
-                            stdout.len()
-                        )
-                    }
-                    Ok(output) => anyhow::bail!(
-                        "doc parity probe exited with status {}: {}",
+                    Ok(output) => classify_probe_output(
                         output.status,
-                        String::from_utf8_lossy(&output.stderr).trim()
+                        &String::from_utf8_lossy(&output.stdout),
+                        &String::from_utf8_lossy(&output.stderr),
                     ),
                     // `run_bounded_for` already distinguishes "failed to run"
                     // from "timed out" in its message, and both stay errors.
                     Err(e) => Err(e),
                 }
             },
-            |err| {
-                // No deterministic local fallback exists for doc parity, so the
-                // watchdog path must report the failure rather than manufacture
-                // a pass. This arm previously returned is_doc_sufficient: true,
-                // which made gate 1 unfailable.
-                Err(anyhow::anyhow!(
-                    "doc parity probe supervision failed: {}",
-                    err
-                ))
-            },
+            // No deterministic local fallback exists for doc parity, so the
+            // watchdog path must report the failure rather than manufacture a
+            // pass. This arm previously returned is_doc_sufficient: true, which
+            // made gate 1 unfailable.
+            |err| Err(probe_supervision_failure(&err)),
         )
         .await
     }
@@ -498,6 +550,77 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         }
         Ok(updated)
     }
+}
+
+/// Decides whether a completed doc-parity probe run produced a judgement.
+///
+/// SCAFFOLDING (`tdd/docguard-oracle-repair`): a byte-verbatim EXTRACTION of the
+/// classification `evaluate_doc_parity`'s probe closure already performed
+/// inline, which now calls it. No behaviour moves and no defect is repaired
+/// here; the extraction is disclosed at the head of
+/// `tests/docguard_oracle_repair_test.rs` together with the cases it makes
+/// green — the same treatment, for the same reason, as
+/// `pre_merge_guard::evaluator::doc_parity_status`.
+///
+/// It is public because it is the decision the specification cares about most
+/// and the one the suite could not otherwise reach: the boundary between "the
+/// probe told us something" and "the probe told us nothing". `Err` here is not a
+/// degraded `Ok`. It is the state whose historical collapse into
+/// `is_doc_sufficient: true` made gate 1 unfailable, and the comment recording
+/// that is still in this file.
+///
+/// # Contract
+///
+/// * exit success and a parseable judgement on stdout — `Ok(judgement)`,
+///   carrying what the probe actually said, unaltered.
+/// * exit success and nothing parseable on stdout — `Err`. A run that printed
+///   prose, printed nothing, or was cut off mid-JSON has said nothing about this
+///   diff, and "nothing" must never be read as "sufficient".
+/// * a non-zero exit — `Err`, carrying the run's own stderr, because that is
+///   what tells an operator whether this was a broken invocation or a broken
+///   repository.
+/// * every `Err` states something, and the categories are tellable apart.
+pub fn classify_probe_output(
+    status: std::process::ExitStatus,
+    stdout: &str,
+    stderr: &str,
+) -> Result<DocParityEvaluation> {
+    if status.success() {
+        if let Some(json_str) = extract_json_block(stdout)
+            && let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
+        {
+            return Ok(eval);
+        }
+        // Ran successfully but produced nothing parseable: we have no
+        // judgement, so we must not claim sufficiency.
+        anyhow::bail!(
+            "doc parity probe returned no parseable evaluation (stdout {} bytes)",
+            stdout.len()
+        )
+    }
+    anyhow::bail!(
+        "doc parity probe exited with status {}: {}",
+        status,
+        stderr.trim()
+    )
+}
+
+/// The error a doc-parity probe abandoned by its supervisor produces.
+///
+/// SCAFFOLDING (`tdd/docguard-oracle-repair`): a byte-verbatim EXTRACTION of the
+/// `run_with_watchdog` fallback closure `evaluate_doc_parity` already passed
+/// inline, which now passes this instead. Same disclosure as
+/// `classify_probe_output`.
+///
+/// `run_with_adaptive_watchdog` calls its fallback for both of its own failure
+/// modes AND for an operation that simply returned `Err`, so this is the last
+/// thing every unsuccessful probe passes through. There is no deterministic
+/// local fallback for doc parity, so it must report the failure rather than
+/// manufacture a judgement — and it must carry the supervisor's own reason, or a
+/// stalled probe, a probe that exited non-zero, and a probe that printed
+/// gibberish all become the same unactionable line on a contributor's scorecard.
+pub fn probe_supervision_failure(err: &str) -> anyhow::Error {
+    anyhow::anyhow!("doc parity probe supervision failed: {}", err)
 }
 
 fn extract_json_block(text: &str) -> Option<String> {

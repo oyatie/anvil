@@ -292,11 +292,7 @@ Write the policy files directly to the workspace now."#####,
             warn!("agy stderr: {}", stderr_str);
         }
 
-        crate::queue_healer::interpret_agy_outcome(
-            output.status.success(),
-            &stdout_str,
-            &stderr_str,
-        )
+        crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
     }
 }
 

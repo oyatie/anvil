@@ -204,10 +204,6 @@ impl FixEngine {
         // edits the workspace directly, so a run that died mid-edit has left
         // the tree in a state nobody chose. Partial output is not partial
         // success.
-        crate::queue_healer::interpret_agy_outcome(
-            output.status.success(),
-            &stdout_str,
-            &stderr_str,
-        )
+        crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
     }
 }

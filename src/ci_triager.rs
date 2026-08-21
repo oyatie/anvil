@@ -258,11 +258,7 @@ Output strictly valid JSON matching this schema:
             warn!("agy stderr: {}", stderr_str);
         }
 
-        crate::queue_healer::interpret_agy_outcome(
-            output.status.success(),
-            &stdout_str,
-            &stderr_str,
-        )
+        crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
     }
 }
 

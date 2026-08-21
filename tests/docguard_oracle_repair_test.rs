@@ -12,8 +12,11 @@
 //! Issue #29's live path sits behind the `agy` doc-parity probe, so **no test in
 //! this file calls `DocGuard::ensure_documentation_parity` at all**. Every case
 //! here drives either a pure function (`corpus_sync::sync_published_counts`,
-//! `evaluator::doc_parity_status`) or the exemption rewriter through the sync.
-//! None of them can reach the probe, so none of them can spawn `agy`.
+//! `evaluator::doc_parity_status`) or the exemption rewriter through the sync,
+//! or — in the last section — `PreMergeGuard::evaluate_pre_merge_gates`, which
+//! is arithmetic over the sixty-nine guard reports it is handed plus two gates
+//! that read Anvil's own source tree. None of them can reach the probe, so none
+//! of them can spawn `agy`.
 //!
 //! ## Why the gate cases are not in this binary
 //!
@@ -56,9 +59,12 @@
 //!
 //! ## Four cases in this file are GREEN at review time, deliberately
 //!
-//! The last section pins the `DocGuardReport` -> `GateStatus` mapping, which is
-//! where issue #29's requirement is actually decided. To drive it, the
-//! scaffolding EXTRACTED the evaluator's existing inline mapping into
+//! Measured: this binary reports **4 passed, 19 failed**. The four are named
+//! below and every one of them is a regression fence rather than red evidence.
+//!
+//! The `DocGuardReport` -> `GateStatus` mapping section pins where issue #29's
+//! requirement is actually decided. To drive it, the scaffolding EXTRACTED the
+//! evaluator's existing inline mapping into
 //! `pre_merge_guard::evaluator::doc_parity_status` — verbatim, defect and all —
 //! rather than replacing it with a `todo!()`. The consequence is that four of
 //! the five cases there pass today:
@@ -83,6 +89,13 @@
 //! `a_diff_..._does_not_certify_because_a_stub_was_written` reports when it
 //! fails with `status: AutoUpdated`.
 //!
+//! The section after that one —
+//! `a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator`
+//! — closes the requirement those five cases cannot: that
+//! `evaluate_pre_merge_gates` keeps reaching gate 1's verdict through
+//! `doc_parity_status` rather than through a second, private copy. It is RED, on
+//! `gate 1: AutoUpdated`, for the same live defect.
+//!
 //! ## Ownership is a compile-time constant
 //!
 //! Which repository is Anvil's own is settled by this suite as a property of the
@@ -94,7 +107,8 @@
 
 use anvil::doc_guard::DocGuardReport;
 use anvil::doc_guard::corpus_sync::sync_published_counts;
-use anvil::pre_merge_guard::evaluator::doc_parity_status;
+use anvil::git_manager::PrDiffContext;
+use anvil::pre_merge_guard::evaluator::{PreMergeGuard, doc_parity_status};
 use anvil::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport, TOTAL_GATES};
 use std::path::Path;
 use tempfile::tempdir;
@@ -136,9 +150,19 @@ const NEAR_MISSES: &[&str] = &[
     "oyatie/anvil-sdk",
     "oyatie/anvildocs",
     "attacker/anvil",
+    // `"oyatie/anvil"` as a proper SUFFIX of somebody else's slug. Every other
+    // entry here dies to a `contains`, a `starts_with` or an owner-blind
+    // predicate, but an `ends_with("oyatie/anvil")` survives all of them and
+    // hands this repository Anvil's corpus rules.
+    "notoyatie/anvil",
     // No owner at all: not a slug Anvil can recognise as its own.
     "anvil",
-    // The boundary: nothing is known about the repository under review.
+    // Nothing is known about the repository under review — and a slug that is
+    // only whitespace is the shape a trimmed-but-unchecked event payload
+    // produces, which a `repo.trim() == ""`-blind predicate then compares
+    // against nothing.
+    "   ",
+    // The boundary: an empty slug.
     "",
 ];
 
@@ -150,6 +174,35 @@ const OWNED_PAGES: &[&str] = &[
     "docs/adr/0001-console.md",
     "docs/decisions/0001-console.md",
 ];
+
+/// Pages that exist in Anvil's own checkout and are deliberately **not** part
+/// of the corpus the sync owns.
+///
+/// The counter-pressure to `OWNED_PAGES`, and until now the suite had none of
+/// it on Anvil's own side: every Anvil fixture in every one of the four binaries
+/// wrote only paths that were already owned, so the pressure ran one way —
+/// "reach every owned page" — with nothing at all fencing what must be left
+/// alone. The cheapest way to satisfy that one-directional pressure is to stop
+/// maintaining a list and walk the checkout instead (`walkdir`, or a hand-rolled
+/// `read_dir` recursion filtering `*.md` / `*.yaml`), which reaches every owned
+/// page by construction and passes every assertion in every binary — because
+/// under it the tempdir contains nothing BUT owned pages, so even
+/// `assert_eq!(sync.rewritten.len(), OWNED_PAGES.len())` still matches.
+///
+/// What that ships is issue #27's harm aimed inward: on Anvil's own pull
+/// requests the sync rewrites gate-count claims in, and deletes exemption
+/// sentences from, `CHANGELOG.md`, `.github/**`, and every `docs/**` page that
+/// is not doctrine — and the pipeline commits and pushes those edits onto the
+/// contributor's branch.
+///
+/// `CHANGELOG.md` is chosen deliberately: it is named in the historical
+/// exemption sentence itself (`such as README.md or CHANGELOG.md`), so excluding
+/// it is a real decision about the corpus boundary rather than an arbitrary
+/// path. The nested `docs/notes/roadmap.md` is chosen because it sits under
+/// `docs/`, beside the two directories `collect_owned_pages` really does
+/// enumerate, which is exactly where a recursive walk stops being
+/// distinguishable from the fixed list.
+const NOT_OWNED_PAGES: &[&str] = &["CHANGELOG.md", "docs/notes/roadmap.md"];
 
 const EXEMPTION_MARKER: &str = "does **not** yet amend existing documents";
 const PLAIN_EXEMPTION_MARKER: &str = "does not yet amend existing documents";
@@ -332,9 +385,29 @@ fn make_adr_dir_unreadable(repo_dir: &Path) -> Option<std::fs::Permissions> {
     Some(original)
 }
 
+/// Restores `docs/adr`'s permissions on drop, so a panic *between* the fixture
+/// being built and the assertions running cannot leave a `0o000` directory
+/// behind — `TempDir`'s own cleanup cannot remove one, so every such panic
+/// otherwise leaks an undeletable directory into `TMPDIR`.
+///
+/// A plain restore call at the end of the case is not enough, and during the red
+/// phase it is actively wrong: a byte-index bug in the new `rewrite_page` panics
+/// *inside* `sync_published_counts`, which is upstream of any line the case
+/// could put the restore on. The gate binary already uses this shape; both
+/// places now do.
 #[cfg(unix)]
-fn restore_adr_dir(repo_dir: &Path, original: std::fs::Permissions) {
-    std::fs::set_permissions(repo_dir.join("docs/adr"), original).unwrap();
+struct RestoreAdrDir<'a> {
+    repo_dir: &'a Path,
+    original: Option<std::fs::Permissions>,
+}
+
+#[cfg(unix)]
+impl Drop for RestoreAdrDir<'_> {
+    fn drop(&mut self) {
+        if let Some(original) = self.original.take() {
+            let _ = std::fs::set_permissions(self.repo_dir.join("docs/adr"), original);
+        }
+    }
 }
 
 // =========================================================================
@@ -454,10 +527,22 @@ fn the_corpus_sync_rewrites_every_owned_page_not_only_the_readme() {
     // `corpus_sync` was written to end. The `docs/adr` fence elsewhere in this
     // file does NOT catch it: it only requires `collect_owned_pages` to keep
     // LISTING the ADR directories, never that their contents are rewritten.
+    //
+    // The counter-pressure runs in the SAME sync: `NOT_OWNED_PAGES` carries the
+    // identical drifting bytes, in the same checkout, so the only thing that can
+    // separate them is the corpus boundary itself. Without it this case pushes
+    // one way only — "reach every owned page" — and the cheapest way to satisfy
+    // that is to stop maintaining a list and walk the checkout instead, which
+    // passes every assertion in all four binaries while rewriting Anvil's
+    // CHANGELOG, its `.github/` pages and its `docs/` notes on every pull
+    // request. See `NOT_OWNED_PAGES`.
     let page = drifting_page_with_exemption();
     let dir = tempdir().unwrap();
     for owned in OWNED_PAGES {
         write(&dir.path().join(owned), &page);
+    }
+    for unowned in NOT_OWNED_PAGES {
+        write(&dir.path().join(unowned), &page);
     }
 
     let sync = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES).unwrap();
@@ -524,6 +609,34 @@ fn the_corpus_sync_rewrites_every_owned_page_not_only_the_readme() {
             got.lines().count(),
             page.lines().count(),
             "{owned}: line structure must be preserved: {got}"
+        );
+    }
+
+    // And the other direction, in the same run and on the same bytes: a page of
+    // Anvil's that the corpus does not own is not the sync's to edit either.
+    for unowned in NOT_OWNED_PAGES {
+        let got = std::fs::read_to_string(dir.path().join(unowned)).unwrap();
+        assert_eq!(
+            got, page,
+            "{unowned} is not one of Anvil's published corpus pages. It carries the \
+             same drifting claims and the same exemption sentence as the five that \
+             are, so the only thing that may separate them is the corpus boundary — \
+             and a sync that walks the checkout instead of enumerating the corpus \
+             rewrites this file, and the pipeline commits and pushes that edit onto \
+             the contributor's branch. That is issue #27's harm, aimed at Anvil"
+        );
+        assert!(
+            !sync.rewritten.contains(&(*unowned).to_string()),
+            "{unowned} is not owned, so it may not be reported as rewritten — a \
+             non-empty file list is read as AutoUpdated at gate 1 and AutoUpdated \
+             certifies: {:?}",
+            sync.rewritten
+        );
+        assert!(
+            !sync.remaining_drift.iter().any(|d| d.contains(unowned)),
+            "{unowned} is not measured against Anvil's TOTAL_GATES, so its counts \
+             are not drift and must never fail a pull request: {:?}",
+            sync.remaining_drift
         );
     }
 }
@@ -832,12 +945,16 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
             );
         };
 
-        // Both calls are made while the directory is unreadable, and the
-        // permissions are restored before anything can panic, because an
+        // Both calls are made while the directory is unreadable, and the guard
+        // restores the permissions however this block leaves — assertion,
+        // panic inside the sync, or ordinary fall-through — because an
         // unreadable directory also defeats `TempDir`'s own cleanup.
+        let _restore = RestoreAdrDir {
+            repo_dir: dir.path(),
+            original: Some(original),
+        };
         let anvil_result = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES);
         let watched_result = sync_published_counts(repo, dir.path(), TOTAL_GATES);
-        restore_adr_dir(dir.path(), original);
 
         assert!(
             anvil_result.is_err(),
@@ -877,48 +994,43 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
     }
 }
 
-// STATED EXCLUSION — the corpus sync's `remaining_drift` arm at the gate.
+// WHERE THE CORPUS SYNC'S `remaining_drift` ARM IS PINNED, and why it is not
+// pinned here.
 //
 // `ensure_documentation_parity` matches three ways on the sync: `Err` (absent
-// evidence, pinned by `a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate`
-// in `tests/docguard_oracle_repair_gate_test.rs`), non-empty `remaining_drift`
-// (hard fail, not AutoUpdated), and the ordinary success. This branch restructures that
-// match to thread `not_applicable` through it, and the drift arm is the one no
-// case here drives. That is a decision, recorded so an implementer restructuring
-// the match knows the arm is load-bearing rather than dead — not an oversight.
+// evidence), non-empty `remaining_drift` (hard fail, never AutoUpdated), and the
+// ordinary success. This branch restructures that match to thread
+// `not_applicable` through it, so all three arms are load-bearing rather than
+// dead. All three are driven, and all three are driven at the GATE, in
+// `tests/docguard_oracle_repair_gate_test.rs` —
+// `a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate` and
+// `published_drift_the_sync_could_not_repair_fails_anvils_own_gate` — because
+// that is where the arms exist. Nothing here needs to change for them; this note
+// exists so an implementer flattening the match knows to look there.
 //
-// It is not driven because it is not reachable through a *correct* rewriter, and
-// the reason is structural rather than a shortage of fixtures:
+// The drift arm needed a fixture that had to be BUILT rather than written down,
+// and the reason is worth stating because an earlier round of this suite got it
+// wrong and declared the arm unreachable:
 //
-//   * `rewrite_page` and `remaining_claim` share the same two regexes and the
-//     same `EXEMPTION_MARKERS` list, so anything the checker can see is
-//     something the rewriter has already normalised. The count rewrite emits
-//     `TOTAL_GATES` followed by the captured suffix verbatim, so the repaired
-//     claim always re-parses; the checker's "unparseable gate-count claim"
-//     branch needs digits the rewriter's identical `\d+` did not match, and
-//     there are none.
-//   * The deletion cannot *manufacture* a claim at its junction. `start` is
-//     always immediately preceded by a sentence terminator, a `|`, a newline, or
-//     the start of the page — never a digit and never a partial marker — so no
-//     `\d+ gates`, no `sixty-gate` and no marker can be formed by splicing the
-//     surviving prefix onto the surviving suffix.
+//   * `rewrite_page` and `remaining_claim` share `count_regex`, `sixty_regex`
+//     and `EXEMPTION_MARKERS`, so no page can simply *arrive* carrying drift
+//     that survives its own repair. The count rewrite emits `TOTAL_GATES`
+//     followed by the captured suffix verbatim, so a repaired claim always
+//     re-parses.
+//   * But the deletion CAN manufacture a claim at its junction, and that is the
+//     whole of the arm's reachability. Removing a sentence splices the text
+//     either side of it together, and `count_regex`'s `\s*-\s*gate` spans a
+//     newline — so `Anvil ships 12` followed by an exemption sentence followed
+//     by `-gate release check.` becomes a `12`-gate claim that nobody wrote.
+//     The ORDER rule in the next section is what settles the consequence: the
+//     count passes run first, so the spliced claim is reported as drift rather
+//     than silently normalised. `unrepairable_drift_page()` in the gate binary
+//     is that fixture, and it depends on the rule.
 //
-// So drift after a rewrite means the rewriter failed, which is a self-check on
-// code this branch is replacing rather than a property of page content. That
-// makes the arm a fail-closed net for layouts this suite does not carry: if the
-// new sentence deletion misses an occurrence, `remaining_claim` is what turns
-// that into a blocked PR instead of a page published mangled and reported clean.
 // Every issue-#28 case below asserts `remaining_drift.is_empty()`, which fences
-// the argument from the other side — if the new rewriter ever does leave drift
-// on a pinned layout, those assertions say so.
-//
-// REQUIREMENT FOR THE IMPLEMENTER, since no test can enforce it: the drift arm
-// must survive the restructuring. `let sync = corpus_sync::sync_published_counts(
-// repo, repo_dir, TOTAL_GATES)?;` deletes it silently and is caught by the
-// `Err`-arm case named above; a restructure that keeps the `Err` arm and drops only the drift guard
-// is caught by nothing here. If the implementer's rewriter *can* leave a marker
-// or a stale count behind in some layout, the arm becomes reachable and must be
-// pinned at the gate in the same commit.
+// the same net from the other side: if the new sentence deletion misses an
+// occurrence on a pinned layout, those assertions say so rather than letting the
+// page be published mangled and reported clean.
 
 // =========================================================================
 // Issue #28 — removing the exemption removes one sentence, not one line
@@ -950,8 +1062,43 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
 //   * The trailing newline is consumed only when `start` landed at a line start
 //     *and* nothing survives on that line after `end` — otherwise the surviving
 //     prefix or suffix would be fused with the next line.
+//   * "`start` landed at a line start" means nothing but WHITESPACE precedes it
+//     on that line, and when the newline is consumed that leading whitespace
+//     goes with it. Anvil's own `openapi/openapi.yaml` is an owned page and it
+//     is indented, so the exemption sentence occupying a whole *indented* line
+//     is a layout the corpus really has; a rule that required `start` to be at
+//     byte-column zero would leave a whitespace-only line behind there and a
+//     rule that did not say which way it went would let either happen. Decided
+//     rather than left open, and the cost is stated: it forbids leaving the
+//     indentation, which on a page nobody re-indents is only diff noise —
+//     but diff noise on a page the pipeline commits and pushes is still a
+//     change nobody asked for.
 //   * Every occurrence is removed, not only the first — including two on one
 //     line, and including one of each marker variant on the same line.
+//   * ORDER: the gate-count rewrite and the `sixty-gate` rewrite run BEFORE the
+//     exemption-sentence deletion, and neither is re-run over the deleted text
+//     afterwards. This is a requirement, not an artefact of today's code, and
+//     it is stated here because a fixture depends on it
+//     (`unrepairable_drift_page()` in `tests/docguard_oracle_repair_gate_test.rs`).
+//
+//     Deleting a sentence SPLICES the text either side of it together, and the
+//     splice can form a gate-count claim that was never written on the page: a
+//     line ending `Anvil ships 12`, an exemption sentence, and a line opening
+//     `-gate release check.` become `Anvil ships 12\n-gate release check.`, which
+//     `count_regex`'s `\s*-\s*gate` reads as a `12`-gate claim. A rewriter that
+//     normalises counts AFTER the deletion silently manufactures that claim and
+//     then repairs it to `TOTAL_GATES`, publishing a number the author never
+//     wrote and never saw. A rewriter that normalises BEFORE it leaves the
+//     spliced claim standing, `remaining_claim` reports it as drift, and gate 1
+//     hands it back to a human — which is the fail-closed answer, and the one
+//     this suite requires.
+//
+//     STATED COST, so this reads as a decision rather than an accident of the
+//     code it replaces: re-running the count pass to a fixpoint after the
+//     deletion would be a defensible design, and it is forbidden here. The
+//     reason is that its output on this layout is a published claim nobody
+//     authored, which is the class of statement this whole branch exists to
+//     stop the oracle making.
 
 #[test]
 fn an_exemption_marker_inside_a_table_row_leaves_the_row_and_its_neighbour_intact() {
@@ -1522,6 +1669,38 @@ fn the_trailing_newline_goes_only_when_the_deletion_started_at_a_line_start() {
         "no line may be lost here — the exemption line had other prose on it:\n{got}"
     );
     assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
+
+    // The third layout, and the one that settles what "at a line start" means:
+    // the sentence occupies a whole INDENTED line. `openapi/openapi.yaml` is an
+    // owned page and it is indented throughout, so this is a layout Anvil's own
+    // corpus really has — and a scan that requires `start` at byte-column zero
+    // leaves `    \n` behind, while one that accepts "only whitespace precedes
+    // start" removes the line. Both satisfy every other case in this file, which
+    // is why the rule block states which one is required.
+    let indented = "openapi: 3.1.0\n\
+                    info:\n\
+                    \x20 description: |\n\
+                    \x20   Alpha line.\n\
+                    \x20   DocGuard does **not** yet amend existing documents.\n\
+                    \x20   Gamma line.\n";
+    let (got, remaining_drift) = rewrite_anvil_page("openapi/openapi.yaml", indented);
+
+    assert!(
+        !got.contains(EXEMPTION_MARKER),
+        "the exemption marker is the thing being removed: {got:?}"
+    );
+    assert_eq!(
+        got,
+        "openapi: 3.1.0\n\
+         info:\n\
+         \x20 description: |\n\
+         \x20   Alpha line.\n\
+         \x20   Gamma line.\n",
+        "the indented exemption line goes whole — its own indentation and its \
+         newline with it — leaving neither a blank line nor a line of trailing \
+         spaces on a page the pipeline commits and pushes: {got:?}"
+    );
+    assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
 }
 
 #[test]
@@ -1955,5 +2134,723 @@ fn a_sufficient_diff_certifies_and_a_rewritten_owned_page_does_not_block_it() {
     assert!(
         certifies_with(clean.clone()),
         "a documented diff on a clean corpus certifies: {clean:?}"
+    );
+}
+
+// =========================================================================
+// Issue #29 at the function that actually makes the merge decision
+// =========================================================================
+//
+// The five cases above pin `pre_merge_guard::evaluator::doc_parity_status`. That
+// is where the decision is *written*, and it is not the same claim as "that is
+// where the decision is *made*". The branch's own scaffolding doc comment on
+// that function records the difference —
+//
+//     "must keep being called from `evaluate_pre_merge_gates` — a second,
+//      private copy of it inside the evaluator would put the decision back out
+//      of the suite's reach"
+//
+// — as a REQUIREMENT FOR THE IMPLEMENTER that, until this case, nothing
+// enforced. Nothing else in `tests/` touches it either: `scorecard_wiring_test`
+// and `naming_law_survivors_test` only assign a `GateStatus` to the report field
+// directly.
+//
+// The wrong implementation is not contrived. While repairing the mapping the
+// implementer wants gate 1's `Failed` reason to also carry the corpus-sync note,
+// finds it reads better beside the other sixty-nine gates that are mapped
+// inline, and folds the logic back into `evaluate_pre_merge_gates` — leaving
+// `doc_parity_status` correctly repaired, publicly exported, and uncalled. All
+// five cases above go green, `certifies_with` still returns the right answers,
+// and gate 1 in production goes on reading a stub-driven non-empty
+// `files_created_or_updated` as `AutoUpdated` and certifying every
+// under-documented diff the probe flagged.
+//
+// On a branch whose subject is the honesty law, a specification requirement that
+// lives only in a doc comment is that same defect one level up — which is
+// exactly the argument this branch used to justify making `Probe` an enum
+// rather than trusting a comment about `take()`.
+//
+// So the decision is pinned at the function that makes it. The other
+// sixty-nine guard reports are neutral: every one of them is the value that
+// leaves its own gate acceptable, so the only thing that varies between the two
+// runs below is the `DocGuardReport`.
+//
+// STATED LIMIT, measured rather than assumed, and the reason this case does not
+// assert `!report.is_certified_ready` even though that is the sentence one would
+// like to write. `evaluate_pre_merge_gates` runs two gates against Anvil's OWN
+// tree rather than against the reports it is handed: `brand_absence_status` and
+// `migration_boundary_status`. On this tree the brand-absence gate is
+// `Failed("12 name(s) or PR-visible string(s) ...")` — twelve pre-existing
+// violations in `src/migration/registry.rs`, none of them this branch's, and the
+// gate is a real measurement rather than a fixture input, so no test can supply
+// a value that clears it. `is_certified_ready` is therefore `false` for every
+// report this fixture can build, and asserting it would be a test that passes
+// whether or not gate 1 is correct — the exact defect this suite exists to stop.
+//
+// What replaces it is stronger, not weaker: the two runs differ in nothing but
+// the `DocGuardReport`, so the number of gates withholding certification must
+// differ by exactly one. That is independent of the tree's own brand-absence
+// debt, it is false today, and no "block everything" or "accept everything"
+// implementation satisfies it. The merge arithmetic itself —
+// `GateStatus::is_acceptable()` conjoined by `seal()` — is pinned by
+// `certifies_with` in the five cases above.
+
+/// The other sixty-nine guard reports, each carrying the value that leaves its
+/// own gate acceptable.
+///
+/// Held in one struct rather than passed as a sixty-nine-element tuple so the
+/// two runs below are visibly identical apart from the `DocGuardReport`. Every
+/// field is the neutral value for its gate: nothing here is evidence about
+/// anything, and no assertion in this file reads any of it. `NEUTRAL` is the
+/// summary string on every report that has one, so a summary that leaked into
+/// gate 1's reason would be visible rather than plausible.
+struct NeutralGuardReports {
+    cedar: anvil::cedar_guard::CedarGuardReport,
+    compliance: anvil::compliance_guard::ComplianceGuardReport,
+    api_contract: anvil::api_contract_guard::ApiContractReport,
+    cell: anvil::cell_isolation_guard::CellIsolationReport,
+    supply_chain: anvil::supply_chain_guard::SupplyChainReport,
+    clean_arch: anvil::clean_architecture_guard::CleanArchitectureReport,
+    monorepo: anvil::monorepo_guard::MonorepoGuardReport,
+    debt: anvil::debt_shrink_guard::DebtShrinkReport,
+    modular: anvil::modularization_guard::ModularizationReport,
+    coverage: anvil::coverage_guard::CoverageReport,
+    rust_skills: anvil::rust_language_policy::RustSkillsReport,
+    kani: anvil::kani_guard::KaniGuardReport,
+    slo: anvil::slo_canary_guard::SloCanaryReport,
+    adr: anvil::adr_drift_ratchet::AdrReport,
+    shuffle: anvil::shuffle_shard_simulator::ShuffleShardReport,
+    trace: anvil::trace_context_guard::TraceContextReport,
+    constant_work: anvil::constant_work_guard::ConstantWorkReport,
+    idempotency: anvil::idempotency_guard::IdempotencyReport,
+    finops: anvil::finops_ratchet::FinOpsReport,
+    ghost_migration: anvil::ghost_migration_harness::GhostMigrationReport,
+    gitops_promo: anvil::gitops_promotion::GitOpsPromotionReport,
+    gitops_drift: anvil::gitops_drift_reconciler::GitOpsDriftReport,
+    canary: anvil::canary_rollout::CanaryRolloutReport,
+    cluster_audit: anvil::cluster_state_auditor::ClusterAuditReport,
+    migration_orch: anvil::migration_orchestrator::MigrationLifecycleReport,
+    ci_wallclock: anvil::ci_wallclock_ratchet::CiWallclockReport,
+    predictive_test: anvil::predictive_test_selector::PredictiveTestReport,
+    compile_profile: anvil::compile_time_profiler::CompileProfileReport,
+    remote_cache: anvil::remote_cache_optimizer::CacheReport,
+    runner_economics: anvil::ci_runner_economics::RunnerEconomicsReport,
+    sandbox: anvil::ephemeral_sandbox::SandboxReport,
+    cross_service: anvil::cross_service_impact::ServiceImpactReport,
+    secret_policy: anvil::ephemeral_secrets::SecretPolicyReport,
+    psa: anvil::psa_admission_guard::PsaAdmissionReport,
+    shadow_traffic: anvil::shadow_traffic_harness::ShadowTrafficReport,
+    unresolved_review: anvil::unresolved_review_guard::UnresolvedReviewReport,
+    local_probe: anvil::local_inner_loop::LocalProbeReport,
+    semantic_abi: anvil::semantic_abi_ratchet::SemanticAbiReport,
+    zero_day: anvil::zero_day_patcher::ZeroDayReport,
+    formal: anvil::formal_verification::FormalVerificationReport,
+    deadlock: anvil::deadlock_analyzer::DeadlockReport,
+    aca: anvil::automated_canary::AutomatedCanaryReport,
+    ring: anvil::progressive_rollout::ProgressiveRingReport,
+    hermetic: anvil::hermetic_build::HermeticBuildReport,
+    openvex: anvil::vex_scanner::OpenVexReport,
+    cosign: anvil::cosign_signer::CosignReport,
+    chaos_inj: anvil::chaos_injector::ChaosInjectorReport,
+    stacked: anvil::stacked_diffs::StackedDiffsReport,
+    microbench: anvil::microbenchmark_ratchet::MicrobenchmarkReport,
+    jittered: anvil::jittered_backoff::JitteredBackoffReport,
+    schema_evo: anvil::schema_evolution::SchemaEvolutionReport,
+    auto_rollback: anvil::auto_rollback::AutoRollbackReport,
+    wasm: anvil::wasm_sandbox::WasmSandboxReport,
+    consistency: anvil::consistency_guard::ConsistencyReport,
+    flake_quarantine: anvil::flake_quarantine::FlakeQuarantineReport,
+    zero_trust: anvil::zero_trust_workload::ZeroTrustWorkloadReport,
+    carbon: anvil::carbon_aware::CarbonComputeReport,
+    replay: anvil::replay_harness::ReplayHarnessReport,
+    upgrade_train: anvil::upgrade_train::UpgradeTrainReport,
+    mutation: anvil::chaos_mutation_guard::MutationAdequacyReport,
+    feature_flag: anvil::feature_flag_ratchet::FeatureFlagReport,
+    bench: anvil::criterion_bench_ratchet::BenchmarkReport,
+    attestation: anvil::attestation_guard::AttestationReport,
+    shape: anvil::shape::facade::gate::ShapeGateOutcome,
+}
+
+/// The summary string carried by every neutral report that has one.
+const NEUTRAL: &str = "neutral in this fixture; it is not evidence about anything";
+
+fn neutral_guard_reports() -> NeutralGuardReports {
+    use anvil::clean_architecture_guard::ArchMeasurement;
+    use anvil::coverage_guard::CoverageMeasurement;
+
+    let n = || NEUTRAL.to_string();
+    NeutralGuardReports {
+        cedar: anvil::cedar_guard::CedarGuardReport {
+            is_compliant: true,
+            files_created_or_updated: Vec::new(),
+            summary: n(),
+        },
+        compliance: anvil::compliance_guard::ComplianceGuardReport {
+            is_compliant: true,
+            violations: Vec::new(),
+            evaluation_date: "2026-08-21".to_string(),
+            jurisdictions_evaluated: Vec::new(),
+            active_rules_count: 0,
+            summary: n(),
+        },
+        api_contract: anvil::api_contract_guard::ApiContractReport {
+            is_intact: true,
+            auto_synced_files: Vec::new(),
+            summary: n(),
+        },
+        cell: anvil::cell_isolation_guard::CellIsolationReport {
+            is_isolated: true,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        supply_chain: anvil::supply_chain_guard::SupplyChainReport {
+            is_secure: true,
+            audited_packages: 0,
+            patched_packages: Vec::new(),
+            slsa_provenance_generated: true,
+            summary: n(),
+        },
+        clean_arch: anvil::clean_architecture_guard::CleanArchitectureReport {
+            is_clean: true,
+            violations: Vec::new(),
+            summary: n(),
+            measurement: ArchMeasurement::Measured {
+                files_inspected: 0,
+                files_classified: 0,
+            },
+            scope: n(),
+        },
+        monorepo: anvil::monorepo_guard::MonorepoGuardReport {
+            is_compliant: true,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        debt: anvil::debt_shrink_guard::DebtShrinkReport {
+            is_acceptable: true,
+            total_debt_shrunk: 0,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        modular: anvil::modularization_guard::ModularizationReport {
+            is_modular: true,
+            oversized_files: Vec::new(),
+            summary: n(),
+        },
+        coverage: anvil::coverage_guard::CoverageReport {
+            is_sufficient: true,
+            estimated_diff_coverage_percent: 100.0,
+            executable_lines_added: 0,
+            test_lines_added: 0,
+            findings: Vec::new(),
+            summary: n(),
+            measurement: CoverageMeasurement::NothingToMeasure,
+        },
+        rust_skills: anvil::rust_language_policy::RustSkillsReport {
+            is_idiomatic: true,
+            findings: Vec::new(),
+            rules_evaluated_count: 0,
+            categories_evaluated: Vec::new(),
+            summary: n(),
+        },
+        kani: anvil::kani_guard::KaniGuardReport {
+            is_verified: true,
+            unsafe_blocks_found: 0,
+            safety_proofs_valid: 0,
+            kani_proofs_passed: 0,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        slo: anvil::slo_canary_guard::SloCanaryReport {
+            status: GateStatus::Passed,
+            is_compliant: true,
+            slos_evaluated: 0,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        adr: anvil::adr_drift_ratchet::AdrReport {
+            is_compliant: true,
+            adrs_evaluated: 0,
+            scaffolded_adrs: Vec::new(),
+            violations: Vec::new(),
+            summary: n(),
+        },
+        shuffle: anvil::shuffle_shard_simulator::ShuffleShardReport {
+            is_isolated: true,
+            total_cells: 0,
+            cells_per_tenant: 0,
+            blast_radius_ratio: 0.0,
+            max_tenant_overlap: 0,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        trace: anvil::trace_context_guard::TraceContextReport {
+            is_propagated: true,
+            tasks_scanned: 0,
+            detached_findings: Vec::new(),
+            summary: n(),
+        },
+        constant_work: anvil::constant_work_guard::ConstantWorkReport {
+            is_bounded: true,
+            unbounded_findings: Vec::new(),
+            summary: n(),
+        },
+        idempotency: anvil::idempotency_guard::IdempotencyReport {
+            is_idempotent: true,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        finops: anvil::finops_ratchet::FinOpsReport {
+            is_cost_optimal: true,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        ghost_migration: anvil::ghost_migration_harness::GhostMigrationReport {
+            is_safe: true,
+            migrations_evaluated: 0,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        gitops_promo: anvil::gitops_promotion::GitOpsPromotionReport {
+            is_pinned: true,
+            unpinned_findings: Vec::new(),
+            summary: n(),
+        },
+        gitops_drift: anvil::gitops_drift_reconciler::GitOpsDriftReport {
+            is_safe: true,
+            orphan_findings: Vec::new(),
+            summary: n(),
+        },
+        canary: anvil::canary_rollout::CanaryRolloutReport {
+            is_healthy: true,
+            current_traffic_percent: 100,
+            burn_rate: 0.0,
+            summary: n(),
+        },
+        cluster_audit: anvil::cluster_state_auditor::ClusterAuditReport {
+            status: GateStatus::Passed,
+            is_synchronized: true,
+            drift_findings: Vec::new(),
+            summary: n(),
+        },
+        migration_orch: anvil::migration_orchestrator::MigrationLifecycleReport {
+            is_ordered: true,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        ci_wallclock: anvil::ci_wallclock_ratchet::CiWallclockReport {
+            status: GateStatus::Passed,
+            is_acceptable: true,
+            summary: n(),
+        },
+        predictive_test: anvil::predictive_test_selector::PredictiveTestReport {
+            is_optimized: true,
+            selected_packages: Vec::new(),
+            skipped_packages_count: 0,
+            pruning_ratio: 0.0,
+            summary: n(),
+        },
+        compile_profile: anvil::compile_time_profiler::CompileProfileReport {
+            is_lean: true,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        remote_cache: anvil::remote_cache_optimizer::CacheReport {
+            status: GateStatus::Passed,
+            is_cache_aligned: true,
+            summary: n(),
+        },
+        runner_economics: anvil::ci_runner_economics::RunnerEconomicsReport {
+            is_cost_optimal: true,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        sandbox: anvil::ephemeral_sandbox::SandboxReport {
+            is_hermetic: true,
+            sandboxes_allocated: 0,
+            average_spinup_ms: 0,
+            summary: n(),
+        },
+        cross_service: anvil::cross_service_impact::ServiceImpactReport {
+            is_compatible: true,
+            breaking_findings: Vec::new(),
+            summary: n(),
+        },
+        secret_policy: anvil::ephemeral_secrets::SecretPolicyReport {
+            is_zero_trust: true,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        psa: anvil::psa_admission_guard::PsaAdmissionReport {
+            is_compliant: true,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        shadow_traffic: anvil::shadow_traffic_harness::ShadowTrafficReport {
+            status: GateStatus::Passed,
+            is_verified: true,
+            summary: n(),
+        },
+        unresolved_review: anvil::unresolved_review_guard::UnresolvedReviewReport {
+            is_clean: true,
+            unresolved_threads: Vec::new(),
+            summary: n(),
+        },
+        local_probe: anvil::local_inner_loop::LocalProbeReport {
+            is_valid: true,
+            latency_ms: 0,
+            findings: Vec::new(),
+            summary: n(),
+        },
+        semantic_abi: anvil::semantic_abi_ratchet::SemanticAbiReport {
+            is_abi_stable: true,
+            breaking_findings: Vec::new(),
+            summary: n(),
+        },
+        zero_day: anvil::zero_day_patcher::ZeroDayReport {
+            is_clean: true,
+            advisories_detected: Vec::new(),
+            summary: n(),
+        },
+        formal: anvil::formal_verification::FormalVerificationReport {
+            passed: true,
+            findings: Vec::new(),
+        },
+        deadlock: anvil::deadlock_analyzer::DeadlockReport {
+            passed: true,
+            findings: Vec::new(),
+        },
+        aca: anvil::automated_canary::AutomatedCanaryReport {
+            status: GateStatus::Passed,
+            passed: true,
+            verdict: anvil::automated_canary::CanaryVerdict::Pass,
+        },
+        ring: anvil::progressive_rollout::ProgressiveRingReport {
+            passed: true,
+            state: anvil::progressive_rollout::RingRolloutState {
+                current_ring: anvil::progressive_rollout::DeploymentRing::Ring3GlobalProd,
+                target_ring: anvil::progressive_rollout::DeploymentRing::Ring3GlobalProd,
+                traffic_pct: 100,
+                is_healthy: true,
+            },
+        },
+        hermetic: anvil::hermetic_build::HermeticBuildReport {
+            passed: true,
+            result: anvil::hermetic_build::ReproducibilityResult::DeterministicBitForBit,
+        },
+        openvex: anvil::vex_scanner::OpenVexReport {
+            passed: true,
+            statements: Vec::new(),
+        },
+        cosign: anvil::cosign_signer::CosignReport {
+            passed: true,
+            bundle: anvil::cosign_signer::CosignSignatureBundle {
+                artifact_digest: "sha256:0".to_string(),
+                oidc_issuer: n(),
+                certificate_chain: Vec::new(),
+                rekor_entry_uuid: "0".to_string(),
+                is_valid: true,
+            },
+        },
+        chaos_inj: anvil::chaos_injector::ChaosInjectorReport {
+            passed: true,
+            trials: Vec::new(),
+        },
+        stacked: anvil::stacked_diffs::StackedDiffsReport {
+            status: GateStatus::Passed,
+            passed: true,
+            plan: anvil::stacked_diffs::StackSyncPlan {
+                stack_depth: 0,
+                rebase_order: Vec::new(),
+                atomic_merge_ready: true,
+            },
+        },
+        microbench: anvil::microbenchmark_ratchet::MicrobenchmarkReport {
+            status: GateStatus::Passed,
+            passed: true,
+            verdict: anvil::microbenchmark_ratchet::BenchmarkRegressionVerdict::Optimal,
+        },
+        jittered: anvil::jittered_backoff::JitteredBackoffReport {
+            passed: true,
+            unjittered_retries_detected: 0,
+            missing_deadline_calls: 0,
+            summary: n(),
+        },
+        schema_evo: anvil::schema_evolution::SchemaEvolutionReport {
+            passed: true,
+            breaking_field_changes: 0,
+            tag_renumbering_detected: false,
+            summary: n(),
+        },
+        auto_rollback: anvil::auto_rollback::AutoRollbackReport {
+            passed: true,
+            rollback_triggered: false,
+            postmortem: None,
+            summary: n(),
+        },
+        wasm: anvil::wasm_sandbox::WasmSandboxReport {
+            passed: true,
+            active_wasm_plugins: 0,
+            policy_violations: Vec::new(),
+            summary: n(),
+        },
+        consistency: anvil::consistency_guard::ConsistencyReport {
+            passed: true,
+            split_brain_risks: 0,
+            unversioned_mutations: 0,
+            summary: n(),
+        },
+        flake_quarantine: anvil::flake_quarantine::FlakeQuarantineReport {
+            passed: true,
+            quarantined_tests_isolated: 0,
+            rehabilitated_tests_restored: 0,
+            summary: n(),
+        },
+        zero_trust: anvil::zero_trust_workload::ZeroTrustWorkloadReport {
+            passed: true,
+            spiffe_id_verified: true,
+            mtls_enforced: true,
+            unauthenticated_endpoints: 0,
+            summary: n(),
+        },
+        carbon: anvil::carbon_aware::CarbonComputeReport {
+            passed: true,
+            estimated_joules_per_build: 0.0,
+            green_window_scheduled: true,
+            summary: n(),
+        },
+        replay: anvil::replay_harness::ReplayHarnessReport {
+            passed: true,
+            replayed_fixtures_count: 0,
+            divergence_detected: false,
+            summary: n(),
+        },
+        upgrade_train: anvil::upgrade_train::UpgradeTrainReport {
+            passed: true,
+            pending_upgrades_available: 0,
+            breaking_major_upgrades: 0,
+            summary: n(),
+        },
+        mutation: anvil::chaos_mutation_guard::MutationAdequacyReport {
+            is_adequate: true,
+            mutated_branches_count: 0,
+            surviving_findings: Vec::new(),
+            summary: n(),
+        },
+        feature_flag: anvil::feature_flag_ratchet::FeatureFlagReport {
+            is_clean: true,
+            flags_scanned_count: 0,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        bench: anvil::criterion_bench_ratchet::BenchmarkReport {
+            is_within_budget: true,
+            hot_paths_evaluated: 0,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        attestation: anvil::attestation_guard::AttestationReport {
+            is_attested: true,
+            stamped_receipt_path: None,
+            summary: n(),
+        },
+        shape: anvil::shape::facade::gate::ShapeGateOutcome::NoSpec { reason: n() },
+    }
+}
+
+/// Runs the full gate matrix over `doc` and the neutral reports.
+///
+/// Nothing here spawns anything: `evaluate_pre_merge_gates` is arithmetic over
+/// the reports it is handed, plus two self-directed gates that read Anvil's own
+/// source tree.
+fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport {
+    let r = neutral_guard_reports();
+    // Never the developer's own checkout: the fixture's working directory is a
+    // tempdir, so an implementation that decided to act on `repo_working_dir`
+    // cannot reach the tree this suite is running out of.
+    let workdir = tempdir().unwrap();
+    let ctx = PrDiffContext {
+        repo: ANVIL.to_string(),
+        pr_number: 77,
+        base_branch: "main".to_string(),
+        base_sha: "base-sha".to_string(),
+        head_sha: "head-sha".to_string(),
+        is_incremental: false,
+        previous_head_sha: None,
+        diff_content: "+pub fn newly_public() {}\n".to_string(),
+        changed_files: vec!["src/lib.rs".to_string()],
+        repo_working_dir: workdir.path().to_path_buf(),
+    };
+
+    PreMergeGuard::new()
+        .evaluate_pre_merge_gates(
+            &ctx,
+            doc,
+            &r.cedar,
+            &r.compliance,
+            &r.api_contract,
+            &r.cell,
+            &r.supply_chain,
+            &r.clean_arch,
+            &r.monorepo,
+            &r.debt,
+            &r.modular,
+            &r.coverage,
+            &r.rust_skills,
+            &r.kani,
+            &r.slo,
+            &r.adr,
+            &r.shuffle,
+            &r.trace,
+            &r.constant_work,
+            &r.idempotency,
+            &r.finops,
+            &r.ghost_migration,
+            &r.gitops_promo,
+            &r.gitops_drift,
+            &r.canary,
+            &r.cluster_audit,
+            &r.migration_orch,
+            &r.ci_wallclock,
+            &r.predictive_test,
+            &r.compile_profile,
+            &r.remote_cache,
+            &r.runner_economics,
+            &r.sandbox,
+            &r.cross_service,
+            &r.secret_policy,
+            &r.psa,
+            &r.shadow_traffic,
+            &r.unresolved_review,
+            &r.local_probe,
+            &r.semantic_abi,
+            &r.zero_day,
+            &r.formal,
+            &r.deadlock,
+            &r.aca,
+            &r.ring,
+            &r.hermetic,
+            &r.openvex,
+            &r.cosign,
+            &r.chaos_inj,
+            &r.stacked,
+            &r.microbench,
+            &r.jittered,
+            &r.schema_evo,
+            &r.auto_rollback,
+            &r.wasm,
+            &r.consistency,
+            &r.flake_quarantine,
+            &r.zero_trust,
+            &r.carbon,
+            &r.replay,
+            &r.upgrade_train,
+            &r.mutation,
+            &r.feature_flag,
+            &r.bench,
+            &r.attestation,
+            true,
+            "APPROVE",
+            &r.shape,
+        )
+        .expect("the evaluator is arithmetic over the reports it is handed")
+}
+
+/// How many of the report's gates withhold certification.
+fn gates_withholding_certification(report: &PreMergeCertificationReport) -> usize {
+    report
+        .all_statuses()
+        .iter()
+        .filter(|s| !s.is_acceptable())
+        .count()
+}
+
+#[test]
+fn a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator() {
+    let under_documented = doc_report(
+        false,
+        None,
+        &["docs/reference/newly-public.md"],
+        MISSING_REASON,
+    );
+    let documented = doc_report(
+        true,
+        None,
+        &["README.md"],
+        &format!("Published docs rewritten to TOTAL_GATES={TOTAL_GATES}: README.md"),
+    );
+
+    let blocked = certification_report_for(&under_documented);
+    let certified = certification_report_for(&documented);
+
+    // 1. The decision itself, at the gate that makes it.
+    assert!(
+        !blocked.doc_parity_status.is_acceptable(),
+        "the probe judged this diff under-documented and DocGuard wrote a stub. \
+         A stub carrying the symbol's name in a heading is evidence of the gap, \
+         not its repair, and this is the function where that stops being a merge. \
+         gate 1: {:?}",
+        blocked.doc_parity_status
+    );
+    assert!(
+        stated_reason(&blocked.doc_parity_status).contains(MISSING_REASON),
+        "the scorecard row a contributor reads is composed from this status, so \
+         the probe's finding must reach it; a gate that blocks without saying why \
+         is unactionable: {:?}",
+        blocked.doc_parity_status
+    );
+
+    // 2. The counterweight, so none of this is satisfied by an evaluator that
+    //    has simply stopped accepting anything. The corpus sync's whole purpose
+    //    is to repair Anvil's own published counts while certifying a pull
+    //    request, and gate 1 accepting that is what makes the repair land
+    //    instead of blocking every Anvil PR that touches a drifted page.
+    assert!(
+        certified.doc_parity_status.is_acceptable(),
+        "the probe judged the diff documented and the sync repaired a page of \
+         Anvil's own; that is a pass, not a finding: {:?}",
+        certified.doc_parity_status
+    );
+
+    // 3. The requirement that had no test: the evaluator must reach gate 1's
+    //    verdict through the same decision this file pins directly. A private
+    //    re-inlined copy that disagrees with the exported one is caught here,
+    //    and an unrepaired copy disagrees on exactly the report above.
+    //
+    //    Asserted as equality with `doc_parity_status`, not against a named
+    //    variant, so the implementer stays free to choose how the block is
+    //    reported — only that the evaluator and the exported decision cannot
+    //    diverge.
+    assert_eq!(
+        blocked.doc_parity_status,
+        doc_parity_status(&under_documented),
+        "gate 1 in a certification report must be the status \
+         `pre_merge_guard::evaluator::doc_parity_status` maps the DocGuardReport \
+         to. A second, private copy inside `evaluate_pre_merge_gates` puts the \
+         merge decision back out of this suite's reach and leaves the exported \
+         function correctly repaired, publicly visible, and uncalled"
+    );
+    assert_eq!(
+        certified.doc_parity_status,
+        doc_parity_status(&documented),
+        "the same, on the arm that must keep certifying"
+    );
+
+    // 4. The merge arithmetic, expressed as a difference rather than an
+    //    absolute. `is_certified_ready` cannot carry weight here — see the
+    //    STATED LIMIT above this section — but the two runs differ in NOTHING
+    //    except the `DocGuardReport`, so exactly one more gate must withhold
+    //    certification in the first. An implementation that blocks everything or
+    //    accepts everything fails it, and it does not depend on how much
+    //    unrelated debt the tree happens to be carrying.
+    assert_eq!(
+        gates_withholding_certification(&blocked),
+        gates_withholding_certification(&certified) + 1,
+        "the only difference between these two certification reports is gate 1's \
+         DocGuardReport, so exactly one more gate must withhold certification when \
+         the probe judged the diff under-documented.\n\
+         under-documented gate 1: {:?}\n\
+         documented gate 1:       {:?}",
+        blocked.doc_parity_status,
+        certified.doc_parity_status
     );
 }

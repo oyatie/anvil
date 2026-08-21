@@ -6,8 +6,6 @@ use tracing::info;
 
 use crate::git_manager::PrDiffContext;
 
-pub mod proof_runner;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KaniGuardReport {
     pub is_verified: bool,

@@ -30,9 +30,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      checker.",
         reference: "Kani / CBMC; AWS Automated Reasoning Group",
         fidelity: Fidelity::Heuristic,
-        gap: "Checks whether a `SAFETY:` documentation comment appears near `unsafe` (kani_guard/mod.rs:49-50). \
-              When the kani binary is absent it returns status `VERIFIED_STATIC` -- a missing verifier \
-              reporting success (kani_guard/proof_runner.rs:40-44).",
+        gap: "Checks whether a `SAFETY:` documentation comment appears near `unsafe` \
+              (kani_guard/mod.rs:47-48). No bounded model checker is invoked at any point.",
         blocked_on: None,
     },
     GateFidelity {
@@ -127,7 +126,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         reference: "Bazel/Buck2 remote execution CAS statistics",
         fidelity: Fidelity::Aspirational,
         gap: "With no sccache or Buck2 CAS statistics endpoint configured, reports `NotMeasured` \
-              (remote_cache_optimizer/mod.rs:82-85). Cache keys use non-cryptographic FNV-1a hashing via \
+              (remote_cache_optimizer/mod.rs:79-82). Cache keys use non-cryptographic FNV-1a hashing via \
               `compute_cache_key` (remote_cache_optimizer/cache_keys.rs:16).",
         blocked_on: Some("sccache or Buck2 CAS statistics"),
     },

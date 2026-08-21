@@ -48,13 +48,13 @@ The table below is a representative selection, not the full corpus.
 | Command | Description |
 |---|---|
 | `cargo run -- serve` | Starts the Anvil webhook listener daemon and automatic forwarders. |
-| `cargo run -- review --repo --pr ` | Runs 16-lens adversarial review on any PR. |
-| `cargo run -- fix --repo --pr ` | Evaluates, fixes, tests, and pushes code for review comments. |
-| `cargo run -- certify --repo --pr ` | Runs the full pre-merge certification scorecard (`TOTAL_GATES`) and merge enlistment. |
-| `cargo run -- triage --repo --run-id ` | Triages a failed CI workflow run on main/dev. |
-| `cargo run -- enlist --repo --pr ` | Enlists an approved & certified PR into the Merge Queue. |
-| `cargo run -- heal-queue --repo --pr ` | Auto-heals an ejected merge train PR with speculative bisection. |
-| `cargo run -- reconcile --repo --pr ` | Reconciles lockfiles and truth ledgers. |
+| `cargo run -- review --repo <repo> --pr <number>` | Runs 16-lens adversarial review on any PR. |
+| `cargo run -- fix --repo <repo> --pr <number>` | Evaluates, fixes, tests, and pushes code for review comments. |
+| `cargo run -- certify --repo <repo> --pr <number>` | Runs the full pre-merge certification scorecard (`TOTAL_GATES`) and merge enlistment. |
+| `cargo run -- triage --repo <repo> --run-id <id>` | Triages a failed CI workflow run on main/dev. |
+| `cargo run -- enlist --repo <repo> --pr <number>` | Enlists an approved & certified PR into the Merge Queue. |
+| `cargo run -- heal-queue --repo <repo> --pr <number>` | Auto-heals an ejected merge train PR with speculative bisection. |
+| `cargo run -- reconcile --repo <repo> --pr <number>` | Reconciles lockfiles and truth ledgers. |
 
 ---
 
@@ -79,7 +79,7 @@ The table below is a representative selection, not the full corpus.
 ```env
 HOST=127.0.0.1
 PORT=3000
-WATCHED_REPOS=oyatie/oyatie,oyatie/console
+WATCHED_REPOS=oyatie/oyatie,oyatie/console,oyatie/anvil
 REPOS_DIR=./repos
 DATA_DIR=./data
 RULES_PATH=./rules.md

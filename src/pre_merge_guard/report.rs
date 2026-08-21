@@ -99,7 +99,9 @@ pub struct PreMergeCertificationReport {
     /// incomplete even when `is_certified_ready` is true: the badge and the
     /// merge-admission decision are deliberately decoupled (invariant I1 —
     /// absent evidence is never a pass, but nor is it a false accusation).
-    #[serde(default)]
+    /// No `serde(default)`: a payload without this field would deserialise to
+    /// an empty vector, and an empty vector means admissible. Absent evidence
+    /// must fail to parse, not arrive looking measured.
     pub unmeasured_gates: Vec<String>,
     pub summary_markdown: String,
 }
@@ -490,6 +492,24 @@ impl GateStatus {
 
 #[cfg(test)]
 mod tests {
+
+    /// A report whose `unmeasured_gates` field is absent used to deserialise to
+    /// an empty vector, and an empty vector is what `is_admissible` reads as
+    /// "every gate was measured". Absent evidence has to fail here, because
+    /// nothing downstream can tell it apart from measured-and-clean.
+    #[test]
+    fn a_report_missing_unmeasured_gates_does_not_parse() {
+        let mut json = serde_json::to_value(sample_report()).expect("serialise");
+        json.as_object_mut()
+            .expect("object")
+            .remove("unmeasured_gates");
+
+        assert!(
+            serde_json::from_value::<PreMergeCertificationReport>(json).is_err(),
+            "a payload with no unmeasured_gates parsed anyway, so absent evidence \
+             arrives looking measured and admissible"
+        );
+    }
     use super::*;
 
     pub(super) fn sample_report() -> PreMergeCertificationReport {

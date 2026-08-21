@@ -24,27 +24,6 @@ use std::path::Path;
 
 use super::provider::ModelExecutionConfig;
 
-/// Runs a prompt against a model identified by an opaque name.
-///
-/// The name is resolved by the *adapter*, not by the caller.
-/// `ModelProvider::AnthropicClaudeCode` and `ModelProvider::OpenAiCodex` are the
-/// vocabulary of which subscription CLI to spawn; a component that reasons about
-/// agreement between two peer models does not need that vocabulary and must not
-/// acquire it, because acquiring it is what welds it to the superseded executor.
-pub trait PromptExecutor: Send + Sync {
-    /// Runs `prompt` against the model named `model`, with `working_dir` as the
-    /// working directory, and returns the model's response text.
-    /// Returns `impl Future + Send` rather than using `async fn` directly:
-    /// a bare `async fn` in a public trait cannot express the `Send` bound, so
-    /// callers cannot hold the future across an await in a spawned task.
-    fn execute(
-        &self,
-        model: &str,
-        prompt: &str,
-        working_dir: &Path,
-    ) -> impl std::future::Future<Output = Result<String>> + Send;
-}
-
 /// Runs a prompt against an already-resolved execution configuration.
 ///
 /// Used by the per-stage fallback chain, which has already decided the provider,

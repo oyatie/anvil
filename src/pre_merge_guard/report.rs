@@ -321,6 +321,28 @@ impl PreMergeCertificationReport {
         self.is_certified_ready && self.unmeasured_gates.is_empty()
     }
 
+    /// A report built from what the gates actually measured: every gate in the
+    /// corpus named with the status it produced. `Err` when the outcomes do
+    /// not cover the corpus, because a report missing a gate is a report with
+    /// a hole in it.
+    ///
+    /// This is the only way gate outcomes enter a report, and a report that
+    /// did not come through here did not come from a measurement — it was
+    /// deserialised, cloned from `unmeasured`, or assembled by a caller who
+    /// decided what the gates would have said. `admission_refusal` has to be
+    /// able to tell those apart, so the difference is carried by the value and
+    /// not by the spelling of whatever produced it: a report knows whether its
+    /// statuses were handed to it as gate outcomes.
+    ///
+    /// SCAFFOLDING: signature only. How provenance is represented — a private
+    /// field, a wrapper, a token no other module can name — is the
+    /// implementer's choice; what is fixed is that it cannot be typed at a
+    /// keyboard outside this function, and that `unmeasured` does not confer
+    /// it.
+    pub fn from_gate_outcomes(_outcomes: &[(&str, GateStatus)]) -> anyhow::Result<Self> {
+        todo!("spec: a report is what a certification run produced, not what a caller wrote")
+    }
+
     /// A report in which nothing has been measured: every gate is
     /// `NotMeasured` with `reason`, nothing is certified, nothing is
     /// admissible. The honest starting point for a fixture or a preview —

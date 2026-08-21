@@ -694,6 +694,8 @@ fn live_gate_count() -> usize {
         test_suite_status: GateStatus::Passed,
         unmeasured_gates: Vec::new(),
         summary_markdown: String::new(),
+        // A hand-built fixture is not a measurement, and says so.
+        provenance: Default::default(),
     };
     let (passed, failed) = report.gate_counts();
     assert_eq!(

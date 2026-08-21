@@ -121,6 +121,8 @@ fn all_passing() -> PreMergeCertificationReport {
         test_suite_status: GateStatus::Passed,
         unmeasured_gates: Vec::new(),
         summary_markdown: String::new(),
+        // A hand-built fixture is not a measurement, and says so.
+        provenance: Default::default(),
     };
     r.recompute_unmeasured();
     r.summary_markdown = matrix_for(&r);

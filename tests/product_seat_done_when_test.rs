@@ -86,7 +86,32 @@
 //!      passing, and the all-deferral counterparts as failing, so the rule the
 //!      suite means — strip what is not content, then judge what is left — is
 //!      the only rule that satisfies it.
-//!   9. **Every family that can be line-ending-sensitive runs over both.** The
+//!   9. **The marker is a heading line, not a phrase.** Until this revision no
+//!      passing fixture contained the words "problem" or "done when" anywhere
+//!      except on a marker line, so `normalise(line).contains("done when")` —
+//!      the cheapest way to satisfy the marker cross-product — was unfalsified
+//!      in both directions. Taking the first match rejects a body whose summary
+//!      paragraph mentions the problem; taking the last swallows a later
+//!      paragraph as the acceptance bar of an empty section.
+//!      `the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose` pins
+//!      both.
+//!  10. **The marker's own formatting is pinned in all three spacings.** Every
+//!      passing body used to put a blank line between the marker and its
+//!      content, so `**Done when**` above a list that starts on the next line,
+//!      and `## Done when: p99 < 5ms` with the bar on the marker's own line,
+//!      were unpinned — and the boundary rule this file forces pushes an
+//!      implementer straight into rejecting both. The marker family now runs
+//!      all three, with the empty and deferred mirrors under each.
+//!  11. **The deferral vocabulary is bounded from below as well as above.**
+//!      `PLACEHOLDERS` forces `"TODO: write the acceptance criteria here"` to
+//!      fail while `derived_deferrals()` forbids an enumeration, and the
+//!      cheapest implementation satisfying both is a prefix test on the
+//!      normalised line. That gate rejects `- Navigation completes in under
+//!      200ms` and a problem opening `Native TLS …`.
+//!      `real_content_that_merely_begins_with_a_deferral_stem_passes` forces
+//!      token-level matching, and pins the same-line case where a deferral
+//!      token opens a line of real content.
+//!  12. **Every family that can be line-ending-sensitive runs over both.** The
 //!      boundary and marker families are where CRLF actually bites: a trailing
 //!      `\r` defeats the `ends_with` test that recognises `**Testing**`,
 //!      `Testing:` and `**Done when**`, and `body.split('\n')` instead of
@@ -102,15 +127,23 @@
 //!
 //! `product_bar::missing_artifacts` returns which halves of the artifact are
 //! absent; `judge` renders the verdict and the message from it. The tests
-//! assert the set, and assert only *positively* on the message (it must name
-//! each missing artifact) plus that the three shapes of absence render three
-//! distinct messages. An earlier revision asserted the negative as a raw
-//! substring ban — "a missing-bar message must not contain the word problem" —
-//! which turned a correct, helpful implementation red for quoting the offending
-//! section back at the author. Do-not-falsely-accuse is enforced where it is
-//! mechanically checkable: on the measurement, by `expect_missing` pinning the
-//! set exactly. See `three_shapes_of_absence_produce_three_distinct_messages`
-//! for what that test does and does not claim.
+//! assert the set, and assert the message in three places: positively on the
+//! whole message (it must name each missing artifact), negatively on the
+//! *residue* (the message with the body's own lines subtracted must not name an
+//! artifact the author did write), and for distinctness on the residues of the
+//! three shapes of absence.
+//!
+//! The residue is what closed the last hole here. An earlier revision asserted
+//! the negative as a raw substring ban — "a missing-bar message must not
+//! contain the word problem" — which turned a correct, helpful implementation
+//! red for quoting the offending section back at the author. Dropping the ban
+//! entirely then left the whole contract satisfiable by one constant string
+//! naming both artifacts with the body echoed after it: every positive
+//! assertion holds, and the three messages differ because the three *bodies*
+//! differ. Subtracting the body first keeps quoting legal — it is removed
+//! before the rule is applied — while holding the gate to what it said on its
+//! own account. See `message_residue` and
+//! `three_shapes_of_absence_produce_three_distinct_messages`.
 //!
 //! # The marker vocabulary is open; the marker *formatting* is not
 //!
@@ -197,6 +230,42 @@ const SHORT_PROBLEM: &str = "Checkout p99 regressed to 40ms after the cache chan
 /// A genuine acceptance bar, eleven bytes of it. Shorter than four of the
 /// placeholders that must fail.
 const SHORT_BAR: &str = "- p99 < 5ms";
+
+/// A one-line acceptance bar with no bullet, for the shapes where the bar is
+/// written on the marker's own line (`## Done when: …`).
+const INLINE_BAR: &str = "checkout p99 is under 5ms and the scorecard names the canary it queried";
+
+/// A one-line problem with no bullet, for the same inline shapes.
+const INLINE_PROBLEM: &str = "checkout p99 regressed to 40ms when the cache change landed";
+
+/// Sections whose first word merely *begins* with a deferral stem, plus one
+/// that opens with a deferral token used as an ordinary word.
+///
+/// These are the bound on the deferral vocabulary, and without them the whole
+/// derived family is satisfiable by a prefix test on the normalised line —
+/// `STEMS.iter().any(|s| normalised.starts_with(s))` with `na`, `tbd`, `todo`,
+/// `wip`, `xxx` in the table. That gate passes every other fixture in this file
+/// (`"Today:"` misses `"todo"` by one character) and then reports a missing bar
+/// for `- Navigation completes in under 200ms`, a missing problem for a section
+/// opening `Native TLS …`, and kills anything starting `X-Ray`, `Wipe` or
+/// `NAT`. Every string below is a real thing a person writes, and every one of
+/// them must pass.
+///
+/// The last entry is the same defect on the same line rather than at the start
+/// of a word: `TODO` is the first token and the rest of the line is content, so
+/// a rule keyed on "the first token is a deferral" rejects it. What separates
+/// it from `"TODO: write the acceptance criteria here"` and `"TBD - will fill
+/// this in before merge"` — both of which must still fail — is the separator: a
+/// deferral announces itself with `:` or ` - ` or nothing at all, while `TODO
+/// comments` is the word used in a sentence.
+const REAL_CONTENT_WITH_A_DEFERRAL_PREFIX: &[&str] = &[
+    "- Navigation completes in under 200ms",
+    "Native TLS was disabled by the cache change, so every canary poll now falls back to the \
+     plaintext listener.",
+    "- NAT rebinding no longer drops the canary connection mid-poll",
+    "- Wipe the stale rollout entries before the queue admits the change",
+    "TODO comments are removed from src/pre_merge_guard/",
+];
 
 /// Every one of these has been shipped in a real pull request body. A gate that
 /// reads any of them as an artifact is measuring the presence of a heading.
@@ -314,6 +383,10 @@ const PROBLEM_MARKERS: &[&str] = &[
 /// markdown allows. A body with three sections is the commonest filled-in
 /// template there is, and until this suite carried one no fixture falsified the
 /// gate's section-boundary logic in either direction.
+///
+/// Used for the *passing* family only: a complete artifact followed by any of
+/// these is still a complete artifact, whether the gate reads the third heading
+/// as a boundary or reads straight past it.
 const THIRD_SECTION_HEADERS: &[&str] = &[
     "# Testing",
     "## Testing",
@@ -321,6 +394,51 @@ const THIRD_SECTION_HEADERS: &[&str] = &[
     "**Testing**",
     "Testing:",
 ];
+
+/// The subset of `THIRD_SECTION_HEADERS` that must TERMINATE the section above
+/// it, so that an empty `## Done when` cannot swallow the testing notes.
+///
+/// # Why `"Testing:"` is not in this list any more
+///
+/// A previous revision required a bare colon-terminated line, followed by a
+/// blank line, to end the section above it — and separately required a
+/// colon-terminated *lead-in* line to be ordinary writing. The only structural
+/// difference between the two is the blank line, so the rule the suite forced
+/// was "a colon-terminated line followed by a blank line is a heading". That
+/// rule then reports a missing acceptance bar for
+///
+/// ```text
+/// ## Done when
+///
+/// Acceptance criteria:
+///
+/// - p99 < 5ms
+/// ```
+///
+/// which is one of the commonest shapes a done-when takes. The two demands are
+/// irreconcilable: those two bodies are structurally identical, and only the
+/// English tells them apart. So the suite decides, rather than leaving the
+/// implementer to guess which half to satisfy:
+///
+///   * a colon-terminated line is **never** a section boundary. It is ordinary
+///     technical writing, markdown says nothing else about it, and
+///     `a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary`
+///     now pins the blank-line form as passing in both sections.
+///   * a bold-only line **is** a heading, blank line or no blank line. This
+///     suite already treats one as a heading in the other direction — `**Done
+///     when**` and `**Problem**` are markers that open a section — so a
+///     bold-only line that opens a *different* topic closes the one above it.
+///     `a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it`
+///     pins the consequence, which is the half of this decision that costs an
+///     author something.
+///
+/// Both halves are listed in open_questions. The veto for the first is putting
+/// `"Testing:"` back and pinning the lead-in family as failing; the veto for
+/// the second is dropping `"**Testing**"` from this list and pinning the bold
+/// lead-in as passing. Whichever a human picks, the pair has to stay
+/// consistent, which is what `the_boundary_families_state_one_consistent_rule`
+/// asserts.
+const BOUNDARY_HEADERS: &[&str] = &["# Testing", "## Testing", "### Testing", "**Testing**"];
 
 /// What a third section says. It reports what the author did; it states neither
 /// what is wrong nor how anyone checks the change is done, so counting it as
@@ -510,6 +628,45 @@ fn names(artifact: Artifact, msg: &str) -> bool {
     }
 }
 
+/// `msg` with every non-blank line of `body` subtracted from it.
+///
+/// What the gate says **on its own account**. Quoting the offending section
+/// back at the author is legal and helpful — the module docs are explicit that
+/// the `judge`/`missing_artifacts` split exists so the tests need not forbid it
+/// — so the body's own text is removed before the message's vocabulary is
+/// judged, and only the remainder is held to the rule.
+///
+/// Without this subtraction the message contract was satisfiable by a single
+/// constant that names both artifacts every time:
+///
+///     GateStatus::Failed(format!(
+///         "The change does not carry the Product artifact (a written problem and a
+///          done-when acceptance bar). Body: {pr_body:?}"))
+///
+/// Every positive containment assertion holds, `expect_missing` only pins the
+/// measurement set, and the three messages differ from one another because the
+/// three *bodies* differ — the echoed body does the distinguishing, not the
+/// measurement. An author whose bar is missing then reads a comment accusing
+/// them of also not writing a problem statement they did write.
+///
+/// Longest lines first, so a line that contains a shorter one is removed whole,
+/// and each removal leaves a space behind so subtracting a `-` cannot join two
+/// words into vocabulary that was never written.
+fn message_residue(msg: &str, body: &str) -> String {
+    let mut lines: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    lines.sort_by_key(|l| std::cmp::Reverse(l.len()));
+
+    let mut residue = msg.to_string();
+    for line in lines {
+        residue = residue.replace(line, " ");
+    }
+    residue
+}
+
 /// The measurement, normalised for comparison.
 ///
 /// Render order is presentation, so this sorts before comparing. Duplication is
@@ -624,7 +781,68 @@ fn assert_failed_naming(body: &str, want: &[Artifact], context: &str) -> String 
              can act on it without reading the gate's source; got {msg:?}"
         );
     }
+
+    // And the negative, on what the gate said ON ITS OWN ACCOUNT. The positive
+    // above is asserted on the whole message, so a gate may name the missing
+    // artifact by quoting the heading it found empty. The negative is asserted
+    // on the residue — the message with the body's own lines subtracted — so
+    // quoting stays legal while naming an artifact the author DID write does
+    // not. That is what stops one constant string that lists both artifacts,
+    // plus an echo of the body, from satisfying this whole file: for a change
+    // whose problem statement is present and whose bar is not, the residue must
+    // not accuse the author over the problem statement they wrote.
+    //
+    // See open_questions: this forbids a message that reports the artifact that
+    // IS present ("your problem statement is here, your done-when is not"),
+    // which is helpful prose, and a human may prefer to pay that price the
+    // other way.
+    let residue = message_residue(&msg, body);
+    for artifact in [Artifact::WrittenProblem, Artifact::DoneWhenBar] {
+        if want.contains(&artifact) {
+            continue;
+        }
+        assert!(
+            !names(artifact, &residue),
+            "{context}: the gate did not find {artifact:?} missing, and the author did \
+             write it, but the message names it anyway on its own account — telling \
+             them to go and write the thing they already wrote. Quoting the offending \
+             section is legal and is subtracted before this check; this is the \
+             message minus the body. Missing: {want:?}. Message: {msg:?}. Residue: \
+             {residue:?}"
+        );
+    }
+
     msg
+}
+
+/// The failure-message vocabulary must not be smuggled in from the fixtures.
+///
+/// `message_residue` subtracts the body's own lines before the negative naming
+/// rule is applied, so a fixture that itself said "problem" or "acceptance"
+/// would silently exempt the gate from that rule. None of the content fixtures
+/// does — this is what pins it, and it is asserted from inside a test rather
+/// than standing alone so it is never green before the gate exists.
+#[track_caller]
+fn assert_the_content_fixtures_carry_none_of_the_message_vocabulary() {
+    for (name, fixture) in [
+        ("PROBLEM", PROBLEM),
+        ("BAR", BAR),
+        ("MULTILINE_BAR", MULTILINE_BAR),
+        ("SHORT_PROBLEM", SHORT_PROBLEM),
+        ("SHORT_BAR", SHORT_BAR),
+        ("INLINE_PROBLEM", INLINE_PROBLEM),
+        ("INLINE_BAR", INLINE_BAR),
+        ("KO_PROBLEM", KO_PROBLEM),
+        ("KO_BAR", KO_BAR),
+        ("THIRD_SECTION_BODY", THIRD_SECTION_BODY),
+    ] {
+        assert!(
+            !names_the_problem(fixture) && !names_the_bar(fixture),
+            "fixture invariant: {name} must contain none of the vocabulary the failure \
+             message is judged on, or subtracting it from the message exempts the gate \
+             from the rule that message is held to. Fixture: {fixture:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -745,6 +963,105 @@ fn the_same_two_words_are_the_marker_however_the_author_formats_them() {
             }
         }
 
+        // THE SAME MARKERS WITH NO BLANK LINE UNDER THEM. Until this family
+        // existed, every passing body in the whole file — without exception —
+        // put a blank line between the marker and its content, so two ordinary
+        // markdown shapes were unpinned and the boundary rule the file forces
+        // pushed the implementer straight into rejecting them:
+        //
+        //     **Done when**
+        //     - p99 < 5ms
+        //
+        // Under `is_bold_only(line) && next_is_blank` the marker is not
+        // recognised as a heading at all, so the gate reports BOTH artifacts
+        // missing from a body that carries both. A list that starts on the line
+        // after its bold label is not an exotic input; it is what an author who
+        // does not double-space writes.
+        for problem_marker in PROBLEM_MARKERS {
+            for done_when_marker in DONE_WHEN_MARKERS {
+                expect_passed(
+                    &as_eol(
+                        &format!(
+                            "{problem_marker}\n{PROBLEM}\n\n{done_when_marker}\n{MULTILINE_BAR}\n"
+                        ),
+                        eol,
+                    ),
+                    &format!(
+                        "a complete Product artifact whose content starts on the line \
+                         directly under {problem_marker:?} and {done_when_marker:?}, {eol:?}"
+                    ),
+                );
+            }
+        }
+
+        // THE COLON-TERMINATED MARKERS WITH THEIR CONTENT ON THE SAME LINE.
+        // `"## Done when:"` is in DONE_WHEN_MARKERS, so an implementer strips
+        // the colon and matches the heading text against the two words — an
+        // `==`-shaped match, which `## Done when: p99 < 5ms` defeats. The
+        // marker is then unrecognised and the bar is reported missing from a
+        // change that stated one on the heading's own line.
+        for problem_marker in PROBLEM_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            for done_when_marker in DONE_WHEN_MARKERS.iter().filter(|m| m.ends_with(':')) {
+                expect_passed(
+                    &as_eol(
+                        &format!(
+                            "{problem_marker} {INLINE_PROBLEM}\n\n{done_when_marker} {INLINE_BAR}\n"
+                        ),
+                        eol,
+                    ),
+                    &format!(
+                        "both artifacts written on their own marker lines, \
+                         {problem_marker:?} and {done_when_marker:?}, {eol:?}"
+                    ),
+                );
+            }
+        }
+        // And each of them inline beside an ordinarily-headed counterpart, so
+        // the recognition is not pinned only when both sections take the same
+        // shape.
+        for done_when_marker in DONE_WHEN_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            expect_passed(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker} {INLINE_BAR}\n"),
+                    eol,
+                ),
+                &format!("a bar written on the {done_when_marker:?} line itself, {eol:?}"),
+            );
+        }
+        for problem_marker in PROBLEM_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            expect_passed(
+                &as_eol(
+                    &format!("{problem_marker} {INLINE_PROBLEM}\n\n## Done when\n\n{BAR}\n"),
+                    eol,
+                ),
+                &format!("a problem written on the {problem_marker:?} line itself, {eol:?}"),
+            );
+        }
+
+        // The mirrors for both widenings, so neither can fail open. A marker
+        // whose content starts on the next line still has to be judged on that
+        // content, and a marker with a deferral on its own line is a deferral.
+        for done_when_marker in DONE_WHEN_MARKERS {
+            expect_missing(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker}\nTBD\n"),
+                    eol,
+                ),
+                &[Artifact::DoneWhenBar],
+                &format!("a deferral on the line directly under {done_when_marker:?}, {eol:?}"),
+            );
+        }
+        for done_when_marker in DONE_WHEN_MARKERS.iter().filter(|m| m.ends_with(':')) {
+            expect_missing(
+                &as_eol(
+                    &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker} TBD\n"),
+                    eol,
+                ),
+                &[Artifact::DoneWhenBar],
+                &format!("a deferral written on the {done_when_marker:?} line itself, {eol:?}"),
+            );
+        }
+
         // The mirror, so widening recognition cannot itself become a fail-open:
         // an empty section under any of those spellings is still an empty
         // section.
@@ -841,12 +1158,19 @@ fn a_third_section_does_not_hide_an_empty_one() {
     // for a gate that fails open on the shape GitHub's web UI actually submits.
     // `str::lines()` strips a trailing `\r` and `.trim()` eats it, so a gate
     // that finds its boundary with `ends_with("**")` or `ends_with(':')` on
-    // `body.split('\n')` sees `**Testing**\r` and `Testing:\r` as ordinary prose
-    // — and then swallows the testing notes as the acceptance bar of an empty
+    // `body.split('\n')` sees `**Testing**\r` as ordinary prose — and then
+    // swallows the testing notes as the acceptance bar of an empty
     // `## Done when`. That is the headline defect of this file, certified, in
     // the exact line endings a browser produces.
+    //
+    // `BOUNDARY_HEADERS`, not `THIRD_SECTION_HEADERS`: `"Testing:"` is no
+    // longer required to end a section, because the rule that makes it end one
+    // also rejects `Acceptance criteria:` above a real list of bullets. See
+    // BOUNDARY_HEADERS' own docs for that decision and its veto, and
+    // `the_boundary_families_state_one_consistent_rule` for the invariant that
+    // stops the two families drifting apart.
     for eol in BOTH_EOLS {
-        for header in THIRD_SECTION_HEADERS {
+        for header in BOUNDARY_HEADERS {
             let third = third_section(header);
 
             for filler in ["", "   ", "TBD", "- [ ]"] {
@@ -1321,27 +1645,44 @@ fn a_section_mixing_a_deferral_with_real_content_is_judged_on_the_real_content()
 
 #[test]
 fn a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary() {
-    // The bound on `THIRD_SECTION_HEADERS`'s `"Testing:"` entry.
+    // A colon-terminated line is ordinary technical writing, in both the shapes
+    // it is written in: with its content on the next line, and with a blank
+    // line between the two.
     //
-    // That entry requires a bare colon-terminated paragraph line to end the
-    // section above it, which is the strongest demand this file makes. Until
-    // this test existed nothing bounded how aggressive the resulting rule could
-    // be: no passing fixture anywhere carried a colon-terminated line INSIDE a
-    // section, so "any short line ending in a colon is a heading" satisfied the
-    // whole suite — and that gate then reports a missing bar for a done-when
-    // that opens `Acceptance:` above its bullets, and a missing problem for one
-    // that opens `Today:`. A lead-in ending in a colon is ordinary technical
-    // writing; the suite created the pressure to reject it and then never
-    // checked the consequence.
+    // The previous revision pinned only the first. That was pinning the half of
+    // the rule that was convenient. `"Testing:"` was in the boundary family, so
+    // a bare colon-terminated line followed by a blank line had to END a
+    // section — and no fixture anywhere put such a line, followed by a blank
+    // line, INSIDE one. The implementation the suite demanded was therefore
     //
-    // What separates the two, in these fixtures and in real markdown, is the
-    // blank line: a heading is followed by one and a lead-in is not. That is
-    // the only difference the fixtures rely on, and it is listed in
-    // open_questions as the disambiguation a human may veto — by dropping
-    // `"Testing:"` from `THIRD_SECTION_HEADERS` instead, which leaves the other
-    // four closing the boundary hole.
+    //     line.starts_with('#') || ((line.ends_with(':') || is_bold_only(line))
+    //         && next_is_blank)
+    //
+    // which passes every test in the file and then reports a missing acceptance
+    // bar for
+    //
+    //     ## Done when
+    //
+    //     Acceptance criteria:
+    //
+    //     - p99 < 5ms
+    //     - the scorecard names the unqueried canary
+    //
+    // one of the two commonest shapes a done-when takes. High incidence,
+    // unfalsified: the fabricated accusation this file names as equal in
+    // severity to a false green.
+    //
+    // The two demands cannot both be met — `Acceptance criteria:` above bullets
+    // and `Testing:` above prose are structurally identical, and only the
+    // English tells them apart — so the suite decides instead of leaving it to
+    // whichever side the implementer guesses. `"Testing:"` is out of
+    // `BOUNDARY_HEADERS`; a colon-terminated line is never a boundary; both
+    // spacings pass, in both sections, under both line endings. The veto is
+    // stated in BOUNDARY_HEADERS' docs and in open_questions.
     let lead_in_bar = format!("Acceptance:\n{MULTILINE_BAR}");
     let lead_in_problem = format!("Today:\n{PROBLEM}");
+    let spaced_lead_in_bar = format!("Acceptance criteria:\n\n{MULTILINE_BAR}");
+    let spaced_lead_in_problem = format!("Today:\n\n{PROBLEM}");
 
     for eol in BOTH_EOLS {
         expect_passed(
@@ -1356,16 +1697,300 @@ fn a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary() {
             &as_eol(&body_with(&lead_in_problem, &lead_in_bar), eol),
             &format!("both sections introduced by a colon-terminated lead-in, {eol:?}"),
         );
+
+        // THE MIRROR FIXTURES, and the reason this test was rejected: the same
+        // lead-in with a BLANK LINE under it, which is the shape the boundary
+        // rule above turns into a heading. Both sections, both line endings.
+        expect_passed(
+            &as_eol(&body_with(PROBLEM, &spaced_lead_in_bar), eol),
+            &format!(
+                "a bar introduced by \"Acceptance criteria:\" and a blank line above its \
+                 bullets, {eol:?}"
+            ),
+        );
+        expect_passed(
+            &as_eol(&body_with(&spaced_lead_in_problem, BAR), eol),
+            &format!(
+                "a problem introduced by \"Today:\" and a blank line above its prose, \
+                 {eol:?}"
+            ),
+        );
+        expect_passed(
+            &as_eol(
+                &body_with(&spaced_lead_in_problem, &spaced_lead_in_bar),
+                eol,
+            ),
+            &format!(
+                "both sections introduced by a colon-terminated lead-in and a blank \
+                 line, {eol:?}"
+            ),
+        );
     }
 
-    // The mirror, so this cannot be satisfied by abandoning the boundary rule
-    // altogether: a colon-terminated line with nothing but a lead-in under it
-    // is still an empty section.
+    // The mirror in the other direction, so this cannot be satisfied by reading
+    // a colon-terminated line as content: a lead-in with nothing to lead in to
+    // is still an empty section, whichever spacing follows it.
     expect_missing(
         &body_with(PROBLEM, "Acceptance:"),
         &[Artifact::DoneWhenBar],
         "a done-when section holding a lead-in line and nothing to lead in to",
     );
+    expect_missing(
+        &body_with(PROBLEM, "Acceptance criteria:\n\n"),
+        &[Artifact::DoneWhenBar],
+        "a done-when section holding a lead-in line, a blank line, and nothing else",
+    );
+}
+
+#[test]
+fn a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it() {
+    // The other half of the boundary decision, pinned so the implementer does
+    // not have to guess it either — and pinned in the direction that costs an
+    // author something, which is why it is a decision rather than a detail.
+    //
+    // `**Done when**` and `**Problem**` are markers in this file: a bold-only
+    // line OPENS a section. It follows that a bold-only line naming a different
+    // topic CLOSES the one above it, and `BOUNDARY_HEADERS` keeps `"**Testing**"`
+    // for exactly that reason — an empty `## Done when` above `**Testing**` must
+    // not swallow the testing notes, which is this file's headline defect.
+    //
+    // The cost: a bold sub-label inside a done-when section starts a new
+    // section, so the bar above it is empty. That is the consequence of the
+    // rule, so it is pinned here rather than left for an author to discover.
+    // The veto is in BOUNDARY_HEADERS' docs: drop `"**Testing**"` from that
+    // list and flip these two fixtures to `expect_passed`, which re-opens the
+    // bold-third-section fail-open in exchange.
+    assert_the_boundary_families_state_one_consistent_rule();
+
+    for eol in BOTH_EOLS {
+        expect_missing(
+            &as_eol(
+                &format!(
+                    "## Problem\n\n{PROBLEM}\n\n## Done when\n\n**Acceptance criteria**\n\n{MULTILINE_BAR}\n"
+                ),
+                eol,
+            ),
+            &[Artifact::DoneWhenBar],
+            &format!("a bold-only sub-label under an otherwise empty done-when heading, {eol:?}"),
+        );
+        expect_missing(
+            &as_eol(
+                &format!("## Problem\n\n**Background**\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n"),
+                eol,
+            ),
+            &[Artifact::WrittenProblem],
+            &format!("a bold-only sub-label under an otherwise empty problem heading, {eol:?}"),
+        );
+    }
+}
+
+/// The two boundary families have to state one rule between them.
+///
+/// Not a `#[test]` of its own: nothing here touches the gate, so standing alone
+/// it would be green from the moment it was written, and a test that has never
+/// been observed failing publishes assurance it has not earned. It runs first
+/// inside `a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it`,
+/// which is red on the absent measurement like everything else here — the same
+/// arrangement as `assert_the_wiring_parsers_read_a_real_wiring`.
+#[track_caller]
+fn assert_the_boundary_families_state_one_consistent_rule() {
+    // The two boundary families are the one place in this file where a passing
+    // fixture and a failing fixture are told apart by a rule rather than by
+    // their content, so the relationship between them is asserted rather than
+    // left implicit. A later edit that puts `"Testing:"` back into
+    // `BOUNDARY_HEADERS` without also flipping the colon lead-in fixtures
+    // re-creates the contradiction that got the previous revision rejected —
+    // two demands no implementation can satisfy at once, which an implementer
+    // discovers as an unwinnable test run rather than as a decision.
+    for header in BOUNDARY_HEADERS {
+        assert!(
+            THIRD_SECTION_HEADERS.contains(header),
+            "{header:?} must terminate a section AND be one of the third-section \
+             headings the passing family runs, or the two families are testing \
+             different things"
+        );
+    }
+    assert!(
+        !BOUNDARY_HEADERS.contains(&"Testing:"),
+        "a colon-terminated line is pinned as ordinary writing by \
+         a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary, so \
+         requiring one to terminate a section here demands two incompatible things \
+         of the same rule. Flip that test's blank-line fixtures to expect_missing \
+         before putting this entry back"
+    );
+    assert!(
+        BOUNDARY_HEADERS.contains(&"**Testing**"),
+        "a bold-only line is pinned as a heading by \
+         a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it, and by \
+         **Done when** and **Problem** being markers. Dropping it here without \
+         flipping that test re-opens the bold-third-section fail-open"
+    );
+}
+
+#[test]
+fn the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose() {
+    // Until this test existed, no passing fixture in the file contained the
+    // words "problem" or "done when" anywhere except on a marker line. The two
+    // occurrences inside content were both on the failing side, where the
+    // verdict is already forced by an empty counterpart section. So the suite
+    // could not tell a marker predicate anchored to a whole heading line apart
+    // from one built on `contains` — and `contains` is the cheapest way to
+    // satisfy the seven-by-six cross-product the marker test demands:
+    //
+    //     fn is_done_when_marker(l: &str) -> bool {
+    //         normalise_heading(l).contains("done when")
+    //     }
+    //
+    // Both directions of that mistake are pinned below, because a `contains`
+    // predicate is wrong twice over depending on which match it takes.
+    for eol in BOTH_EOLS {
+        // FIRST MATCH WINS: an ordinary summary paragraph mentioning the
+        // problem, above the real sections. The prose line becomes the marker,
+        // its section runs to the `## Problem` heading and is therefore empty,
+        // and the gate reports a missing written problem on a change that wrote
+        // one — an entirely ordinary body, rejected.
+        expect_passed(
+            &as_eol(
+                &format!(
+                    "## Summary\n\nThis addresses a problem in the canary path.\n\n\
+                     ## Problem\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n"
+                ),
+                eol,
+            ),
+            &format!(
+                "a summary paragraph mentioning the problem above a real problem and a \
+                 real bar, {eol:?}"
+            ),
+        );
+        expect_passed(
+            &as_eol(
+                &format!(
+                    "This addresses a problem in the canary path.\n\n\
+                     ## Problem\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n"
+                ),
+                eol,
+            ),
+            &format!(
+                "an unheaded opening paragraph mentioning the problem above a real \
+                 problem and a real bar, {eol:?}"
+            ),
+        );
+
+        // LAST MATCH WINS: the fail-open twin. A later section's prose contains
+        // the words "done when", and the `## Done when` section above it is
+        // empty. The prose sentence is a statement about the rollout, not this
+        // change's acceptance bar, and reading it as one certifies a template
+        // paste.
+        expect_missing(
+            &as_eol(
+                &format!(
+                    "## Problem\n\n{PROBLEM}\n\n## Done when\n\n\n\
+                     ## Rollout\n\nThe rollout is done when the canary reports two clean \
+                     windows in a row.\n"
+                ),
+                eol,
+            ),
+            &[Artifact::DoneWhenBar],
+            &format!(
+                "an empty done-when section above a later paragraph whose prose \
+                 contains the marker words, {eol:?}"
+            ),
+        );
+        expect_missing(
+            &as_eol(
+                &format!(
+                    "## Problem\n\n\n## Done when\n\n{BAR}\n\n\
+                     ## Notes\n\nThe problem was introduced by the cache change last \
+                     quarter, and this only reports it.\n"
+                ),
+                eol,
+            ),
+            &[Artifact::WrittenProblem],
+            &format!(
+                "an empty problem section above a later paragraph whose prose contains \
+                 the marker word, {eol:?}"
+            ),
+        );
+    }
+}
+
+/// Runs one section of real content through both positions and both-at-once.
+///
+/// The mirror of `assert_placeholder_fails_in_both_sections`, and used for the
+/// same reason: a rule applied to the bar and not to the bet is half a gate.
+#[track_caller]
+fn assert_real_content_passes_in_both_sections(content: &str, family: &str) {
+    expect_passed(
+        &body_with(PROBLEM, content),
+        &format!("{family}: the done-when section holds {content:?}"),
+    );
+    expect_passed(
+        &body_with(content, BAR),
+        &format!("{family}: the problem section holds {content:?}"),
+    );
+    expect_passed(
+        &body_with(content, content),
+        &format!("{family}: both sections hold {content:?}"),
+    );
+}
+
+#[test]
+fn real_content_that_merely_begins_with_a_deferral_stem_passes() {
+    // The bound on the deferral vocabulary, and the reason `PLACEHOLDERS` can
+    // demand that `"TBD - will fill this in before merge"` and `"TODO: write
+    // the acceptance criteria here"` fail without that demand costing an author
+    // their acceptance bar.
+    //
+    // Neither of those two normalises to anything in a stem table, and
+    // `derived_deferrals()` forbids an enumeration, so the cheapest
+    // implementation satisfying both is a prefix test on the normalised line:
+    //
+    //     STEMS.iter().any(|s| normalised.starts_with(s))
+    //
+    // with `na`, `tbd`, `todo`, `wip`, `xxx` in the table. That passes every
+    // other fixture in this file — `"Today:"` misses `"todo"` by one character
+    // — and then reports a missing bar for `- Navigation completes in under
+    // 200ms`, a missing problem for a section opening `Native TLS …`, and kills
+    // anything starting `Wipe` or `NAT`. Nothing pinned a legitimate section
+    // whose first word merely begins with a stem.
+    //
+    // The last fixture is the same defect at token level rather than at
+    // character level: `TODO comments are removed from src/pre_merge_guard/`
+    // opens with a deferral token used as an ordinary word. What separates it
+    // from the two placeholders above — which must still fail — is the
+    // separator after the token, not the token itself.
+    // The fixture invariant that makes this family load-bearing, asserted
+    // first so it is exercised rather than stranded behind the measurement:
+    // the normalised form of every one of these really does start with a
+    // deferral stem, so the prefix rule really is falsified here.
+    for content in REAL_CONTENT_WITH_A_DEFERRAL_PREFIX {
+        let normalised = content.trim_start_matches(['-', '*', ' ']).to_lowercase();
+        assert!(
+            DEFERRAL_STEMS
+                .iter()
+                .any(|s| normalised.starts_with(&s.to_lowercase())),
+            "fixture invariant: {content:?} must normalise to something that STARTS \
+             WITH a deferral stem, or it stops separating a prefix rule from a token \
+             rule and this whole family is decoration. Normalised: {normalised:?}"
+        );
+    }
+
+    for content in REAL_CONTENT_WITH_A_DEFERRAL_PREFIX {
+        assert_real_content_passes_in_both_sections(content, "real content, deferral prefix");
+    }
+
+    // And the mirror, so widening the vocabulary this way cannot fail open: the
+    // two placeholders whose separator announces a deferral still fail, in both
+    // sections, however much the other one says.
+    for placeholder in [
+        "TODO: write the acceptance criteria here",
+        "TBD - will fill this in before merge",
+    ] {
+        assert_placeholder_fails_in_both_sections(
+            placeholder,
+            "a deferral announced by its separator",
+        );
+    }
 }
 
 #[test]
@@ -1412,35 +2037,54 @@ fn three_shapes_of_absence_produce_three_distinct_messages() {
     // here, your done-when bar is not", or quote the offending section back at
     // the author — and a raw vocabulary ban turns both of those red. The
     // do-not-falsely-accuse property is therefore enforced one level down,
-    // where it *is* mechanically checkable: `expect_missing` pins the
-    // measurement set exactly, so a gate cannot report an artifact the author
-    // wrote. See open_questions.
+    // where it *is* mechanically checkable: on the measurement, by
+    // `expect_missing` pinning the set exactly, and on the message minus the
+    // body, by `assert_failed_naming`'s residue rule. See open_questions.
+    //
+    // Distinctness is asserted on the RESIDUE, not on the raw message. Asserted
+    // raw, this test claimed something it did not check: the three bodies are
+    // three different strings, so a gate rendering one constant message with
+    // the body quoted after it produces three different messages, and the echo
+    // does all the distinguishing. The measurement has to be what differs, so
+    // the body is subtracted first.
+    assert_the_content_fixtures_carry_none_of_the_message_vocabulary();
+
+    let bodies = ["".to_string(), problem_only(PROBLEM), bar_only(BAR)];
     let both = expect_missing(
-        "",
+        &bodies[0],
         &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
         "nothing written at all",
     );
     let no_bar = expect_missing(
-        &problem_only(PROBLEM),
+        &bodies[1],
         &[Artifact::DoneWhenBar],
         "problem written, bar missing",
     );
     let no_problem = expect_missing(
-        &bar_only(BAR),
+        &bodies[2],
         &[Artifact::WrittenProblem],
         "bar written, problem missing",
     );
 
+    let both_said = message_residue(&both, &bodies[0]);
+    let no_bar_said = message_residue(&no_bar, &bodies[1]);
+    let no_problem_said = message_residue(&no_problem, &bodies[2]);
+
     assert_ne!(
-        both, no_bar,
+        both_said, no_bar_said,
         "three different absences cannot share one message; an author has to be \
-         able to tell from it which artifact to go and write"
+         able to tell from it which artifact to go and write. These two differ only \
+         by the body quoted back at them: {both:?} vs {no_bar:?}"
     );
-    assert_ne!(both, no_problem, "same, for the missing problem statement");
     assert_ne!(
-        no_bar, no_problem,
-        "the missing-bar message and the missing-problem message must differ, or \
-         the gate is naming an artifact it did not check"
+        both_said, no_problem_said,
+        "same, for the missing problem statement: {both:?} vs {no_problem:?}"
+    );
+    assert_ne!(
+        no_bar_said, no_problem_said,
+        "the missing-bar message and the missing-problem message must differ in what \
+         the GATE says, not merely in the section it quoted: {no_bar:?} vs \
+         {no_problem:?}"
     );
 }
 
@@ -1777,6 +2421,15 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         "std::str",
         "std::sync::LazyLock",
         "std::sync::OnceLock",
+        // Pure text libraries, admitted for the same reason `regex` is: this
+        // suite demands invisible-character handling and grapheme-aware
+        // trimming, and the crates that do that read the string they are handed
+        // and nothing else. Review found the previous list short of them twice
+        // over, and telling an implementer to edit a settled specification test
+        // mid-implementation is the one thing this project's method forbids.
+        "unicode_normalization",
+        "unicode_segmentation",
+        "unicode_width",
     ];
     for line in src.lines() {
         let trimmed = line.trim();
@@ -1794,6 +2447,34 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     }
 
     // The things reachable without a `use` line at all.
+    //
+    // Swept over source with the string literals blanked out, because this is a
+    // ban on reaching for I/O and not a ban on words. `"Command"`, `"Instant"`
+    // and `"::var("` are all things an author-facing failure message could
+    // legitimately contain, and failing the gate for its prose would be a guard
+    // misreading what it guards. The parser is exercised first, on the shapes
+    // that separate a string from the code around it.
+    for (line, want) in [
+        (
+            r#"let msg = "Command"; std::process::Command::new("git")"#,
+            r#"let msg = "       "; std::process::Command::new("   ")"#,
+        ),
+        (
+            r#"let m = "a \" Instant"; let t = Instant::now();"#,
+            r#"let m = "            "; let t = Instant::now();"#,
+        ),
+        ("let x = 1;", "let x = 1;"),
+    ] {
+        assert_eq!(
+            without_string_literals(line),
+            want,
+            "without_string_literals({line:?}) blanked the wrong span; a sweep fed by \
+             a parser that cannot tell a message from a syscall either bans a correct \
+             implementation for its prose or lets the filesystem through"
+        );
+    }
+
+    let src = without_string_literals(&src);
     for forbidden in [
         "env!",
         "option_env!",
@@ -1973,6 +2654,46 @@ fn without_line_comments(src: &str) -> String {
         .map(strip_line_comment)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `src` with the contents of every double-quoted string literal blanked out.
+///
+/// Used only for the forbidden-substring sweep in
+/// `the_verdict_depends_on_nothing_but_the_change_it_was_handed`. That sweep
+/// bans `"Command"`, `"Instant"` and `"::var("` as *reaches for I/O*, and a
+/// failure message that happened to contain one of those words would have
+/// failed the test for a reason unrelated to determinism — the gate's own
+/// author-facing prose is not a syscall. Code cannot hide inside a string
+/// literal, so blanking them costs the sweep nothing.
+fn without_string_literals(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in src.chars() {
+        if !in_string {
+            out.push(c);
+            in_string = c == '"';
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            out.push(' ');
+            continue;
+        }
+        match c {
+            '\\' => {
+                escaped = true;
+                out.push(' ');
+            }
+            '"' => {
+                in_string = false;
+                out.push('"');
+            }
+            '\n' => out.push('\n'),
+            _ => out.push(' '),
+        }
+    }
+    out
 }
 
 /// Every crate path a `use` line reaches, with a grouped import expanded into
@@ -2282,6 +3003,131 @@ fn binding_statement(src: &str, name: &str) -> Option<String> {
     None
 }
 
+/// `text` with every product_bar `judge(..)` call expression cut out of it.
+///
+/// What is left of a statement once the measurement is removed is everything
+/// the statement does *besides* measuring. For a correct wiring that residue is
+/// `let product_bar_status = ;` and holds nothing; for a wiring that keeps a
+/// second value in reserve it holds the reserve.
+fn without_judge_calls(src: &str, text: &str) -> String {
+    let mut anchors: Vec<&str> = vec!["product_bar::judge("];
+    if imports_product_bar_judge(src) {
+        anchors.push("judge(");
+    }
+
+    let mut out = text.to_string();
+    loop {
+        let Some((start, anchor)) = anchors
+            .iter()
+            .filter_map(|a| out.find(*a).map(|i| (i, *a)))
+            .min_by_key(|(i, _)| *i)
+        else {
+            return out;
+        };
+        let open = start + anchor.len() - 1;
+        let mut depth = 0i32;
+        let mut end = None;
+        for (k, c) in out[open..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open + k);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let cut_to = end.unwrap_or(out.len() - 1);
+        out.replace_range(start..=cut_to, " ");
+    }
+}
+
+/// The ways a statement can hold a value in reserve beside the measurement.
+///
+/// A conditional is the shape an engineer actually writes, and it is the one
+/// the previous revision of these guards could not see:
+///
+///     let product_bar_status = if pr_body.trim().is_empty() {
+///         GateStatus::NotMeasured { .. }
+///     } else {
+///         product_bar::judge(pr_body)
+///     };
+///
+/// `judge` itself stays perfectly correct, so every behavioural test in this
+/// file is green; the binding is `product_bar_status`, the only judge call's
+/// arguments name the body, and the struct initialiser is the shorthand. All
+/// three wiring assertions pass — and every pull request opened with an empty
+/// body then certifies the Product seat as `NotMeasured`, which
+/// `is_acceptable()` returns true for. That is this file's headline defect
+/// (`a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured`) reinstated
+/// one layer up, at the one seam no behavioural test can reach.
+const UNMEASURED_ALTERNATIVES: &[&str] = &["GateStatus::", "if ", "match ", "unwrap_or"];
+
+/// Whichever of `UNMEASURED_ALTERNATIVES` survive in `statement` once every
+/// product_bar `judge(..)` call has been cut out of it.
+fn unmeasured_alternatives_in(src: &str, statement: &str) -> Vec<&'static str> {
+    let residue = without_judge_calls(src, statement);
+    UNMEASURED_ALTERNATIVES
+        .iter()
+        .copied()
+        .filter(|marker| residue.contains(marker))
+        .collect()
+}
+
+/// Whether the `let` that binds `ident` in `src` BUILDS the change-under-review
+/// struct and was handed the change's body.
+///
+/// The previous revision asked only whether *any* argument in the call had a
+/// `let` statement containing the substring "body", and two arguments at the
+/// real call site have always qualified: `&doc_report`, bound by a statement
+/// ending `…, title, body).await?`, and `&review_resp.verdict`, bound by
+/// `state.reviewer.review_pr(&diff_ctx, title, body)`. Neither has anything to
+/// do with handing the body to the gate. The moment a body field appeared on
+/// `PrDiffContext` — which route two requires anyway — both wiring guards went
+/// green with no change to the pipeline at all, `prepare_pr_diff` still never
+/// received the body, `pr_body` stayed `String::new()` forever and the gate
+/// read `""` for every pull request. A guard satisfied by bindings that predate
+/// the change it guards is not a guard.
+///
+/// So the question is asked of the statement that produces the struct, and of
+/// nothing else. Two spellings carry the fact, because both really do hand the
+/// body over: passing it to the constructor, and assigning it onto the struct
+/// afterwards.
+fn diff_context_carries_the_body(src: &str, ident: &str, body_fields: &[String]) -> bool {
+    let Some(statement) = binding_statement(src, ident) else {
+        return false;
+    };
+    if !(statement.contains("prepare_pr_diff") || statement.contains("PrDiffContext {")) {
+        return false;
+    }
+    if statement.contains("body") {
+        return true;
+    }
+
+    body_fields.iter().any(|field| {
+        let target = format!("{ident}.{field}");
+        src.lines().any(|line| {
+            let Some((lhs, rhs)) = line.split_once('=') else {
+                return false;
+            };
+            lhs.trim() == target && rhs.contains("body")
+        })
+    })
+}
+
+/// Whether one of `args` is a change-under-review struct that was built from
+/// the change's body.
+fn an_argument_carries_the_change_body(src: &str, args: &[String], body_fields: &[String]) -> bool {
+    !body_fields.is_empty()
+        && args.iter().any(|a| {
+            let ident = leading_ident(a.trim_start_matches('&').trim_start_matches("mut ").trim());
+            diff_context_carries_the_body(src, &ident, body_fields)
+        })
+}
+
 #[test]
 fn the_evaluator_receives_the_change_under_review() {
     let src = without_line_comments(&source("src/pre_merge_guard/evaluator.rs"));
@@ -2306,18 +3152,28 @@ fn the_evaluator_receives_the_change_under_review() {
     // promised that second route in a comment and then asserted the first, so
     // it would have failed the cleaner implementation while accusing it of the
     // one defect it does not have.
+    //
+    // Route two is that the field EXISTS AND IS READ, not merely that it
+    // exists. Declaring `pub pr_body: String` on `PrDiffContext` satisfied the
+    // previous revision on its own, and a declared-but-unread field is exactly
+    // the "named thing, no measurement" pattern this seat exists to catch. Read
+    // together with `the_review_pipeline_hands_the_evaluator_the_change_body`
+    // and the judge-call check below, the chain is unbroken: body -> diff
+    // context -> evaluator -> judge.
     let named_parameter = signature.contains("body");
     let body_fields = diff_context_body_fields();
-    let on_the_change_under_review = signature.contains("PrDiffContext") && !body_fields.is_empty();
+    let reads_the_body_field = body_fields.iter().any(|f| src.contains(&format!(".{f}")));
+    let on_the_change_under_review = signature.contains("PrDiffContext") && reads_the_body_field;
 
     assert!(
         named_parameter || on_the_change_under_review,
         "evaluate_pre_merge_gates never receives the change's body, which is where \
          the written problem and the done-when bar are authored. Hand it a parameter \
          whose name says body, or put the body on PrDiffContext — the \
-         change-under-review struct this signature already takes — and either \
-         satisfies this. PrDiffContext body fields: {body_fields:?}. Signature: \
-         {signature:?}"
+         change-under-review struct this signature already takes — AND READ IT \
+         HERE; a field the evaluator never touches gates as much as no field at \
+         all. PrDiffContext body fields: {body_fields:?} (read by this file: \
+         {reads_the_body_field}). Signature: {signature:?}"
     );
 }
 
@@ -2371,6 +3227,43 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
              else's measurement under the Product seat's name. Bindings from judge \
              calls: {bindings:?}"
         );
+
+        // AND THE VALUE IS THE MEASUREMENT, UNCONDITIONALLY. Everything above
+        // is satisfied by a conditional whose other branch fails open —
+        //
+        //     let product_bar_status = if pr_body.trim().is_empty() {
+        //         GateStatus::NotMeasured { .. }
+        //     } else {
+        //         product_bar::judge(pr_body)
+        //     };
+        //
+        // — which binds the right name, calls judge over the body, and hands
+        // the struct the shorthand. `judge` stays perfectly correct, so every
+        // behavioural test in this file is green, and every pull request opened
+        // with an empty body certifies the Product seat as NotMeasured, which
+        // `is_acceptable()` returns true for. That is the exact defect this
+        // file exists to close, reintroduced at the one seam no behavioural
+        // test reaches: an empty body is precisely the change with no bar.
+        //
+        // So the statement is asked what is left of it once the measurement is
+        // removed. For a correct wiring, nothing.
+        let statement = if is_a_product_bar_judge_call(&src, init) {
+            init.clone()
+        } else {
+            binding_statement(&src, &leading_ident(init)).unwrap_or_else(|| init.clone())
+        };
+        let smuggled = unmeasured_alternatives_in(&src, &statement);
+        assert!(
+            smuggled.is_empty(),
+            "product_bar_status is not simply the measurement: {smuggled:?} survive in \
+             {statement:?} once the product_bar::judge call is cut out of it. The \
+             field's value must be the judge call and nothing else. A branch that \
+             answers NotMeasured for a body the gate found nothing in certifies every \
+             change whose author wrote nothing, which is the one case this seat is \
+             for — absence of the bar IS the defect, not an unread measurement. If \
+             the body can legitimately be absent, say so in `judge`, where \
+             a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured can see it"
+        );
     }
 }
 
@@ -2415,26 +3308,36 @@ fn the_review_pipeline_hands_the_evaluator_the_change_body() {
     // Same two routes as the test above, for the same reason. Either the
     // pipeline hands the evaluator an argument that names the body, or the body
     // rides on the change-under-review struct — in which case the pipeline's
-    // obligation is that the statement building that struct was handed the
+    // obligation is that the statement building THAT STRUCT was handed the
     // body, since a `PrDiffContext` with an empty `pr_body` gates exactly as
     // much as no body at all.
+    //
+    // "That struct", not "some argument". The previous revision asked whether
+    // any argument in the sixty-eight had a `let` statement mentioning "body",
+    // and two of them have always qualified: `&doc_report`, bound by a call
+    // ending `…, title, body).await?`, and `&review_resp.verdict`, bound by
+    // `state.reviewer.review_pr(&diff_ctx, title, body)`. Neither hands the
+    // body to the gate. The only thing keeping that check red was the absent
+    // body field — so the instant an implementer declared one, both wiring
+    // guards went green with zero change to the pipeline, `prepare_pr_diff`
+    // still never received the body, and the gate read `""` for every pull
+    // request. `assert_the_wiring_parsers_read_a_real_wiring` now runs that
+    // exact arrangement through this route and requires the answer "no".
     let handed_directly = args.iter().any(|a| a.contains("body"));
 
     let body_fields = diff_context_body_fields();
-    let built_from_the_body = !body_fields.is_empty()
-        && args.iter().any(|a| {
-            let ident = leading_ident(a.trim_start_matches('&').trim_start_matches("mut ").trim());
-            binding_statement(&src, &ident).is_some_and(|s| s.contains("body"))
-        });
+    let built_from_the_body = an_argument_carries_the_change_body(&src, &args, &body_fields);
 
     assert!(
         handed_directly || built_from_the_body,
         "the review pipeline never hands the evaluator the pull request body, which \
          is where the written problem and the done-when bar are authored. Pass it as \
-         an argument that names the body, or build the PrDiffContext from the body \
-         and pass that. The gate otherwise has nothing to read, and a gate that reads \
-         nothing gates nothing. Arguments: {args:?}. PrDiffContext body fields: \
-         {body_fields:?}"
+         an argument that names the body, or hand the body to the statement that \
+         builds the PrDiffContext (or assign it onto that struct) and pass that \
+         struct. Declaring a body field is not enough on its own: an unpopulated \
+         field reads as the empty string for every pull request, and a gate that \
+         reads nothing gates nothing. Arguments: {args:?}. PrDiffContext body \
+         fields: {body_fields:?}"
     );
 }
 
@@ -2611,5 +3514,110 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
     assert!(
         binding_statement(pipeline, "cert_report").is_none(),
         "binding_statement must find nothing for an identifier no let binds"
+    );
+
+    // ROUTE TWO, EXERCISED ON THE ARRANGEMENT THAT DEFEATED THE PREVIOUS
+    // REVISION. This synthetic pipeline is the real one in miniature: a
+    // body-carrying `let review_resp = …review_pr(&diff_ctx, title, body)`, a
+    // body-carrying `let doc_report = …, title, body)`, and a `let diff_ctx =
+    // …prepare_pr_diff(…)` that never sees the body. The old check answered
+    // "yes" here on the strength of the two unrelated bindings; the answer has
+    // to be "no", because nothing in this pipeline hands the change's body to
+    // the struct the evaluator reads.
+    let body_field = vec!["pr_body".to_string()];
+    let unwired = "    let diff_ctx = state\n\
+                    \x20       .git_mgr\n\
+                    \x20       .prepare_pr_diff(repo, pr_number, base_sha, head_sha)\n\
+                    \x20       .await?;\n\
+                    \x20   let review_resp = state.reviewer.review_pr(&diff_ctx, title, body).await?;\n\
+                    \x20   let doc_report = state.doc_guard.parity(repo, &diff_ctx, title, body).await?;\n";
+    let unwired_args = [
+        "&diff_ctx".to_string(),
+        "&doc_report".to_string(),
+        "&review_resp.verdict".to_string(),
+    ];
+    assert!(
+        !an_argument_carries_the_change_body(unwired, &unwired_args, &body_field),
+        "route two answered yes for a pipeline whose diff context never received the \
+         body. `&doc_report` and `&review_resp.verdict` are bound by statements that \
+         mention the body and have nothing to do with the gate; a guard they satisfy \
+         is a guard that predates the change it guards, and it would let a \
+         permanently empty pr_body certify every pull request"
+    );
+    assert!(
+        !an_argument_carries_the_change_body(unwired, &unwired_args, &[]),
+        "with no body field on PrDiffContext at all, route two cannot be open"
+    );
+
+    // And the two spellings that really do carry the body, so the fix is not so
+    // narrow that it forces the parameter route and decides the implementer's
+    // surface for them — which is the mistake the previous round removed.
+    let wired_through_the_constructor = unwired.replace(
+        "prepare_pr_diff(repo, pr_number, base_sha, head_sha)",
+        "prepare_pr_diff(repo, pr_number, base_sha, head_sha, body)",
+    );
+    assert!(
+        an_argument_carries_the_change_body(
+            &wired_through_the_constructor,
+            &unwired_args,
+            &body_field
+        ),
+        "a diff context built by a call that was handed the body satisfies route two"
+    );
+
+    let wired_by_assignment = format!("{unwired}    diff_ctx.pr_body = body.to_string();\n");
+    assert!(
+        an_argument_carries_the_change_body(&wired_by_assignment, &unwired_args, &body_field),
+        "assigning the body onto the diff context after building it carries the body \
+         just as far, and must satisfy route two too"
+    );
+    assert!(
+        !an_argument_carries_the_change_body(
+            &format!("{unwired}    diff_ctx.pr_body = String::new();\n"),
+            &unwired_args,
+            &body_field
+        ),
+        "an assignment that puts something OTHER than the body on the field must not \
+         satisfy route two; that is the permanently-empty field this route exists to \
+         forbid"
+    );
+
+    // The unconditional-initialiser reader. A conditional that keeps a literal
+    // status in reserve is the shape an engineer writes, and it is invisible to
+    // every other check in these guards.
+    let straight = "let product_bar_status = product_bar::judge(pr_body);\n";
+    assert_eq!(
+        unmeasured_alternatives_in(
+            straight,
+            &binding_statement(straight, "product_bar_status").expect("bound by a let")
+        ),
+        Vec::<&str>::new(),
+        "a plain judge call must leave nothing behind when the call is cut out of it"
+    );
+
+    let annotated = "let product_bar_status: GateStatus = product_bar::judge(&diff_ctx.pr_body);\n";
+    assert_eq!(
+        unmeasured_alternatives_in(
+            annotated,
+            &binding_statement(annotated, "product_bar_status").expect("bound by a let")
+        ),
+        Vec::<&str>::new(),
+        "a type annotation is not a value held in reserve, and rejecting it would fail \
+         a correct wiring for its spelling"
+    );
+
+    let conditional = "let product_bar_status = if pr_body.trim().is_empty() {\n\
+                       \x20   GateStatus::NotMeasured { gate_id: \"product_bar_status\".to_string(), reason: \"no body\".to_string() }\n\
+                       \x20} else {\n\
+                       \x20   product_bar::judge(pr_body)\n\
+                       };\n";
+    let found = unmeasured_alternatives_in(
+        conditional,
+        &binding_statement(conditional, "product_bar_status").expect("bound by a let"),
+    );
+    assert!(
+        found.contains(&"if ") && found.contains(&"GateStatus::"),
+        "the conditional fail-open must be visible once the judge call is cut out; \
+         found {found:?}"
     );
 }

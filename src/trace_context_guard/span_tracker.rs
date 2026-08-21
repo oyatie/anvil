@@ -18,7 +18,13 @@ pub struct DetachedSpanFinding {
 /// `spawn_continuous_poller(..)`, both live in `src/cli/server.rs` and neither a
 /// traced task. The argument list has to be non-empty for the same reason in the
 /// other direction: `Command::new("cargo").spawn()?` starts a child process,
-/// which will never carry a span.
+/// which will never carry a span. And a match preceded by `fn` is a
+/// *declaration*, not a call -- see [`is_declaration`].
+///
+/// It remains a nominal match: nothing here resolves a type, so any non-empty
+/// call whose final path segment is one of those three names is treated as a
+/// task boundary, and there is no allowlist. Disclosed in
+/// `src/fidelity/registry.rs`.
 static BOUNDARY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[^A-Za-z0-9_])(?:spawn_blocking|spawn_local|spawn)\s*\(").unwrap()
 });
@@ -45,7 +51,10 @@ pub struct ScanOutcome {
     pub classified: usize,
     /// Boundaries whose region never closed inside the hunk that opened it.
     /// Neither verdict is available over one of these, so they are counted here
-    /// and reported nowhere else -- see [`SpanTracker::scan`].
+    /// rather than judged -- see [`SpanTracker::scan`]. A count above zero is
+    /// published: `src/trace_context_guard/mod.rs` reports it as `NotMeasured`,
+    /// which names the number and blocks merge-queue admission, because a
+    /// boundary that was seen and not judged is not an empty measurement.
     pub unresolved: usize,
     /// Classified boundaries that carry no span.
     pub detached: Vec<DetachedSpanFinding>,
@@ -102,54 +111,77 @@ impl SpanTracker {
         // either. Disclosed in `src/fidelity/registry.rs`.
         let mut lex = Lex::Code;
         let mut stack: Vec<Option<Frame>> = Vec::new();
+        // The indices in `stack` of the frames that hold a region, innermost
+        // last. Every character of the hunk is appended to the innermost open
+        // region, and finding that frame by walking the stack costs O(depth)
+        // per character -- quadratic in unmatched-open depth over text that
+        // arrives from a webhook, and this gate bounds its input at no size.
+        // Carried alongside, the lookup is O(1) -- see [`push`].
+        let mut opens: Vec<usize> = Vec::new();
 
         for (idx, (_, raw)) in lines.iter().enumerate() {
             let code = strip_noise(raw, &mut lex);
-            // The byte offset of the parenthesis each boundary call on this
-            // line opens. Every match, not merely the first: a second spawn on
-            // the same line is a second boundary, and skipping it clears a task
-            // that ships detached.
-            let opens: Vec<usize> = BOUNDARY_RE.find_iter(&code).map(|m| m.end() - 1).collect();
+            // Where each boundary call on this line begins, and where it opens
+            // its parenthesis. Every match, not merely the first: a second
+            // spawn on the same line is a second boundary, and skipping it
+            // clears a task that ships detached.
+            let boundaries: Vec<(usize, usize)> = BOUNDARY_RE
+                .find_iter(&code)
+                .map(|m| (m.start(), m.end() - 1))
+                .filter(|(start, _)| !is_declaration(&code[..*start]))
+                .collect();
 
             for (col, ch) in code.char_indices() {
                 match ch {
                     '(' => {
-                        push(&mut stack, ch);
-                        let boundary = opens.contains(&col) && !code[col + 1..].starts_with(')');
-                        stack.push(boundary.then(|| Frame {
+                        push(&mut stack, &opens, ch);
+                        let opened = boundaries
+                            .iter()
+                            .find(|(_, paren)| *paren == col)
+                            .filter(|_| !code[col + 1..].starts_with(')'));
+                        stack.push(opened.map(|(start, paren)| Frame {
                             line: idx,
-                            // What was written before this call's parenthesis
-                            // is what says which kind of boundary it is, and it
-                            // is per call rather than per line: two spawns of
-                            // different kinds can share one.
-                            issue: issue_for(&code[..col]),
+                            // Which kind of boundary this is comes from *this*
+                            // match's own callee text, not from the whole line
+                            // prefix: with the prefix, the second spawn on a
+                            // line reads its kind off the first one's callee
+                            // and its author is told the wrong fix.
+                            issue: issue_for(callee_of(&code, *start, *paren), &code[col + 1..]),
                             text: String::new(),
                         }));
+                        if opened.is_some() {
+                            opens.push(stack.len() - 1);
+                        }
                     }
                     ')' => {
                         // A `)` with nothing open belongs to code above this
                         // hunk. It closes no region here.
-                        if let Some(frame) = stack.pop().flatten() {
-                            outcome.classified += 1;
-                            if !INSTRUMENT_RE.is_match(&frame.text) {
-                                let (line_number, text) = lines[frame.line];
-                                outcome.detached.push(DetachedSpanFinding {
-                                    file_path: file_path.to_string(),
-                                    line_number,
-                                    snippet: text.trim().to_string(),
-                                    issue: frame.issue,
-                                });
+                        if let Some(slot) = stack.pop() {
+                            if opens.last() == Some(&stack.len()) {
+                                opens.pop();
+                            }
+                            if let Some(frame) = slot {
+                                outcome.classified += 1;
+                                if !INSTRUMENT_RE.is_match(&frame.text) {
+                                    let (line_number, text) = lines[frame.line];
+                                    outcome.detached.push(DetachedSpanFinding {
+                                        file_path: file_path.to_string(),
+                                        line_number,
+                                        snippet: text.trim().to_string(),
+                                        issue: frame.issue,
+                                    });
+                                }
                             }
                         }
-                        push(&mut stack, ch);
+                        push(&mut stack, &opens, ch);
                     }
-                    _ => push(&mut stack, ch),
+                    _ => push(&mut stack, &opens, ch),
                 }
             }
-            push(&mut stack, '\n');
+            push(&mut stack, &opens, '\n');
         }
 
-        outcome.unresolved = stack.into_iter().flatten().count();
+        outcome.unresolved = opens.len();
         // Findings close in the order their regions end, which puts an outer
         // task after the inner one it contains. A reader reads down the file.
         outcome.detached.sort_by_key(|f| f.line_number);
@@ -158,29 +190,92 @@ impl SpanTracker {
 }
 
 /// Appends one character to the region of the innermost boundary still open.
-fn push(stack: &mut [Option<Frame>], ch: char) {
-    if let Some(frame) = stack.iter_mut().rev().flatten().next() {
+///
+/// `opens` names that frame directly, so this is O(1) and the region walk is
+/// linear in the text it reads. Searching the stack for it instead --
+/// `.iter_mut().rev().flatten().next()` -- costs O(parenthesis depth) on every
+/// character, the synthetic newline at each line end included, which is
+/// quadratic on a deeply nested line. The input is `git diff` output for a pull
+/// request on a watched repository, a file need not compile to be diffed and
+/// scanned, and unlike `src/cedar_guard.rs` and `src/doc_guard/mod.rs` this gate
+/// caps its input at no size -- so that cost is reachable from outside.
+fn push(stack: &mut [Option<Frame>], opens: &[usize], ch: char) {
+    if let Some(&innermost) = opens.last()
+        && let Some(frame) = stack[innermost].as_mut()
+    {
         frame.text.push(ch);
     }
 }
 
-/// What to tell the author, which depends on what they spawned.
+/// Whether the text preceding a match is the `fn` of a declaration.
+///
+/// A definition named `spawn` is not a call and opens no task, but the matcher
+/// is nominal, so `fn spawn(task: BoxFuture) {` and a `fn spawn(&self, f: F);`
+/// trait row both read as calls with a non-empty argument list. That is not a
+/// corner case: the natural remedy for a fleet of detached boundaries is a
+/// wrapper that attaches the span, the obvious name for it is `spawn`, and its
+/// declaration line is the one place where a span actually is attached.
+fn is_declaration(before: &str) -> bool {
+    let Some(rest) = before.trim_end().strip_suffix("fn") else {
+        return false;
+    };
+    // `fn` has to be a whole keyword: `myfn spawn(..)` is a call.
+    rest.chars()
+        .next_back()
+        .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+}
+
+/// The callee expression one match belongs to: back to the nearest statement or
+/// argument separator, forward to the parenthesis the call opens.
+///
+/// Read per match rather than off the whole line prefix. With the prefix, the
+/// second and later boundaries on a line include the earlier calls, so
+/// `let a = std::thread::spawn(..); let b = tokio::spawn(..)` reads the tokio
+/// task's kind off the thread's callee. Both findings then carry one string,
+/// `remedies()` dedupes them to it, and the sentence tells the author of an
+/// async task to hold a span guard across an await -- the anti-pattern -- while
+/// the advice that fits it is never published at all.
+fn callee_of(code: &str, start: usize, paren: usize) -> &str {
+    let cut = code[..start]
+        .rfind([';', '{', '}', ',', '='])
+        .map_or(0, |i| i + 1);
+    &code[cut..paren]
+}
+
+/// What to tell the author, which depends on the shape of what they spawned.
 ///
 /// `Instrument` is blanket-implemented for every `T: Sized`, but `Instrumented<T>`
 /// implements `Future` only when `T` does -- never when `T` is the `FnOnce()` a
-/// thread is handed. So `std::thread::spawn(closure.instrument(span))` does not
-/// compile, and a gate that blocks a merge on advice the compiler rejects is
-/// worse than one that says nothing. A thread carries the caller's span by
-/// entering it inside the closure instead.
+/// thread or a blocking pool is handed. So the combinator does not compile on
+/// one of those, and a gate that blocks a merge on advice the compiler rejects
+/// is worse than one that says nothing. Such a boundary carries the caller's
+/// span by entering it inside the closure instead.
+///
+/// The decision is made on the callee's shape rather than on the one substring
+/// `thread::spawn`: `spawn_blocking` takes `FnOnce() -> R`,
+/// `std::thread::Builder::new().spawn(..)` never contains `thread::spawn`, and
+/// gate 4 (`src/rust_language_policy/engine.rs`) actively instructs authors to
+/// move blocking calls onto `tokio::task::spawn_blocking` -- so under a
+/// substring rule gate 4 prescribes the form gate 17 then blocks with a fix that
+/// will not build. `argument` is the text the call opens with, which catches a
+/// closure-taking boundary this list does not name, `rayon::spawn(move || ..)`
+/// among them.
 ///
 /// Every string this returns is folded into the published summary by
 /// `src/trace_context_guard/mod.rs`, because `summary` is the only field of the
 /// report that reaches a reader.
-fn issue_for(line: &str) -> String {
-    if line.contains("thread::spawn") {
-        "Thread spawned without carrying the caller's tracing span: capture \
-         `tracing::Span::current()` outside the closure and enter it inside, \
-         with `let _enter = span.enter();`"
+fn issue_for(callee: &str, argument: &str) -> String {
+    let head = argument.trim_start();
+    let closure_taking = callee.contains("spawn_blocking")
+        || callee.contains("thread::")
+        || callee.contains("Builder")
+        || head.starts_with('|')
+        || head.starts_with("move |");
+    if closure_taking {
+        "Work handed to a closure-taking boundary without carrying the caller's \
+         tracing span: the `Instrument` combinator produces a future and a \
+         closure is not one, so capture `tracing::Span::current()` outside the \
+         closure and enter it inside, with `let _enter = span.enter();`"
             .to_string()
     } else {
         "Asynchronous task spawned without attaching tracing span via \

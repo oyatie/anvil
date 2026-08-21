@@ -53,45 +53,72 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         reference: "W3C Trace Context; OpenTelemetry context propagation; tracing-futures `Instrument`",
         fidelity: Fidelity::Heuristic,
         gap: "Runs no tracing runtime and resolves no types, and reads only the diff hunks -- never the \
-              file -- so a boundary this pull request keeps outside a hunk is invisible to it and no \
-              fix below removes that. It text-scans the added and retained lines of Rust chunks for a \
-              call whose final path segment is `spawn`, `spawn_blocking` or `spawn_local` and whose \
-              argument list is not empty (trace_context_guard/span_tracker.rs:14-23), then asks whether \
-              `.instrument(` or `.in_current_span(` appears anywhere inside the parenthesised region \
-              that call opens, minus the regions the boundaries nested in it own \
-              (trace_context_guard/span_tracker.rs:76-92). Appearing in the region is not attachment: \
+              file -- so a boundary this pull request keeps outside a hunk is invisible to it and \
+              no fix below removes that. It text-scans the added and retained lines of Rust chunks \
+              for a call whose final path segment is `spawn`, `spawn_blocking` or `spawn_local` and \
+              whose argument list is not empty (trace_context_guard/span_tracker.rs:28-30), then \
+              asks whether `.instrument(` or `.in_current_span(` appears anywhere inside the \
+              parenthesised region that call opens, minus the regions the boundaries nested in it \
+              own (trace_context_guard/span_tracker.rs:83-102); the published sentence carries that \
+              qualifier rather than the stronger claim. Appearing in the region is not attachment: \
               the call is not matched against the spawned future, so a span attached to some other \
-              value inside the body reads as clean, and the gate can tell neither that the span is the \
-              right one nor that it is attached to this task at all. The published sentence says what \
-              is measured rather than the word attaches. A task instrumented at its definition by \
-              `#[tracing::instrument]` has no such call at the spawn site and is reported detached \
-              (trace_context_guard/span_tracker.rs:26-38). A region is bounded by the hunk the boundary \
-              opened in: the hunks of a file are disjoint windows onto it, so the scan runs once per \
-              hunk and a boundary whose parenthesis does not close inside its own hunk is `unresolved` \
-              -- not classified, not counted among the inspected, and not accused \
-              (trace_context_guard/mod.rs:56-66). Every boundary on a line is inspected, not merely the \
-              first (trace_context_guard/span_tracker.rs:108-113). Lexing is a line scanner with state \
-              carried across lines, blanking string literals, raw strings, character literals, line \
-              comments and block comments before anything counts a parenthesis \
-              (trace_context_guard/span_tracker.rs:200-224); its state starts at code at the top of \
-              every hunk, so a hunk whose first line is already inside a literal or a block comment is \
-              read as code until that literal closes, and a `'` that is neither a character literal nor \
-              a lifetime is read as a lifetime. An accusation names post-image lines derived from the \
-              `@@ -a,b +c,d @@` header (trace_context_guard/mod.rs:224-240) -- a chunk carrying no such \
-              header declares no position and is not read at all -- and it covers retained \
-              lines as well as added ones -- a region walk that skipped context lines could bound \
-              nothing -- so a named line may be one the change only carried past rather than wrote; the \
-              failing sentence says so. It cannot see a boundary crossed by a call it cannot name that \
-              way -- a spawn imported under a different name, or a task started by code this diff does \
-              not touch. A diff crossing no boundary it can see records \
-              `NOTHING TO MEASURE` (trace_context_guard/mod.rs:90-108), but that string reaches no \
-              published surface: `trace_status` is rebuilt from a boolean and only the failing arm \
-              carries a summary (pre_merge_guard/evaluator.rs:292-296), so the scorecard row \
-              End-to-end span instrumentation across async tasks (pre_merge_guard/matrix.rs:102-105) \
-              renders a bare `✅ PASSED` (pre_merge_guard/report.rs:452-455) over a diff in which \
-              nothing was inspected. That follows the `NothingToMeasure` precedent \
-              (coverage_guard.rs:139) rather than the SLO gate's absent-source one -- a choice left \
-              open for the owner in tests/trace_gate_claims_only_what_it_measured_test.rs.",
+              value inside the body reads as clean, and the gate can tell neither that the span is \
+              the right one nor that it is attached to this task at all. The published sentence \
+              says what is measured rather than the word attaches. A task instrumented at its \
+              definition by `#[tracing::instrument]` has no such call at the spawn site and is \
+              reported detached (trace_context_guard/span_tracker.rs:32-44), and a boundary crossed \
+              by a call it cannot name that way -- a spawn imported under another name, or a task \
+              started by code this diff does not touch -- it cannot see at all. \
+              It errs in the other direction too, and that is the direction that blocks a merge. \
+              The matcher is nominal: no type is resolved, so any non-empty call whose final path \
+              segment is one of those three names is treated as a task boundary and reported -- a \
+              thread pool, a process supervisor, an actor handle, a domain type of one is own -- \
+              and there is no allowlist, no annotation and no configuration by which an author can \
+              say otherwise; the verdict is `Failed`, which blocks. Only a definition is excluded, \
+              by the `fn` keyword before the name (trace_context_guard/span_tracker.rs:215-221), so \
+              a wrapper named spawn is left alone where it is declared but reported at every call \
+              site through it. And a span attached before the spawn call rather than inside it -- a \
+              future built in steps and then handed over as a binding, which is the shape any \
+              non-trivial spawn takes -- sits outside the parenthesised region, is not seen, and \
+              the boundary is reported detached. \
+              A region is bounded by the hunk the boundary opened in: the hunks of a file are \
+              disjoint windows onto it, so the scan runs once per hunk and a boundary whose \
+              parenthesis does not close inside its own hunk is `unresolved` -- seen and not \
+              judged, not counted among the inspected, and not accused \
+              (trace_context_guard/mod.rs:67-76). Every boundary on a line is inspected, not merely \
+              the first (trace_context_guard/span_tracker.rs:121-129). Lexing is a line scanner \
+              with state carried across lines, blanking string literals, raw strings, character \
+              literals, line comments and block comments before anything counts a parenthesis \
+              (trace_context_guard/span_tracker.rs:314-320); its state starts at code at the top of \
+              every hunk, so a hunk whose first line is already inside a literal or a block comment \
+              is read as code until that literal closes, and a `\'` that is neither a character \
+              literal nor a lifetime is read as a lifetime. The diff is cut into one chunk per file \
+              at a line beginning `diff --git ` (trace_context_guard/mod.rs:263-276), and a chunk \
+              carrying no `+++ ` header names no path and is not read. An accusation names \
+              post-image lines derived from the `@@ -a,b +c,d @@` header \
+              (trace_context_guard/mod.rs:298-333) -- a chunk with no such header declares no \
+              position, a removed line is not numbered, and neither is the \
+              `\\ No newline at end of file` marker git writes mid-hunk -- and it covers retained \
+              lines as well as added ones, because a region walk that skipped context lines could \
+              bound nothing, so a named line may be one the change only carried past rather than \
+              wrote; the failing sentence says so. \
+              What the guard decides is what is published: it builds its own `GateStatus` and \
+              `trace_status` clones it (pre_merge_guard/evaluator.rs:291-297), the shape \
+              `slo_status` already used. A diff crossing no boundary it can see is `Warning` \
+              carrying `NOTHING TO MEASURE` (trace_context_guard/mod.rs:176-179): acceptable, so it \
+              neither blocks nor accuses, and not `Passed`, which carries no string and would \
+              discard the sentence. A boundary seen and not judged is `NotMeasured` under this \
+              gate is own id (trace_context_guard/mod.rs:148-158), which publishes the count and \
+              the reason and blocks merge-queue admission through `is_admissible` \
+              (pre_merge_guard/report.rs:317-321) -- the same split between `NothingToMeasure` and \
+              `NotMeasured` that `gate_status` makes (coverage_guard.rs:135,139). What remains: the \
+              scorecard renderer collapses an admissible report to a single verdict line and \
+              enumerates no finding at all (publish/scorecard.rs:133-137), so on a pull request \
+              carrying no other finding the warning row is still not printed and the row \
+              \"End-to-end span instrumentation across async tasks\" \
+              (pre_merge_guard/matrix.rs:102-104) is counted in the total without a word. Making a \
+              warning visible on a certified scorecard is a change to that renderer, which every \
+              gate shares.",
         blocked_on: None,
     },
     GateFidelity {

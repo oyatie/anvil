@@ -131,15 +131,31 @@
 //! Each of these rows is shaped so the shortest fix does not reach it. The
 //! commented spawn sits *after* real code on its line, so a rule that tests the
 //! line's first characters still flags a trailing `// tokio::spawn(..)` and
-//! blocks a merge over a defect the author did not commit; only truncating the
-//! line at `//` passes it alongside the positive rows. And the two
-//! `JoinSet::spawn` rows spell their receiver differently -- `workers.spawn(..)`
-//! detached, `set.spawn(..)` instrumented -- so no allowlist of the exact
-//! spellings that appear in this file covers both, and a receiver-method spawn
-//! has to be recognised as a form rather than as a literal. Recognised as a
-//! literal, the row it misses is not flagged and not counted either: an
-//! uninstrumented boundary published as "nothing was inspected", which is
-//! section 1's defect wearing the other face.
+//! blocks a merge over a defect the author did not commit. Truncating the line
+//! at its first `//` passes that row and opens a hole on the other side, so the
+//! hole is pinned shut beside it: two further rows put a `://` inside a string
+//! literal ahead of the call -- a shape this repository carries on 36 lines --
+//! one where the truncation swallows a real detached boundary and publishes it
+//! as nothing-in-scope, one where it swallows the `.instrument(...)` and the
+//! gate accuses a correctly instrumented spawn. Passing all three fixes the
+//! order: blank string literals first, strip line comments second.
+//!
+//! The receiver-method form is generated rather than spelled. An earlier draft
+//! of this file wrote two `JoinSet::spawn` rows with different receiver names
+//! and claimed that no allowlist of the exact spellings appearing here could
+//! cover both. That was false: a six-entry allowlist covers them and greens the
+//! file, while still missing every other receiver. So the form is now run as one
+//! fixture body over a set of receiver identifiers the implementation has never
+//! seen -- `js`, `handles`, `pool`, `tasks`, `workers` -- in a detached shape, an
+//! instrumented shape and a `spawn_blocking` shape, and the gate's verdict is
+//! required to be *identical* across all of them as well as correct in each. A
+//! list of literals cannot green a set of names the fixture invents; only
+//! recognising `<receiver>.spawn[_blocking](` as a form can. This repository has
+//! no live `JoinSet` call site to cut the fixture from (`grep -rn JoinSet src/`
+//! is empty), which is why this one shape is generated rather than lifted.
+//! Recognised as a literal, the rows it misses are not flagged and not counted
+//! either: uninstrumented boundaries published as "nothing was inspected",
+//! which is section 1's defect wearing the other face.
 //!
 //! Where a finding *points* is pinned by the same reasoning. One row of
 //! `a_file_that_instruments_one_spawn_and_forgets_the_other_...` runs inside a
@@ -219,19 +235,21 @@
 //!
 //! ## Out of scope -- stated, rather than left ambiguous
 //!
-//! - The `.rs` chunk filter is pinned in one direction and one only. The
-//!   documentation-only row carries a fenced Rust example with an uninstrumented
-//!   spawn in it, so a scanner that reads every chunk regardless of the path it
-//!   belongs to produces a finding, and gate 17 becomes a permanent block on any
-//!   documentation change that shows an uninstrumented spawn. That direction
-//!   bites. The other does not, and cannot with this helper: `diff_of` always
-//!   emits `--- a/{path}` and `+++ b/{path}`, so a `.rs` path always puts `.rs`
-//!   into its own chunk text and a `.md` path never does. No fixture here can
-//!   separate "the path was consulted" from "the chunk text was searched", and
-//!   nothing here claims to. The filter stays crude both ways -- a Markdown file
-//!   that merely mentions `.rs` is scanned, a Rust file renamed in a chunk that
-//!   does not mention it is skipped -- and neither of those was in this lane's
-//!   verified scope.
+//! - The `.rs` chunk filter is pinned in the direction that bites this
+//!   repository. An earlier draft of this file claimed that no fixture here
+//!   could separate "the path was consulted" from "the chunk text was
+//!   searched"; that claim was wrong and is withdrawn. The documentation-only
+//!   row is a Markdown path whose body both shows an uninstrumented spawn in a
+//!   fenced example *and* names `src/trace_context_guard/mod.rs` in its prose,
+//!   so the chunk text contains `.rs` while the file being changed does not.
+//!   `tasks_scanned == 0` with an empty finding set holds for a filter that
+//!   consults the parsed `+++ b/<path>` and fails for the
+//!   `file_diff.contains(".rs")` that ships today -- which four Markdown files
+//!   in this repository, the ADR corpus among them, would already trip.
+//!   The opposite direction is not pinned and cannot be with this helper:
+//!   `diff_of` always emits `+++ b/{path}`, so a Rust file's chunk text always
+//!   carries `.rs`, and no fixture here shows a Rust file skipped for want of
+//!   the substring. That was not in this lane's verified scope.
 //! - Only `//` line comments are handled. A spawn inside a `/* ... */` block
 //!   comment is not pinned in either direction: flagging it and ignoring it both
 //!   pass this suite. Named as a known limit of the gate rather than left
@@ -481,19 +499,28 @@ fn a_gate_that_inspected_nothing_says_so_plainly_and_accuses_no_one() {
     // a choice to make.
     for (label, files) in [
         (
-            // The body carries a fenced Rust example with an uninstrumented
-            // spawn in it. Without that, this row is the spawn-free Rust row
-            // below it written twice: every assertion in the loop holds for one
-            // exactly when it holds for the other, and neither reaches the
-            // chunk filter this row is nominally about. With it, a scanner that
-            // reads every chunk regardless of the path it belongs to finds the
-            // spawn, produces a finding, and publishes a permanent merge block
-            // on any documentation change that shows an uninstrumented spawn --
-            // the accusation the loop's own assertion forbids.
+            // Two things are packed into this body, and both are load-bearing.
+            //
+            // It carries a fenced Rust example with an uninstrumented spawn in
+            // it, so a scanner that reads every chunk regardless of the path it
+            // belongs to finds the spawn, produces a finding, and publishes a
+            // permanent merge block on any documentation change that shows an
+            // uninstrumented spawn -- the accusation the loop's own assertion
+            // forbids. Without it this row would be the spawn-free Rust row
+            // below it written twice.
+            //
+            // And its prose names a `.rs` path, which is what separates a
+            // filter that consults the path being changed from one that
+            // searches the chunk text. What ships today is the second --
+            // `if !file_diff.contains(".rs") { continue; }` -- and four
+            // Markdown files in this repository already mention a `.rs` path,
+            // the ADR corpus among them. So this chunk is Markdown by path and
+            // contains `.rs` by text, and `tasks_scanned == 0` with an empty
+            // finding set holds only for a filter that looks at the former.
             "a documentation-only pull request",
             &[(
                 "docs/adr/0002-honesty.md",
-                "+The published name must match the live measurement. For example,\n+this is not a boundary in this pull request, it is prose about one:\n+\n+```rust\n+tokio::spawn(async move { work().await; });\n+```",
+                "+Gate 17 lives in `src/trace_context_guard/mod.rs`. The published name\n+must match the live measurement. For example, this is not a boundary in\n+this pull request, it is prose about one:\n+\n+```rust\n+tokio::spawn(async move { work().await; });\n+```",
             )][..],
         ),
         (
@@ -622,20 +649,6 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             1,
         ),
         (
-            // Spelled `workers`, while the instrumented JoinSet row further
-            // down is spelled `set`. An allowlist of the receiver names that
-            // happen to appear in this file covers one row or the other, never
-            // both, so a receiver-method spawn has to be recognised as a form.
-            // Recognised as a literal instead, the row it misses is reported as
-            // nothing-in-scope: an uninstrumented boundary published as
-            // "nothing was inspected", which is section 1's defect wearing the
-            // other face, in the spawn form this row was added to cover.
-            "JoinSet::spawn",
-            "pub async fn dispatch() {\n    let mut workers = tokio::task::JoinSet::new();\n    workers.spawn(async move {\n        work().await;\n    });\n}",
-            Detached,
-            1,
-        ),
-        (
             "std::thread::spawn",
             "pub fn dispatch() {\n    let handle = std::thread::spawn(move || {\n        drain_pipe();\n    });\n    let _ = handle.join();\n}",
             Detached,
@@ -666,6 +679,10 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             // Three, so that the count the summary must publish is a number no
             // stray digit supplies by accident. A sentence reporting "1" or
             // carrying the `17` of "gate 17" does not contain the token `3`.
+            //
+            // Its receiver is spelled `set`, which is deliberately not one of
+            // the five names the generated receiver rows below use: an
+            // allowlist assembled from those five still misses this one.
             "three instrumented boundaries in one file",
             "pub async fn fan_out() {\n    tokio::spawn(async move { alpha().await; }.instrument(tracing::info_span!(\"alpha\")));\n    tokio::task::spawn(async move { beta().await; }.instrument(tracing::info_span!(\"beta\")));\n    let mut set = tokio::task::JoinSet::new();\n    set.spawn(async move { gamma().await; }.instrument(tracing::info_span!(\"gamma\")));\n}",
             InstrumentedBoundary,
@@ -701,6 +718,34 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             0,
         ),
         (
+            // The pair below, read together with the comment row above it,
+            // fixes the *order* of the two textual exclusions rather than
+            // leaving it free. Truncating the line at its first `//` -- the
+            // shortest way to pass the comment row -- silently discards
+            // everything after a URL in a string literal, and this repository
+            // carries 36 lines with a `://` in them. Here that discard drops a
+            // real detached boundary: not flagged and not counted, published as
+            // "nothing was inspected", which is section 1's defect wearing the
+            // other face. The literal is kept on the *same* line as the call,
+            // because that is the only position in which it reaches the bug.
+            "a detached spawn behind a string literal containing //",
+            "pub async fn dispatch() {\n    let url = \"https://api.example.com/hook\"; tokio::spawn(async move { post(url).await; });\n}",
+            Detached,
+            1,
+        ),
+        (
+            // The same hazard pointed the other way: the `//` sits inside the
+            // span's own name, so truncating at it throws away the
+            // `.instrument(...)` that follows and the gate accuses a boundary
+            // that is correctly instrumented. Passing this row and the comment
+            // row together requires blanking string literals first and
+            // stripping line comments second.
+            "a span attached after a string literal containing //",
+            "pub async fn dispatch() {\n    tokio::spawn(async move { post(\"https://api.example.com/hook\").await; }.instrument(tracing::info_span!(\"post https://api.example.com/hook\")));\n}",
+            InstrumentedBoundary,
+            1,
+        ),
+        (
             "a method whose name merely begins with spawn_, live in this repository",
             spawn_prefixed_methods.as_str(),
             NotABoundary,
@@ -710,8 +755,8 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
 
     const FIXTURE_PATH: &str = "src/dispatch.rs";
     let nothing_inspected = summary_when_nothing_was_inspected(FIXTURE_PATH);
-    let mut unseen = Vec::new();
-    let mut misaccused = Vec::new();
+    let mut unseen: Vec<String> = Vec::new();
+    let mut misaccused: Vec<String> = Vec::new();
     // Every row is exercised before anything is asserted, so one wrong row does
     // not hide the rest: the failure names all of them at once.
     let mut misreported: Vec<String> = Vec::new();
@@ -721,8 +766,10 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
         let found = !report.detached_findings.is_empty();
 
         match (*expect, found) {
-            (Detached, false) => unseen.push(*label),
-            (InstrumentedBoundary, true) | (NotABoundary, true) => misaccused.push(*label),
+            (Detached, false) => unseen.push(label.to_string()),
+            (InstrumentedBoundary, true) | (NotABoundary, true) => {
+                misaccused.push(label.to_string())
+            }
             _ => {}
         }
 
@@ -772,6 +819,82 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
                     report.summary
                 ));
             }
+        }
+    }
+
+    // ---- a receiver-method spawn is a form, not a spelling ---------------
+    //
+    // `RECV` is substituted with each identifier below, so the same body is put
+    // to the gate under five names it has never been shown. An allowlist of the
+    // spellings that literally appear in this file -- which is what an earlier
+    // draft of this row could be greened by -- cannot cover a set the fixture
+    // invents; recognising `<receiver>.spawn[_blocking](` as a form is the only
+    // thing that can.
+    //
+    // Two obligations are checked per shape, and the second is the one a pair of
+    // hand-written rows cannot state. Each fixture must be classified correctly
+    // in its own right *and* every receiver must be classified the same, so a
+    // scanner that happens to know `workers` and not `pool` fails naming the
+    // divergence rather than looking like a single wrong row.
+    const RECEIVERS: &[&str] = &["js", "handles", "pool", "tasks", "workers"];
+    let receiver_shapes: &[(&str, &str, Expect)] = &[
+        (
+            "RECV.spawn(..) with no span",
+            "pub async fn dispatch() {\n    let mut RECV = tokio::task::JoinSet::new();\n    RECV.spawn(async move {\n        work().await;\n    });\n}",
+            Detached,
+        ),
+        (
+            "RECV.spawn(..) carrying a span",
+            "pub async fn dispatch() {\n    let mut RECV = tokio::task::JoinSet::new();\n    RECV.spawn(async move {\n        work().await;\n    }.instrument(tracing::info_span!(\"worker\")));\n}",
+            InstrumentedBoundary,
+        ),
+        (
+            "RECV.spawn_blocking(..) with no span",
+            "pub async fn dispatch() {\n    let mut RECV = tokio::task::JoinSet::new();\n    RECV.spawn_blocking(move || {\n        heavy_work();\n    });\n}",
+            Detached,
+        ),
+    ];
+
+    for (shape, code, expect) in receiver_shapes {
+        // (receiver, tasks_scanned, findings) for each spelling of the same body.
+        let mut observed: Vec<(&str, usize, usize)> = Vec::new();
+
+        for receiver in RECEIVERS {
+            let body = code.replace("RECV", receiver);
+            let report = run(&diff_of(&[(FIXTURE_PATH, &as_added(&body))]));
+            let row = shape.replace("RECV", receiver);
+            let found = !report.detached_findings.is_empty();
+
+            match (*expect, found) {
+                (Detached, false) => unseen.push(row.clone()),
+                (InstrumentedBoundary, true) => misaccused.push(row.clone()),
+                _ => {}
+            }
+            if report.tasks_scanned != 1 {
+                misreported.push(format!(
+                    "{row}: this fixture contains one async boundary and the \
+                     gate reported inspecting {}. Summary was: {}",
+                    report.tasks_scanned, report.summary
+                ));
+            }
+            observed.push((
+                receiver,
+                report.tasks_scanned,
+                report.detached_findings.len(),
+            ));
+        }
+
+        let first = (observed[0].1, observed[0].2);
+        if observed
+            .iter()
+            .any(|(_, scanned, found)| (*scanned, *found) != first)
+        {
+            misreported.push(format!(
+                "{shape}: renaming the receiver changed the gate's verdict over \
+                 an identical body, so this form is being recognised as a list \
+                 of spellings rather than as a shape. (receiver, scanned, \
+                 findings) was {observed:?}"
+            ));
         }
     }
 
@@ -1067,7 +1190,21 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
 
     let start = spawn_lines[0].saturating_sub(2);
     let end = (spawn_lines[spawn_lines.len() - 1] + 8).min(lines.len());
-    let hunk = as_added(&lines[start..end].join("\n"));
+    let cut = lines[start..end].join("\n");
+    // The half of the rot guard the count above does not cover. Other lanes are
+    // working this repository; one that attaches a span to these two threads
+    // makes the cut window correct code, and every assertion below then fails
+    // reading like a gate defect -- "the gate reported 0 finding(s)" -- which
+    // invites the next agent to weaken a test that was right. If that happens
+    // this fails first, and says what actually changed.
+    assert!(
+        !cut.contains(".instrument("),
+        "fixture drawn from live source has rotted: the thread spawns in \
+         {LIVE_FILE} now carry a span, so this hunk is no longer an example of \
+         a dropped trace context. Re-cut it from a file that still has one, or \
+         drop the row."
+    );
+    let hunk = as_added(&cut);
 
     let report = run(&diff_of(&[(LIVE_FILE, &hunk)]));
 

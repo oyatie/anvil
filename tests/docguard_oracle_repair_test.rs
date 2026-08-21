@@ -193,6 +193,29 @@ fn drifting_page() -> String {
     )
 }
 
+/// The same drift as `drifting_page`, plus an exemption sentence, so one
+/// fixture exercises **all three** of `rewrite_page`'s mutations on a page of
+/// Anvil's own — the positive-direction mirror of `watched_repo_page`.
+///
+/// Used by `the_corpus_sync_rewrites_every_owned_page_not_only_the_readme` to
+/// drive every entry of `OWNED_PAGES` at once. `OWNED_PAGES` was until now only
+/// ever used against repositories that are NOT Anvil's; on Anvil's side every
+/// fixture in every binary wrote to `README.md` and nothing else, so narrowing
+/// what the sync actually rewrites — `if rel != "README.md" { continue; }`, or
+/// applying the exemption deletion only to `.md` pages — passed the whole suite
+/// while leaving Anvil's own doctrine, OpenAPI document and ADRs publishing
+/// stale counts and surviving markers.
+fn drifting_page_with_exemption() -> String {
+    format!(
+        "# Anvil\n\
+         \n\
+         The fabric ships behind a {}-gate release check.\n\
+         It replaced the sixty-gate pilot programme.\n\
+         Roadmap. DocGuard does **not** yet amend existing documents such as `README.md`. Support is planned.\n",
+        TOTAL_GATES + 1
+    )
+}
+
 /// A page belonging to a repository that is **not** Anvil's.
 ///
 /// `rewrite_page` performs three independent mutations on a page it owns: the
@@ -253,14 +276,28 @@ fn normalise(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Runs the sync over a single Anvil-owned `README.md` and returns the bytes
+/// Runs the sync over a single Anvil-owned page at `rel` and returns the bytes
 /// left on disk together with the reported drift.
-fn rewrite_anvil_readme(body: &str) -> (String, Vec<String>) {
+///
+/// Parameterised by relative path rather than hardcoded to `README.md` so the
+/// issue-#28 fixtures can be driven through a page that is **not** markdown.
+/// `OWNED_PAGES` carries five kinds and `rewrite_page` is handed all five, so a
+/// rewriter that grows a markdown-table-aware sentence scanner for #28 and then
+/// applies the exemption deletion only to `.md` pages leaves
+/// `openapi/openapi.yaml` publishing the marker forever — see
+/// `the_exemption_rewriter_is_not_scoped_to_markdown_pages`.
+fn rewrite_anvil_page(rel: &str, body: &str) -> (String, Vec<String>) {
     let dir = tempdir().unwrap();
-    write(&dir.path().join("README.md"), body);
+    write(&dir.path().join(rel), body);
     let sync = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES).unwrap();
-    let got = std::fs::read_to_string(dir.path().join("README.md")).unwrap();
+    let got = std::fs::read_to_string(dir.path().join(rel)).unwrap();
     (got, sync.remaining_drift)
+}
+
+/// `rewrite_anvil_page` on Anvil's own `README.md`, which is the page most of
+/// the issue-#28 layouts came off.
+fn rewrite_anvil_readme(body: &str) -> (String, Vec<String>) {
+    rewrite_anvil_page("README.md", body)
 }
 
 /// Builds `docs/adr` with one ADR in it and then makes the directory itself
@@ -391,6 +428,162 @@ fn the_corpus_sync_rewrites_anvils_own_published_counts_but_not_a_watched_reposi
             sync.remaining_drift
         );
     }
+}
+
+#[test]
+fn the_corpus_sync_rewrites_every_owned_page_not_only_the_readme() {
+    // The positive-direction mirror of the `OWNED_PAGES` loops above, and until
+    // now the suite had none: every Anvil fixture in every one of the four
+    // binaries wrote drift to `README.md` alone, and `rewrite_anvil_readme` —
+    // the helper the whole of issue #28 runs through — was hardcoded to it.
+    //
+    // The wrong implementation that closed, and it is not contrived: while
+    // restructuring `sync_published_counts` around the ownership early-return
+    // required by issue #27, narrow what actually gets rewritten —
+    // `if rel != "README.md" { continue; }`, or
+    // `const OWNED: &[&str] = &["README.md"];`, or (the more natural variant once
+    // `rewrite_page` grows a markdown-table-aware sentence scanner for #28)
+    // apply the rewrite only to `.md` pages so `openapi/openapi.yaml` is skipped.
+    // Every assertion in every one of the four binaries passed that, because
+    // nothing on Anvil's side ever handed the sync a second page.
+    //
+    // What ships: Anvil's own `docs/doctrine.md`, `openapi/openapi.yaml` and ADRs
+    // go on publishing stale gate counts and surviving exemption markers,
+    // `remaining_claim` never sees them because the rewriter never reached them,
+    // and gate 1 reports the corpus clean — the exact silent-drift defect
+    // `corpus_sync` was written to end. The `docs/adr` fence elsewhere in this
+    // file does NOT catch it: it only requires `collect_owned_pages` to keep
+    // LISTING the ADR directories, never that their contents are rewritten.
+    let page = drifting_page_with_exemption();
+    let dir = tempdir().unwrap();
+    for owned in OWNED_PAGES {
+        write(&dir.path().join(owned), &page);
+    }
+
+    let sync = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES).unwrap();
+
+    assert!(
+        sync.not_applicable.is_none(),
+        "the sync did apply to Anvil, so it must not report otherwise: {:?}",
+        sync.not_applicable
+    );
+    assert!(
+        sync.remaining_drift.is_empty(),
+        "every claim on every one of these pages is one the rewriter knows how to \
+         repair: {:?}",
+        sync.remaining_drift
+    );
+
+    // Reported as a set, not a sequence: `collect_owned_pages` sorts, but the
+    // order it reports in is not a behaviour this suite has any reason to pin.
+    for owned in OWNED_PAGES {
+        assert!(
+            sync.rewritten.contains(&(*owned).to_string()),
+            "{owned} is one of Anvil's own published pages and it carried drift, so \
+             the sync must report having rewritten it: {:?}",
+            sync.rewritten
+        );
+    }
+    assert_eq!(
+        sync.rewritten.len(),
+        OWNED_PAGES.len(),
+        "exactly the pages that were written may be reported: {:?}",
+        sync.rewritten
+    );
+
+    let repaired = format!("{TOTAL_GATES}-gate");
+    for owned in OWNED_PAGES {
+        let got = std::fs::read_to_string(dir.path().join(owned)).unwrap();
+        let lowered = got.to_lowercase();
+
+        assert_eq!(
+            lowered.matches(&repaired).count(),
+            2,
+            "{owned}: both published gate-count claims must survive the rewrite and \
+             both must now read TOTAL_GATES={TOTAL_GATES}: {got}"
+        );
+        assert!(
+            !lowered.contains(&format!("{}-gate", TOTAL_GATES + 1)),
+            "{owned}: the drifting digit claim must be gone: {got}"
+        );
+        assert!(
+            !lowered.contains("sixty-gate"),
+            "{owned}: no page of Anvil's may go on publishing `sixty-gate`: {got}"
+        );
+        assert!(
+            !got.contains(EXEMPTION_MARKER),
+            "{owned}: the exemption marker must be removed from every owned page, \
+             not only from the one the fixtures happened to use: {got}"
+        );
+        assert!(
+            got.contains("Roadmap.") && got.contains("Support is planned."),
+            "{owned}: the prose either side of the exemption sentence must survive \
+             on every owned page: {got}"
+        );
+        assert_eq!(
+            got.lines().count(),
+            page.lines().count(),
+            "{owned}: line structure must be preserved: {got}"
+        );
+    }
+}
+
+#[test]
+fn the_exemption_rewriter_is_not_scoped_to_markdown_pages() {
+    // `openapi/openapi.yaml` is an owned page and it is not markdown. Issue #28's
+    // repair replaces the end-of-line scan with a sentence scan that has to
+    // understand `|` as a markdown cell delimiter, and the natural way to keep
+    // that from misfiring on other formats is to gate the whole deletion on
+    // `rel.ends_with(".md")`. Anvil's OpenAPI document then publishes the
+    // exemption forever, `remaining_claim` never runs on it because the rewriter
+    // skipped it, and gate 1 calls the corpus clean.
+    //
+    // The fixture is shaped like the file it stands for — a YAML block scalar,
+    // indented, with no table row anywhere near it — so it also pins that the
+    // sentence scan does not depend on markdown structure being present.
+    let page = format!(
+        "openapi: 3.1.0\n\
+         info:\n\
+         \x20 title: Anvil\n\
+         \x20 description: |\n\
+         \x20   Runs the {}-gate certification. DocGuard does **not** yet amend existing documents. Support is planned.\n",
+        TOTAL_GATES + 1
+    );
+    let (got, remaining_drift) = rewrite_anvil_page("openapi/openapi.yaml", &page);
+
+    assert!(
+        !got.contains(EXEMPTION_MARKER),
+        "the exemption marker must be removed from a page that is not markdown \
+         too: {got:?}"
+    );
+    assert!(
+        got.contains(&format!("{TOTAL_GATES}-gate")),
+        "the gate-count claim on a page that is not markdown must be repaired \
+         too: {got:?}"
+    );
+    assert!(
+        !got.contains(&format!("{}-gate", TOTAL_GATES + 1)),
+        "the drifting claim must be gone: {got:?}"
+    );
+    assert_eq!(
+        normalise(&got),
+        normalise(&format!(
+            "openapi: 3.1.0\n\
+             info:\n\
+             \x20 title: Anvil\n\
+             \x20 description: |\n\
+             \x20   Runs the {TOTAL_GATES}-gate certification. Support is planned.\n"
+        )),
+        "exactly the exemption sentence goes; the surrounding YAML is not the \
+         rewriter's to touch: {got:?}"
+    );
+    assert_eq!(
+        got.lines().count(),
+        page.lines().count(),
+        "a YAML document that loses a line stops parsing; line structure must be \
+         preserved: {got:?}"
+    );
+    assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
 }
 
 #[test]
@@ -842,6 +1035,135 @@ fn an_exemption_sentence_with_no_terminator_is_clamped_and_takes_nothing_beyond_
     );
     assert_eq!(
         rows[1], "| Next | Row survives |",
+        "the following row must be untouched: {got:?}"
+    );
+    assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
+
+    // `|` IS AN END BOUNDARY, and until now nothing in this suite said so.
+    //
+    // The rule at the head of this section states the boundary set is "the same
+    // walking backwards from the marker and walking forwards from it", `|`
+    // included. `|` was pinned as a START boundary — `rows[0].starts_with("|
+    // Gate |")` above fails if the backward scan does not stop at the cell
+    // delimiter — but NO fixture anywhere required it to stop the FORWARD scan,
+    // because in every table fixture in this file the exemption sentence is the
+    // last content in its cell:
+    //
+    //   * `HISTORICAL_README_TABLE` — the cell ends "… — see the roadmap. |", so
+    //     `end` lands on the ASCII `.` before ever reaching the pipe.
+    //   * the fixture above — nothing survives after the marker except the
+    //     closing pipe itself.
+    //   * `a_page_that_ends_at_the_exemption_sentence_is_not_overrun`'s
+    //     "| Gate | It does **not** yet amend existing documents" — no pipe after
+    //     the marker at all.
+    //
+    // The wrong implementation, and it is the MINIMAL edit to today's
+    // `let end_rel = rest.find('\n').unwrap_or(rest.len());`: add the sentence
+    // terminators to the forward scan and keep `\n` as the only clamp, so `|`
+    // never enters the end-boundary set. Against the fixture above that yields
+    // `rows[0] == "| Gate |"` instead of the correct `"| Gate ||"` — the closing
+    // pipe of the DocGuard cell has been eaten — and BOTH surviving assertions
+    // still hold: `starts_with("| Gate |")` is true because the string equals it,
+    // and `ends_with('|')` is true because the row's own opening-cell pipe is now
+    // the last character.
+    //
+    // What ships: on any owned page where a table cell's exemption sentence
+    // carries no `.`/`?`/`!`/`。` — the commoner markdown shape, as this case's
+    // own comment says — everything from the marker to end-of-line is destroyed:
+    // the cell delimiter and every cell to its right. That is issue #28's
+    // headline harm reached through the one boundary member no fixture exercised.
+    //
+    // So: the exemption sentence is no longer the last content in its row. The
+    // forward scan must stop at `|`, and the cell to its right must survive.
+    // Unterminated first, which is the case that has no other boundary to fall
+    // back on.
+    let table = "| Gate | It does **not** yet amend existing documents | Support is planned |\n\
+                 | Next | Row survives | Third cell |\n";
+    let (got, remaining_drift) = rewrite_anvil_readme(table);
+
+    assert!(
+        !got.contains(EXEMPTION_MARKER),
+        "the exemption marker is the thing being removed: {got:?}"
+    );
+    let rows: Vec<&str> = got.lines().collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "neither row may be swallowed or fused: {got:?}"
+    );
+    assert!(
+        rows[0].contains("Support is planned"),
+        "the cell to the RIGHT of the exemption sentence is a different cell and \
+         must survive: the forward scan stops at `|`, it does not run to the end \
+         of the line: {:?}",
+        rows[0]
+    );
+    assert!(
+        rows[0].starts_with("| Gate |"),
+        "the row's untouched first cell must survive: {:?}",
+        rows[0]
+    );
+    assert!(
+        rows[0].ends_with('|'),
+        "the row must keep its closing pipe and stay a table row: {:?}",
+        rows[0]
+    );
+    assert_eq!(
+        rows[0].matches('|').count(),
+        rows[1].matches('|').count(),
+        "the row must keep its full cell count — a scan that eats the cell \
+         delimiter merges two cells into one and the table stops parsing:\n\
+         got:      {:?}\nneighbour: {:?}",
+        rows[0],
+        rows[1]
+    );
+    assert_eq!(
+        normalise(rows[0]),
+        normalise("| Gate | | Support is planned |"),
+        "the row loses exactly the exemption sentence: its own cell is emptied and \
+         nothing beyond the delimiter is touched: {:?}",
+        rows[0]
+    );
+    assert_eq!(
+        rows[1], "| Next | Row survives | Third cell |",
+        "the following row must be untouched: {got:?}"
+    );
+    assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
+
+    // The same row shape with the sentence TERMINATED, so `end` has a `.` to
+    // stop on and the rest of the cell — not just the rest of the row — has to
+    // survive as well. `HISTORICAL_README_TABLE` cannot pin this: its exemption
+    // sentence is the last thing in its cell.
+    let table = "| Gate | It does **not** yet amend existing documents. Support is planned. | Third |\n\
+                 | Next | Row survives | Cell |\n";
+    let (got, remaining_drift) = rewrite_anvil_readme(table);
+
+    assert!(
+        !got.contains(EXEMPTION_MARKER),
+        "the exemption marker is the thing being removed: {got:?}"
+    );
+    let rows: Vec<&str> = got.lines().collect();
+    assert_eq!(
+        rows.len(),
+        2,
+        "neither row may be swallowed or fused: {got:?}"
+    );
+    assert_eq!(
+        normalise(rows[0]),
+        normalise("| Gate | Support is planned. | Third |"),
+        "the sentence after the exemption keeps its cell, and the cell after that \
+         keeps its place: {:?}",
+        rows[0]
+    );
+    assert_eq!(
+        rows[0].matches('|').count(),
+        rows[1].matches('|').count(),
+        "the row must keep its full cell count:\ngot:      {:?}\nneighbour: {:?}",
+        rows[0],
+        rows[1]
+    );
+    assert_eq!(
+        rows[1], "| Next | Row survives | Cell |",
         "the following row must be untouched: {got:?}"
     );
     assert!(remaining_drift.is_empty(), "{remaining_drift:?}");

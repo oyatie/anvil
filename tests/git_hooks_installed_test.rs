@@ -1,4 +1,5 @@
-//! The hooks must exist, be executable, and actually be the ones git runs.
+//! The hooks must exist, be executable, be tracked, and Anvil must still point
+//! clones at them. A live `git config` probe of the runner is not that.
 //!
 //! Anvil's previous hook mechanism wrote scripts into `.git/hooks` of the
 //! repositories it managed — untracked, unreviewable, silently different on
@@ -55,16 +56,19 @@ fn hooks_are_tracked_so_they_can_be_reviewed() {
 
 #[test]
 fn this_repository_actually_uses_them() {
-    let out = Command::new("git")
-        .args(["config", "core.hooksPath"])
-        .output()
-        .expect("git config");
-    let configured = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    assert_eq!(
-        configured, ".githooks",
-        "core.hooksPath is '{configured}', so the tracked hooks are not the ones git \
-         runs here. Anvil enforcing a rule it does not apply to itself is the pattern \
-         these hooks exist to end."
+    // The merge result is the installer, not whatever `git config` the runner
+    // happens to have. Actions checkout leaves core.hooksPath empty; asserting
+    // that value greens or reds independently of the tree.
+    let src = fs::read_to_string("src/git_manager/mod.rs").expect("git_manager source");
+    let code: String = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        code.contains(r#"["config", "core.hooksPath", ".githooks"]"#),
+        "the managed-clone install path no longer issues `git config core.hooksPath \
+         .githooks`, so tracked hooks are not what Anvil points clones at"
     );
 }
 

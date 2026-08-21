@@ -128,6 +128,28 @@
 //! arguments, so the empty-parens rule that saves `Command::spawn()` does not
 //! save it.
 //!
+//! Each of these rows is shaped so the shortest fix does not reach it. The
+//! commented spawn sits *after* real code on its line, so a rule that tests the
+//! line's first characters still flags a trailing `// tokio::spawn(..)` and
+//! blocks a merge over a defect the author did not commit; only truncating the
+//! line at `//` passes it alongside the positive rows. And the two
+//! `JoinSet::spawn` rows spell their receiver differently -- `workers.spawn(..)`
+//! detached, `set.spawn(..)` instrumented -- so no allowlist of the exact
+//! spellings that appear in this file covers both, and a receiver-method spawn
+//! has to be recognised as a form rather than as a literal. Recognised as a
+//! literal, the row it misses is not flagged and not counted either: an
+//! uninstrumented boundary published as "nothing was inspected", which is
+//! section 1's defect wearing the other face.
+//!
+//! Where a finding *points* is pinned by the same reasoning. One row of
+//! `a_file_that_instruments_one_spawn_and_forgets_the_other_...` runs inside a
+//! diff of three files, with a spawn-free one on each side of the file under
+//! test. In a single-file diff a finding's `file_path` needs no relationship to
+//! the chunk the flagged line was in -- the first changed file, the last chunk
+//! header, and the constant `"src/dispatch.rs"` are all indistinguishable from
+//! per-chunk attribution -- and all of them send a reviewer to a file with no
+//! spawn in it as soon as a pull request touches more than one.
+//!
 //! The lookahead is pinned as a behaviour rather than as a constant. Every
 //! instrumented fixture in the first draft of this file put `.instrument(` two
 //! lines below its spawn, which pinned nothing beyond "the window reaches three
@@ -197,10 +219,40 @@
 //!
 //! ## Out of scope -- stated, rather than left ambiguous
 //!
-//! - The `.rs`-substring chunk filter is crude in both directions (a Markdown
-//!   file that mentions `.rs` is scanned; a Rust file renamed in a chunk that
-//!   does not is skipped) but was not in this lane's verified scope, and nothing
-//!   here asserts about it.
+//! - The `.rs` chunk filter is pinned in one direction and one only. The
+//!   documentation-only row carries a fenced Rust example with an uninstrumented
+//!   spawn in it, so a scanner that reads every chunk regardless of the path it
+//!   belongs to produces a finding, and gate 17 becomes a permanent block on any
+//!   documentation change that shows an uninstrumented spawn. That direction
+//!   bites. The other does not, and cannot with this helper: `diff_of` always
+//!   emits `--- a/{path}` and `+++ b/{path}`, so a `.rs` path always puts `.rs`
+//!   into its own chunk text and a `.md` path never does. No fixture here can
+//!   separate "the path was consulted" from "the chunk text was searched", and
+//!   nothing here claims to. The filter stays crude both ways -- a Markdown file
+//!   that merely mentions `.rs` is scanned, a Rust file renamed in a chunk that
+//!   does not mention it is skipped -- and neither of those was in this lane's
+//!   verified scope.
+//! - Only `//` line comments are handled. A spawn inside a `/* ... */` block
+//!   comment is not pinned in either direction: flagging it and ignoring it both
+//!   pass this suite. Named as a known limit of the gate rather than left
+//!   silent.
+//! - A `.instrument(` belonging to some *other* call inside a spawn's own region
+//!   still clears that spawn, so
+//!   `tokio::spawn(async move { foo(x.instrument(sp)).await; });` reads clean
+//!   here. What is pinned is that a span belongs to the boundary that opened it
+//!   rather than to the next one down; attribution finer than that is not.
+//! - Whether `line_number` counts from the file, the chunk or the hunk is not
+//!   pinned. `a_multi_line_spawn_...` pins only that the number moves with the
+//!   code it locates, and `the_uninstrumented_thread_spawns_...` only that two
+//!   findings in different places carry different numbers. Chunk-relative
+//!   numbering -- what ships today, off by the header count -- passes.
+//! - The summary and the `issue` field are pinned for honesty, not for
+//!   usefulness, and that is the ceiling of reading them by word list and
+//!   numeric token rather than an oversight. A gate publishing `"none"`,
+//!   `"3 inspected"`, `"failed 1"` and an `issue` of `"span"` clears every
+//!   assertion in this file: right verdict, right count, sentences that teach
+//!   very little. Tightening that means pinning phrasing, which pins one
+//!   implementation's wording in place of a behaviour.
 //! - The CRLF half of `added_and_retained_lines_are_counted_but_removed_ones_are_not`
 //!   reaches less than a reader would assume, and it says so rather than
 //!   claiming otherwise. `str::lines()` strips a trailing `\r` before any matcher
@@ -429,10 +481,19 @@ fn a_gate_that_inspected_nothing_says_so_plainly_and_accuses_no_one() {
     // a choice to make.
     for (label, files) in [
         (
+            // The body carries a fenced Rust example with an uninstrumented
+            // spawn in it. Without that, this row is the spawn-free Rust row
+            // below it written twice: every assertion in the loop holds for one
+            // exactly when it holds for the other, and neither reaches the
+            // chunk filter this row is nominally about. With it, a scanner that
+            // reads every chunk regardless of the path it belongs to finds the
+            // spawn, produces a finding, and publishes a permanent merge block
+            // on any documentation change that shows an uninstrumented spawn --
+            // the accusation the loop's own assertion forbids.
             "a documentation-only pull request",
             &[(
                 "docs/adr/0002-honesty.md",
-                "+The published name must match the live measurement.",
+                "+The published name must match the live measurement. For example,\n+this is not a boundary in this pull request, it is prose about one:\n+\n+```rust\n+tokio::spawn(async move { work().await; });\n+```",
             )][..],
         ),
         (
@@ -561,8 +622,16 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             1,
         ),
         (
+            // Spelled `workers`, while the instrumented JoinSet row further
+            // down is spelled `set`. An allowlist of the receiver names that
+            // happen to appear in this file covers one row or the other, never
+            // both, so a receiver-method spawn has to be recognised as a form.
+            // Recognised as a literal instead, the row it misses is reported as
+            // nothing-in-scope: an uninstrumented boundary published as
+            // "nothing was inspected", which is section 1's defect wearing the
+            // other face, in the spawn form this row was added to cover.
             "JoinSet::spawn",
-            "pub async fn dispatch() {\n    let mut set = tokio::task::JoinSet::new();\n    set.spawn(async move {\n        work().await;\n    });\n}",
+            "pub async fn dispatch() {\n    let mut workers = tokio::task::JoinSet::new();\n    workers.spawn(async move {\n        work().await;\n    });\n}",
             Detached,
             1,
         ),
@@ -613,8 +682,14 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             0,
         ),
         (
+            // The comment sits after real code on the line, so this row is not
+            // greened by testing the line's first characters -- the shortest
+            // fix, and one that still flags a trailing `// tokio::spawn(..)`
+            // beside live code, blocking a merge over a defect the author did
+            // not commit. Truncating the line at `//` is what passes both this
+            // row and every positive row above it.
             "a spawn named in a comment",
-            "pub async fn dispatch() {\n    // tokio::spawn(async move { work().await; });\n    work().await;\n}",
+            "pub async fn dispatch() {\n    let h = start(); // tokio::spawn(async move { work().await; });\n    let _ = h;\n}",
             NotABoundary,
             0,
         ),
@@ -752,21 +827,38 @@ fn a_file_that_instruments_one_spawn_and_forgets_the_other_reports_only_the_forg
     // exists to remove, pointed at a boundary that was counted and never
     // measured, so the scope of the lookahead is pinned here as well as its
     // width.
+    //
+    // The last column runs the row inside a diff that also touches two
+    // spawn-free files, one on each side of the file under test. With the file
+    // under test alone in the diff -- which is how every row in this file used
+    // to run -- a finding's `file_path` needs no relationship to the chunk the
+    // flagged line was in: `changed_files.first()`, the last chunk's header, or
+    // the constant `"src/dispatch.rs"` all satisfy the attribution assertion
+    // below, and all three send a reviewer to a file with no spawn in it the
+    // moment a pull request touches more than one. `src/before.rs` kills the
+    // first, `src/after.rs` the second, and both together kill any attribution
+    // that is not per-chunk. Neither neighbour spawns anything, so the counts
+    // below are unchanged by their presence.
     const FILE: &str = "src/dispatch.rs";
-    let cases: &[(&str, &str, usize)] = &[
+    const BEFORE: &str = "src/before.rs";
+    const AFTER: &str = "src/after.rs";
+    const SPAWN_FREE: &str = "pub async fn settle() {\n    ok().await;\n}";
+    let cases: &[(&str, &str, usize, bool)] = &[
         (
             // One spelling of spawn throughout, so nothing here is decided by
             // which form was recognised: the instrumented boundary carries an
             // ordinary multi-line body, the detached one does not, and telling
             // them apart is the whole of the gate's job.
-            "an instrumented spawn and a detached one",
+            "an instrumented spawn and a detached one, in a diff of three files",
             "pub async fn dispatch() {\n    tokio::spawn(\n        async move {\n            let a = load().await;\n            let b = transform(a).await;\n            let c = enrich(b).await;\n            let d = validate(c).await;\n            let e = persist(d).await;\n            with_span(e).await;\n        }\n        .instrument(tracing::info_span!(\"traced\")),\n    );\n    let _ = settle().await;\n    tokio::spawn(async move { no_span().await; });\n}",
             2,
+            true,
         ),
         (
             "the same, with a child process spawned alongside them",
             "pub async fn build_and_dispatch() -> std::io::Result<()> {\n    let mut child = std::process::Command::new(\"cargo\").spawn()?;\n    tokio::task::spawn(async move { with_span().await; }.instrument(tracing::info_span!(\"traced\")));\n    let _ = child.wait()?;\n    tokio::task::spawn_blocking(move || { no_span(); });\n    Ok(())\n}",
             2,
+            false,
         ),
         (
             // The same two boundaries, detached first. The instrumented one
@@ -777,11 +869,23 @@ fn a_file_that_instruments_one_spawn_and_forgets_the_other_reports_only_the_forg
             "a detached spawn above an instrumented one",
             "pub async fn dispatch() {\n    tokio::spawn(async move { no_span().await; });\n    let _ = settle().await;\n    tokio::spawn(\n        async move {\n            let a = load().await;\n            with_span(a).await;\n        }\n        .instrument(tracing::info_span!(\"traced\")),\n    );\n}",
             2,
+            false,
         ),
     ];
 
-    for (label, code, boundaries) in cases {
-        let report = run(&diff_of(&[(FILE, &as_added(code))]));
+    for (label, code, boundaries, neighbours) in cases {
+        let under_test = as_added(code);
+        let neighbour = as_added(SPAWN_FREE);
+        let files: Vec<(&str, &str)> = if *neighbours {
+            vec![
+                (BEFORE, neighbour.as_str()),
+                (FILE, under_test.as_str()),
+                (AFTER, neighbour.as_str()),
+            ]
+        } else {
+            vec![(FILE, under_test.as_str())]
+        };
+        let report = run(&diff_of(&files));
 
         assert_eq!(
             report.detached_findings.len(),
@@ -811,8 +915,12 @@ fn a_file_that_instruments_one_spawn_and_forgets_the_other_reports_only_the_forg
             finding.snippet
         );
         assert!(
-            finding.file_path.contains("dispatch.rs"),
-            "{label}: the finding must name the file it is in; got {:?}",
+            finding.file_path.contains("dispatch.rs")
+                && !finding.file_path.contains("before.rs")
+                && !finding.file_path.contains("after.rs"),
+            "{label}: the detached spawn is in {FILE} and the finding named \
+             {:?}. A path that does not come from the chunk the flagged line \
+             was in sends a reviewer to a file that has no spawn in it at all.",
             finding.file_path
         );
         // The file, the line and the code locate the defect; `issue` is the only

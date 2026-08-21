@@ -40,15 +40,24 @@
 //! spawns. So the sentence is pinned where the gate *did* measure too: it must
 //! name the defect it found (`the_uninstrumented_thread_spawns_...`), it must
 //! differ from the sentence published when nothing was inspected, and it must
-//! state the count it inspected (`every_form_of_task_spawn_...`). No phrasing is
-//! required beyond the word lists below.
+//! publish the number it measured -- the count of boundaries inspected on a
+//! clean diff (`every_form_of_task_spawn_...`), the count of detached ones on a
+//! failing diff (`the_uninstrumented_thread_spawns_...`).
+//!
+//! That number is read as a *token*, not as a substring. `summary.contains("1")`
+//! is satisfied by the `1` in `Gate 17`, so the constant sentence "Gate 17: trace
+//! context reviewed" clears a substring check while reporting nothing about what
+//! happened. `numeric_tokens` splits the sentence on non-digits and requires the
+//! exact number among the results, and the clean case is exercised at a count of
+//! three so no incidental digit can supply it. No phrasing is required beyond
+//! that number and the word lists below.
 //!
 //! ## 2. The status for the nothing-in-scope case is deliberately NOT pinned
 //!
 //! This repository contains two settled precedents that disagree, and this lane
 //! is not entitled to pick between them by writing a test:
 //!
-//!   - `src/slo_canary_guard/mod.rs:147-159` -- no telemetry source, so
+//!   - `src/slo_canary_guard/mod.rs:153` -- no telemetry source, so
 //!     `GateStatus::NotMeasured { gate_id: "slo_status", reason }`.
 //!   - `src/coverage_guard.rs:139` -- `CoverageMeasurement::NothingToMeasure`
 //!     maps to `GateStatus::Passed`, on the stated ground that a diff adding no
@@ -103,6 +112,26 @@
 //! and the gate blocks a merge over a defect the author did not commit. One row
 //! now carries its `.instrument(...)` nine lines below the spawn.
 //!
+//! A window that is merely *wide* is not the behaviour either. The gate's whole
+//! job is deciding which boundary carries a span, and a diff whose every spawn is
+//! instrumented -- or whose every spawn is not -- cannot tell that apart from
+//! `content.contains(".instrument(")` asked once per chunk. So one file here
+//! carries an instrumented spawn and a detached one together
+//! (`a_file_that_instruments_one_spawn_and_forgets_the_other_...`): exactly one
+//! finding, quoting the detached call and not the instrumented one. A second such
+//! file adds `Command::new(..).spawn()?` beside them and pins the count exactly,
+//! so a non-boundary cannot be counted merely because the file it sits in does
+//! contain real ones.
+//!
+//! The detached side of the multi-line call form is pinned too
+//! (`a_multi_line_spawn_with_no_span_...`). Widening the window and *suppressing*
+//! the multi-line form -- "the call opens on its own line, that shape is handled
+//! elsewhere" -- both green an all-instrumented long-body fixture, and the second
+//! publishes a clean verdict over the ordinary shape of any spawn with a real
+//! body, which is the defect this lane exists to remove. The finding must quote
+//! the line that opens the call, and its line number must move with that line
+//! when the fixture is padded above.
+//!
 //! In the other direction the counter is inflated: `tasks_scanned` increments
 //! for every line containing the literal, `-` removal lines included, so a pull
 //! request that *deletes* spawns reports having inspected them -- and, worse,
@@ -124,6 +153,15 @@
 //!   file that mentions `.rs` is scanned; a Rust file renamed in a chunk that
 //!   does not is skipped) but was not in this lane's verified scope, and nothing
 //!   here asserts about it.
+//! - The CRLF half of `added_and_retained_lines_are_counted_but_removed_ones_are_not`
+//!   pins **only** a scanner that splits the diff on `'\n'` itself. `str::lines()`
+//!   strips a trailing `\r` before any matcher sees it, so against any
+//!   `.lines()`-based scanner -- which is what the shipping code uses -- an
+//!   `.instrument` regex closed with `$` and a `line.ends_with(");")` both survive
+//!   it. That is stated rather than claimed away: the assertions are cheap, they
+//!   do catch the `split('\n')` rewrite, and the one thing there that reaches
+//!   *every* implementation is the pin that no published snippet carries a `\r`,
+//!   because a snippet is built from the raw line whatever split produced it.
 //! - A call whose callee is the bare identifier `spawn` (`use tokio::task::spawn;`
 //!   then `spawn(async move { .. })`) or an alias of it (`use tokio::task::spawn
 //!   as go;` then `go(..)`) is **not pinned in either direction**: flagging it
@@ -272,6 +310,20 @@ fn discloses_that_nothing_was_inspected(summary: &str) -> bool {
         .any(|needle| lowered.contains(needle))
 }
 
+/// Every whole number the summary states, as a token rather than as a substring.
+///
+/// `summary.contains(&n.to_string())` is not a pin on a reported count: the `1`
+/// in "Gate 17" satisfies it for `n == 1`, so a constant sentence that reports
+/// nothing passes. Splitting on non-digits and requiring the exact number among
+/// the results means the sentence has to actually carry it.
+fn numeric_tokens(summary: &str) -> Vec<usize> {
+    summary
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|t| !t.is_empty())
+        .filter_map(|t| t.parse::<usize>().ok())
+        .collect()
+}
+
 /// Words by which a summary accuses the pull request of a defect.
 const ACCUSATIONS: &[&str] = &["failed", "detached", "drop distributed", "violation"];
 
@@ -396,41 +448,52 @@ enum Expect {
 fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_clean() {
     use Expect::*;
 
-    let cases: &[(&str, &str, Expect)] = &[
+    // The final column is the number of async boundaries the gate must report
+    // having inspected in that fixture, pinned exactly rather than as `>= 1`:
+    // a count that is merely non-zero says nothing about whether the gate
+    // counted the boundaries or counted the lines that mention one.
+    let cases: &[(&str, &str, Expect, usize)] = &[
         (
             "tokio::spawn",
             "pub async fn dispatch() {\n    tokio::spawn(async move {\n        work().await;\n    });\n}",
             Detached,
+            1,
         ),
         (
             "tokio::task::spawn",
             "pub async fn dispatch() {\n    tokio::task::spawn(async move {\n        work().await;\n    });\n}",
             Detached,
+            1,
         ),
         (
             "tokio::task::spawn_blocking",
             "pub async fn dispatch() {\n    tokio::task::spawn_blocking(move || {\n        heavy_work();\n    });\n}",
             Detached,
+            1,
         ),
         (
             "JoinSet::spawn",
             "pub async fn dispatch() {\n    let mut set = tokio::task::JoinSet::new();\n    set.spawn(async move {\n        work().await;\n    });\n}",
             Detached,
+            1,
         ),
         (
             "std::thread::spawn",
             "pub fn dispatch() {\n    let handle = std::thread::spawn(move || {\n        drain_pipe();\n    });\n    let _ = handle.join();\n}",
             Detached,
+            1,
         ),
         (
             "tokio::spawn carrying a span",
             "pub async fn dispatch() {\n    tokio::spawn(async move {\n        work().await;\n    }.instrument(tracing::info_span!(\"worker\")));\n}",
             InstrumentedBoundary,
+            1,
         ),
         (
             "tokio::task::spawn carrying a span",
             "pub async fn dispatch() {\n    tokio::task::spawn(async move {\n        work().await;\n    }.instrument(tracing::info_span!(\"worker\")));\n}",
             InstrumentedBoundary,
+            1,
         ),
         (
             // The ordinary shape of real code: the span is attached below a
@@ -439,6 +502,16 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             "a span attached below a body longer than any fixed window",
             "pub async fn dispatch() {\n    tokio::spawn(\n        async move {\n            let a = load().await;\n            let b = transform(a).await;\n            let c = enrich(b).await;\n            let d = validate(c).await;\n            let e = persist(d).await;\n            publish(e).await;\n        }\n        .instrument(tracing::info_span!(\"worker\")),\n    );\n}",
             InstrumentedBoundary,
+            1,
+        ),
+        (
+            // Three, so that the count the summary must publish is a number no
+            // stray digit supplies by accident. A sentence reporting "1" or
+            // carrying the `17` of "gate 17" does not contain the token `3`.
+            "three instrumented boundaries in one file",
+            "pub async fn fan_out() {\n    tokio::spawn(async move { alpha().await; }.instrument(tracing::info_span!(\"alpha\")));\n    tokio::task::spawn(async move { beta().await; }.instrument(tracing::info_span!(\"beta\")));\n    let mut set = tokio::task::JoinSet::new();\n    set.spawn(async move { gamma().await; }.instrument(tracing::info_span!(\"gamma\")));\n}",
+            InstrumentedBoundary,
+            3,
         ),
         (
             // A child process is not a traced task and will never carry
@@ -448,17 +521,20 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             "std::process::Command::spawn",
             "pub fn build() -> std::io::Result<()> {\n    let mut child = std::process::Command::new(\"cargo\").spawn()?;\n    let _ = child.wait()?;\n    Ok(())\n}",
             NotABoundary,
+            0,
         ),
         (
             "a spawn named in a comment",
             "pub async fn dispatch() {\n    // tokio::spawn(async move { work().await; });\n    work().await;\n}",
             NotABoundary,
+            0,
         ),
         (
             // Exactly what `span_tracker.rs` carries in its own source.
             "a spawn inside a string literal",
             "pub const SPAWN_NEEDLE: &str = \"tokio::spawn(\";",
             NotABoundary,
+            0,
         ),
     ];
 
@@ -470,7 +546,7 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
     // not hide the rest: the failure names all of them at once.
     let mut misreported: Vec<String> = Vec::new();
 
-    for (label, code, expect) in cases {
+    for (label, code, expect, boundaries) in cases {
         let report = run(&diff_of(&[(FIXTURE_PATH, &as_added(code))]));
         let found = !report.detached_findings.is_empty();
 
@@ -480,27 +556,22 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
             _ => {}
         }
 
+        if report.tasks_scanned != *boundaries {
+            misreported.push(format!(
+                "{label}: this fixture contains {boundaries} async boundar(ies) \
+                 and the gate reported inspecting {}. Under-counting means a \
+                 boundary went uninspected under a verdict that covers it; \
+                 over-counting inflates the number the summary publishes over a \
+                 line that was never a traced task. Summary was: {}",
+                report.tasks_scanned, report.summary
+            ));
+        }
+
         if *expect == NotABoundary {
-            if report.tasks_scanned != 0 {
-                misreported.push(format!(
-                    "{label}: not an async boundary, so the gate inspected none \
-                     here, but `tasks_scanned` was {} -- counting it inflates \
-                     the number the summary publishes. Summary was: {}",
-                    report.tasks_scanned, report.summary
-                ));
-            }
             continue;
         }
 
         // Everything below concerns a diff the gate really did measure.
-        if report.tasks_scanned < 1 {
-            misreported.push(format!(
-                "{label}: a real async boundary was in this diff and \
-                 `tasks_scanned` was {}, so the count does not reflect the work \
-                 the gate actually did",
-                report.tasks_scanned
-            ));
-        }
         if report.summary == nothing_inspected {
             misreported.push(format!(
                 "{label}: the gate measured a boundary here and published the \
@@ -520,12 +591,15 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
                     report.summary
                 ));
             }
-            if !report.summary.contains(&report.tasks_scanned.to_string()) {
+            if !numeric_tokens(&report.summary).contains(boundaries) {
                 misreported.push(format!(
                     "{label}: the sentence must state how many boundaries were \
-                     inspected ({}), or a clean verdict is once again a claim \
-                     with no measurement attached to it. Summary was: {}",
-                    report.tasks_scanned, report.summary
+                     inspected ({boundaries}) as a number a reader can find in \
+                     it, or a clean verdict is once again a claim with no \
+                     measurement attached to it. The numbers it did publish were \
+                     {:?}. Summary was: {}",
+                    numeric_tokens(&report.summary),
+                    report.summary
                 ));
             }
         }
@@ -557,6 +631,174 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
         ));
     }
     assert!(verdict.is_empty(), "{}", verdict);
+}
+
+#[test]
+fn a_file_that_instruments_one_spawn_and_forgets_the_other_reports_only_the_forgotten_one() {
+    // Deciding *which* boundary carries a span is the gate's entire job, and no
+    // homogeneous fixture can pin it. A file whose every spawn is instrumented,
+    // and a file whose every spawn is not, are both classified correctly by a
+    // single chunk-wide `content.contains(".instrument(")` -- which reports a
+    // detached boundary as clean the moment any other line in the file happens
+    // to attach a span. Each file below carries both kinds at once, so exactly
+    // one finding is the only right answer and it has to name the right call.
+    //
+    // The second file adds `Command::new(..).spawn()?` beside the two real
+    // boundaries. `tasks_scanned` is pinned exactly on both, so a non-boundary
+    // cannot be counted merely because the file it sits in does contain real
+    // ones -- the case an all-`Command` fixture cannot reach.
+    const FILE: &str = "src/dispatch.rs";
+    let cases: &[(&str, &str, usize)] = &[
+        (
+            // One spelling of spawn throughout, so nothing here is decided by
+            // which form was recognised: the instrumented boundary carries an
+            // ordinary multi-line body, the detached one does not, and telling
+            // them apart is the whole of the gate's job.
+            "an instrumented spawn and a detached one",
+            "pub async fn dispatch() {\n    tokio::spawn(\n        async move {\n            let a = load().await;\n            let b = transform(a).await;\n            let c = enrich(b).await;\n            let d = validate(c).await;\n            let e = persist(d).await;\n            with_span(e).await;\n        }\n        .instrument(tracing::info_span!(\"traced\")),\n    );\n    let _ = settle().await;\n    tokio::spawn(async move { no_span().await; });\n}",
+            2,
+        ),
+        (
+            "the same, with a child process spawned alongside them",
+            "pub async fn build_and_dispatch() -> std::io::Result<()> {\n    let mut child = std::process::Command::new(\"cargo\").spawn()?;\n    tokio::task::spawn(async move { with_span().await; }.instrument(tracing::info_span!(\"traced\")));\n    let _ = child.wait()?;\n    tokio::task::spawn_blocking(move || { no_span(); });\n    Ok(())\n}",
+            2,
+        ),
+    ];
+
+    for (label, code, boundaries) in cases {
+        let report = run(&diff_of(&[(FILE, &as_added(code))]));
+
+        assert_eq!(
+            report.detached_findings.len(),
+            1,
+            "{label}: one of the two boundaries in this file attaches a span and \
+             the other does not, so exactly one finding is correct. The gate \
+             reported {}: {:?}. Zero means a span attached to one boundary was \
+             read as covering the other; two means the instrumented one was \
+             accused. Summary was: {}",
+            report.detached_findings.len(),
+            report
+                .detached_findings
+                .iter()
+                .map(|f| f.snippet.clone())
+                .collect::<Vec<_>>(),
+            report.summary
+        );
+
+        let finding = &report.detached_findings[0];
+        assert!(
+            finding.snippet.contains("no_span") && !finding.snippet.contains("with_span"),
+            "{label}: the finding must locate the call that carries no span. It \
+             quoted line {} as {:?}, which is the instrumented boundary -- a \
+             reviewer sent there finds a span already attached and learns \
+             nothing about the real defect.",
+            finding.line_number,
+            finding.snippet
+        );
+        assert!(
+            finding.file_path.contains("dispatch.rs"),
+            "{label}: the finding must name the file it is in; got {:?}",
+            finding.file_path
+        );
+        assert!(
+            !report.is_propagated,
+            "{label}: a boundary in this diff drops the trace context, so the \
+             gate must not report the diff as propagating it. Summary was: {}",
+            report.summary
+        );
+        assert_eq!(
+            report.tasks_scanned, *boundaries,
+            "{label}: this file contains {boundaries} async boundaries and the \
+             gate reported inspecting {}. A `Command::new(..).spawn()?` is a \
+             child process, never a traced task, and counting it here would \
+             inflate the number the summary publishes just because real \
+             boundaries share the file. Summary was: {}",
+            report.tasks_scanned, report.summary
+        );
+    }
+}
+
+#[test]
+fn a_multi_line_spawn_with_no_span_is_reported_at_the_line_that_opens_it() {
+    // The long-body instrumented row of the table above with the
+    // `.instrument(...)` removed, in both spellings. That row alone cannot tell
+    // "the lookahead window was widened" from "the multi-line call form is
+    // suppressed" -- both report it clean, and the second reports *every*
+    // multi-line spawn clean, including these two, which is the ordinary shape
+    // of any spawn with a real body and precisely the unmeasured boundary this
+    // lane exists to stop the gate publishing a clean verdict over.
+    const BODY: &str = "pub async fn dispatch() {\n    tokio::spawn(\n        async move {\n            let a = load().await;\n            let b = transform(a).await;\n            let c = enrich(b).await;\n            let d = validate(c).await;\n            let e = persist(d).await;\n            publish(e).await;\n        },\n    );\n    tokio::task::spawn(\n        async move {\n            let a = load().await;\n            let b = transform(a).await;\n            let c = enrich(b).await;\n            let d = validate(c).await;\n            let e = persist(d).await;\n            publish(e).await;\n        },\n    );\n}";
+    /// Four ordinary lines, carrying neither a spawn nor a span.
+    const PADDING: &str = "use crate::pipeline::load;\nuse crate::pipeline::transform;\nuse crate::pipeline::enrich;\nuse crate::pipeline::publish;";
+    const PADDING_LINES: usize = 4;
+
+    let report = run(&diff_of(&[("src/dispatch.rs", &as_added(BODY))]));
+
+    assert_eq!(
+        report.detached_findings.len(),
+        2,
+        "each of these spawns opens on its own line and attaches no span \
+         anywhere. The gate reported {} finding(s), so a boundary it never \
+         measured is covered by the verdict it published. Findings were {:?}. \
+         Summary was: {}",
+        report.detached_findings.len(),
+        report
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>(),
+        report.summary
+    );
+    assert_eq!(
+        report.tasks_scanned, 2,
+        "two async boundaries are in this diff. Summary was: {}",
+        report.summary
+    );
+    assert!(
+        !report.is_propagated,
+        "both boundaries in this diff drop the trace context. Summary was: {}",
+        report.summary
+    );
+    assert!(
+        report
+            .detached_findings
+            .iter()
+            .all(|f| f.snippet.contains("spawn(") && !f.snippet.contains("load()")),
+        "each finding must quote the line that opens its call, so a reviewer \
+         reads the boundary rather than a line of its body; got {:?}",
+        report
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>()
+    );
+
+    // Where a finding points is pinned by moving the spawn, not by naming a
+    // number: nothing here decides whether a line number counts from the file,
+    // the chunk or the hunk. Push the same calls four lines down and every
+    // number must follow by four. A constant -- the hunk start, the file start,
+    // or zero -- does not move.
+    let padded = run(&diff_of(&[(
+        "src/dispatch.rs",
+        &as_added(&format!("{PADDING}\n{BODY}")),
+    )]));
+    let lines_of = |r: &TraceContextReport| {
+        let mut v: Vec<usize> = r.detached_findings.iter().map(|f| f.line_number).collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(
+        lines_of(&padded),
+        lines_of(&report)
+            .into_iter()
+            .map(|n| n + PADDING_LINES)
+            .collect::<Vec<_>>(),
+        "the same calls moved four lines down; the reported line numbers went \
+         from {:?} to {:?}, so they do not locate the spawns and a reviewer \
+         following them lands somewhere else in the file",
+        lines_of(&report),
+        lines_of(&padded)
+    );
 }
 
 #[test]
@@ -616,6 +858,17 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
          says nothing at all -- conceals a defect the gate did find, which is \
          the same false assurance as claiming a verification it did not \
          perform, pointed the other way. Summary was: {}",
+        report.summary
+    );
+    assert!(
+        numeric_tokens(&report.summary).contains(&report.detached_findings.len()),
+        "the sentence must publish how many boundaries were found detached \
+         ({}), as a number a reader can find in it. One of the four words above \
+         is not a report -- a bare \"FAILED\" satisfies that and tells the \
+         author nothing about the size of what the gate found. The numbers it \
+         did publish were {:?}. Summary was: {}",
+        report.detached_findings.len(),
+        numeric_tokens(&report.summary),
         report.summary
     );
 
@@ -716,23 +969,49 @@ fn a_pull_request_that_only_deletes_spawns_inspected_nothing_and_is_accused_of_n
 
 #[test]
 fn added_and_retained_lines_are_counted_but_removed_ones_are_not() {
-    // One addition, one unchanged context line, one removal -- two boundaries
-    // exist in the merged file, not three.
-    let body = "+    tokio::spawn(async move { added().await; }.instrument(span()));\n     tokio::spawn(async move { kept().await; }.instrument(span()));\n-    tokio::spawn(async move { removed().await; }.instrument(span()));";
+    // One addition, one unchanged context line, one removal, and one further
+    // addition that attaches no span. Three boundaries exist in the merged
+    // file, not four, and exactly one of them is detached. The detached one is
+    // last so that no forward lookahead can reach a `.instrument(` above it and
+    // clear it for the wrong reason.
+    let body = "+    tokio::spawn(async move { added().await; }.instrument(span()));\n     tokio::spawn(async move { kept().await; }.instrument(span()));\n-    tokio::spawn(async move { removed().await; }.instrument(span()));\n+    tokio::spawn(async move { no_span().await; });";
     let report = run(&diff_of(&[("src/worker.rs", body)]));
 
     assert_eq!(
-        report.tasks_scanned, 2,
-        "the merged file contains two spawns -- one added, one retained. The \
-         third is being deleted and is not part of what this pull request \
+        report.tasks_scanned, 3,
+        "the merged file contains three spawns -- two added, one retained. The \
+         fourth is being deleted and is not part of what this pull request \
          ships. Summary was: {}",
         report.summary
     );
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "only the last spawn attaches no span; the removed line takes its own \
+         defect with it and is not the author's to answer for. Findings were \
+         {:?}. Summary was: {}",
+        report
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>(),
+        report.summary
+    );
 
-    // The identical hunk out of a CRLF-authored file. Every body line now ends
-    // in `\r`, so a classifier that matches or anchors at end-of-line -- an
-    // `.instrument` regex closed with `$`, a `line.ends_with(");")` -- quietly
-    // reclassifies all three lines and counts or accuses wrongly.
+    // The identical hunk out of a CRLF-authored file. What this catches is
+    // narrower than it looks, and is stated rather than assumed: `str::lines()`
+    // strips a trailing `\r` before any matcher sees it, so against a
+    // `.lines()`-based scanner -- the shipping one, and the obvious rewrite --
+    // these two equalities hold whether or not the author ever thought about
+    // CRLF. They bite one implementation: a scanner that splits the diff on
+    // `'\n'` itself, where every body line arrives with a `\r` still attached
+    // and an end-anchored matcher or a `line.ends_with(");")` silently
+    // reclassifies all four. The counts are compared against the LF run rather
+    // than against literals so this stays a statement about line endings.
+    //
+    // The finding count now has a non-zero baseline, so CRLF that makes the
+    // gate *miss* the detached spawn fails here too, not just CRLF that makes
+    // it miscount.
     let crlf = run(&diff_of(&[("src/worker.rs", &as_crlf(body))]));
 
     assert_eq!(
@@ -745,10 +1024,30 @@ fn added_and_retained_lines_are_counted_but_removed_ones_are_not() {
     assert_eq!(
         crlf.detached_findings.len(),
         report.detached_findings.len(),
-        "every spawn in this hunk carries a span under either line ending; the \
-         CRLF hunk produced {} finding(s) against {}. Summary was: {}",
+        "the same one spawn is detached under either line ending; the CRLF hunk \
+         produced {} finding(s) against {}. Summary was: {}",
         crlf.detached_findings.len(),
         report.detached_findings.len(),
         crlf.summary
     );
+
+    // This one does reach every implementation, `.lines()` included: a snippet
+    // is cut from the raw line whatever split produced it. A carriage return
+    // published into a pull request comment renders as a broken line or a
+    // stray box, and it is evidence that the classifier was reading a line
+    // that ends in a character the author did not write.
+    for report in [&report, &crlf] {
+        assert!(
+            report
+                .detached_findings
+                .iter()
+                .all(|f| !f.snippet.contains('\r')),
+            "a finding quoted a line with a carriage return still on it: {:?}",
+            report
+                .detached_findings
+                .iter()
+                .map(|f| f.snippet.clone())
+                .collect::<Vec<_>>()
+        );
+    }
 }

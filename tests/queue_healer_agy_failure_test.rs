@@ -19,7 +19,7 @@
 //! session is strictly worse than no session, because it leaves the workspace
 //! in a state nobody chose.
 
-use anvil::queue_healer::interpret_agy_outcome;
+use anvil::exec::interpret_agy_outcome;
 
 #[test]
 fn a_timed_out_run_that_printed_something_is_still_a_failure() {
@@ -108,6 +108,6 @@ fn no_source_treats_partial_output_from_a_failed_process_as_success() {
         offenders.is_empty(),
         "these treat partial output from a failed process as success: {offenders:?}\n\
          A non-zero exit is a failure regardless of what was printed. Route the decision \
-         through queue_healer::interpret_agy_outcome instead."
+         through exec::interpret_agy_outcome instead."
     );
 }

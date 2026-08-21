@@ -202,6 +202,27 @@ pub async fn run_bounded_with_stdin(
     }
 }
 
+/// Lives here rather than in one of its callers. It was defined in
+/// `queue_healer` and called from `cedar_guard`, `ci_triager`, `fixer::engine`
+/// and `ai_driver::router` -- which made `cedar_guard` depend on the queue
+/// healer to decide what an exit status means. The rule is an execution
+/// concern and belongs beside `ExecClass` and `run_bounded`.
+///
+/// Result policy for a model turn that edits the workspace: any non-zero exit
+/// is a failed turn. Partial stdout from a process that died mid-edit is not a
+/// partial repair; it is a tree in a state nobody chose. Shared with
+/// `fixer::engine`, which has the same shape and failed the same way.
+pub fn interpret_agy_outcome(status_success: bool, stdout: &str, stderr: &str) -> Result<String> {
+    if !status_success {
+        let why = stderr.trim();
+        if why.is_empty() {
+            bail!("agy exited non-zero with no stderr");
+        }
+        bail!("agy exited non-zero: {}", why);
+    }
+    Ok(stdout.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -40,21 +40,6 @@ pub enum TestGate {
     Unavailable,
 }
 
-/// Result policy for a model turn that edits the workspace: any non-zero exit
-/// is a failed turn. Partial stdout from a process that died mid-edit is not a
-/// partial repair; it is a tree in a state nobody chose. Shared with
-/// `fixer::engine`, which has the same shape and failed the same way.
-pub fn interpret_agy_outcome(status_success: bool, stdout: &str, stderr: &str) -> Result<String> {
-    if !status_success {
-        let why = stderr.trim();
-        if why.is_empty() {
-            bail!("agy exited non-zero with no stderr");
-        }
-        bail!("agy exited non-zero: {}", why);
-    }
-    Ok(stdout.to_string())
-}
-
 pub struct QueueHealer {
     git_mgr: Arc<GitManager>,
     github_client: Arc<GitHubClient>,
@@ -518,7 +503,7 @@ impl QueueHealer {
             );
             warn!("agy stderr: {}", stderr_str.trim());
         }
-        interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
+        crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
     }
 }
 
@@ -542,7 +527,7 @@ mod tests {
     fn agy_failure_is_a_failure_even_with_partial_stdout() {
         // 2026-08-20 13:41:45: agy exited 1 ("timeout waiting for response")
         // after streaming text; the healer treated it as a repair and pushed.
-        let r = interpret_agy_outcome(
+        let r = crate::exec::interpret_agy_outcome(
             false,
             "Inspecting the workspace...\n",
             "Error: timeout waiting for response\n",
@@ -550,7 +535,7 @@ mod tests {
         let err = r.expect_err("non-zero agy exit must not be a repair");
         assert!(err.to_string().contains("timeout waiting for response"));
 
-        let ok = interpret_agy_outcome(true, "done", "").unwrap();
+        let ok = crate::exec::interpret_agy_outcome(true, "done", "").unwrap();
         assert_eq!(ok, "done");
     }
 

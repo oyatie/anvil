@@ -4,6 +4,7 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::github::GitHubClient;
+use crate::pre_merge_guard::report::PreMergeCertificationReport;
 use crate::reviewer::ReviewResponse;
 
 pub struct MergeEnlister {
@@ -13,6 +14,34 @@ pub struct MergeEnlister {
 impl MergeEnlister {
     pub fn new(github_client: Arc<GitHubClient>) -> Self {
         Self { github_client }
+    }
+
+    /// Whether the evidence in hand admits a pull request to the merge queue.
+    ///
+    /// `report` is `None` when the caller could not obtain a certification
+    /// report at all -- it was never computed, or computing it failed.
+    /// `Ok(())` admits; `Err` refuses and says why.
+    ///
+    /// SCAFFOLDING: signature only, so the spec suite can state the invariant
+    /// before anything implements it. Where this decision is wired -- inside
+    /// `enlist_into_merge_queue` or at each of its callers -- is the
+    /// implementer's choice. That no path reaches the queue without passing
+    /// through a decision like it is not.
+    pub fn admission_refusal(_report: Option<&PreMergeCertificationReport>) -> Result<()> {
+        todo!("spec: Anvil admits nothing to the merge queue on evidence it does not have")
+    }
+
+    /// The body of the approving review Anvil publishes for a pull request,
+    /// derived from what it actually measured.
+    ///
+    /// `None` means Anvil publishes no approving review at all -- the honest
+    /// answer when there is nothing to derive a claim from.
+    ///
+    /// SCAFFOLDING: signature only. Dropping self-approval entirely is a valid
+    /// implementation of this seam (return `None` throughout); what is fixed is
+    /// that no sentence Anvil signs may assert more than the report contains.
+    pub fn approval_summary(_report: Option<&PreMergeCertificationReport>) -> Option<String> {
+        todo!("spec: Anvil endorses nothing it did not measure")
     }
 
     /// Enlists a certified Pull Request into the repository's Merge Queue, ensuring an Approving Review is present

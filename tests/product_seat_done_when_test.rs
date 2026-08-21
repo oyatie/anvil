@@ -35,15 +35,32 @@
 //! cheap gate, and the fixtures now close both off. Every property below is a
 //! constraint on the fixtures, not on the implementation.
 //!
-//!   1. **Length is not monotone with the verdict, in either direction.** The
-//!      failing set brackets the passing set at both ends: the shortest failing
-//!      body is empty and the longest (`long_prose()` under a placeholder) is
-//!      over a kilobyte, while every passing body sits between roughly ninety
-//!      bytes and seven hundred. No threshold on total length can separate them.
-//!   2. **Length is not monotone per section either.** `SHORT_BAR` is an
-//!      eleven-byte bar that must pass; `"TODO: write the acceptance criteria
-//!      here"` is a thirty-nine-byte placeholder that must fail. A minimum
-//!      section length that admits the first admits the second.
+//!   1. **The two sets overlap in length at both ends.** The failing set
+//!      reaches above and below the passing set — the shortest failing body is
+//!      empty and `long_prose()` under a placeholder is over a kilobyte — and
+//!      the passing set now reaches above the failing one too:
+//!      `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact` carries a
+//!      real acceptance bar at the end of two kilobytes of background over
+//!      thirty-odd lines, and is longer than every body in this file that must
+//!      fail. Both halves are needed and the file used to have only one. Mutual
+//!      bracketing rules out a *threshold* on total length; it does not rule out
+//!      a *truncation*, and truncation is the direction that produces a
+//!      fabricated accusation rather than a false green. Review verified the
+//!      hole: `&pr_body[..450]` and `pr_body.lines().take(18)` each passed every
+//!      behavioural test in the previous revision, because no must-pass body put
+//!      its bar further in than that.
+//!   2. **Length is not monotone per section, in either direction either.**
+//!      `"TODO: write the acceptance criteria here"` is a thirty-nine-byte
+//!      placeholder that must fail, so no minimum section length can be the
+//!      measurement — but that only rules out a length rule used *instead of* a
+//!      content check, not a floor bolted *on top of* one, and
+//!      `core.chars().count() >= 9` passed every behavioural test in the
+//!      previous revision. `SHORT_REAL_CONTENT` closes it from below:
+//!      `"- p99<5ms"` has no space in it at all and `"- 빌드 통과"` is five
+//!      characters of Hangul in thirteen bytes, and
+//!      `content_passes_however_few_characters_and_words_it_takes` asserts each
+//!      of them is shorter than the longest must-fail string in characters AND
+//!      in words before running them through both sections.
 //!   3. **Both sections are held to one standard.** Every placeholder family
 //!      runs through the problem position and the done-when position, so an
 //!      implementation cannot screen the bar for substance and settle for
@@ -123,7 +140,16 @@
 //!      paragraph mentions the problem; taking the last swallows a later
 //!      paragraph as the acceptance bar of an empty section.
 //!      `the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose` pins
-//!      both.
+//!      both — and pins the last-match half properly only because the
+//!      marker-bearing prose sentence is no longer the final line of the body.
+//!      In the revision before this one it was, in both fixtures, so the
+//!      spurious section a `contains` predicate opens after it was empty either
+//!      way and the wrong gate reached the right verdict by accident. Review
+//!      reproduced it: the any-over-sections form of that predicate certified an
+//!      empty `## Done when` whose words were supplied by a later `## Rollout`
+//!      paragraph, and passed every behavioural test in the file while doing it.
+//!      `assert_the_marker_prose_is_followed_by_content` now pins the fixture
+//!      shape the family depends on.
 //!  11. **The marker's own formatting is pinned in all three spacings.** Every
 //!      passing body used to put a blank line between the marker and its
 //!      content, so `**Done when**` above a list that starts on the next line,
@@ -147,6 +173,20 @@
 //!      `body.lines()` is an entirely ordinary way to write an extractor. Under
 //!      LF alone the headline defect this file exists to close stayed open in
 //!      the exact line endings the GitHub web UI submits.
+//!  14. **The determinism rule names effects, not spellings.** The source scan
+//!      inside `the_verdict_depends_on_nothing_but_the_change_it_was_handed` used
+//!      to be a whitelist of import prefixes, and three rounds of review found a
+//!      correct implementation turned red by it over an import with no effect
+//!      behind it — `regex`, then the `unicode_*` crates, then `std::mem` in a
+//!      line-splitting loop, accused of reading "a file, an environment
+//!      variable, a clock or the network". A guard that misreads what it guards
+//!      is worse than none, and a settled specification test that has to be
+//!      edited mid-implementation is the one thing this project's method
+//!      forbids. `impure_import` states the rule as the denylist it always was:
+//!      the `std` subtrees that reach outside the process, the machine or the
+//!      moment, plus any third-party crate that is not on a short pure-text
+//!      list. It is exercised on thirty-eight paths, both sides, before it is
+//!      trusted.
 //!
 //! Character count and byte count are also deliberately decoupled: the Korean
 //! fixtures are short in characters and long in bytes, so a heuristic in either
@@ -298,6 +338,36 @@ const INLINE_BAR: &str = "checkout p99 is under 5ms and the scorecard names the 
 
 /// A one-line problem with no bullet, for the same inline shapes.
 const INLINE_PROBLEM: &str = "checkout p99 regressed to 40ms when the cache change landed";
+
+/// Genuine content written in as few characters and as few words as anyone ever
+/// writes it, and every one of these must pass.
+///
+/// # Why this exists
+///
+/// The shortest content that had to pass anywhere in this file used to be
+/// `SHORT_BAR` — `"- p99 < 5ms"`, which normalises to nine characters and three
+/// words. Nothing between one and eight characters, and nothing of one or two
+/// words, was ever required to pass. Module-doc property (2) called that closed
+/// because "a minimum section length that admits `SHORT_BAR` admits the
+/// thirty-nine-byte placeholder too" — which is true of a length rule used
+/// *instead of* a content check, and false of a length floor bolted *on top of*
+/// one. Review verified it: appending `core.chars().count() >= 9` to an
+/// otherwise-correct content predicate passed every behavioural test in this
+/// file, and so did "the line must contain a space" and "the line must have at
+/// least three tokens". The Korean fixtures did not close it either — `KO_BAR`'s
+/// lines are long.
+///
+/// Each of these is shorter, in characters AND in whitespace-separated words,
+/// than the longest string this file requires to fail, and
+/// `content_passes_however_few_characters_and_words_it_takes` asserts exactly
+/// that before using them. `"- p99<5ms"` has no space in it at all, and
+/// `"- 빌드 통과"` is five characters of Hangul in thirteen bytes, so a floor in
+/// either unit rejects one of them.
+///
+/// They are terse, and terse is not the same as absent: "no 5xx" is a checkable
+/// condition, and rejecting it measures how much the author typed rather than
+/// whether they said what done looks like.
+const SHORT_REAL_CONTENT: &[&str] = &["- no 5xx", "- p99<5ms", "- 빌드 통과", "- 결제 실패 급증"];
 
 /// Sections whose first word merely *begins* with a deferral stem, plus one
 /// that opens with a deferral token used as an ordinary word.
@@ -582,6 +652,88 @@ fn long_prose() -> String {
 /// the thing that is missing.
 fn long_bar() -> String {
     format!("{BAR}\n\n{BAR}\n\n{BAR}\n\n{BAR}")
+}
+
+/// Two kilobytes of genuine background, over thirty-odd lines, saying nothing
+/// about what done looks like.
+///
+/// # Why this exists
+///
+/// Every body in this file that had to PASS used to be short, and every long
+/// body was on the failing side. The module docs called that closed — "the
+/// failing set brackets the passing set at both ends, so no threshold on total
+/// length can separate them" — and bracketing does close off a *threshold*. It
+/// does not close off a *truncation*, and truncation is the direction that
+/// produces a fabricated accusation rather than a false green.
+///
+/// Review verified the hole against a working implementation: wrapping its entry
+/// point in `let pr_body = &pr_body[..450.min(pr_body.len())]` passed every
+/// behavioural test in this file, and so did `pr_body.lines().take(18)`. Four
+/// hundred bytes and sixteen lines were caught; four hundred and fifty and
+/// eighteen were not, because no must-pass body anywhere put its acceptance bar
+/// further in than that. A bounded regex, a `.take(n)`, a `&body[..N]` "safety"
+/// clamp and an extractor that stops after the first two sections are all
+/// ordinary ways to write this gate, and every one of them would have shipped
+/// telling authors of long, careful pull requests that they wrote no bar.
+///
+/// So the passing and failing sets now overlap in length at BOTH ends: this
+/// background carries a real bar at the far end of it and must pass, and the
+/// same background with that section emptied must still fail. It contains none
+/// of the vocabulary the failure message is judged on — see
+/// `assert_the_content_fixtures_carry_none_of_the_message_vocabulary`.
+const LONG_BACKGROUND_LINES: &[&str] = &[
+    "The merge queue admits a change as soon as every gate reports an acceptable",
+    "status, and nine of those gates read their evidence from the rollout",
+    "controller rather than from the change itself.",
+    "",
+    "The controller answers a poll from a cache whenever the upstream store is",
+    "slow, and the cache has no notion of staleness. A poll that times out is",
+    "served the last document the controller happened to hold, which on a quiet",
+    "afternoon can be several hours old.",
+    "",
+    "What that has cost us across the last three release trains:",
+    "",
+    "- eleven changes were admitted against a canary window that had already closed",
+    "- four of those eleven were rolled back inside the same hour",
+    "- the scorecard showed nine green gates for every one of the four",
+    "",
+    "The rollback that started this was a checkout latency regression. The canary",
+    "window had closed forty minutes before the change was queued, so the P99 the",
+    "gate compared against was the P99 of the change before it, and the two",
+    "changes touched the same code path.",
+    "",
+    "Background on the cache, for anyone who has not read the controller:",
+    "",
+    "The controller was written when the upstream store was in-process and a poll",
+    "could not fail. The cache was added during the migration to the shared store,",
+    "as a way to keep the dashboard responsive while the store warmed up. Nobody",
+    "revisited it once the gates began reading from the same endpoint.",
+    "",
+    "What I have already ruled out, so nobody repeats the work:",
+    "",
+    "- the upstream store is healthy; its own latency has not moved in six weeks",
+    "- the timeout is 250ms and has been since the endpoint was introduced",
+    "- raising the timeout to 2s moves the failure rate but not the staleness",
+    "- the controller records no metric for how old a served document is",
+    "",
+    "So the fix has to be on the reading side rather than the serving side: a gate",
+    "that cannot tell how old its evidence is must not report a verdict at all.",
+];
+
+fn long_background() -> String {
+    LONG_BACKGROUND_LINES.join("\n")
+}
+
+/// The long background with `done_when` written at the far end of it.
+///
+/// Passed a real bar this is a body that must pass and is longer than every body
+/// in this file that must fail; passed `""` it is the same body with the section
+/// emptied, and must still fail.
+fn long_body_with_bar_at_the_end(done_when: &str) -> String {
+    format!(
+        "## Problem\n\n{}\n\n## Done when\n\n{done_when}\n",
+        long_background()
+    )
 }
 
 /// `stem` in lower case, upper case and sentence case — the three shapes a
@@ -885,6 +1037,7 @@ fn assert_failed_naming(body: &str, want: &[Artifact], context: &str) -> String 
 /// than standing alone so it is never green before the gate exists.
 #[track_caller]
 fn assert_the_content_fixtures_carry_none_of_the_message_vocabulary() {
+    let background = long_background();
     for (name, fixture) in [
         ("PROBLEM", PROBLEM),
         ("BAR", BAR),
@@ -896,6 +1049,11 @@ fn assert_the_content_fixtures_carry_none_of_the_message_vocabulary() {
         ("KO_PROBLEM", KO_PROBLEM),
         ("KO_BAR", KO_BAR),
         ("THIRD_SECTION_BODY", THIRD_SECTION_BODY),
+        ("LONG_BACKGROUND_LINES", background.as_str()),
+        ("SHORT_REAL_CONTENT[0]", SHORT_REAL_CONTENT[0]),
+        ("SHORT_REAL_CONTENT[1]", SHORT_REAL_CONTENT[1]),
+        ("SHORT_REAL_CONTENT[2]", SHORT_REAL_CONTENT[2]),
+        ("SHORT_REAL_CONTENT[3]", SHORT_REAL_CONTENT[3]),
     ] {
         assert!(
             !names_the_problem(fixture) && !names_the_bar(fixture),
@@ -931,10 +1089,18 @@ fn a_bar_written_as_measurable_criteria_passes() {
 
 #[test]
 fn a_one_line_problem_and_a_one_line_bar_pass() {
-    // The smallest change that has still done Product's job. `SHORT_BAR` is
-    // eleven bytes — shorter than four of the placeholders in PLACEHOLDERS that
-    // must fail — so no minimum length, in bytes or characters, can admit this
+    // A small change that has still done Product's job. `SHORT_BAR` is eleven
+    // bytes — shorter than four of the placeholders in PLACEHOLDERS that must
+    // fail — so no minimum length used INSTEAD OF a content check can admit this
     // and reject those. The gate has to discriminate on what the words say.
+    //
+    // That is not the whole of it, and this test used to be written as if it
+    // were. A length floor bolted ON TOP OF a correct content check is a
+    // different mistake, and `SHORT_BAR` does not falsify it: nine characters
+    // and three words was the shortest content this file required to pass, so
+    // `core.chars().count() >= 9` was green everywhere.
+    // `content_passes_however_few_characters_and_words_it_takes` is what closes
+    // that, with content of one and two words and no space in it at all.
     assert!(
         SHORT_BAR.len() < "TODO: write the acceptance criteria here".len(),
         "fixture invariant: the legitimate short bar must be shorter than the \
@@ -1385,9 +1551,14 @@ fn an_acceptance_bar_with_no_written_problem_fails_however_long_the_bar() {
 
 #[test]
 fn a_heading_with_nothing_under_it_fails_however_much_the_other_section_says() {
-    // The two long cases are the reason a global length threshold cannot
-    // satisfy this suite: `long_prose()` under an empty done-when is the
-    // longest body anywhere in this file, and it must fail.
+    // The two long cases are half the reason a global length threshold cannot
+    // satisfy this suite: `long_prose()` under an empty done-when is longer than
+    // every short passing body, and it must fail. The other half — a passing
+    // body longer than every failing one, so the sets overlap at that end too
+    // and a gate reading only a prefix of the change is falsified — is
+    // `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact`. Neither is
+    // sufficient alone: bracketing from this side rules out a threshold and says
+    // nothing about a truncation.
     let cases: Vec<(String, Vec<Artifact>, &str)> = vec![
         (
             body_with(PROBLEM, ""),
@@ -1427,6 +1598,100 @@ fn a_heading_with_nothing_under_it_fails_however_much_the_other_section_says() {
 
     for (body, expected, context) in &cases {
         expect_missing(body, expected, context);
+    }
+}
+
+#[test]
+fn a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact() {
+    // The other half of the length property, and the half the file argued for
+    // and did not have. The test above brackets the passing set from ABOVE: some
+    // body that must fail is longer than every body that must pass, so no
+    // threshold on total length can separate the sets. That closes off a
+    // threshold and nothing else.
+    //
+    // It does not close off a TRUNCATION, and truncation is the direction that
+    // produces a fabricated accusation rather than a false green. Review
+    // verified it by mutation against a working implementation: wrapping the
+    // entry point in `let pr_body = &pr_body[..450.min(pr_body.len())]` passed
+    // every behavioural test in this file, and so did
+    // `pr_body.lines().take(18)`. Four hundred bytes and sixteen lines were
+    // caught; four hundred and fifty and eighteen were not, because no must-pass
+    // body anywhere put its acceptance bar further in than that. A bounded
+    // regex, a `.take(n)`, a `&body[..N]` "safety" clamp and an extractor that
+    // stops after the first two sections are all ordinary ways to write this
+    // gate, and every one of them ships a comment telling the author of a long,
+    // careful pull request that they wrote no bar.
+    //
+    // So this pins the bracket from BELOW: a body that must pass, longer than
+    // every body in the file that must fail, with its bar at the far end of two
+    // kilobytes of background. Its mirror — the same body with that one section
+    // emptied — must still fail, so widening the passing side this way cannot
+    // itself become a fail-open.
+    let passing = long_body_with_bar_at_the_end(MULTILINE_BAR);
+    let mirror = long_body_with_bar_at_the_end("");
+
+    // The fixture invariants first, so they are exercised rather than stranded
+    // behind the measurement.
+    let longest_failing = [
+        mirror.clone(),
+        body_with(&long_prose(), ""),
+        body_with("", &long_bar()),
+        body_with(&long_prose(), "TODO: write the acceptance criteria here"),
+        problem_only(&long_prose()),
+        bar_only(&long_bar()),
+    ]
+    .iter()
+    .map(String::len)
+    .max()
+    .unwrap();
+    assert!(
+        passing.len() > longest_failing,
+        "fixture invariant: the longest body that must PASS ({} bytes) has to be \
+         longer than every body that must fail ({longest_failing} bytes), or the two \
+         sets do not overlap in length at this end and a gate that reads only a prefix \
+         of the change is unfalsifiable",
+        passing.len()
+    );
+
+    let marker_byte = passing
+        .find("## Done when")
+        .expect("fixture invariant: the long body must carry a done-when marker");
+    let marker_line = passing
+        .lines()
+        .position(|l| l.trim() == "## Done when")
+        .expect("fixture invariant: the done-when marker must be on a line of its own");
+    assert!(
+        marker_byte > 1500 && marker_line > 25,
+        "fixture invariant: the acceptance bar must sit deep enough into the body that \
+         a gate reading a prefix of it cannot see the marker at all; got byte \
+         {marker_byte}, line {marker_line}"
+    );
+    assert!(
+        LONG_BACKGROUND_LINES.len() > 30,
+        "fixture invariant: the background must be spread over more than thirty lines, \
+         or a `.take(n)` extractor is still unfalsified; got {}",
+        LONG_BACKGROUND_LINES.len()
+    );
+
+    for eol in BOTH_EOLS {
+        expect_passed(
+            &as_eol(&passing, eol),
+            &format!(
+                "two kilobytes of genuine background with a real acceptance bar at the \
+                 end of it; reading only the opening of a change and reporting the rest \
+                 absent is a fabricated accusation aimed squarely at the authors who \
+                 wrote the most, {eol:?}"
+            ),
+        );
+        expect_missing(
+            &as_eol(&mirror, eol),
+            &[Artifact::DoneWhenBar],
+            &format!(
+                "the same two kilobytes of background with the done-when section \
+                 emptied; length is not the measurement in this direction either, \
+                 {eol:?}"
+            ),
+        );
     }
 }
 
@@ -2058,6 +2323,45 @@ fn the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose() {
     //
     // Both directions of that mistake are pinned below, because a `contains`
     // predicate is wrong twice over depending on which match it takes.
+    //
+    // The two last-match fixtures are built and checked here, above the loop and
+    // above the first measurement, so their invariant is exercised rather than
+    // stranded behind a `todo!()`.
+    //
+    // The marker-bearing prose sentence is deliberately NOT the last line of
+    // either body, and that detail is the whole test. In the revision before this
+    // one it was, in both fixtures — so the spurious section a `contains`
+    // predicate opens after it was empty either way, and the verdict came out
+    // identical whether the line was read as a marker or as prose. Review
+    // reproduced it: the any-over-sections form of
+    // `normalise(l).contains("done when")` passed this test and every other
+    // behavioural test in the file while certifying an empty `## Done when` whose
+    // words were supplied by a later `## Rollout` paragraph. A further line of
+    // ordinary content under each prose sentence is what makes the spurious
+    // section non-empty, so a `contains` predicate now reports the artifact
+    // present here and this test goes red on it.
+    let empty_bar_under_rollout_prose = format!(
+        "## Problem\n\n{PROBLEM}\n\n## Done when\n\n\n\
+         ## Rollout\n\nThe rollout is done when the canary reports two clean \
+         windows in a row.\n\
+         We will keep the old path behind a flag until then.\n"
+    );
+    let empty_problem_under_notes_prose = format!(
+        "## Problem\n\n\n## Done when\n\n{BAR}\n\n\
+         ## Notes\n\nThe problem was introduced by the cache change last \
+         quarter, and this only reports it.\n\
+         The queue has carried the same defect since the rollout path was \
+         split in two.\n"
+    );
+    assert_the_marker_prose_is_followed_by_content(
+        &empty_bar_under_rollout_prose,
+        "is done when the canary",
+    );
+    assert_the_marker_prose_is_followed_by_content(
+        &empty_problem_under_notes_prose,
+        "The problem was introduced",
+    );
+
     for eol in BOTH_EOLS {
         // FIRST MATCH WINS: an ordinary summary paragraph mentioning the
         // problem, above the real sections. The prose line becomes the marker,
@@ -2095,16 +2399,9 @@ fn the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose() {
         // the words "done when", and the `## Done when` section above it is
         // empty. The prose sentence is a statement about the rollout, not this
         // change's acceptance bar, and reading it as one certifies a template
-        // paste.
+        // paste. The two bodies and their invariant are above the loop.
         expect_missing(
-            &as_eol(
-                &format!(
-                    "## Problem\n\n{PROBLEM}\n\n## Done when\n\n\n\
-                     ## Rollout\n\nThe rollout is done when the canary reports two clean \
-                     windows in a row.\n"
-                ),
-                eol,
-            ),
+            &as_eol(&empty_bar_under_rollout_prose, eol),
             &[Artifact::DoneWhenBar],
             &format!(
                 "an empty done-when section above a later paragraph whose prose \
@@ -2112,14 +2409,7 @@ fn the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose() {
             ),
         );
         expect_missing(
-            &as_eol(
-                &format!(
-                    "## Problem\n\n\n## Done when\n\n{BAR}\n\n\
-                     ## Notes\n\nThe problem was introduced by the cache change last \
-                     quarter, and this only reports it.\n"
-                ),
-                eol,
-            ),
+            &as_eol(&empty_problem_under_notes_prose, eol),
             &[Artifact::WrittenProblem],
             &format!(
                 "an empty problem section above a later paragraph whose prose contains \
@@ -2127,6 +2417,39 @@ fn the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose() {
             ),
         );
     }
+}
+
+/// The fixture invariant that makes the last-match-wins pair load-bearing.
+///
+/// A `contains` marker predicate opens a spurious section at the prose line that
+/// carries the marker words. If that line is the last line of the body, the
+/// spurious section is empty and the wrong gate reaches the right verdict by
+/// accident — which is exactly how the previous revision of this test failed to
+/// falsify the defect its own comment named. So: the marker-bearing sentence
+/// must exist in the body, and at least one line of ordinary content must follow
+/// it before the body ends.
+#[track_caller]
+fn assert_the_marker_prose_is_followed_by_content(body: &str, marker_prose: &str) {
+    let lines: Vec<&str> = body.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains(marker_prose))
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture invariant: {marker_prose:?} must appear in the body, or this \
+                 fixture pins nothing about a phrase-matching marker. body={body:?}"
+            )
+        });
+    let followed_by_content = lines[at + 1..]
+        .iter()
+        .any(|l| !l.trim().is_empty() && !l.trim().starts_with('#'));
+    assert!(
+        followed_by_content,
+        "fixture invariant: at least one line of ordinary content must follow the \
+         marker-bearing prose {marker_prose:?}, or the spurious section a `contains` \
+         predicate opens there is empty and the wrong gate reaches the right verdict \
+         by accident. body={body:?}"
+    );
 }
 
 /// Runs one section of real content through both positions and both-at-once.
@@ -2204,6 +2527,85 @@ fn real_content_that_merely_begins_with_a_deferral_stem_passes() {
         assert_placeholder_fails_in_both_sections(
             placeholder,
             "a deferral announced by its separator",
+        );
+    }
+}
+
+#[test]
+fn content_passes_however_few_characters_and_words_it_takes() {
+    // The bound on "substantive" from below, and the mirror of
+    // `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact`.
+    //
+    // `SHORT_BAR` used to be the shortest thing this file required to pass:
+    // "- p99 < 5ms", nine characters and three words once normalised. Nothing
+    // between one and eight characters, and nothing of one or two words, was
+    // required to pass anywhere. The module docs called that closed because a
+    // minimum length admitting `SHORT_BAR` also admits the thirty-nine-byte
+    // placeholder — true of a length rule used INSTEAD OF a content check, and
+    // false of a length floor bolted ON TOP OF one. Review verified it:
+    // appending `core.chars().count() >= 9` to an otherwise-correct content
+    // predicate passed every behavioural test in this file, and so did "the line
+    // must contain a space" and "the line must have at least three tokens".
+    //
+    // A floor is not a hypothetical mistake. It is the natural thing to reach
+    // for once the placeholder family is in front of you, and it rejects the
+    // terse bars that the best-run teams write — the ones with a number in them.
+    //
+    // The invariants first, so the family cannot quietly stop being short.
+    let longest_failing = PLACEHOLDERS
+        .iter()
+        .chain(PHRASE_DEFERRALS.iter())
+        .copied()
+        .max_by_key(|p| p.chars().count())
+        .expect("fixture invariant: the must-fail vocabulary must not be empty");
+    for content in SHORT_REAL_CONTENT {
+        assert!(
+            content.chars().count() < longest_failing.chars().count()
+                && content.split_whitespace().count() < longest_failing.split_whitespace().count(),
+            "fixture invariant: {content:?} ({} chars, {} words) must be shorter than \
+             the longest string this file requires to FAIL, {longest_failing:?} ({} \
+             chars, {} words), in characters AND in words — otherwise a length floor \
+             bolted on top of a content check still separates the two sets and \
+             \"the measurement is the content, not the length\" is asserted in prose \
+             only",
+            content.chars().count(),
+            content.split_whitespace().count(),
+            longest_failing.chars().count(),
+            longest_failing.split_whitespace().count(),
+        );
+    }
+
+    let shortest_passing = SHORT_REAL_CONTENT
+        .iter()
+        .map(|c| c.chars().count())
+        .min()
+        .unwrap_or(0);
+    let shortest_failing = PLACEHOLDERS
+        .iter()
+        .map(|p| p.trim().chars().count())
+        .min()
+        .unwrap_or(0);
+    assert!(
+        shortest_failing < shortest_passing,
+        "fixture invariant: something that must FAIL has to be shorter than everything \
+         that must pass ({shortest_failing} vs {shortest_passing} chars), or the two \
+         sets are separable by length from below as well and this family only pins the \
+         ceiling"
+    );
+
+    // One of these has no space in it at all; one is five characters of Hangul
+    // in thirteen bytes. A floor in characters, in bytes, in words or in "does
+    // it contain a space" rejects at least one of them.
+    for content in SHORT_REAL_CONTENT {
+        assert_real_content_passes_in_both_sections(content, "content written tersely");
+    }
+
+    // And the mirror, in the same length band, so widening the passing side
+    // downwards cannot fail open: the deferrals that are this short still fail.
+    for placeholder in ["TBD", "n/a", "...", "- [ ] "] {
+        assert_placeholder_fails_in_both_sections(
+            placeholder,
+            "a deferral as short as the content beside it",
         );
     }
 }
@@ -2651,36 +3053,23 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     // `env!`, `option_env!` and `File::open` were not covered at all. A guard
     // that misreads what it guards is worse than none.
     //
-    // So this asserts the positive shape instead. The import list of a module
-    // this small is knowable, and an allowlist cannot be evaded by respelling —
-    // there is no way to reach the filesystem without naming something outside
-    // it. Widening the list is a deliberate act with a diff to argue about,
-    // which is the point.
+    // So this asserts the shape of the import list instead, through
+    // `impure_import` — a denylist of *effects*, not a whitelist of spellings.
+    // See that function's docs for why the whitelist had to go: three rounds
+    // running it turned a correct implementation red over an import with no
+    // effect behind it (`regex`, then the `unicode_*` crates, then `std::mem`),
+    // which is a guard misreading what it guards and, worse, a settled
+    // specification test demanding to be edited mid-implementation.
     //
-    // The allowlist is a determinism rule, not a style rule, so it must admit
-    // every spelling that is deterministic. Two corrections review found:
+    // `use std::{cmp, fmt};` is how anyone brings in two std modules. The group
+    // is expanded into its members and each member judged on its own, so the ban
+    // on `std::{` is gone: it forbade a spelling, not an effect. `pub use` is
+    // matched too — it re-exports exactly as far as `use` reaches, so leaving it
+    // unmatched was a hole.
     //
-    //   * `regex` is a first-class dependency of this crate and the house idiom
-    //     for exactly this kind of marker parsing — src/cedar_guard.rs,
-    //     src/supply_chain_guard.rs, src/clean_architecture_guard.rs,
-    //     src/adr_drift_ratchet.rs and src/cell_isolation_guard.rs all open with
-    //     `use regex::Regex;`. A compiled regex is pure: it reads the string it
-    //     is handed and nothing else. Rejecting it turned a correct
-    //     implementation red for a reason this test's own stated property —
-    //     "a file, an environment variable, a clock or the network" — does not
-    //     cover, and told the implementer to edit a settled specification test
-    //     mid-implementation, which is the one thing this project's method
-    //     forbids.
-    //   * `use std::{cmp, fmt};` is how anyone brings in two std modules. The
-    //     group is expanded into its members and each member held to the list on
-    //     its own, so the ban on `std::{` is gone: it forbade a spelling, not an
-    //     effect.
-    //
-    // `pub use` is matched too. It re-exports exactly as far as `use` reaches,
-    // so leaving it unmatched was a hole in the guard.
-    // The allowlist is only as good as the parser that feeds it, so the parser
-    // is exercised before it is trusted — including the grouped form that used
-    // to be banned outright and the `pub use` form that used to walk past.
+    // The rule is only as good as the parser that feeds it, so the parser is
+    // exercised before it is trusted — including the grouped form that used to
+    // be banned outright and the `pub use` form that used to walk past.
     for (line, want) in [
         ("use regex::Regex;", vec!["regex::Regex"]),
         ("pub use regex::Regex;", vec!["regex::Regex"]),
@@ -2707,42 +3096,76 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         );
     }
 
+    // And the effect rule itself, exercised on both sides before it is trusted.
+    // The pure half of this table is not decoration: every one of these is an
+    // import an ordinary line-splitting, string-trimming implementation reaches
+    // for, and the whitelist this replaces rejected nine of them.
+    for (path, impure) in [
+        ("std::mem", false),
+        ("std::char", false),
+        ("std::ops::Range", false),
+        ("std::convert::identity", false),
+        ("std::num::NonZeroUsize", false),
+        ("std::slice", false),
+        ("std::hash::Hash", false),
+        ("std::vec::Vec", false),
+        ("std::iter::once", false),
+        ("std::sync::Arc", false),
+        ("std::sync::LazyLock", false),
+        ("std::collections::BTreeMap", false),
+        ("std::borrow::Cow", false),
+        ("std::cmp::Reverse", false),
+        ("std::fmt::Write", false),
+        ("std::str::FromStr", false),
+        ("core::fmt", false),
+        ("alloc::string::String", false),
+        ("super::GateStatus", false),
+        ("crate::pre_merge_guard::GateStatus", false),
+        ("self::inner", false),
+        ("regex::Regex", false),
+        ("unicode_segmentation::UnicodeSegmentation", false),
+        ("std::fs", true),
+        ("std::fs::File", true),
+        ("std::env", true),
+        ("std::env::var", true),
+        ("std::io::Read", true),
+        ("std::net::TcpStream", true),
+        ("std::os::unix::fs::PermissionsExt", true),
+        ("std::process::Command", true),
+        ("std::time::SystemTime", true),
+        ("std::thread", true),
+        ("std::sync::mpsc::channel", true),
+        ("reqwest::Client", true),
+        ("tokio::fs", true),
+        ("chrono::Utc", true),
+        ("rand::random", true),
+    ] {
+        assert_eq!(
+            impure_import(path).is_some(),
+            impure,
+            "impure_import({path:?}) misjudged the import. A determinism rule that \
+             calls a pure module impure accuses a correct implementation and forces a \
+             settled specification test to be edited mid-implementation; one that calls \
+             an impure module pure lets a second source of truth for what the author \
+             wrote in through the front door"
+        );
+    }
+
     let src = without_line_comments(&source("src/pre_merge_guard/product_bar.rs"));
 
-    const ALLOWED_IMPORTS: &[&str] = &[
-        "super::",
-        "crate::",
-        "regex",
-        "std::borrow",
-        "std::cmp",
-        "std::collections",
-        "std::fmt",
-        "std::iter",
-        "std::str",
-        "std::sync::LazyLock",
-        "std::sync::OnceLock",
-        // Pure text libraries, admitted for the same reason `regex` is: this
-        // suite demands invisible-character handling and grapheme-aware
-        // trimming, and the crates that do that read the string they are handed
-        // and nothing else. Review found the previous list short of them twice
-        // over, and telling an implementer to edit a settled specification test
-        // mid-implementation is the one thing this project's method forbids.
-        "unicode_normalization",
-        "unicode_segmentation",
-        "unicode_width",
-    ];
     for line in src.lines() {
         let trimmed = line.trim();
         for path in imported_paths(trimmed) {
-            assert!(
-                ALLOWED_IMPORTS.iter().any(|a| path.starts_with(a)),
-                "src/pre_merge_guard/product_bar.rs imports {trimmed:?}, which reaches \
-                 {path:?} — outside the allowlist {ALLOWED_IMPORTS:?}. The Product \
-                 artifact is authored on the change under review and nowhere else: a \
-                 gate that reads a file, an environment variable, a clock or the \
-                 network is both a flake this suite could not attribute and a second \
-                 source of truth for what the author wrote"
-            );
+            if let Some(reason) = impure_import(&path) {
+                panic!(
+                    "src/pre_merge_guard/product_bar.rs imports {trimmed:?}, which \
+                     reaches {path:?} — {reason}. The Product artifact is authored on \
+                     the change under review and nowhere else: a gate that reads a \
+                     file, an environment variable, a clock or the network is both a \
+                     flake this suite could not attribute and a second source of truth \
+                     for what the author wrote"
+                );
+            }
         }
     }
 
@@ -2774,6 +3197,12 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         );
     }
 
+    // The things reachable with a `use` that `impure_import` admits — `use std;`
+    // followed by a full path, or `use std::sync;` followed by `sync::mpsc` —
+    // are caught here rather than by widening the import rule back into a ban on
+    // spellings. `::io::` and `::net::` are spelled with both separators so that
+    // an ordinary identifier ending in those two letters (`Ratio::new`) is not
+    // mistaken for a syscall.
     let src = without_string_literals(&src);
     for forbidden in [
         "env!",
@@ -2784,6 +3213,10 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         "fs::",
         "env::",
         "process::",
+        "thread::",
+        "mpsc",
+        "::io::",
+        "::net::",
         "Command",
         "::var(",
         "SystemTime",
@@ -3063,6 +3496,92 @@ fn imported_paths(line: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Why importing `path` would make the verdict depend on something other than
+/// the change the gate was handed — or `None` if it cannot.
+///
+/// # Why this is a denylist and not an allowlist
+///
+/// Three revisions of this file stated the determinism rule as a whitelist of
+/// import prefixes, and three times review found a correct implementation turned
+/// red by it for a spelling with no effect behind it. `regex` and the
+/// `unicode_*` crates were added in the first two rounds; the third found the
+/// list still missing `std::mem`, `std::char`, `std::ops`, `std::convert`,
+/// `std::num`, `std::slice`, `std::hash`, `std::sync::Arc` and `std::vec`, so
+/// `use std::mem;` in a line-splitting loop was accused of reading "a file, an
+/// environment variable, a clock or the network". The list forbade a spelling
+/// rather than an effect, and each round told the implementer to edit a settled
+/// specification test mid-implementation — the one thing this project's method
+/// forbids.
+///
+/// The stated property is what this now checks: a file, an environment variable,
+/// a socket, a clock, another thread or another process. Those live in a short,
+/// stable set of `std` subtrees, and everything else in `std`, `core` and
+/// `alloc` is a pure data structure or a pure formatting or text facility. A
+/// third-party crate is a different matter — it can do anything — so those are
+/// still admitted by name, from a small list of pure-text crates.
+///
+/// `crate::`, `super::` and `self::` are admitted: this crate's own modules are
+/// this crate's business, and the forbidden-token sweep below is what catches a
+/// gate reaching for I/O through one of them without a `use` line. That
+/// remaining seam is listed in open_questions.
+fn impure_import(path: &str) -> Option<&'static str> {
+    /// The `std` subtrees that reach outside the process, the machine or the
+    /// moment. Matched on `::` segment boundaries, so `std::iter` is not
+    /// `std::io` and `std::sync::Arc` is not `std::sync::mpsc`.
+    const IMPURE_SUBTREES: &[&str] = &[
+        "std::env",
+        "std::fs",
+        "std::io",
+        "std::net",
+        "std::os",
+        "std::process",
+        "std::sync::mpsc",
+        "std::thread",
+        "std::time",
+    ];
+
+    /// Third-party crates that read the string they are handed and nothing else.
+    /// `regex` is a first-class dependency of this crate and the house idiom for
+    /// exactly this kind of marker parsing — src/cedar_guard.rs,
+    /// src/supply_chain_guard.rs, src/clean_architecture_guard.rs,
+    /// src/adr_drift_ratchet.rs and src/cell_isolation_guard.rs all open with
+    /// `use regex::Regex;`. The rest are the pure-text crates this suite's
+    /// invisible-character and grapheme demands point an implementer at.
+    const PURE_CRATES: &[&str] = &[
+        "aho_corasick",
+        "itertools",
+        "lazy_static",
+        "memchr",
+        "once_cell",
+        "regex",
+        "regex_lite",
+        "unicode_normalization",
+        "unicode_segmentation",
+        "unicode_width",
+    ];
+
+    let path = path.trim();
+    for subtree in IMPURE_SUBTREES {
+        if path == *subtree || path.starts_with(&format!("{subtree}::")) {
+            return Some(
+                "a std subtree that reaches outside the process, the machine or the \
+                 moment — a file, an environment variable, a socket, a clock, another \
+                 thread or another process",
+            );
+        }
+    }
+
+    let first = path.split("::").next().unwrap_or(path).trim();
+    match first {
+        "std" | "core" | "alloc" | "crate" | "self" | "super" => None,
+        _ if PURE_CRATES.contains(&first) => None,
+        _ => Some(
+            "a third-party crate outside the small list of pure-text crates, which can \
+             do anything at all",
+        ),
+    }
 }
 
 /// One line, with any `//` comment on it dropped.

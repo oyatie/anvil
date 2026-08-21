@@ -278,7 +278,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         fidelity: Fidelity::Partial,
         gap: "Fails closed, creates missing ADRs, and corpus_sync amends owned pages so published \
               gate counts match TOTAL_GATES. generate_and_write_docs still writes only when a file \
-              does not exist (doc_guard/mod.rs:350-375); it does not rewrite existing documents.",
+              does not exist (doc_guard/mod.rs:397-422); it does not rewrite existing documents.",
         blocked_on: None,
     },
     GateFidelity {

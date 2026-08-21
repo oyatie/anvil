@@ -60,15 +60,28 @@ impl DocGuard {
     /// probe — issue #29's "a diff the probe judged insufficient does not yield
     /// a sufficient report", and issue #27's "the gate's summary must state the
     /// sync did not apply" — are only reachable through
-    /// `ensure_documentation_parity` after a model has run. Without a seam, the
-    /// only testable surface is a helper that nothing is obliged to call, and a
-    /// suite pinning it can go green over an entry point that was never fixed.
+    /// `ensure_documentation_parity` after a model has run, and no test may
+    /// spawn a model.
     ///
-    /// The shape here (a constructor taking the evaluation) is one of several
-    /// that would serve; an injected trait object or a boxed async closure would
-    /// do as well, and the implementer may substitute either. What the tests
-    /// depend on is only that the public entry point can be driven with a known
-    /// judgement and without a model.
+    /// # Contract
+    ///
+    /// This signature is pinned by `tests/docguard_oracle_repair_test.rs`. It is
+    /// not a suggestion the implementer may substitute a different shape for;
+    /// changing it edits the specification and requires a fresh test review.
+    ///
+    /// The stored judgement must be consulted **inside `evaluate_doc_parity`**,
+    /// at the point where the `agy` probe's judgement is produced and returned,
+    /// so that an overridden run and a production run traverse byte-identical
+    /// code from the judgement onward. An override consulted earlier — one that
+    /// returns from `ensure_documentation_parity` before the corpus sync, or
+    /// jumps straight to a report-composing helper — would let the whole suite
+    /// go green over an entry point whose real path still passes every
+    /// under-documented diff. That is the defect class this branch exists to
+    /// remove, so it must not be reintroduced by the seam that tests it.
+    ///
+    /// The body stays `todo!()` until then: a seam that stores the judgement
+    /// without anything consulting it would make a live `agy` spawn reachable
+    /// from the suite, and panicking at construction makes that impossible.
     #[allow(unused_variables)]
     pub fn with_probe_override(agy_effort: String, evaluation: DocParityEvaluation) -> Self {
         todo!("supply the doc-parity judgement without spawning the agy probe")
@@ -210,28 +223,6 @@ impl DocGuard {
             files_created_or_updated: updated_files,
             summary,
         })
-    }
-
-    /// Applies a `DocParityEvaluation` that judged the diff under-documented,
-    /// and composes the report for it.
-    ///
-    /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
-    /// the implementer. This exists because the tail of
-    /// `ensure_documentation_parity` — the code issue #29 is about — is only
-    /// reachable after the `agy` probe has run, and a test must never spawn the
-    /// probe. The implementer moves that tail here, fixes it, and calls this
-    /// from `ensure_documentation_parity`.
-    #[allow(dead_code, unused_variables)]
-    async fn apply_doc_parity_evaluation(
-        &self,
-        repo: &str,
-        repo_dir: &Path,
-        diff_ctx: &PrDiffContext,
-        pr_title: &str,
-        pr_body: &str,
-        eval: &DocParityEvaluation,
-    ) -> DocGuardReport {
-        todo!("compose the report for a diff the probe judged under-documented")
     }
 
     async fn evaluate_doc_parity(
@@ -431,193 +422,4 @@ fn extract_json_block(text: &str) -> Option<String> {
         return Some(text.trim().to_string());
     }
     None
-}
-
-#[cfg(test)]
-mod insufficient_docs_tests {
-    //! Issue #29: absent or failed evidence is never a pass.
-    //!
-    //! These drive `apply_doc_parity_evaluation` directly. The public entry
-    //! point, `ensure_documentation_parity`, reaches this behaviour only after
-    //! spawning the `agy` doc-parity probe, and a test must never spawn a model.
-
-    use super::*;
-    use std::path::PathBuf;
-    use tempfile::tempdir;
-
-    fn diff_ctx(repo: &str) -> PrDiffContext {
-        PrDiffContext {
-            repo: repo.to_string(),
-            pr_number: 4242,
-            base_branch: "main".to_string(),
-            base_sha: "base-sha".to_string(),
-            head_sha: "head-sha".to_string(),
-            is_incremental: false,
-            previous_head_sha: None,
-            diff_content: "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn newly_public() {}\n"
-                .to_string(),
-            changed_files: vec!["src/lib.rs".to_string()],
-            repo_working_dir: PathBuf::from("."),
-        }
-    }
-
-    fn insufficient(files: &[&str]) -> DocParityEvaluation {
-        DocParityEvaluation {
-            is_doc_sufficient: false,
-            missing_doc_summary: Some(
-                "newly_public is a new public API with no reference page".to_string(),
-            ),
-            doc_files_to_update: files.iter().map(|f| (*f).to_string()).collect(),
-            suggested_adr_title: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn a_diff_the_probe_judged_under_documented_does_not_yield_a_sufficient_report() {
-        let dir = tempdir().unwrap();
-        let guard = DocGuard::new("low".to_string());
-
-        let report = guard
-            .apply_doc_parity_evaluation(
-                "oyatie/anvil",
-                dir.path(),
-                &diff_ctx("oyatie/anvil"),
-                "feat: add a public API",
-                "no docs",
-                &insufficient(&["docs/reference/newly-public.md"]),
-            )
-            .await;
-
-        assert!(
-            !report.is_sufficient,
-            "the probe judged the diff under-documented; the report must not claim \
-             sufficiency. summary was: {}",
-            report.summary
-        );
-        // The complement of the failed-write case below. A judgement WAS
-        // obtained and the tempdir is writable, so this is a real adverse
-        // finding, not absent evidence. Collapsing it into Errored contradicts
-        // `DocGuardReport::errored`'s documented contract and would let an
-        // implementation that writes nothing, ever, satisfy the honesty tests.
-        assert!(
-            report.errored.is_none(),
-            "a judgement was obtained and the write was possible, so this is a \
-             finding and not absent evidence: {:?}",
-            report.errored
-        );
-        assert!(
-            dir.path().join("docs/reference/newly-public.md").exists(),
-            "the file the probe named does not exist and the directory is \
-             writable, so it must actually be written"
-        );
-        assert!(
-            report
-                .files_created_or_updated
-                .contains(&"docs/reference/newly-public.md".to_string()),
-            "the file that was written must be reported as created/updated: {:?}",
-            report.files_created_or_updated
-        );
-    }
-
-    #[tokio::test]
-    async fn naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass() {
-        let dir = tempdir().unwrap();
-        let readme = dir.path().join("README.md");
-        let before = "# Watched\n\nNothing here mentions newly_public.\n";
-        std::fs::write(&readme, before).unwrap();
-
-        let guard = DocGuard::new("low".to_string());
-        let report = guard
-            .apply_doc_parity_evaluation(
-                "oyatie/anvil",
-                dir.path(),
-                &diff_ctx("oyatie/anvil"),
-                "feat: add a public API",
-                "no docs",
-                // One file that does not exist and one that does. Creating a
-                // stub for the first must not license passing on the second.
-                &insufficient(&["docs/reference/newly-public.md", "README.md"]),
-            )
-            .await;
-
-        let after = std::fs::read_to_string(&readme).unwrap();
-
-        // Unconditional: whatever the guard decides to do about an existing
-        // file it was told to update, clobbering the contributor's prose is not
-        // one of the options. "Amending" by overwriting with a generated stub
-        // is the same vandalism class as issues #27 and #28.
-        assert!(
-            after.contains("# Watched"),
-            "the existing README's heading must survive: {after:?}"
-        );
-        assert!(
-            after.contains("Nothing here mentions newly_public."),
-            "the existing README's prose must survive: {after:?}"
-        );
-
-        // Two legitimate outcomes, and both have to be honest.
-        if after == before {
-            assert!(
-                !report.is_sufficient,
-                "README.md was named as needing an update and was never amended; \
-                 that is absent evidence, not a pass. summary was: {}",
-                report.summary
-            );
-            assert!(
-                !report
-                    .files_created_or_updated
-                    .contains(&"README.md".to_string()),
-                "README.md is byte-identical, so it must not be reported as updated: {:?}",
-                report.files_created_or_updated
-            );
-        } else {
-            assert!(
-                report
-                    .files_created_or_updated
-                    .contains(&"README.md".to_string()),
-                "README.md was amended, so it must be reported as updated: {:?}",
-                report.files_created_or_updated
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn a_documentation_write_that_failed_is_errored_and_never_reported_as_updated() {
-        let dir = tempdir().unwrap();
-        // `docs` is a regular file, so no file under `docs/reference/` can be
-        // created: every write to that path fails.
-        std::fs::write(dir.path().join("docs"), "not a directory\n").unwrap();
-
-        let guard = DocGuard::new("low".to_string());
-        let report = guard
-            .apply_doc_parity_evaluation(
-                "oyatie/anvil",
-                dir.path(),
-                &diff_ctx("oyatie/anvil"),
-                "feat: add a public API",
-                "no docs",
-                &insufficient(&["docs/reference/newly-public.md"]),
-            )
-            .await;
-
-        assert!(
-            !dir.path().join("docs/reference/newly-public.md").exists(),
-            "precondition: the write cannot have succeeded"
-        );
-        assert!(
-            report.errored.is_some(),
-            "a write that failed is absent evidence and must be Errored. summary was: {}",
-            report.summary
-        );
-        assert!(
-            !report.is_sufficient,
-            "a failed write must not pass the gate. summary was: {}",
-            report.summary
-        );
-        assert!(
-            report.files_created_or_updated.is_empty(),
-            "nothing was written, so nothing may be reported as AutoUpdated: {:?}",
-            report.files_created_or_updated
-        );
-    }
 }

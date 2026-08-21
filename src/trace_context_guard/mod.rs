@@ -47,38 +47,40 @@ impl TraceContextGuard {
         let mut tasks_scanned = 0;
 
         for file_diff in diff_ctx.diff_content.split("diff --git") {
-            if !file_diff.contains(".rs") {
-                continue;
-            }
-
             let lines: Vec<&str> = file_diff.lines().collect();
-            for line in &lines {
-                if line.contains("tokio::spawn") {
-                    tasks_scanned += 1;
-                }
-            }
+            let Some(path) = rust_path_of(&lines) else {
+                continue;
+            };
 
-            let mut current_file = "unknown.rs".to_string();
-            if let Some(first_line) = lines.first()
-                && let Some(path) = first_line.split_whitespace().last()
-            {
-                current_file = path.trim_start_matches("b/").to_string();
-            }
-
-            let findings = self.tracker.scan_detached_tasks(&current_file, file_diff);
+            let (scanned, findings) = self.tracker.scan(path, &shipped_lines(&lines));
+            tasks_scanned += scanned;
             detached_findings.extend(findings);
         }
 
         let is_propagated = detached_findings.is_empty();
-        let summary = if is_propagated {
+        let summary = if tasks_scanned == 0 {
+            // Nothing crossed an async boundary, so there is nothing to have a
+            // view about, and the gate says exactly that rather than publishing
+            // the word "verified" over a measurement it never took. The status
+            // stays `Passed` -- see `src/coverage_guard.rs`, where a diff adding
+            // no coverable line is `NothingToMeasure` and passes, rather than
+            // `src/slo_canary_guard/mod.rs`, where a telemetry source that
+            // should have been there was absent. This is the first kind: the
+            // measurement is complete and it is empty.
+            "➖ NOTHING TO MEASURE (no async task boundary in the Rust lines this pull request adds \
+             or keeps; nothing was inspected)"
+                .to_string()
+        } else if is_propagated {
             format!(
-                "✅ PASSED (W3C trace context & span instrumentation verified across {} async boundaries)",
-                tasks_scanned
+                "✅ PASSED ({} async task boundar{} inspected; each attaches a tracing span via `.instrument(...)`)",
+                tasks_scanned,
+                if tasks_scanned == 1 { "y" } else { "ies" }
             )
         } else {
             format!(
-                "❌ FAILED ({} detached async task(s) drop distributed tracing context)",
-                detached_findings.len()
+                "❌ FAILED ({} of {} async task boundaries inspected drop distributed tracing context: no `.instrument(...)` span is attached)",
+                detached_findings.len(),
+                tasks_scanned
             )
         };
 
@@ -89,6 +91,53 @@ impl TraceContextGuard {
             summary,
         })
     }
+}
+
+/// The post-image path of a diff chunk, when it is a Rust file.
+///
+/// Read off the `+++ b/<path>` header rather than searched for in the chunk
+/// text: four Markdown files in this repository name a `.rs` path in their
+/// prose, and `file_diff.contains(".rs")` treats every one of them as Rust.
+fn rust_path_of<'a>(lines: &[&'a str]) -> Option<&'a str> {
+    let header = lines.iter().find_map(|l| l.strip_prefix("+++ "))?;
+    let path = header.split_whitespace().next()?;
+    let path = path.strip_prefix("b/").unwrap_or(path);
+    path.ends_with(".rs").then_some(path)
+}
+
+/// The body lines of a diff chunk that this pull request ships -- added or
+/// left untouched -- each with the position it occupies in the chunk.
+///
+/// A removed line is not code the author ships: counting it reports boundaries
+/// that were inspected but no longer exist, and reading it lets a `.instrument(`
+/// on its way out clear a spawn that ships detached.
+fn shipped_lines<'a>(lines: &[&'a str]) -> Vec<(usize, &'a str)> {
+    let mut body = Vec::new();
+    let mut in_body = false;
+
+    for (idx, line) in lines.iter().enumerate() {
+        if line.starts_with("@@") {
+            in_body = true;
+            continue;
+        }
+        if !in_body {
+            // `--- a/<path>` precedes it, so the header block ends here.
+            in_body = line.starts_with("+++ ");
+            continue;
+        }
+        if line.starts_with('-') {
+            continue;
+        }
+        // Never sliced by byte: a line may be empty, and this corpus carries
+        // Rust files whose first character is multi-byte.
+        let text = line
+            .strip_prefix('+')
+            .or_else(|| line.strip_prefix(' '))
+            .unwrap_or(line);
+        body.push((idx + 1, text));
+    }
+
+    body
 }
 
 // `test_trace_guard_passes_clean_diff` used to live here. It fed the gate a

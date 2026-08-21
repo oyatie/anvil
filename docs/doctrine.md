@@ -1,7 +1,7 @@
 # Oyatie Anvil Platform Doctrine
 
 ## 1. Principle of Autonomous Verification
-Every pull request and trunk commit across the Oyatie monorepo and microservices ecosystem must undergo continuous, deterministic evaluation across the live Anvil certification corpus (`TOTAL_GATES` on `PreMergeCertificationReport`). The founding "60-Gate" name is historical. The field list is the authority.
+Every pull request and trunk commit across the Oyatie monorepo and microservices ecosystem must undergo continuous, deterministic evaluation across the live Anvil certification corpus (`TOTAL_GATES` on `PreMergeCertificationReport`). The founding name said sixty gates. That number is historical. The field list is the authority.
 
 ## 2. Zero Unresolved Review Threads Invariant
 Pull requests may never enter the merge queue or be certified if there are open review threads (`isResolved: false`).

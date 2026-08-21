@@ -535,3 +535,11 @@ pub async fn task_sweep_handler(
         }),
     )
 }
+
+/// Latest shape measurement per repository, straight from the telemetry
+/// journal — a trend endpoint, never a prior (I2).
+pub async fn fleet_shape_handler(
+    axum::extract::State(state): axum::extract::State<crate::webhook::AppState>,
+) -> axum::Json<std::collections::HashMap<String, crate::telemetry_store::ShapeMeasurementRecord>> {
+    axum::Json(state.telemetry_store.latest_shape_measurements().await)
+}

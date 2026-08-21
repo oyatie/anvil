@@ -45,7 +45,8 @@ impl StateManager {
             let content = tokio::fs::read_to_string(&file_path)
                 .await
                 .context("Failed to read pr_states.json")?;
-            serde_json::from_str(&content).unwrap_or_default()
+            serde_json::from_str(&content)
+                .context("pr_states.json did not parse; refusing to start with empty state")?
         } else {
             HashMap::new()
         };

@@ -30,11 +30,9 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 use crate::pre_merge_guard::report::GateStatus;
 
-pub mod bitrot_scrubber;
 pub mod cache_hit_ratchet;
 pub mod cache_keys;
 
-pub use bitrot_scrubber::{CasBitRotScrubber, CasScrubReport};
 pub use cache_hit_ratchet::{CacheHitMetrics, CacheHitRateRatchet};
 pub use cache_keys::CacheKeyGenerator;
 

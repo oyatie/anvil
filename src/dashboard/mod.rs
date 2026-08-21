@@ -76,7 +76,8 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         })
         .collect();
 
-    // Generate 70 Canonical Gates with Mutation Kill Rates (MKR)
+    // Gate display names. The authority for how many gates exist is
+    // `TOTAL_GATES`; this list is a label table, not a count.
     let gate_names = [
         "Docs-As-Code Parity",
         "AWS Cedar IAM Policy",
@@ -196,8 +197,8 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
                     speculative_base: short_base,
                     head_sha: short_head,
                     state: "SPECULATIVE_PRE_SUBMIT".to_string(),
-                    gates_completed: 69,
-                    total_gates: 70,
+                    gates_completed: crate::pre_merge_guard::report::TOTAL_GATES - 1,
+                    total_gates: crate::pre_merge_guard::report::TOTAL_GATES,
                 });
             }
         }
@@ -215,7 +216,7 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         uptime_secs: 300,
         watched_repos: state.config.watched_repos.clone(),
         total_prs_reviewed: total_open_prs + 8,
-        total_gates_evaluated: 70,
+        total_gates_evaluated: crate::pre_merge_guard::report::TOTAL_GATES,
         merge_queue_depth: total_merge_queue_depth,
         quota_spent_usd: state.self_governor.quota.current_spend_usd(),
         quota_budget_usd: 100.0,

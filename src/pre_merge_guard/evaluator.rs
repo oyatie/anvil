@@ -818,13 +818,16 @@ pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome)
 /// the documentation is deficient, only that we could not judge it. Both block
 /// (invariant I1).
 ///
-/// SCAFFOLDING (`tdd/docguard-oracle-repair`): the body below is the mapping
-/// `evaluate_pre_merge_gates` has always performed inline, extracted verbatim so
-/// the suite can drive it. Nothing about it was changed, and the defect it
-/// carries is live: a non-empty `files_created_or_updated` is read as
-/// `AutoUpdated` *before* `is_sufficient` is consulted, and
-/// `AutoUpdated.is_acceptable()` is `true`, so a report that says the diff is
-/// under-documented still certifies as long as DocGuard wrote a stub.
+/// An adverse judgement outranks the work the guard got done. This chain used to
+/// read `files_created_or_updated` first, and `AutoUpdated.is_acceptable()` is
+/// `true`, so a report that said the diff was under-documented still certified
+/// as long as DocGuard had written a stub. A stub carrying the symbol's name in
+/// a heading is evidence of the gap, not its repair.
+///
+/// `AutoUpdated` is still reached, and still acceptable, when the guard repaired
+/// something on a diff the probe judged documented — which is what lets the
+/// corpus sync land its own rewrite instead of blocking every Anvil pull request
+/// that touches a drifted page.
 ///
 /// # Contract
 ///
@@ -841,11 +844,11 @@ pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome)
 pub fn doc_parity_status(report: &DocGuardReport) -> GateStatus {
     if let Some(err) = &report.errored {
         GateStatus::Errored(err.clone())
+    } else if !report.is_sufficient {
+        GateStatus::Failed(report.summary.clone())
     } else if !report.files_created_or_updated.is_empty() {
         GateStatus::AutoUpdated
-    } else if report.is_sufficient {
-        GateStatus::Passed
     } else {
-        GateStatus::Failed(report.summary.clone())
+        GateStatus::Passed
     }
 }

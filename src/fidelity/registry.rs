@@ -176,9 +176,10 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         reference: "docs-as-code; Google g3doc",
         fidelity: Fidelity::Partial,
         gap: "Fails closed, creates missing ADRs, and corpus_sync amends owned pages so published \
-              gate counts match TOTAL_GATES. generate_and_write_docs still writes only when a file \
-              does not exist (doc_guard::generate_and_write_docs); it does not rewrite existing \
-              documents.",
+              gate counts match TOTAL_GATES -- but only in Anvil's own repository; on every watched \
+              repository the sync declines and says so. generate_and_write_docs still writes only \
+              when a file does not exist (doc_guard::generate_and_write_docs); a named document \
+              that already exists is left untouched and reported as unamended, never as updated.",
         blocked_on: None,
     },
     GateFidelity {

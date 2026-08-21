@@ -43,9 +43,6 @@ const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_
 
 /// Where `evaluate_doc_parity` gets its judgement from.
 ///
-/// SCAFFOLDING (`tdd/docguard-oracle-repair`): declaration only. It carries no
-/// logic, and the arm that would return a stored outcome is `todo!()`.
-///
 /// # Contract
 ///
 /// This shape is pinned by `tests/docguard_oracle_repair_test.rs` and
@@ -88,9 +85,6 @@ impl DocGuard {
 
     /// Constructs a guard whose doc-parity probe *outcome* is supplied directly
     /// instead of being obtained by spawning the `agy` probe.
-    ///
-    /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
-    /// the implementer.
     ///
     /// Both of the behaviours the specification asks for on the far side of the
     /// probe — issue #29's "a diff the probe judged insufficient does not yield
@@ -152,15 +146,17 @@ impl DocGuard {
     /// under-documented diff. That is the defect class this branch exists to
     /// remove, so it must not be reintroduced by the seam that tests it.
     ///
-    /// The body stays `todo!()` until then: a seam that stores the outcome
-    /// without anything consulting it would make a live `agy` spawn reachable
-    /// from the suite, and panicking at construction makes that impossible.
+    /// The effort level is discarded rather than stored alongside the outcome:
+    /// there is no state in which this guard spawns anything, so there is
+    /// nothing for it to be the effort level *of*.
     #[allow(unused_variables)]
     pub fn with_probe_override(
         agy_effort: String,
         outcome: Result<DocParityEvaluation, String>,
     ) -> Self {
-        todo!("supply the doc-parity probe outcome without spawning the agy probe")
+        Self {
+            probe: Probe::Overridden(outcome),
+        }
     }
 
     /// Evaluates documentation parity, frontmatter compliance, and auto-generates any missing docs or ADRs.
@@ -183,7 +179,12 @@ impl DocGuard {
         // Mechanical corpus sync first. Remaining drift must fail the gate
         // without being reported as AutoUpdated (the evaluator treats a
         // non-empty files list as AutoUpdated).
-        let rewritten = match corpus_sync::sync_published_counts(
+        //
+        // The sync applies only to Anvil's own repository. When it declines, the
+        // skip is a stated fact rather than absent evidence — it must neither
+        // fail nor rescue the pull request — so it is carried into the summary
+        // instead of being allowed to read as a silent pass.
+        let sync = match corpus_sync::sync_published_counts(
             repo,
             repo_dir,
             crate::pre_merge_guard::report::TOTAL_GATES,
@@ -200,7 +201,7 @@ impl DocGuard {
                     ),
                 });
             }
-            Ok(sync) => sync.rewritten,
+            Ok(sync) => sync,
             Err(e) => {
                 return Ok(DocGuardReport {
                     errored: Some(e.to_string()),
@@ -209,6 +210,14 @@ impl DocGuard {
                     summary: format!("Could not make published docs honest: {e}"),
                 });
             }
+        };
+        let rewritten = sync.rewritten;
+        // Appended, never interpolated into a fixed phrase: a sync that DID
+        // apply must not be described by a sentence that trails off where the
+        // reason it did not apply would have gone.
+        let skip_statement = match &sync.not_applicable {
+            Some(reason) => format!(" Corpus sync did not apply: {reason}"),
+            None => String::new(),
         };
 
         // Step 1: Validate frontmatters on all modified documentation and config files
@@ -249,7 +258,9 @@ impl DocGuard {
                     errored: Some(e.to_string()),
                     is_sufficient: false,
                     files_created_or_updated: Vec::new(),
-                    summary: format!("Documentation parity could not be evaluated: {}", e),
+                    summary: format!(
+                        "Documentation parity could not be evaluated: {e}{skip_statement}"
+                    ),
                 });
             }
         };
@@ -259,7 +270,7 @@ impl DocGuard {
                 "Documentation parity is satisfied for {}#{}",
                 repo, diff_ctx.pr_number
             );
-            let summary = if rewritten.is_empty() {
+            let base = if rewritten.is_empty() {
                 "Documentation and SSOT frontmatters satisfy the required fields and parity rules."
                     .to_string()
             } else {
@@ -273,7 +284,7 @@ impl DocGuard {
                 errored: None,
                 is_sufficient: true,
                 files_created_or_updated: rewritten,
-                summary,
+                summary: format!("{base}{skip_statement}"),
             });
         }
 
@@ -282,22 +293,65 @@ impl DocGuard {
             repo, diff_ctx.pr_number, eval.doc_files_to_update
         );
 
-        // Step 3: Auto-generate missing documentation / ADRs in the workspace
-        let mut updated_files = self
-            .generate_and_write_docs(repo, repo_dir, diff_ctx, pr_title, pr_body, &eval)
-            .await?;
-        updated_files.extend(rewritten);
+        // Step 3: Auto-generate missing documentation / ADRs in the workspace.
+        //
+        // The verdict below is the PROBE's, not a summary of the work this step
+        // got done. A stub carrying the symbol's name in a heading is evidence
+        // of the documentation gap, not its repair, so writing one cannot turn
+        // an adverse judgement into a pass — which is what the discarded
+        // `is_sufficient: true` on this path did.
+        let generated = generate_and_write_docs(repo_dir, &eval).await;
 
-        let summary = format!(
-            "Auto-generated documentation updates for: {}",
-            updated_files.join(", ")
-        );
+        let mut files_created_or_updated = generated.written.clone();
+        files_created_or_updated.extend(rewritten.iter().cloned());
+
+        let mut statements = vec![match eval
+            .missing_doc_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+        {
+            Some(reason) => format!("Documentation parity is insufficient: {reason}"),
+            // A blocked pull request whose scorecard row says nothing is
+            // unactionable; the probe declining to explain itself is not a
+            // licence for the gate to publish an empty reason.
+            None => {
+                "Documentation parity is insufficient, and the probe gave no reason.".to_string()
+            }
+        }];
+        if !generated.written.is_empty() {
+            statements.push(format!(
+                "Documentation stubs generated: {}",
+                generated.written.join(", ")
+            ));
+        }
+        if !generated.unamended.is_empty() {
+            statements.push(format!(
+                "Named but left untouched, because amending an existing document is not \
+                 implemented: {}",
+                generated.unamended.join(", ")
+            ));
+        }
+        if !rewritten.is_empty() {
+            statements.push(format!(
+                "Published docs rewritten to TOTAL_GATES={}: {}",
+                crate::pre_merge_guard::report::TOTAL_GATES,
+                rewritten.join(", ")
+            ));
+        }
+        if !generated.failed.is_empty() {
+            statements.push(format!(
+                "Documentation could not be written: {}",
+                generated.failed.join("; ")
+            ));
+        }
 
         Ok(DocGuardReport {
-            errored: None,
-            is_sufficient: true,
-            files_created_or_updated: updated_files,
-            summary,
+            // A write that never happened is absent evidence, not an update.
+            errored: (!generated.failed.is_empty()).then(|| generated.failed.join("; ")),
+            is_sufficient: false,
+            files_created_or_updated,
+            summary: format!("{}{skip_statement}", statements.join(" ")),
         })
     }
 
@@ -380,17 +434,16 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         );
 
         let target = format!("{}#{}", repo, diff_ctx.pr_number);
-        // SCAFFOLDING (`tdd/docguard-oracle-repair`): the `Live` arm is what
-        // this line already did, verbatim. The `Overridden` arm is the seam and
-        // its body is left to the implementer — it must return the stored
-        // outcome from here, at the point the probe's judgement is produced, so
-        // an overridden run and a production run traverse byte-identical code
-        // from the outcome onward. See `with_probe_override`.
+        // The `Overridden` arm returns the stored outcome from exactly the point
+        // the `agy` probe's judgement would have been produced, so an overridden
+        // run and a production run traverse byte-identical code from the outcome
+        // onward — including the `Err` path, which is the arm whose historical
+        // collapse into `is_doc_sufficient: true` made gate 1 unfailable. The
+        // outcome is read, never taken: there is no state in which falling
+        // through to a real spawn becomes legal. See `with_probe_override`.
         let agy_effort = match &self.probe {
             Probe::Live(effort) => effort.clone(),
-            Probe::Overridden(_) => {
-                todo!("return the stored probe outcome instead of spawning `agy`")
-            }
+            Probe::Overridden(outcome) => return outcome.clone().map_err(anyhow::Error::msg),
         };
         let repo_dir_owned = repo_dir.to_path_buf();
         let prompt_clone = prompt.clone();
@@ -471,33 +524,56 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         )
         .await
     }
+}
 
-    async fn generate_and_write_docs(
-        &self,
-        _repo: &str,
-        repo_dir: &Path,
-        _diff_ctx: &PrDiffContext,
-        _pr_title: &str,
-        _pr_body: &str,
-        eval: &DocParityEvaluation,
-    ) -> Result<Vec<String>> {
-        let mut updated = Vec::new();
-        for file in &eval.doc_files_to_update {
-            let path = repo_dir.join(file);
-            if let Some(parent) = path.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            if !path.exists() {
-                let initial = format!(
-                    "---\nschema: hyperscaler.doc.v1\ntitle: {}\nstatus: draft\ncanonical_authority: false\nowner: \"@team/core\"\nlast_verified_at: \"2026-08-19\"\n---\n\n# {}\n\nAuto-generated documentation stub by Anvil DocGuard.\n",
-                    file, file
-                );
-                let _ = tokio::fs::write(&path, initial).await;
-                updated.push(file.clone());
-            }
+/// What `generate_and_write_docs` actually did, told apart so the report can be
+/// honest about each.
+#[derive(Debug, Default)]
+struct GeneratedDocs {
+    /// Files that were named, did not exist, and were written successfully.
+    written: Vec<String>,
+    /// Files that were named and already existed. DocGuard does not yet amend an
+    /// existing document, so these were left exactly as the contributor wrote
+    /// them — and are not reported as updated, because they were not.
+    unamended: Vec<String>,
+    /// Files that were named and could not be written. Reporting one of these as
+    /// AutoUpdated claims work that never happened.
+    failed: Vec<String>,
+}
+
+/// Writes a stub for every named file that does not exist yet.
+///
+/// Three outcomes, kept separate. The historical version had one: it wrote only
+/// when the path did not exist, discarded the write error with `let _ =`, and
+/// pushed the file onto the updated list either way — so a file that was skipped
+/// and a file whose write failed were both published to the scorecard as
+/// AutoUpdated.
+async fn generate_and_write_docs(repo_dir: &Path, eval: &DocParityEvaluation) -> GeneratedDocs {
+    let mut out = GeneratedDocs::default();
+    for file in &eval.doc_files_to_update {
+        let path = repo_dir.join(file);
+        if path.exists() {
+            // Overwriting the contributor's document with a generated stub would
+            // be the same vandalism the corpus sync was just scoped to stop.
+            warn!("DocGuard was told to update {file}, which already exists; leaving it alone");
+            out.unamended.push(file.clone());
+            continue;
         }
-        Ok(updated)
+        if let Some(parent) = path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            out.failed.push(format!("{file}: {e}"));
+            continue;
+        }
+        let initial = format!(
+            "---\nschema: hyperscaler.doc.v1\ntitle: {file}\nstatus: draft\ncanonical_authority: false\nowner: \"@team/core\"\nlast_verified_at: \"2026-08-19\"\n---\n\n# {file}\n\nAuto-generated documentation stub by Anvil DocGuard.\n"
+        );
+        match tokio::fs::write(&path, initial).await {
+            Ok(()) => out.written.push(file.clone()),
+            Err(e) => out.failed.push(format!("{file}: {e}")),
+        }
     }
+    out
 }
 
 fn extract_json_block(text: &str) -> Option<String> {

@@ -17,7 +17,7 @@ The table below is a representative selection, not the full corpus.
 
 | Quality Gate | Description |
 |---|---|
-| **Documentation & ADR Parity** | Verifies public APIs and platform doctrine (`DocGuard`). Amends owned pages (README, doctrine, ADRs, OpenAPI, CLI copy) so published gate counts match `TOTAL_GATES`. If it cannot write an honest page, the gate fails closed. |
+| **Documentation & ADR Parity** | Verifies public APIs and platform doctrine (`DocGuard`). In Anvil's own repository, amends owned pages (README, doctrine, ADRs, OpenAPI, CLI copy) so published gate counts match `TOTAL_GATES`; on every other watched repository the corpus sync declines and the summary says so, because `TOTAL_GATES` is Anvil's own number and says nothing about anyone else's pages. If it cannot write an honest page, the gate fails closed. |
 | **Cedar Policy & IAM Boundaries** | Verifies AWS Cedar authorization policy coverage & tenant bounds (`CedarGuard`) |
 | **Systematic Regulatory & Statutory Compliance** | Dynamic temporal multi-jurisdiction regulatory engine (`ComplianceGuard`) |
 | **OpenAPI & Wire Contract Integrity** | Validates OpenAPI schemas & auto-syncs route definitions (`ApiContractGuard`) |

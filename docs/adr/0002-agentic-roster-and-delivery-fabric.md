@@ -40,6 +40,12 @@ Prevent false greens and shallow checks wrapped as sophisticated gates. Close th
 
 DocGuard: auto-update owned pages when it can write an honest page. Fail closed if it cannot. The README exemption is a defect. Live authority is `TOTAL_GATES` / `PreMergeCertificationReport::all_statuses().len()`, not README or doctrine.
 
+The corpus sync owns Anvil's pages and only Anvil's. `TOTAL_GATES` is a private constant of this repository; nothing about it is true of `oyatie/oyatie` or `oyatie/console`, so rewriting their published counts to it and pushing the result onto a contributor's branch is vandalism under a governance message. On any repository that is not Anvil's own, the sync declines and the gate summary states that it declined — a skip that reads as a clean page is the same false assurance this law exists to end. Ownership is settled as a compile-time constant, not from `SELF_REPO`: a mis-set environment must not be able to hand somebody else's documents to the rewriter. Renaming this repository turns the sync off silently, so a rename updates that constant in the same commit.
+
+Removing an exemption sentence removes the sentence, not the line it sits on. A deletion that runs to end-of-line destroys whatever prose followed the marker and fuses the surviving prefix onto the next line — a documentation gate silently destroying documentation, which is the harm inverted.
+
+Absent or failed evidence is never a pass, on the far side of the probe as well as the near side. A diff the probe judged under-documented does not come back sufficient however many stubs were written; a stub carries the missing symbol's name in a heading and is evidence of the gap, not its repair. A file that was named and never amended is not reported as updated, and a write that failed is Errored rather than AutoUpdated.
+
 ## Design-system artifacts Anvil drafts and keeps honest
 - ADR
 - Spec

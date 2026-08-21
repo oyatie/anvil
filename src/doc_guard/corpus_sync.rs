@@ -22,6 +22,44 @@ pub struct CorpusSync {
 const OWNED: &[&str] = &["README.md", "docs/doctrine.md", "openapi/openapi.yaml"];
 const ADR_DIRS: &[&str] = &["docs/adr", "docs/decisions"];
 
+/// Anvil's own repository: the only one whose published gate counts are
+/// `TOTAL_GATES`, and therefore the only one this module may touch.
+///
+/// A compile-time constant rather than a lookup of `SELF_REPO`, because
+/// `Config::from_env` calls `dotenvy::dotenv()` and mutates the process
+/// environment: ownership would then depend on whichever `.env` sat in the
+/// working directory, and a mis-set `SELF_REPO` would hand a watched
+/// repository's published documents to a rewrite that the review pipeline then
+/// commits and pushes onto the contributor's branch. That is issue #27 reached
+/// through the environment instead of through the argument.
+///
+/// STATED COST: renaming or moving this repository switches gate 1's corpus
+/// enforcement off silently. The failure direction is safe — Anvil stops
+/// repairing its own pages, and no watched repository is ever corrupted — but a
+/// rename must update this constant in the same commit.
+const ANVIL_REPO: &str = "oyatie/anvil";
+
+/// Whether the repository under review is Anvil's own.
+///
+/// GitHub slugs are case-insensitive identities and arrive in whatever case the
+/// event carried, so `Oyatie/Anvil` is Anvil. The comparison is over the WHOLE
+/// slug: `attacker/anvil`, `oyatie/anvil-sdk`, `oyatie/anvildocs` and a bare
+/// `anvil` all belong to somebody else.
+fn is_anvils_own(repo: &str) -> bool {
+    repo.eq_ignore_ascii_case(ANVIL_REPO)
+}
+
+/// Why the sync declined to run.
+///
+/// A property of *which repository is under review* and nothing else, so a
+/// caller can derive the same sentence without reproducing the checkout.
+fn not_applicable_reason(repo: &str) -> String {
+    format!(
+        "the repository under review is {repo:?}, not {ANVIL_REPO}; Anvil's published \
+         counts and owned page set say nothing about it"
+    )
+}
+
 const EXEMPTION_MARKERS: &[&str] = &[
     "does **not** yet amend existing documents",
     "does not yet amend existing documents",
@@ -41,7 +79,20 @@ pub fn sync_published_counts(
     repo_dir: &Path,
     total_gates: usize,
 ) -> Result<CorpusSync> {
-    let _ = repo;
+    // Ownership is decided BEFORE the corpus is opened at all, not per page and
+    // not after `collect_owned_pages`. Both filesystem reads below belong to
+    // Anvil's own checkout: listing somebody else's `docs/adr` or reading their
+    // `README.md` is something this sync has no reason to do, and an `Err` from
+    // either would be mapped onto `errored` at the gate — blocking every pull
+    // request on that repository on a directory Anvil should never have opened.
+    if !is_anvils_own(repo) {
+        return Ok(CorpusSync {
+            rewritten: Vec::new(),
+            remaining_drift: Vec::new(),
+            not_applicable: Some(not_applicable_reason(repo)),
+        });
+    }
+
     let mut rewritten = Vec::new();
     let mut remaining_drift = Vec::new();
     let pages = collect_owned_pages(repo_dir)?;
@@ -109,19 +160,110 @@ fn rewrite_page(input: &str, total_gates: usize) -> String {
     out = sixty_regex()
         .replace_all(&out, format!("{n}-Gate"))
         .into_owned();
-    for marker in EXEMPTION_MARKERS {
-        if let Some(idx) = out.find(marker) {
-            let start = out[..idx].rfind(['.', '\n']).map(|i| i + 1).unwrap_or(0);
-            let rest = &out[idx + marker.len()..];
-            let end_rel = rest.find('\n').unwrap_or(rest.len());
-            let mut end = idx + marker.len() + end_rel;
-            if end < out.len() && out.as_bytes()[end] == b'\n' {
-                end += 1;
-            }
-            out.replace_range(start..end, "");
-        }
+    // Every occurrence of every variant, taking exactly the marker's own
+    // SENTENCE each time. Deleting in ascending order of the *current* string
+    // (rather than collecting offsets up front) is what keeps the second
+    // occurrence on a line from being sliced at an offset the first deletion
+    // has already invalidated.
+    //
+    // This terminates: `sentence_start` never runs past the marker and
+    // `sentence_end` never stops before the end of it, so every pass removes at
+    // least the marker's own bytes.
+    while let Some((idx, len)) = EXEMPTION_MARKERS
+        .iter()
+        .filter_map(|marker| out.find(marker).map(|i| (i, marker.len())))
+        .min()
+    {
+        let start = sentence_start(&out, idx);
+        let end = with_trailing_newline(&out, start, sentence_end(&out, idx + len));
+        out.replace_range(start..end, "");
     }
     out
+}
+
+/// Characters that end a sentence and BELONG to it, so the deletion consumes
+/// them.
+fn is_terminator(c: char) -> bool {
+    matches!(c, '.' | '?' | '!' | '。')
+}
+
+/// Characters that bound a sentence WITHOUT belonging to it: a markdown cell
+/// delimiter and a line break. They are clamps, so the deletion stops in front
+/// of them and leaves them where they are — eating the `|` merges two cells and
+/// the table stops parsing; eating the `\n` fuses two lines.
+fn is_clamp(c: char) -> bool {
+    matches!(c, '|' | '\n')
+}
+
+/// Whether the terminator at `idx` really ends a sentence here.
+///
+/// `.` does not when the next character is ASCII alphanumeric, which is what
+/// keeps `README.md`, `CHANGELOG.md` and `v1.2` from ending a sentence
+/// mid-word. The exception belongs to `.` alone: `。`, `?` and `!` terminate
+/// whatever follows them, because Korean and Japanese prose puts no space after
+/// `。` and a page may write `Wonderful!Next`. And it is `is_ascii_alphanumeric`
+/// rather than `is_alphanumeric`, so `.md` continues a sentence and `.고시` ends
+/// one.
+fn ends_a_sentence(text: &str, idx: usize, c: char) -> bool {
+    if c != '.' {
+        return true;
+    }
+    match text[idx + c.len_utf8()..].chars().next() {
+        Some(next) => !next.is_ascii_alphanumeric(),
+        None => true,
+    }
+}
+
+/// The byte offset the marker's sentence starts at: walk back to the nearest
+/// boundary, then forward over the spaces that separated it from the sentence
+/// before it.
+fn sentence_start(text: &str, marker_start: usize) -> usize {
+    let mut start = 0;
+    for (i, c) in text[..marker_start].char_indices().rev() {
+        if is_clamp(c) || (is_terminator(c) && ends_a_sentence(text, i, c)) {
+            // A clamp stays put and a terminator belongs to the sentence it
+            // ended, so in both cases the deletion begins after it.
+            start = i + c.len_utf8();
+            break;
+        }
+    }
+    for (i, c) in text[start..marker_start].char_indices() {
+        if c != ' ' && c != '\t' {
+            return start + i;
+        }
+    }
+    marker_start
+}
+
+/// The byte offset the marker's sentence ends at: the first boundary after the
+/// marker, with a terminator consumed by its own encoded length (`。` is three
+/// bytes, and `+ 1` would land mid-character and panic in `replace_range`) and
+/// a clamp left alone. A sentence that simply runs out of page ends there.
+fn sentence_end(text: &str, marker_end: usize) -> usize {
+    for (i, c) in text[marker_end..].char_indices() {
+        let at = marker_end + i;
+        if is_clamp(c) {
+            return at;
+        }
+        if is_terminator(c) && ends_a_sentence(text, at, c) {
+            return at + c.len_utf8();
+        }
+    }
+    text.len()
+}
+
+/// Extends the deletion over the trailing newline only when the whole line goes
+/// with it: the sentence began the line and nothing survives on it afterwards.
+/// Consuming the newline in any other case fuses a surviving prefix or suffix
+/// onto the line below.
+fn with_trailing_newline(text: &str, start: usize, end: usize) -> usize {
+    let began_the_line = start == 0 || text.as_bytes()[start - 1] == b'\n';
+    let line_is_emptied = end < text.len() && text.as_bytes()[end] == b'\n';
+    if began_the_line && line_is_emptied {
+        end + 1
+    } else {
+        end
+    }
 }
 
 fn remaining_claim(text: &str, total_gates: usize) -> Option<String> {

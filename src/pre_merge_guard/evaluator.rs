@@ -2,6 +2,7 @@ use anyhow::Result;
 use tracing::info;
 
 use super::matrix::MatrixRenderer;
+use super::product_bar;
 use super::report::{GateStatus, PreMergeCertificationReport};
 use super::scanner::PreMergeScanner;
 use crate::adr_drift_ratchet::AdrReport;
@@ -155,6 +156,9 @@ impl PreMergeGuard {
         test_suite_passed: bool,
         review_verdict: &str,
         shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
+        // The change's own body: where the Product seat's written problem and
+        // done-when acceptance bar are authored (ADR-0002, Discover §1).
+        pr_body: &str,
     ) -> Result<PreMergeCertificationReport> {
         info!(
             "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
@@ -689,6 +693,15 @@ impl PreMergeGuard {
 
         let shape_status = shape_gate_status(shape_outcome);
 
+        // The Product seat (ADR-0002, Discover §1). The bet and the acceptance
+        // bar are authored on the change under review, so the measurement is a
+        // function of the change's own body and nothing else. Absence is the
+        // defect rather than an unread measurement, so `judge` answers Failed
+        // for a change that wrote no bar — and nothing here may substitute a
+        // softer status for that verdict, because "the author wrote nothing" is
+        // the one case this seat exists for.
+        let product_bar_status = product_bar::judge(pr_body);
+
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
             is_certified_ready: false,
@@ -764,16 +777,7 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
-            // SCAFFOLDING, NOT AN IMPLEMENTATION. The Product seat's gate is
-            // unwritten, so the report carries a placeholder that measures
-            // nothing. `tests/product_seat_done_when_test.rs` specifies what has
-            // to replace it: a `product_bar::judge` call over the change under
-            // review. Those wiring tests are red against this line on purpose —
-            // a gate computed from nothing gates nothing.
-            product_bar_status: GateStatus::NotMeasured {
-                gate_id: "product_bar_status".to_string(),
-                reason: "the Product seat gate is not implemented yet".to_string(),
-            },
+            product_bar_status,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
         };

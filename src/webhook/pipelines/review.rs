@@ -623,6 +623,7 @@ pub async fn execute_pr_review(
         true,
         &review_resp.verdict,
         &shape_outcome,
+        body,
     )?;
 
     // Re-stamp the provenance receipt with the verdict that was actually

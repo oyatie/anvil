@@ -180,22 +180,28 @@ impl VcsPort for GitLaneVcs {
     }
 
     async fn cleanup(&self, lane: LaneWorktree) -> Result<(), LaneError> {
-        // The worktree belongs to whichever repo created it; `git worktree
-        // remove` from inside resolves the owner.
-        let owner = lane.path.clone();
-        let _ = Self::git(
-            &owner,
-            &[
-                "worktree",
-                "remove",
-                "--force",
-                lane.path.to_str().unwrap_or_default(),
-            ],
-            "git worktree remove (lane)",
+        // No `worktree remove --force`: resolve the owning repository first,
+        // delete the lane directory, and prune the stale administrative
+        // entry — the same mechanism the GC uses, with no force verb at all.
+        let owner = Self::git(
+            &lane.path,
+            &["rev-parse", "--git-common-dir"],
+            "git rev-parse (lane cleanup)",
         )
-        .await;
-        if lane.path.exists() {
-            let _ = tokio::fs::remove_dir_all(&lane.path).await;
+        .await
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        let _ = tokio::fs::remove_dir_all(&lane.path).await;
+        if let Some(common) = owner
+            && let Some(repo) = std::path::Path::new(&common).parent()
+        {
+            let _ = Self::git(
+                repo,
+                &["worktree", "prune"],
+                "git worktree prune (lane cleanup)",
+            )
+            .await;
         }
         Ok(())
     }

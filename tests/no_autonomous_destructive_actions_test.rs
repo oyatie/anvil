@@ -78,3 +78,32 @@ fn a_published_claim_about_ci_is_not_made_without_querying_ci() {
         );
     }
 }
+
+/// Change delivery builds branches for review; it must be incapable of the
+/// destructive verbs. No force, no hook-skipping, and — in this build — no
+/// push at all: pushing is the landing step, which arrives with its own
+/// review and its own scan entry here.
+#[test]
+fn change_delivery_cannot_force_push_or_skip_hooks() {
+    let forbidden = [
+        "--force",
+        "--force-with-lease",
+        "\"-f\"",
+        "--no-verify",
+        "\"push\"",
+    ];
+    let mut hits = Vec::new();
+    for (path, text) in sources_under("src/change_delivery") {
+        let code = code_only(&text);
+        for f in forbidden {
+            if code.contains(f) {
+                hits.push(format!("{path}: contains {f}"));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "change_delivery grew a destructive verb; landing changes must arrive \
+         with their own review and their own entry in this scan: {hits:?}"
+    );
+}

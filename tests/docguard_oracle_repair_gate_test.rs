@@ -26,16 +26,16 @@
 //! race against any other thread reading it, and a `cargo test` binary runs its
 //! cases in parallel threads.
 //!
-//! ## Why one `#[test]` and sixteen case functions
+//! ## Why one `#[test]` and eighteen case functions
 //!
 //! The environment mutation is only sound if nothing else in this process is
-//! running while it happens. Sixteen `#[test]` functions each neutralising
+//! running while it happens. Eighteen `#[test]` functions each neutralising
 //! `PATH` under a `Once` would still race the first mutation against every other
 //! case's `tempdir()` (which reads `TMPDIR`), which is precisely the race the
 //! three-binary split exists to avoid. One `#[test]` gives a single-threaded
 //! binary and makes the mutation sound by construction.
 //!
-//! The cost is that the sixteen behaviours share one test name, and it is paid
+//! The cost is that the eighteen behaviours share one test name, and it is paid
 //! down rather than hidden: each case is a named function with its own doc
 //! comment, they are run through `catch_unwind` so **one failure does not mask
 //! the others**, every case is reported individually as `ok` or `FAILED`, and the
@@ -55,25 +55,31 @@
 //! `tests/docguard_oracle_repair_test.rs`, because none of them can reach the
 //! probe at all.
 //!
-//! ## Five of the sixteen cases here are FENCES, not red evidence
+//! ## Six of the eighteen cases here are FENCES, not red evidence
 //!
-//! Every case in this binary is currently blocked at `with_probe_override`'s
-//! `todo!()` (`src/doc_guard/mod.rs:163`), so a run reports 16/16 failing. That
-//! number must not be read as sixteen behaviours failing against the three live
-//! defects, and this file used to let it be read that way.
+//! Seventeen of the eighteen are currently blocked at a seam `todo!()`
+//! (`src/doc_guard/mod.rs:172` and `:228`), so an unmodified run reports 17
+//! failing and one passing. That number must not be read as seventeen
+//! behaviours failing against the three live defects, and this file used to let
+//! it be read that way.
 //!
-//! Measured, not assumed: with ONLY the two scaffolding bodies filled in
-//! (`with_probe_override` -> `Self { probe: Probe::Overridden(outcome) }`, and
+//! Measured, not assumed: with ONLY the four scaffolding bodies filled in
+//! (`with_probe_override` -> `Self { probe: Probe::Overridden(outcome) }`;
+//! `with_probe_output_override` -> `Self { probe: Probe::SuppliedOutput(output) }`;
 //! the `Probe::Overridden` arm in `evaluate_doc_parity` ->
-//! `return outcome.clone().map_err(anyhow::Error::msg)`) and nothing else
-//! touched — no defect repaired — this binary reports **11 failing on test-file
-//! assertion lines and these five passing**:
+//! `return outcome.clone().map_err(anyhow::Error::msg)`; the
+//! `Probe::SuppliedOutput` arm -> `return classify_probe_output(..)`) and
+//! nothing else touched — no defect repaired — this binary reports **12 failing
+//! on test-file assertion lines and these six passing**:
 //!
 //! * `a_probe_that_produced_no_judgement_is_errored_and_never_a_pass`
 //! * `a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do`
 //! * `a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate`
 //! * `published_drift_the_sync_could_not_repair_fails_anvils_own_gate`
 //! * `a_finding_the_gate_reached_before_the_probe_is_the_finding_it_reports`
+//! * `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path`
+//!   (which needs no seam at all, and so is the one case that passes on an
+//!   unmodified tree)
 //!
 //! They are regression fences on arms of `ensure_documentation_parity` that are
 //! already CORRECT on `main` — the same category, and the same disclosure, that
@@ -118,24 +124,33 @@
 //!   which is the placement this header claims to have killed. The repair that
 //!   breaks it is an early `if let Probe::Overridden(Err(e)) = &self.probe`
 //!   return sitting between the corpus-sync match and the frontmatter loop.
-//!   MEASURED, not argued: with that mutant applied on top of the two
-//!   scaffolding bodies this binary reports 12 failing rather than 11, and the
-//!   one case that flips is this one — every other `Err`-arm assertion in all
-//!   four binaries is satisfied by the mutant. What the mutant costs is that no
-//!   test in any binary then reaches the real `Err(e) =>` arm at the
+//!   MEASURED, not argued: with that mutant applied on top of the seam
+//!   scaffolding this binary reports one more failing case than without it, and
+//!   the one case that flips is this one — every other `Err`-arm assertion in
+//!   all four binaries is satisfied by the mutant. What the mutant costs is
+//!   that no test in any binary reaches the real `Err(e) =>` arm at the
 //!   `evaluate_doc_parity` call site, which is the arm whose historical collapse
 //!   into `is_doc_sufficient: true` made gate 1 unfailable.
+//! * The sixth is
+//!   `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path`,
+//!   and it fences something no other case in any binary touches: the
+//!   PRODUCTION of a probe failure, as opposed to its consumption. Every case
+//!   above hands the gate a failure string a test wrote. This one hands it
+//!   nothing, lets the real probe closure run with an empty `PATH`, and reads
+//!   the failure back out of the report — so `run_bounded_for`,
+//!   `run_with_watchdog` and the watchdog's own fallback are all traversed by
+//!   the product rather than described by a comment.
 //!
 //! Nothing about them needs to change; they are correctly aimed and correctly
 //! falsifiable. What was wrong was publishing "16/16 red" as behavioural red
-//! evidence when five of the sixteen prove only that the seam is unimplemented
+//! evidence when several of the cases prove only that a seam is unimplemented
 //! and then go green. On a branch whose subject is ADR-0002's honesty law, a
 //! published number that does not match the measurement is that same defect one
 //! level up.
 //!
-//! ## One more thing the 11 does not say, and should
+//! ## One more thing the failing count does not say, and should
 //!
-//! Of those eleven, FOUR die inside the `skipped_sync_reason()` helper rather
+//! Of those failing cases, FOUR die inside the `skipped_sync_reason()` helper rather
 //! than on the assertion the case is named for —
 //! `the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason`,
 //! `the_gate_applies_the_corpus_sync_to_anvils_own_repository`,
@@ -148,12 +163,35 @@
 //! and once ownership lands the four proceed to the assertions they are named
 //! for. But it means the third of them,
 //! `the_gate_applies_the_corpus_sync_to_anvils_own_repository`, is effectively a
-//! fifth fence at review time: its own subject (Anvil's sync still runs at the
+//! further fence at review time: its own subject (Anvil's sync still runs at the
 //! gate) is correct on `main`, and its redness today comes from the helper.
 //! Recorded here so the number is read for what it measures.
+//!
+//! ## The two cases at the end of this file, and what they close
+//!
+//! `PROBE_FAILURES` is five strings a test wrote, and every case that uses them
+//! pins what the gate DOES with a probe failure. Until now nothing in any binary
+//! ran the code that decides whether a probe run IS a failure, which is the one
+//! arm this whole branch keeps naming as the one whose collapse made gate 1
+//! unfailable. Two cases close that, neither of them spawning anything:
+//!
+//! * `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path`
+//!   runs the real probe path with an empty `PATH`, so `run_bounded_for` fails
+//!   to resolve `agy` before any process exists and the failure the gate reports
+//!   is one the product produced.
+//! * `the_supplied_probe_output_is_classified_by_the_exported_classifier`
+//!   supplies a completed probe RUN — exit status, stdout, stderr — through
+//!   `DocGuard::with_probe_output_override`, and requires the gate's report to
+//!   agree with what `doc_guard::classify_probe_output` returns for that same
+//!   run. `classify_probe_output`'s own behaviour is pinned directly in
+//!   `tests/docguard_oracle_repair_test.rs`; this is the binding that stops a
+//!   second, private copy from deciding it while the exported one stays
+//!   correctly repaired and uncalled.
 
 use anvil::doc_guard::corpus_sync::sync_published_counts;
-use anvil::doc_guard::{DocGuard, DocGuardReport, DocParityEvaluation, FrontmatterValidator};
+use anvil::doc_guard::{
+    DocGuard, DocGuardReport, DocParityEvaluation, FrontmatterValidator, classify_probe_output,
+};
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::report::TOTAL_GATES;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -200,6 +238,13 @@ const MISSING_REASON: &str = "newly_public is a new public API with no reference
 /// The strings are the shapes the real call site produces (spawn failure,
 /// non-zero exit, timeout, unparseable output, watchdog supervision failure);
 /// their wording is the test's, and it is only ever asserted as pass-through.
+///
+/// These strings therefore say nothing about whether the product produces `Err`
+/// in those five situations — they are the CONSUMPTION side only. The production
+/// side is pinned separately and against the product's own output, by the two
+/// cases at the end of this file and by the `classify_probe_output` /
+/// `probe_supervision_failure` section of
+/// `tests/docguard_oracle_repair_test.rs`.
 const PROBE_FAILURES: &[&str] = &[
     "failed to run doc parity probe: No such file or directory (os error 2)",
     "doc parity probe exited with status exit status: 1: permission check failed for command",
@@ -497,6 +542,52 @@ fn probe_failed(reason: &str) -> Result<DocParityEvaluation, String> {
     Err(reason.to_string())
 }
 
+/// A completed process' exit status, built rather than obtained, so a probe run
+/// of a given shape can be handed to the gate without any process existing.
+///
+/// STATED COST: there is no portable constructor, so on a non-unix target this
+/// fixture cannot be built. It panics there rather than letting the case that
+/// needs it disappear from the run.
+#[cfg(unix)]
+fn exit_status(code: i32) -> std::process::ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    std::process::ExitStatus::from_raw(code << 8)
+}
+
+#[cfg(not(unix))]
+fn exit_status(_code: i32) -> std::process::ExitStatus {
+    panic!(
+        "this fixture needs a constructed `ExitStatus`, which only the unix \
+         extension trait provides. The behaviour is not satisfied on this \
+         platform, it is unmeasured on it"
+    )
+}
+
+/// A completed probe run: what `run_bounded_for` hands the classification.
+fn probe_output(code: i32, stdout: &str, stderr: &str) -> std::process::Output {
+    std::process::Output {
+        status: exit_status(code),
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+
+/// A judgement of sufficiency, printed the way the probe's own prompt asks for
+/// it. Held as stdout rather than as a `DocParityEvaluation` because these two
+/// constants exist to be PARSED by the code under test.
+const PRINTED_SUFFICIENT: &str = "```json\n\
+     {\"is_doc_sufficient\": true, \"missing_doc_summary\": null, \
+     \"doc_files_to_update\": [], \"suggested_adr_title\": null}\n\
+     ```\n";
+
+/// A judgement of insufficiency, naming one file, printed the same way.
+const PRINTED_INSUFFICIENT: &str = "```json\n\
+     {\"is_doc_sufficient\": false, \"missing_doc_summary\": \
+     \"newly_public is a new public API with no reference page\", \
+     \"doc_files_to_update\": [\"docs/reference/newly-public.md\"], \
+     \"suggested_adr_title\": null}\n\
+     ```\n";
+
 /// `true` when the outcome is a judgement of sufficiency. Only meaningful for
 /// the `Ok` arm; used to label the two-verdict loops.
 fn verdict_of(outcome: &Result<DocParityEvaluation, String>) -> bool {
@@ -633,15 +724,29 @@ fn reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identica
 /// does not catch it either, because that case supplies `sufficient()`, so the
 /// early return is never taken there.
 ///
-/// What it costs is the whole point. Under that wiring NO test in any binary
-/// ever reaches the real `Err(e) =>` arm at the `self.evaluate_doc_parity(..)`
-/// call site, nor `evaluate_doc_parity`'s own watchdog fallback. That arm is
-/// precisely the one whose historical collapse into `is_doc_sufficient: true`
-/// made gate 1 unfailable — the comment recording it is still in the source. An
-/// implementer who, while wiring the seam, reverts that fallback to
+/// What it costs is the whole point. Under that wiring NO test that supplies a
+/// probe OUTCOME reaches the real `Err(e) =>` arm at the
+/// `self.evaluate_doc_parity(..)` call site. That arm is precisely the one whose
+/// historical collapse into `is_doc_sufficient: true` made gate 1 unfailable —
+/// the comment recording it is still in the source. An implementer who, while
+/// wiring the seam, reverts it to
 /// `Ok(DocParityEvaluation { is_doc_sufficient: true, .. })` would ship an
-/// unfailable gate 1 with every gate case in this binary green, because the five
-/// `PROBE_FAILURES` never traverse it.
+/// unfailable gate 1 with every `PROBE_FAILURES` case in this binary green,
+/// because none of the five traverses it.
+///
+/// CORRECTED, and the correction matters: an earlier version of this paragraph
+/// added "nor `evaluate_doc_parity`'s own watchdog fallback", and went on to
+/// treat that as something the mutant alone cost. It is not the mutant's doing.
+/// The ACCEPTED design has the override answer at the point the judgement is
+/// produced, which is before `run_with_watchdog` is entered at all, so no case
+/// that supplies an outcome was ever going to reach the watchdog or its
+/// fallback. Publishing that as a property the suite had was the same defect
+/// this branch exists to remove, one level up. It is now a property the suite
+/// really has, and it is
+/// `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path` at
+/// the end of this file that gives it: nothing supplied, nothing spawned, the
+/// real closure and the real supervision run, and the failure the gate reports
+/// is one the product produced.
 ///
 /// # What is asserted, and why it is behaviour rather than structure
 ///
@@ -1108,18 +1213,39 @@ fn an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply() {
     // assurance as issue #27's silent pass, published on the one repository the
     // sync does own.
     //
-    // So two further assertions, neither of which invents wording:
+    // So three further assertions, none of which invents wording:
     //
     //   1. The applied summary must not end mid-statement — no dangling label
     //      character, no trailing whitespace. This kills the whole
-    //      `unwrap_or_default()` family whose fixed prose ends in a separator,
-    //      while still permitting `format!("{base} {skip}")`, which makes no
-    //      false claim.
+    //      `unwrap_or_default()` family whose fixed prose ends in a separator.
     //   2. Whatever text the SKIPPED summary adds must be shared between two
     //      different skipped repositories and must not be the bare reason. Under
     //      the wrong implementation the added text IS the reason, so the two
     //      runs share only whatever prefix the two reasons share; under a correct
     //      one they share the sentence that introduces the reason.
+    //   3. That shared sentence, named rather than inferred: the text a skipped
+    //      run adds with its own reason removed. It must be the same for both
+    //      skipped repositories, it must contain actual words, and it must be
+    //      ABSENT from the applied summary. That last clause is the direct,
+    //      wording-free statement of the requirement this case is named for, and
+    //      it is what kills the one surviving shape of the defect — hoisting the
+    //      fixed announcement out of the Option so it lands on every summary and
+    //      only the reason stays conditional. See the comment on assertion 3 for
+    //      why assertions 1 and 2 both pass that mutant.
+    //
+    // STATED COST of assertion 3, recorded so it reads as a decision rather than
+    // an accident: together with assertion 1 it forbids `format!("{base} {skip}")`
+    // — the base summary, a space, and the reason with no announcing words of the
+    // gate's own. The argument for forbidding it is that this suite deliberately
+    // does NOT pin the wording of `not_applicable` (only that it is non-empty and
+    // varies with the repository), so under that shape the entire statement "the
+    // sync did not apply" rests on a string nothing requires to say it: a reason
+    // of `"not applicable"` satisfies every other assertion here and publishes a
+    // scorecard row that reads as an aside. Requiring the gate to contribute the
+    // announcement is what makes issue #27's "the skip must not read as a silent
+    // pass" enforceable at all. The cost is that one otherwise-blameless
+    // composition is out of bounds; the owner may veto this and take the weaker
+    // reading, in which case assertion 3's alphabetic clause is the line to drop.
     //
     // STATED REQUIREMENT, so this is a decision and not an artefact: the summary
     // of a *skipped* sync is the summary of an *applied* sync that had nothing
@@ -1358,6 +1484,89 @@ fn an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply() {
              of the reason itself — so the words that announce it were \
              interpolated into the applied summary too, and this Anvil pull \
              request is being told the sync did not apply while it demonstrably \
+             did.\napplied:  {}\nskipped 1: {}\nskipped 2: {}",
+            anvil.summary,
+            console.summary,
+            other.summary
+        );
+
+        // Assertion 3: the introducing phrase itself, named and required to be
+        // absent from the applied summary.
+        //
+        // Assertions 1 and 2 leave one shape of the very defect this case is
+        // named for alive. HOIST the fixed phrase out of the Option and
+        // interpolate only the reason:
+        //
+        //     let summary = format!(
+        //         "{base} Corpus sync did not apply{}",
+        //         not_applicable.map(|r| format!(": {r}")).unwrap_or_default(),
+        //     );
+        //
+        // Then `anvil.summary` ends "…Corpus sync did not apply" — a flat false
+        // statement published on every Anvil pull request, on the one repository
+        // the sync does own — and every assertion above passes it. It ends on
+        // `y`, so assertion 1's trim and dangling-character loop pass. It is a
+        // literal prefix of both skipped summaries, so `contains` and
+        // `strip_prefix` pass. The text each skipped run adds is `": REASON"`,
+        // so `shared` is `": oyatie/"`: non-empty, and not a prefix of either
+        // reason, so assertion 2 passes too. The whole suite stays green while
+        // gate 1's scorecard row tells every Anvil pull request the corpus sync
+        // did not apply while it demonstrably did.
+        //
+        // So name the phrase rather than infer it: the introducer is what the
+        // skipped run added with its own reason taken back out. Under a correct
+        // implementation that is the fixed prose announcing the skip; under the
+        // mutant it is the punctuation `": "` that was left holding the reason
+        // after the words were hoisted away.
+        //
+        // MEASURED, not argued — two runs, both reverted. With a nine-line
+        // ownership guard in `sync_published_counts` and
+        // `format!("{base} Corpus sync did not apply: {reason}")` on both summary
+        // sites, this case passes. Hoisting the fixed phrase out of the Option —
+        // `format!("{base} Corpus sync did not apply{}", opt.map(|r| format!(": {r}")).unwrap_or_default())`
+        // — leaves assertions 1 and 2 green and dies here, reporting
+        // `The skipped run added only ": "` beside an applied summary that ends
+        // "...Corpus sync did not apply".
+        assert!(
+            added_for_console.contains(&reason) && added_for_oyatie.contains(&other_reason),
+            "is_doc_sufficient={verdict}: the reason must live in the text the \
+             skipped run ADDED, not straddle the boundary with the applied \
+             summary.\napplied:  {}\nskipped 1: {}\nskipped 2: {}",
+            anvil.summary,
+            console.summary,
+            other.summary
+        );
+        let introducer = added_for_console.replace(reason.as_str(), "");
+        let other_introducer = added_for_oyatie.replace(other_reason.as_str(), "");
+        assert_eq!(
+            introducer, other_introducer,
+            "is_doc_sufficient={verdict}: with each run's own reason removed, what \
+             remains is the implementation's fixed announcement of the skip, and it \
+             does not vary with which repository was skipped.\napplied:  {}\n\
+             skipped 1: {}\nskipped 2: {}",
+            anvil.summary, console.summary, other.summary
+        );
+        assert!(
+            introducer.chars().any(char::is_alphabetic),
+            "is_doc_sufficient={verdict}: the gate must say IN WORDS that the sync \
+             did not apply. Nothing in this suite pins the wording of \
+             `not_applicable`, so a summary that adds only punctuation around it \
+             leaves the whole announcement to a string the gate does not own — and \
+             the shape that gets here is the one that hoisted the announcement out \
+             of the Option and onto the applied summary, where it is false. The \
+             skipped run added only {introducer:?}.\napplied:  {}\nskipped 1: {}\n\
+             skipped 2: {}",
+            anvil.summary,
+            console.summary,
+            other.summary
+        );
+        assert!(
+            !anvil.summary.contains(&introducer),
+            "is_doc_sufficient={verdict}: this is the requirement the case is named \
+             for, stated without inventing a word of it — the phrase that announces \
+             a skipped sync, {introducer:?}, must be absent from the summary of a \
+             sync that APPLIED. Seeing it there means every Anvil pull request is \
+             told the corpus sync did not apply while it demonstrably \
              did.\napplied:  {}\nskipped 1: {}\nskipped 2: {}",
             anvil.summary,
             console.summary,
@@ -1990,6 +2199,210 @@ fn naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass() {
 }
 
 // =========================================================================
+// Issue #29 at the source of the judgement — where `Err` is PRODUCED
+// =========================================================================
+//
+// Every case above supplies a probe outcome and pins what the gate does with
+// it. None of them runs the code that DECIDES what that outcome is, so until
+// now every `Err` this suite consumed was a string a test wrote. The two cases
+// here close that: the first drives the real probe path end to end with nothing
+// for it to spawn, and the second binds the gate's classification of a probe run
+// to the exported function that performs it. `classify_probe_output`'s own
+// behaviour — which stdout is a judgement and which is not — is pinned directly
+// in `tests/docguard_oracle_repair_test.rs`, where no environment is touched.
+
+/// A probe that could not run at all is Errored — through the real call path,
+/// with nothing supplied and nothing spawned.
+///
+/// FENCE, disclosed: this passes today. It is here because it is the only case
+/// in any binary that traverses `evaluate_doc_parity`'s real probe closure, the
+/// `run_with_watchdog` call around it, and the watchdog's fallback — the arm
+/// whose historical collapse into `is_doc_sufficient: true` made gate 1
+/// unfailable. Every `PROBE_FAILURES` case reaches the gate's handling of a
+/// failure while leaving the production of one untouched, and the accepted seam
+/// design (the override answers at the judgement point, before the watchdog is
+/// entered) is what makes that so.
+///
+/// Nothing is spawned. `PATH` is an empty directory for the whole of this
+/// binary, so `Command::new("agy")` fails to resolve and `run_bounded_for`
+/// returns before any process exists — which is exactly the "spawn failure"
+/// shape `PROBE_FAILURES[0]` writes down by hand, obtained here from the product
+/// instead. The failure text is therefore never asserted against a literal: it
+/// is read out of the report and required to reach the summary.
+fn a_live_probe_that_could_not_run_is_errored_through_the_real_call_path() {
+    // Anvil's own repository and an empty checkout, so the corpus sync applies,
+    // finds nothing, and returns first with nothing of its own to report. Every
+    // subsequent step is live, and an empty `files_created_or_updated` below
+    // cannot be a rewritten page in disguise.
+    let dir = tempdir().unwrap();
+    let ctx = diff_ctx(ANVIL, dir.path(), &["src/lib.rs"]);
+    let report = block_on(async {
+        DocGuard::new("low".to_string())
+            .ensure_documentation_parity(ANVIL, dir.path(), &ctx, "feat: add a public API", "")
+            .await
+            .expect("a probe that could not run is a report, not a propagated error")
+    });
+
+    let errored = report.errored.as_deref().unwrap_or_else(|| {
+        panic!(
+            "the probe never ran, so nothing was learned about this diff. That is \
+             absent evidence and it must be Errored — GateStatus::Errored blocks \
+             without claiming the documentation is deficient. summary was: {}",
+            report.summary
+        )
+    });
+    assert!(
+        !errored.trim().is_empty(),
+        "an Errored gate that states nothing cannot be acted on: {errored:?}"
+    );
+    assert!(
+        !report.is_sufficient,
+        "a probe that never ran cannot have judged the diff documented: {}",
+        report.summary
+    );
+    assert!(
+        report.files_created_or_updated.is_empty(),
+        "with no judgement there is no file list to act on: {:?}",
+        report.files_created_or_updated
+    );
+    assert!(
+        report.summary.contains(errored),
+        "the gate must state why it could not evaluate parity, so the failure can \
+         be told apart from a documentation finding. errored: {errored:?}, \
+         summary: {}",
+        report.summary
+    );
+}
+
+/// The gate classifies a completed probe run exactly as `classify_probe_output`
+/// classifies it.
+///
+/// This is the binding assertion, and it is the same one
+/// `a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator`
+/// makes for `doc_parity_status`: the expectation is not written down here, it
+/// is COMPUTED by calling the exported function, and the report the gate
+/// produced for the same probe run must agree with it. A second, private copy of
+/// the classification inside the probe closure — the shape that reintroduces
+/// "ran, printed nothing usable, therefore sufficient" while leaving the
+/// exported function correctly repaired, publicly visible and uncalled — cannot
+/// diverge without failing here.
+///
+/// Nothing is spawned: the probe run is supplied, and only the run. What the
+/// gate does with it is production code all the way down.
+///
+/// STATED EXCLUSION: this does not assert that the classification happens
+/// *inside* the watchdog-supervised closure, only that it is the exported
+/// function's answer that reaches the report. Requiring the watchdog's wrapping
+/// would pin how the error is composed rather than what it says, and
+/// `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path` above
+/// already traverses that closure for real.
+///
+/// MEASURED, not argued — three runs, all reverted:
+///
+/// * With the four scaffolding bodies filled and `is_sufficient` corrected on
+///   the generate path, this case passes on all four runs. It is satisfiable by
+///   an obvious correct implementation.
+/// * With a second, private copy in the `SuppliedOutput` arm that collapses
+///   "ran, printed nothing usable" into `is_doc_sufficient: true` — the exact
+///   historical defect, with the exported function left correctly repaired and
+///   uncalled — it fails on "a successful run that printed no judgement" with
+///   "Absent evidence is never a pass".
+/// * With a private copy that returns `Err` but words it differently, it fails
+///   on the same run with the classifier's message and the reported one printed
+///   side by side. Divergence in either direction is caught.
+fn the_supplied_probe_output_is_classified_by_the_exported_classifier() {
+    let runs: &[(&str, i32, &str, &str)] = &[
+        ("a judgement of sufficiency", 0, PRINTED_SUFFICIENT, ""),
+        ("a judgement of insufficiency", 0, PRINTED_INSUFFICIENT, ""),
+        // The historical defect, in the shape the product actually meets it: the
+        // probe ran, exited zero, and printed prose. It said nothing about this
+        // diff.
+        (
+            "a successful run that printed no judgement",
+            0,
+            "I was unable to review this diff.\n",
+            "",
+        ),
+        // A judgement on stdout AND a non-zero exit: the run failed, so its
+        // answer is not taken. Nothing else in this suite drives that pairing.
+        (
+            "a non-zero exit that printed a judgement anyway",
+            1,
+            PRINTED_SUFFICIENT,
+            "permission check failed for command",
+        ),
+    ];
+
+    for (label, code, stdout, stderr) in runs {
+        let expected = classify_probe_output(exit_status(*code), stdout, stderr);
+
+        let dir = tempdir().unwrap();
+        let ctx = diff_ctx(ANVIL, dir.path(), &["src/lib.rs"]);
+        let report = block_on(async {
+            DocGuard::with_probe_output_override(
+                "low".to_string(),
+                probe_output(*code, stdout, stderr),
+            )
+            .ensure_documentation_parity(ANVIL, dir.path(), &ctx, "feat: add a public API", "")
+            .await
+            .expect("the gate reports, it does not propagate")
+        });
+
+        match expected {
+            Ok(eval) => {
+                assert!(
+                    report.errored.is_none(),
+                    "{label}: `classify_probe_output` obtained a judgement from this \
+                     run, so the gate has evidence and this is not absent evidence: \
+                     {:?}",
+                    report.errored
+                );
+                assert_eq!(
+                    report.is_sufficient, eval.is_doc_sufficient,
+                    "{label}: the gate's verdict must be the verdict the exported \
+                     classifier read out of this run. summary: {}",
+                    report.summary
+                );
+            }
+            Err(e) => {
+                let errored = report.errored.as_deref().unwrap_or_else(|| {
+                    panic!(
+                        "{label}: `classify_probe_output` obtained no judgement from \
+                         this run, so the gate has none either. Absent evidence is \
+                         never a pass. summary: {}",
+                        report.summary
+                    )
+                });
+                assert!(
+                    errored.contains(&e.to_string()),
+                    "{label}: the reason the gate reports must be the reason the \
+                     exported classifier gave, or a second private copy is deciding \
+                     this and the exported one is decoration.\nclassifier: {}\n\
+                     reported:   {errored}",
+                    e
+                );
+                assert!(
+                    !report.is_sufficient,
+                    "{label}: no judgement was obtained, so the diff was not judged \
+                     documented: {}",
+                    report.summary
+                );
+                assert!(
+                    report.files_created_or_updated.is_empty(),
+                    "{label}: with no judgement there is no file list to act on: {:?}",
+                    report.files_created_or_updated
+                );
+                assert!(
+                    report.summary.contains(errored),
+                    "{label}: the summary a contributor reads must carry the reason: {}",
+                    report.summary
+                );
+            }
+        }
+    }
+}
+
+// =========================================================================
 // The single entry point
 // =========================================================================
 
@@ -2078,9 +2491,17 @@ fn the_documentation_gate_is_pinned_with_no_agy_reachable_on_path() {
             "naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass",
             naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass,
         ),
+        (
+            "a_live_probe_that_could_not_run_is_errored_through_the_real_call_path",
+            a_live_probe_that_could_not_run_is_errored_through_the_real_call_path,
+        ),
+        (
+            "the_supplied_probe_output_is_classified_by_the_exported_classifier",
+            the_supplied_probe_output_is_classified_by_the_exported_classifier,
+        ),
     ];
 
-    // `catch_unwind` so that one red case does not hide the other fifteen: a
+    // `catch_unwind` so that one red case does not hide the other seventeen: a
     // run of this binary reports every behaviour that is failing, which is the
     // property a single aggregating test would otherwise cost.
     let mut failures: Vec<String> = Vec::new();

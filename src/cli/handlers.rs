@@ -608,7 +608,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             state
                 .merge_enlister
-                .enlist_into_merge_queue(&repo, pr)
+                .enlist_into_merge_queue(&repo, pr, None)
                 .await?;
         }
         Commands::HealQueue { repo, pr } => {

@@ -12,129 +12,148 @@
 //!
 //! Issue #18 — `ensure_approving_review` submits a formal GitHub `APPROVE`
 //! whose body asserts "All automated review, documentation parity, clean
-//! architecture, and safety gates have passed with 100% compliance". That
-//! sentence is a string literal in a function that receives no report. It is
-//! written into the permanent review record of the pull request, so a reader
-//! cannot tell a genuinely certified PR from one enlisted with zero gates run.
+//! architecture, and safety gates have passed with 100% compliance", and
+//! `post_enlistment_note` follows it with "Pre-Merge Certification 100% Green".
+//! Both sentences are string literals in functions that receive no report. They
+//! are written onto the pull request, so a reader cannot tell a genuinely
+//! certified PR from one enlisted with zero gates run.
+//!
+//! # Why the entry point takes the evidence
+//!
+//! The first version of this suite pinned issue #17 entirely by reading
+//! production source: it looked for a call to the admission seam near each
+//! door. A source window can show that a token is present and has a syntactic
+//! consequence. It cannot show that the token is on the path that matters, and
+//! an implementation that wrote the guard as
+//! `if let Some(r) = self.cached_report(..).await { Self::admission_refusal(Some(&r))?; }`
+//! — with `cached_report` returning `None` — satisfied every such scan while
+//! admitting every pull request on no evidence at all. The check being
+//! conditional on the evidence existing *is* the bug, and the window was opened
+//! inside the conditional.
+//!
+//! So "no report" is made a value the entry point must answer for rather than a
+//! state it cannot observe: `enlist_into_merge_queue` takes
+//! `Option<&PreMergeCertificationReport>`, and
+//! `the_merge_queue_entry_point_refuses_the_evidence_it_was_handed` calls it
+//! with `None` and with two reports that must not merge, and requires each to
+//! come back refused. That is behaviour, not a scan, and it holds whatever
+//! shape the guard is written in. What remains for source scans is the part no
+//! in-process call can reach: which callers exist, what they hand over, and
+//! what the two publishing functions weld into the text they sign.
 //!
 //! # Premortem
 //!
 //! Assume both fixes shipped and then failed. The ways they can have failed,
 //! each turned into a test below:
 //!
-//! P1. The check is added to `enlist_into_merge_queue` but reads
-//!     `is_certified_ready` instead of `is_admissible`, so a report that
-//!     certifies while three gates produced no measurement still merges — the
-//!     exact distinction the two predicates exist to draw.
-//!     -> `a_certified_report_with_an_unmeasured_gate_is_refused_and_the_gate_is_named`.
+//! P1. The check reads `is_certified_ready` instead of `is_admissible`, so a
+//!     report that certifies while three gates produced no measurement still
+//!     merges — the exact distinction the two predicates exist to draw.
+//!     -> `a_certified_report_with_an_unmeasured_gate_is_refused_and_the_gate_is_named`,
+//!        and the same report as a case of the entry-point test.
 //! P2. A caller that cannot obtain a report treats "no report" as "nothing
 //!     objected" and enlists. Absent configuration is not permission.
-//!     -> `evidence_that_was_never_obtained_does_not_admit_a_pull_request`.
-//! P3. The refusal is a silent `return Ok(())`, or the caller throws it away.
-//!     Nothing merges and nobody can say why; the operator concludes the daemon
-//!     is wedged and disables it.
+//!     -> `evidence_that_was_never_obtained_does_not_admit_a_pull_request`,
+//!        and `None` as a case of the entry-point test.
+//! P3. The refusal is a silent `return Ok(())`, or the caller throws it away,
+//!     or it reaches a log inside a detached task and never the requester.
+//!     Nothing merges and nobody can say why.
 //!     -> every refusal test asserts a reason;
-//!        `no_door_into_the_merge_queue_is_left_unchecked` requires the refusal
-//!        to divert control flow rather than merely be mentioned, and
 //!        `no_path_drops_a_merge_queue_refusal_on_the_floor` bans discarding the
-//!        outcome by shape — `let _`, a bare `_ =`, `.ok()`, `.unwrap_or*`,
-//!        `drop(`.
+//!        outcome at the call site, and
+//!        `the_enlist_api_does_not_answer_success_for_an_enlistment_it_has_not_performed`
+//!        covers the layer that test cannot see.
 //! P4. Over-correction: the precondition refuses everything, including a
 //!     genuinely certified, fully measured pull request. I1 cuts both ways —
 //!     absent evidence is not a pass and present evidence is not an accusation.
 //!     -> `a_fully_measured_and_certified_report_admits_the_pull_request`.
-//! P5. One or two of the three ungated doors are fixed and the third is not,
-//!     which is how the defect arose in the first place.
-//!     -> `no_door_into_the_merge_queue_is_left_unchecked`, a mechanism over
-//!        source (I22) rather than a reviewer's memory. It accepts either
-//!        design: one check at the entry point, or a check at every caller.
+//! P5. The entry point is fixed and the callers keep passing `None`, so nothing
+//!     ever merges again; or a caller manufactures the report it hands over,
+//!     which is the same defect wearing a report's clothes.
+//!     -> `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`.
 //! P6. The blanket claim is deleted from `ensure_approving_review` and reappears
 //!     a few lines down in the enlistment note, or moves into a `const`, a
 //!     helper, or a sibling file. The struct is honest, the published comment
 //!     is not — and the comment is what a human reads.
-//!     -> `no_published_string_claims_a_compliance_total_that_no_gate_produced`
-//!        scans every source file that defines or feeds what Anvil publishes,
-//!        not one function.
+//!     -> the note is held to the same derivation rule as the review: both
+//!        seams are exercised by `the_endorsement_differs_when_the_evidence_differs`
+//!        and both publishers by
+//!        `nothing_anvil_publishes_is_written_by_a_function_that_holds_no_report`.
+//!        `no_published_string_claims_a_compliance_total_that_no_gate_produced`
+//!        is a cheap backstop over eight words, not a substitute for either.
 //! P7. `approval_summary` is implemented correctly and never called: the
-//!     production path keeps writing its own sentence with no report in scope.
-//!     -> `the_approving_review_is_not_written_by_a_function_that_holds_no_report`.
+//!     production path keeps writing its own sentence with no report in scope,
+//!     or calls the seam with a literal `None` and publishes a fallback.
+//!     -> `nothing_anvil_publishes_is_written_by_a_function_that_holds_no_report`.
 //! P8. The claim is reworded rather than derived — a different literal, equally
 //!     unmeasured, identical for every pull request in the fleet.
 //!     -> `the_endorsement_differs_when_the_evidence_differs`, which pins
 //!        derivation without pinning one wording, on a pair of reports that are
-//!        *both* admissible so an endorsement is actually published for each;
-//!        and `an_endorsement_asserts_no_total_when_a_gate_only_warned`, the one
-//!        test that reads what Anvil signs onto a pull request it admits.
+//!        *both* admissible so a publication is actually produced for each.
 //! P9. The text is derived from `unmeasured_gates` only, so a gate that
 //!     `Errored` — configured, attempted, no result — is still described as
 //!     having passed.
-//!     -> `an_endorsement_asserts_no_total_when_a_gate_errored`.
+//!     -> `an_endorsement_asserts_no_total_when_a_gate_errored`, and
+//!        `a_report_that_certifies_while_a_gate_errored_is_still_refused`.
 //! P10. The text is derived from the ready-made `gate_counts()`, which scores
 //!     `NotMeasured` as acceptable and so reports "72 of 72 gates passed" for a
 //!     report where three gates measured nothing. Honest-looking, asserted on
 //!     behalf of nobody's measurement, and it trips no ban on totality wording.
 //!     -> the two `asserts_no_total` tests carry a positive obligation as well
-//!        as the ban: an endorsement published over an unmeasured or errored
-//!        gate must name that gate or say how many there were.
+//!        as the ban: a publication made over an unmeasured or errored gate must
+//!        name that gate or say how many there were.
 //!
 //! # What the source scans will and will not accept
 //!
-//! The four mechanisms below read production source, because these paths shell
-//! out to `gh` and take an `AppState` of ninety `Arc` fields: the wiring
-//! between a decision and a door cannot be exercised in-process without a
-//! network. What they read is code only — comment text *and the contents of
+//! Three questions cannot be asked in-process, because the paths that answer
+//! them shell out to `gh` and take an `AppState` of ninety `Arc` fields: which
+//! callers hand a pull request to the merge queue, what they hand over with it,
+//! and whether the text a publishing function signs is the text a seam derived.
+//! Those are read from production source. Comment text *and the contents of
 //! string literals* are blanked before any structural scan, so neither a
 //! comment documenting the convention nor a `warn!` reminding callers of it can
-//! answer a question about whether a decision is taken.
+//! answer a question about whether something is done. `#[cfg(test)]` items are
+//! removed by brace matching rather than by truncating the file at the first
+//! one, so a test module parked above a door cannot delete that door from the
+//! corpus.
 //!
-//! A door counts as guarded when it routes through `admission_refusal` **and**
-//! the refusal has a consequence: propagated with `?`, `bail!`ed, returned
-//! from, `continue`d past, or wrapped around the enlistment itself. A mention
-//! that gates nothing is not a guard, and neither is
-//! `if refusal.is_err() { return Ok(()) }`.
-//!
-//! `is_admissible()` is deliberately *not* accepted as the door's guard, even
-//! though the review pipeline uses it today:
-//! `a_report_that_certifies_while_a_gate_errored_is_still_refused` establishes
-//! that it says yes to a report this lane refuses, so a door written
-//! `if r.is_admissible() { enlist }` would be scored as guarded while admitting
-//! precisely that report. The seam this lane defines is `admission_refusal`,
-//! and it is what the doors must consult.
+//! A `Result` counts as discarded when *its own* value is thrown away: the call
+//! is bound to `_`, wrapped in `drop(`, or its result — everything after the
+//! call's closing parenthesis — is `.ok()`d or `unwrap_or`'d. A `.ok()` inside
+//! the argument list belongs to an argument, not to the call, and
+//! `Self::admission_refusal(self.report(..).await.ok().as_ref())?` is a guarded
+//! door: converting a fetch failure into `None` and refusing on it is exactly
+//! what the spec asks for.
 //!
 //! # Scaffolding this suite depends on
 //!
-//! Two signatures with `todo!()` bodies in `src/merge_enlister.rs`:
-//! `MergeEnlister::admission_refusal` and `MergeEnlister::approval_summary`.
-//! They exist so the invariant can be stated before anything implements it.
-//! Neither prescribes where the decision is wired: `no_door_into_the_merge_queue_is_left_unchecked`
-//! deliberately accepts the entry point deciding once — directly, or in a
-//! helper whose failure it propagates — or every caller deciding for itself,
-//! and returning `None` from `approval_summary` for every report, which is to
-//! say dropping self-approval altogether, is a valid implementation.
+//! Three signatures with `todo!()` bodies in `src/merge_enlister.rs` —
+//! `admission_refusal`, `approval_summary`, `enlistment_note` — and one
+//! parameter added to `enlist_into_merge_queue`, with every caller passing
+//! `None` so the tree compiles. No body holds logic.
 //!
 //! # Not pinned here, and why
 //!
 //! `ensure_approving_review` already fails closed on `CHANGES_REQUESTED` and on
 //! unresolved review threads, and the crate uses no `--admin` anywhere. Those
 //! are green today, so a guard for them would be a green test in a lane whose
-//! rule is that every spec test starts red. They are called out in the handoff
-//! instead: if self-approval is dropped by deleting `ensure_approving_review`,
-//! those two bails go with it and nothing here would notice.
+//! rule is that every spec test starts red. If self-approval is dropped by
+//! deleting `ensure_approving_review`, those two bails go with it and nothing
+//! here would notice.
 
+use anvil::github::GitHubClient;
 use anvil::merge_enlister::MergeEnlister;
 use anvil::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport, TOTAL_GATES};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-/// The seam every door into the merge queue must route through.
-const SEAM: &str = "admission_refusal";
+use std::sync::Arc;
 
 /// Totality words, in the sense a published claim uses them.
 ///
-/// Shared by `assert_no_blanket_claim` and by the source scan: what Anvil may
-/// not assert about a report at runtime is what it may not weld into a literal
-/// either. An honest derived body — "69 of 72 gates passed, 3 produced no
-/// measurement" — contains none of them.
+/// Shared by `assert_no_blanket_claim` and by the source backstop: what Anvil
+/// may not assert about a report at runtime is what it may not weld into a
+/// literal either. An honest derived body — "69 of 72 gates passed, 3 produced
+/// no measurement" — contains none of them.
 const TOTALITY: [&str; 8] = [
     "100%",
     "all automated",
@@ -146,6 +165,11 @@ const TOTALITY: [&str; 8] = [
     "fully green",
 ];
 
+/// The merge strategy the enlistment note is written about. Held constant
+/// wherever two notes are compared, so any difference between them comes from
+/// the report and not from this.
+const STRATEGY: &str = "Squash & Merge";
+
 // -------------------------------------------------------------------------
 // Report fixtures
 // -------------------------------------------------------------------------
@@ -155,7 +179,9 @@ const TOTALITY: [&str; 8] = [
 /// Built by round-tripping `PreMergeCertificationReport::unmeasured` through
 /// serde rather than by naming seventy-two fields, so it stays correct when the
 /// corpus grows. There is deliberately no "all passed" constructor in
-/// production (invariant I2) and this fixture is not one — it is test data.
+/// production (invariant I2) and this fixture is not one — it is test data, and
+/// `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`
+/// exists to keep it from becoming production data.
 fn every_gate_passing() -> PreMergeCertificationReport {
     let base = PreMergeCertificationReport::unmeasured("fixture baseline");
     let mut value = serde_json::to_value(&base).expect("report serialises");
@@ -193,6 +219,25 @@ fn not_measured(gate_id: &str) -> GateStatus {
     }
 }
 
+/// Certified on every measured gate, with one gate that produced no
+/// measurement: `is_certified_ready` says yes, `is_admissible()` says no.
+fn certified_with_an_unmeasured_gate() -> PreMergeCertificationReport {
+    let mut report = every_gate_passing();
+    report.kani_status = not_measured("kani_status");
+    report.seal();
+    report
+}
+
+/// A report that asserts certification while a gate errored. Deliberately not
+/// sealed: `is_admissible()` alone says yes to it.
+fn certified_while_a_gate_errored() -> PreMergeCertificationReport {
+    let mut report = every_gate_passing();
+    report.slo_status = GateStatus::Errored("prometheus probe timed out".into());
+    report.is_certified_ready = true;
+    report.recompute_unmeasured();
+    report
+}
+
 /// Whether `n` appears in `text` as a number in its own right, so a claim about
 /// three gates is not answered by the "3" inside "23".
 fn mentions_number(text: &str, n: usize) -> bool {
@@ -211,29 +256,65 @@ fn repo_path(rel: &str) -> PathBuf {
 /// One production source file, split into the code that runs and the strings it
 /// carries.
 struct Production {
-    /// One entry per line, with comment text and the *contents* of every string
-    /// literal replaced by spaces. Line numbers still line up with the file,
-    /// and the quote characters are kept, so a surviving `"` marks a literal.
+    /// One entry per line, with comment text, the *contents* of every string
+    /// literal, and every `#[cfg(test)]` item replaced by spaces. Line numbers
+    /// still line up with the file, and the quote characters are kept, so a
+    /// surviving `"` marks a literal.
     ///
-    /// A token found here is code. Neither a comment explaining an invariant
-    /// nor a `warn!` reminding callers of one can satisfy a scan for it.
+    /// A token found here is production code. Neither a comment explaining an
+    /// invariant, nor a `warn!` reminding callers of one, nor a call made by
+    /// the module's own unit tests can satisfy a scan for it.
     code: Vec<String>,
-    /// Every string literal, as (1-based line, contents) — what a scan for a
-    /// published claim reads.
+    /// Every string literal outside the test modules, as (1-based line,
+    /// contents) — what a scan for a published claim reads.
     literals: Vec<(usize, String)>,
 }
 
-/// Reads production source, dropping everything from `#[cfg(test)]` onwards so
-/// a call made by a module's own unit tests cannot answer a question about
-/// production.
+/// Blanks a byte range, keeping newlines so line numbers still line up.
+fn blank_range(chars: &mut [char], range: std::ops::Range<usize>) {
+    for c in &mut chars[range] {
+        if *c != '\n' {
+            *c = ' ';
+        }
+    }
+}
+
+/// The end of the `#[cfg(test)]`-attributed item starting at `attr`: past the
+/// matching `}` of its first block, or past the `;` that ends it if it has
+/// none (`#[cfg(test)] use ...;`).
+///
+/// Brace matching rather than truncation, because truncating at the *first*
+/// `#[cfg(test)]` deletes every door below it from the corpus. A test module
+/// parked above the CLI `enlist` handler used to remove that door from the scan
+/// silently, leaving the door test green over three doors instead of four.
+fn cfg_test_item_end(code: &[char], attr: usize) -> usize {
+    let mut i = attr;
+    let mut depth = 0usize;
+    while i < code.len() {
+        match code[i] {
+            '{' => depth += 1,
+            // A `}` at depth zero closes whatever encloses the attributed item,
+            // so the item ended before it.
+            '}' if depth == 0 => return i,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            ';' if depth == 0 && i > attr => return i + 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    code.len()
+}
+
+/// Reads production source: no comments, no string contents, no test modules.
 fn production(rel: &str) -> Production {
     let path = repo_path(rel);
     let text =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let text = match text.find("#[cfg(test)]") {
-        Some(i) => text[..i].to_string(),
-        None => text,
-    };
     let src: Vec<char> = text.chars().collect();
     let mut code: Vec<char> = Vec::with_capacity(src.len());
     let mut literals: Vec<(usize, String)> = Vec::new();
@@ -380,6 +461,33 @@ fn production(rel: &str) -> Production {
         i += 1;
     }
 
+    // Test items are removed after literal blanking, so a `{` or `}` inside a
+    // string in a test module cannot throw the brace matching off.
+    let needle: Vec<char> = "#[cfg(test)]".chars().collect();
+    let mut stripped: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut at = 0usize;
+    while at + needle.len() <= code.len() {
+        if code[at..at + needle.len()] == needle[..] {
+            let end = cfg_test_item_end(&code, at);
+            stripped.push(at..end);
+            at = end;
+        } else {
+            at += 1;
+        }
+    }
+    let stripped_lines: Vec<std::ops::Range<usize>> = stripped
+        .iter()
+        .map(|r| {
+            let first = code[..r.start].iter().filter(|c| **c == '\n').count() + 1;
+            let last = code[..r.end].iter().filter(|c| **c == '\n').count() + 1;
+            first..(last + 1)
+        })
+        .collect();
+    for range in stripped {
+        blank_range(&mut code, range);
+    }
+    literals.retain(|(line, _)| !stripped_lines.iter().any(|r| r.contains(line)));
+
     let joined: String = code.into_iter().collect();
     Production {
         code: joined.lines().map(str::to_string).collect(),
@@ -421,19 +529,59 @@ fn rust_sources_under(dir: &str) -> Vec<String> {
     out
 }
 
-/// The decision a token at `idx` sits in: back to the previous `;`, `{` or `}`,
-/// and forward either to the `;` ending the statement or, when the token opens
-/// a block, past that block's closing `}`.
+fn char_boundary_at_or_after(text: &str, mut i: usize) -> usize {
+    let i_max = text.len();
+    while i < i_max && !text.is_char_boundary(i) {
+        i += 1;
+    }
+    i.min(i_max)
+}
+
+/// The start of the statement `idx` sits in: back past the previous `;`, `{` or
+/// `}`, but *through* the opening brace of a struct literal, so that
+/// `let approval = ReviewResponse { summary: f(), .. };` is one statement whose
+/// binder is `approval` rather than a fragment beginning at `summary:`.
+///
+/// A struct literal is told from a block by its opener: `Type {` is preceded by
+/// an upper-case-initial path, `if x {` and `else {` are not.
+fn statement_start(text: &str, idx: usize) -> usize {
+    let mut pos = idx;
+    loop {
+        let start = text[..pos]
+            .rfind([';', '{', '}'])
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if start == 0 {
+            return 0;
+        }
+        if text.as_bytes()[start - 1] == b'{' {
+            let before = text[..start - 1].trim_end();
+            let token: String = before
+                .chars()
+                .rev()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            let head = token.rsplit("::").next().unwrap_or("").to_string();
+            if head.chars().next().is_some_and(|c| c.is_uppercase()) {
+                pos = start - 1;
+                continue;
+            }
+        }
+        return start;
+    }
+}
+
+/// The end of the statement `idx` sits in: the `;` that closes it, or — when
+/// the statement opens a block — past that block's closing `}`.
 ///
 /// The forward half is the point. What becomes of a value is written after it:
 /// `...enlist_into_merge_queue(..).await.ok();` throws a refusal away *after*
 /// the call, and `if refusal.is_err() { return Ok(()) }` swallows one inside a
 /// block. A window that stops at the token sees neither.
-fn decision_span(text: &str, idx: usize) -> String {
-    let start = text[..idx]
-        .rfind([';', '{', '}'])
-        .map(|i| i + 1)
-        .unwrap_or(0);
+fn statement_end(text: &str, idx: usize) -> usize {
     let bytes = text.as_bytes();
     let mut i = idx;
     let mut depth: i32 = 0;
@@ -445,8 +593,11 @@ fn decision_span(text: &str, idx: usize) -> String {
                 opened = true;
             }
             b'}' => {
+                if !opened {
+                    break;
+                }
                 depth -= 1;
-                if opened && depth <= 0 {
+                if depth <= 0 {
                     i += 1;
                     break;
                 }
@@ -459,100 +610,210 @@ fn decision_span(text: &str, idx: usize) -> String {
         }
         i += 1;
     }
-    let mut end = i.min(text.len());
-    while end < text.len() && !text.is_char_boundary(end) {
-        end += 1;
+    char_boundary_at_or_after(text, i)
+}
+
+/// The whole statement a token sits in.
+fn statement(text: &str, idx: usize) -> String {
+    text[statement_start(text, idx)..statement_end(text, idx)].to_string()
+}
+
+/// A call found by a needle that ends in `(`: the index of the needle, of its
+/// open parenthesis, and of the matching close.
+struct Call {
+    idx: usize,
+    open: usize,
+    close: usize,
+}
+
+fn find_call(text: &str, needle: &str, from: usize) -> Option<Call> {
+    debug_assert!(needle.ends_with('('));
+    // A needle that starts on an identifier must not match the tail of a longer
+    // one: `enlistment_note(` is inside `post_enlistment_note(`, and a scan that
+    // takes the function's own signature for a call to the seam reads every
+    // parameter as an argument and finds no binding at all.
+    let head_is_word = needle
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let mut search = from;
+    let idx = loop {
+        let at = search + text[search..].find(needle)?;
+        search = at + 1;
+        if !head_is_word
+            || !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
+            break at;
+        }
+    };
+    let open = idx + needle.len() - 1;
+    let bytes = text.as_bytes();
+    let mut depth = 0i32;
+    for (offset, b) in bytes[open..].iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(Call {
+                        idx,
+                        open,
+                        close: open + offset,
+                    });
+                }
+            }
+            _ => {}
+        }
     }
-    text[start..end].to_string()
+    None
 }
 
-/// Whether a span throws away the `Result` it is about, in any of the spellings
-/// Rust offers for it.
-fn discards_result(span: &str) -> bool {
-    ["_ =", ".ok()", ".unwrap_or", "drop("]
-        .iter()
-        .any(|d| span.contains(d))
+/// The arguments of a call, split on the commas that are not inside a nested
+/// group.
+fn call_arguments(text: &str, call: &Call) -> Vec<String> {
+    let inner = &text[call.open + 1..call.close];
+    let mut args = Vec::new();
+    let mut depth = 0i32;
+    let mut current = String::new();
+    for c in inner.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                args.push(current.trim().to_string());
+                current = String::new();
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    if !current.trim().is_empty() {
+        args.push(current.trim().to_string());
+    }
+    args
 }
 
-/// Whether a refusal in this span can actually stop anything.
+/// Whether a call's *own* `Result` is thrown away.
 ///
-/// Propagated, bailed, returned from, `continue`d past, or wrapped around the
-/// enlistment itself. `return Ok` is excluded by name: that is the silent
-/// no-op — the pull request is withheld and the caller is told it was admitted.
-fn refusal_has_teeth(span: &str) -> bool {
-    if discards_result(span) {
-        return false;
+/// Measured against the call, not against everything sharing its statement: the
+/// suffix is what follows the call's closing parenthesis, and the prefix is the
+/// binding immediately in front of it. A `.ok()` inside the argument list
+/// belongs to an argument — `admission_refusal(self.report(..).await.ok().as_ref())?`
+/// converts a fetch failure into `None` and refuses on it, which is a guarded
+/// door and not a discarded one.
+fn discards_call_result(text: &str, call: &Call) -> bool {
+    let suffix = &text[call.close + 1..statement_end(text, call.close)];
+    if suffix.contains(".ok()") || suffix.contains(".unwrap_or") {
+        return true;
     }
-    span.contains('?')
-        || span.contains("bail!")
-        || span.contains("continue")
-        || (span.contains("return") && !span.contains("return Ok"))
-        || span.contains("enlist_into_merge_queue(")
+    let prefix = text[statement_start(text, call.idx)..call.idx].trim_end();
+    prefix.ends_with("drop(") || prefix.contains("_ =")
 }
 
-/// Whether a slab of production code takes an admissibility decision it cannot
-/// walk past. See the module doc for why `is_admissible` is not accepted here.
-fn takes_an_admissibility_decision(code: &str) -> bool {
+/// The whole of one function, signature and braces included, found by a
+/// fragment of its signature. Brace-matched, so it works for free functions and
+/// for methods at any indentation.
+fn find_fn(source: &str, signature_fragment: &str) -> Option<String> {
+    let start = source.find(signature_fragment)?;
+    let open = start + source[start..].find('{')?;
+    let mut depth = 0i32;
+    for (offset, b) in source.as_bytes()[open..].iter().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(source[start..=open + offset].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `text` mentions `ident` as an identifier rather than as a substring
+/// of a longer one.
+fn mentions_ident(text: &str, ident: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let mut from = 0usize;
-    while let Some(off) = code[from..].find(SEAM) {
-        let idx = from + off;
-        from = idx + SEAM.len();
-        if refusal_has_teeth(&decision_span(code, idx)) {
+    while let Some(off) = text[from..].find(ident) {
+        let at = from + off;
+        from = at + ident.len();
+        let before_ok = text[..at].chars().next_back().is_none_or(|c| !is_word(c));
+        let after_ok = text[from..].chars().next().is_none_or(|c| !is_word(c));
+        if before_ok && after_ok {
             return true;
         }
     }
     false
 }
 
-/// The body of one method in a rustfmt-formatted `impl`, from its signature to
-/// the closing `    }`.
-fn find_method_body(source: &str, signature_fragment: &str) -> Option<String> {
-    let start = source.find(signature_fragment)?;
-    let rest = &source[start..];
-    let end = rest.find("\n    }").map(|i| i + 6).unwrap_or(rest.len());
-    Some(rest[..end].to_string())
-}
-
-fn method_body(source: &str, signature_fragment: &str) -> String {
-    find_method_body(source, signature_fragment)
-        .unwrap_or_else(|| panic!("no method matching `{signature_fragment}` in source"))
-}
-
-/// Methods this body calls and whose failure it propagates — where a guard
-/// extracted into a helper would live.
-fn propagated_callees(body: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for prefix in ["self.", "Self::"] {
-        let mut from = 0usize;
-        while let Some(off) = body[from..].find(prefix) {
-            let idx = from + off;
-            from = idx + prefix.len();
-            let rest = &body[from..];
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            if name.is_empty() || !rest[name.len()..].starts_with('(') {
-                continue;
-            }
-            if refusal_has_teeth(&decision_span(body, idx)) {
-                out.push(name);
-            }
+/// The identifier a statement binds, in the spellings a value that may be
+/// absent is bound with: `let x =`, `let mut x =`, `let Some(x) = .. else`,
+/// `if let Some(x) =`.
+fn binder(statement: &str) -> Option<String> {
+    let mut rest = statement.trim_start();
+    for prefix in ["if ", "while "] {
+        if let Some(stripped) = rest.strip_prefix(prefix) {
+            rest = stripped.trim_start();
         }
     }
-    out
+    let mut rest = rest.strip_prefix("let ")?.trim_start();
+    for pattern in ["Some(", "Ok("] {
+        if let Some(stripped) = rest.strip_prefix(pattern) {
+            rest = stripped.trim_start();
+        }
+    }
+    if let Some(stripped) = rest.strip_prefix("mut ") {
+        rest = stripped.trim_start();
+    }
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() || name == "_" {
+        None
+    } else {
+        Some(name)
+    }
 }
 
-/// Whether `enlist_into_merge_queue` itself takes the decision — directly, or
-/// in a helper whose failure it propagates. Extracting a guard into a private
-/// helper is a normal thing to do and must not read as an unguarded door.
-fn entry_point_is_gated(source: &str) -> bool {
-    let body = method_body(source, "fn enlist_into_merge_queue(");
-    takes_an_admissibility_decision(&body)
-        || propagated_callees(&body).iter().any(|callee| {
-            find_method_body(source, &format!("fn {callee}("))
-                .is_some_and(|helper| takes_an_admissibility_decision(&helper))
-        })
+/// The identifiers the value produced at `idx` flows into, transitively.
+///
+/// A value is followed rather than a spelling searched for: whatever
+/// `approval_summary` returns is bound, may be rebound (`let Some(s) = summary
+/// else ..`), and may be carried inside another value (`let approval =
+/// ReviewResponse { summary, .. }`). One of those names has to appear in the
+/// statement that hands text to GitHub, or what is published came from
+/// somewhere else.
+fn value_aliases(body: &str, idx: usize) -> Vec<String> {
+    let mut aliases: Vec<String> = Vec::new();
+    if let Some(name) = binder(&body[statement_start(body, idx)..statement_end(body, idx)]) {
+        aliases.push(name);
+    }
+    if aliases.is_empty() {
+        return aliases;
+    }
+    let mut from = statement_end(body, idx);
+    while let Some(off) = body[from..].find("let ") {
+        let at = from + off;
+        from = at + 4;
+        let stmt = &body[at..statement_end(body, at)];
+        let Some(name) = binder(stmt) else { continue };
+        if aliases.contains(&name) {
+            continue;
+        }
+        let rhs = stmt.split_once('=').map(|(_, r)| r).unwrap_or("");
+        if aliases.iter().any(|a| mentions_ident(rhs, a)) {
+            aliases.push(name);
+        }
+    }
+    aliases
 }
 
 /// One place in production source where a pull request is handed to the merge
@@ -560,16 +821,40 @@ fn entry_point_is_gated(source: &str) -> bool {
 struct MergeQueueDoor {
     file: String,
     line: usize,
-    /// The fifty lines of production source immediately preceding the call.
-    /// A guard placed further away than that is not a guard a reader can see.
-    approach: String,
-    /// What becomes of the `Result`: the call's own statement, read forward to
-    /// the `;` that ends it.
-    span: String,
+    /// The whole file's production code, so the call can be measured in place.
+    code: String,
+    call: Call,
 }
 
+impl MergeQueueDoor {
+    fn at(&self) -> String {
+        format!("{}:{}", self.file, self.line)
+    }
+
+    fn arguments(&self) -> Vec<String> {
+        call_arguments(&self.code, &self.call)
+    }
+
+    fn statement(&self) -> String {
+        statement(&self.code, self.call.idx)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// The files that hold a door today. Named rather than counted, because the
+/// failure mode this pins is a door *disappearing* from the scan: a shrinking
+/// list of offenders reads like progress.
+const KNOWN_DOOR_FILES: [&str; 4] = [
+    "src/cli/handlers.rs",
+    "src/queue_healer.rs",
+    "src/webhook/manual_handlers.rs",
+    "src/webhook/pipelines/review.rs",
+];
+
 /// Every call to `enlist_into_merge_queue`, excluding its own definition and
-/// any mention of it inside a comment or a string literal.
+/// any mention of it inside a comment, a string literal or a test module.
 fn merge_queue_doors() -> Vec<MergeQueueDoor> {
     const NEEDLE: &str = "enlist_into_merge_queue(";
     let mut doors = Vec::new();
@@ -577,26 +862,39 @@ fn merge_queue_doors() -> Vec<MergeQueueDoor> {
         let lines = production_lines(&rel);
         let text = lines.join("\n");
         let mut from = 0usize;
-        while let Some(offset) = text[from..].find(NEEDLE) {
-            let idx = from + offset;
-            from = idx + NEEDLE.len();
+        while let Some(call) = find_call(&text, NEEDLE, from) {
+            from = call.idx + NEEDLE.len();
             // A call, not the declaration: the identifier is reached through
             // `.`, ignoring the whitespace and newlines rustfmt puts in a
             // method chain.
-            let preceding = text[..idx].trim_end();
-            if !preceding.ends_with('.') {
+            if !text[..call.idx].trim_end().ends_with('.') {
                 continue;
             }
-            let line = text[..idx].matches('\n').count();
-            let start = line.saturating_sub(50);
+            let line = text[..call.idx].matches('\n').count() + 1;
             doors.push(MergeQueueDoor {
                 file: rel.clone(),
-                line: line + 1,
-                approach: lines[start..=line].join("\n"),
-                span: decision_span(&text, idx),
+                line,
+                code: text.clone(),
+                call,
             });
         }
     }
+
+    let found: Vec<&str> = doors.iter().map(|d| d.file.as_str()).collect();
+    let missing: Vec<&str> = KNOWN_DOOR_FILES
+        .iter()
+        .copied()
+        .filter(|f| !found.contains(f))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the merge queue door scan no longer sees a door in {missing:?}, and found \
+         only {found:?}.\n\
+         Either those doors were deleted — in which case delete them from \
+         KNOWN_DOOR_FILES and say so — or the scan has been blinded and every \
+         test built on it is now reporting on a corpus with a hole in it. A door \
+         must fail this test when it vanishes, not quietly stop being counted."
+    );
     doors
 }
 
@@ -661,9 +959,7 @@ fn evidence_that_was_never_obtained_does_not_admit_a_pull_request() {
 /// nothing to act on.
 #[test]
 fn a_certified_report_with_an_unmeasured_gate_is_refused_and_the_gate_is_named() {
-    let mut report = every_gate_passing();
-    report.kani_status = not_measured("kani_status");
-    report.seal();
+    let report = certified_with_an_unmeasured_gate();
 
     assert!(
         report.is_certified_ready,
@@ -705,17 +1001,9 @@ fn a_report_with_a_failed_gate_is_refused() {
 /// `is_admissible()` untouched. A gate that was configured, attempted and
 /// produced no result is absent evidence in exactly the sense I1 means, and
 /// issue #17 names `Errored` alongside `NotMeasured` for that reason.
-///
-/// This is also why the source scans require a door to route through
-/// `admission_refusal` rather than accepting `is_admissible()` at the door.
 #[test]
 fn a_report_that_certifies_while_a_gate_errored_is_still_refused() {
-    let mut report = every_gate_passing();
-    report.slo_status = GateStatus::Errored("prometheus probe timed out".into());
-    // Not sealed: this is a report that asserts certification it has not
-    // earned, which is precisely the input a precondition exists to catch.
-    report.is_certified_ready = true;
-    report.recompute_unmeasured();
+    let report = certified_while_a_gate_errored();
 
     assert!(
         report.is_admissible(),
@@ -742,16 +1030,82 @@ fn a_fully_measured_and_certified_report_admits_the_pull_request() {
     );
 }
 
-/// P5, P3. The defect is that the rule holds at one door of four. Either the
-/// door itself takes the decision — one precondition inside
-/// `enlist_into_merge_queue`, or in a helper whose failure it propagates — or
-/// every caller does. Both are accepted; neither being true is the bug.
+/// A repo spec the `gh` CLI rejects locally — four path segments — so that a
+/// version of `enlist_into_merge_queue` which does *not* refuse fails on its
+/// first subprocess rather than reaching GitHub. No test in this suite opens a
+/// socket, in either the red state or the green one.
+const NO_SUCH_REPO: &str = "anvil-spec/there/is/no/such/repo";
+
+/// P1, P2, P9, and the reason the entry point takes the evidence at all.
 ///
-/// A decision, not a mention: see the module doc. String literals and comments
-/// are blanked before this reads anything, and the refusal must divert control
-/// flow rather than merely appear near the door.
+/// The three reports below are the three shapes of absent evidence: none at
+/// all, a gate that was never measured, and a gate that tried and errored. Each
+/// must come back refused *from the entry point*, with the refusal the seam
+/// gives for it — not from a helper that may or may not have been reached, and
+/// not from `gh`.
+///
+/// This is what a source scan could not establish. A guard written inside
+/// `if let Some(r) = self.cached_report(..).await { .. }` reads as present to
+/// any window and admits everything; here it simply fails, because `None` goes
+/// in and something other than a refusal comes back.
+#[tokio::test]
+async fn the_merge_queue_entry_point_refuses_the_evidence_it_was_handed() {
+    let unmeasured = certified_with_an_unmeasured_gate();
+    let errored = certified_while_a_gate_errored();
+    let cases: [(&str, Option<&PreMergeCertificationReport>); 3] = [
+        ("no certification report at all", None),
+        (
+            "a report that certifies while a gate produced no measurement",
+            Some(&unmeasured),
+        ),
+        (
+            "a report that certifies while a gate errored",
+            Some(&errored),
+        ),
+    ];
+
+    let enlister = MergeEnlister::new(Arc::new(GitHubClient::new()));
+    for (what, report) in cases {
+        // Taken first: while the seam is unimplemented this panics here, at the
+        // seam, rather than shelling out.
+        let refusal = match MergeEnlister::admission_refusal(report) {
+            Err(refusal) => refusal.to_string(),
+            Ok(()) => panic!("fixture sanity: `admission_refusal` must refuse {what}"),
+        };
+
+        let err = enlister
+            .enlist_into_merge_queue(NO_SUCH_REPO, 1, report)
+            .await
+            .expect_err(
+                "the merge queue entry point admitted a pull request it was handed \
+                 no usable evidence for",
+            );
+        let chain = format!("{err:?}");
+        assert!(
+            chain.contains(&refusal),
+            "`enlist_into_merge_queue` was handed {what} and did not refuse it. It \
+             failed with something else, which means the admission decision is not \
+             on the path this call took:\n  wanted the refusal: {refusal}\n  got: {chain}\n\
+             Invariant I1 — absent evidence must never merge — has to hold for the \
+             call, not for a helper that may or may not have been reached."
+        );
+    }
+}
+
+/// P5. The entry point can only refuse on what it is given. A door that hands
+/// it `None` for ever has closed the queue rather than guarded it; a door that
+/// hands it a report the door itself wrote has reopened issue #17 behind a
+/// well-typed argument.
+///
+/// The second half is the one with no live offender today, and it is here
+/// because the wrong implementation is four lines: run `cargo check` in the
+/// healer, round-trip `PreMergeCertificationReport::unmeasured` through serde
+/// setting every `*_status` to `Passed`, `seal()`, hand that over. Every
+/// admission test in this file passes on it, because the report is a forgery
+/// and the predicate is asked politely. Gate statuses are assigned by the
+/// certification run and by nothing else.
 #[test]
-fn no_door_into_the_merge_queue_is_left_unchecked() {
+fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
     let doors = merge_queue_doors();
     assert!(
         !doors.is_empty(),
@@ -761,69 +1115,166 @@ fn no_door_into_the_merge_queue_is_left_unchecked() {
          wrong with anything"
     );
 
-    if entry_point_is_gated(&production_source("src/merge_enlister.rs")) {
-        return;
-    }
-
-    let unchecked: Vec<String> = doors
+    let empty_handed: Vec<String> = doors
         .iter()
-        .filter(|d| !takes_an_admissibility_decision(&d.approach))
-        .map(|d| format!("{}:{}", d.file, d.line))
+        .filter(|d| {
+            let args = d.arguments();
+            args.len() < 3 || args.iter().any(|a| a == "None")
+        })
+        .map(|d| format!("{} — {}", d.at(), d.statement()))
         .collect();
-
     assert!(
-        unchecked.is_empty(),
-        "these paths hand a pull request to the merge queue without taking an \
-         admissibility decision: {:?}\n\
-         The entry point does not take one either, so nothing does. Invariant I1 — \
-         absent evidence must never merge — is stated in \
-         src/webhook/pipelines/review.rs and enforced only there; a rule held at \
-         one door of {} is a convention, not an invariant. Fix it at the entry \
-         point or at every caller, but not at some of them. A refusal that is \
-         mentioned, logged or discarded rather than acted on does not count.",
-        unchecked,
-        doors.len()
+        empty_handed.is_empty(),
+        "these paths hand a pull request to the merge queue with no evidence for \
+         it:\n{}\n\
+         The entry point refuses what it is handed nothing for, so this is \
+         fail-closed and safe — and it is also a door that can never admit \
+         anything again. Obtain the certification report on this path and hand it \
+         over, or delete the door.",
+        empty_handed.join("\n")
+    );
+
+    let forged: Vec<String> = rust_sources_under("src")
+        .into_iter()
+        .filter(|rel| !rel.starts_with("src/pre_merge_guard/"))
+        .flat_map(|rel| {
+            let code = production_source(&rel);
+            let mut hits = Vec::new();
+            for (needle, what) in [
+                ("PreMergeCertificationReport {", "builds a report by hand"),
+                (
+                    "PreMergeCertificationReport::",
+                    "calls a report constructor",
+                ),
+                (".seal()", "seals a report"),
+                (
+                    ".recompute_unmeasured()",
+                    "rewrites a report's gate summary",
+                ),
+            ] {
+                if code.contains(needle) {
+                    hits.push(format!("{rel}: {what} (`{needle}`)"));
+                }
+            }
+            if assigns_a_gate_status(&code) {
+                hits.push(format!("{rel}: assigns a gate status to a report"));
+            }
+            if code.contains("is_certified_ready =") && !code.contains("is_certified_ready ==") {
+                hits.push(format!("{rel}: assigns its own certification verdict"));
+            }
+            hits
+        })
+        .collect();
+    assert!(
+        forged.is_empty(),
+        "these production files outside src/pre_merge_guard/ produce a \
+         certification report rather than receiving one:\n{}\n\
+         A report a caller wrote is not evidence, it is the caller's opinion in \
+         the shape of evidence, and `admission_refusal` cannot tell the \
+         difference. Gate statuses come from the certification run.",
+        forged.join("\n")
     );
 }
 
-/// P3. `POST /api/enlist` binds the enlistment to `_` inside a detached task
-/// and answers `202 ACCEPTED` regardless, so a refusal has nowhere to go: no
-/// log, no response, no record. A refusal nobody can observe is indistinguishable
-/// from an enlistment that happened.
+/// Whether `code` assigns to a `*_status` field reached through a `.`, which is
+/// how a caller overwrites what a gate measured. A bare local named
+/// `conflict_status` is not that.
+fn assigns_a_gate_status(code: &str) -> bool {
+    let mut from = 0usize;
+    while let Some(off) = code[from..].find("_status") {
+        let at = from + off;
+        from = at + "_status".len();
+        let start = code[..at]
+            .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if start == 0 || code.as_bytes()[start - 1] != b'.' {
+            continue;
+        }
+        let rest = code[from..].trim_start();
+        if rest.starts_with('=') && !rest.starts_with("==") {
+            return true;
+        }
+    }
+    false
+}
+
+/// P3, at the call site. `POST /api/enlist` binds the enlistment to `_` inside
+/// a detached task, so the refusal is not merely unreachable by the requester —
+/// it is not written down anywhere at all.
 ///
-/// Banned by shape rather than by spelling: `let _`, a bare `_ =`, `.ok()`,
-/// `.unwrap_or*` and `drop(` throw the same `Result` away, and the window runs
-/// forward to the end of the statement so the ones written after the call are
-/// in scope.
+/// This test claims exactly that much and no more: the `Result` of the
+/// enlistment is not thrown away where it is produced. Whether the refusal then
+/// reaches the person who asked for the enlistment is a separate question, and
+/// `the_enlist_api_does_not_answer_success_for_an_enlistment_it_has_not_performed`
+/// is where it is asked.
 #[test]
 fn no_path_drops_a_merge_queue_refusal_on_the_floor() {
     let doors = merge_queue_doors();
     assert!(
         !doors.is_empty(),
         "this scan found no call to `enlist_into_merge_queue`; see \
-         `no_door_into_the_merge_queue_is_left_unchecked`"
+         `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`"
     );
 
     let discarded: Vec<String> = doors
         .iter()
-        .filter(|d| discards_result(&d.span))
-        .map(|d| {
-            format!(
-                "{}:{} — {}",
-                d.file,
-                d.line,
-                d.span.split_whitespace().collect::<Vec<_>>().join(" ")
-            )
-        })
+        .filter(|d| discards_call_result(&d.code, &d.call))
+        .map(|d| format!("{} — {}", d.at(), d.statement()))
         .collect();
 
     assert!(
         discarded.is_empty(),
-        "these paths discard the outcome of merge queue enlistment:\n{}\n\
-         The refusal must be observable — surfaced to the caller or at minimum \
-         logged. Thrown away it is a silent no-op, and the operator cannot tell \
-         a withheld pull request from an admitted one.",
+        "these paths throw away the outcome of merge queue enlistment:\n{}\n\
+         Handle it: `?`, a `bail!`, or an `if let Err(e) = .. {{ warn!(..) }}` all \
+         count. `let _ =`, `drop(..)`, `.ok()` and `.unwrap_or*` on the call's own \
+         result do not — thrown away, a refusal is a silent no-op and nothing \
+         downstream can tell a withheld pull request from an admitted one.",
         discarded.join("\n")
+    );
+}
+
+/// P3, one layer out. The refusal not being dropped at the call site is a third
+/// of the problem: `manual_enlist_handler` spawns the enlistment into a
+/// detached task and answers `202 ACCEPTED` with `success: true` before the
+/// task has done anything. Logging the refusal inside that task satisfies the
+/// discard scan and still tells the operator — or the automation calling the
+/// API — that an enlistment happened when it was refused.
+///
+/// Either the handler waits for the outcome and answers with it, or it stops
+/// asserting an outcome it does not have. Vacuously satisfied if the handler is
+/// deleted or if it no longer detaches the work.
+#[test]
+fn the_enlist_api_does_not_answer_success_for_an_enlistment_it_has_not_performed() {
+    const HANDLER: &str = "fn manual_enlist_handler(";
+    let source = production_source("src/webhook/manual_handlers.rs");
+    let Some(body) = find_fn(&source, HANDLER) else {
+        return;
+    };
+    let Some(spawn) = body.find("tokio::spawn(") else {
+        return;
+    };
+    let spawned = &body[spawn..statement_end(&body, spawn)];
+    if !spawned.contains("enlist_into_merge_queue(") {
+        return;
+    }
+
+    let after = &body[statement_end(&body, spawn)..];
+    assert!(
+        !after.contains("success: true"),
+        "`manual_enlist_handler` detaches the enlistment and then answers \
+         `success: true` regardless of what it does:\n{}\n\
+         The requester is told the pull request was enlisted when it may have \
+         been refused, and a refusal that reaches only a log line inside a \
+         detached task has not been surfaced to anybody who asked. Wait for the \
+         outcome and answer with it, or answer something that is true of a job \
+         that has not run yet.",
+        after
+            .trim()
+            .lines()
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ")
     );
 }
 
@@ -831,43 +1282,73 @@ fn no_path_drops_a_merge_queue_refusal_on_the_floor() {
 // Issue #18 — Anvil endorses nothing it did not measure
 // =========================================================================
 
-/// The honest answer when there is no report is to sign nothing. Today the
-/// function that signs receives no report and signs anyway.
+/// The two seams that derive what Anvil publishes onto a pull request, so that
+/// every test below reads both. The enlistment note is published onto the same
+/// pull request as the approving review, by the same run, and is read by the
+/// same people: holding one to derivation and the other to a word list is how
+/// "Pre-Merge Certification 100% Green" survives a fix to the review body.
+fn publication(
+    report: Option<&PreMergeCertificationReport>,
+) -> Vec<(&'static str, Option<String>)> {
+    vec![
+        ("approval_summary", MergeEnlister::approval_summary(report)),
+        (
+            "enlistment_note",
+            MergeEnlister::enlistment_note(report, STRATEGY),
+        ),
+    ]
+}
+
+/// What Anvil actually publishes for a report: the seams that produced text.
+fn published_texts(report: &PreMergeCertificationReport) -> Vec<(&'static str, String)> {
+    publication(Some(report))
+        .into_iter()
+        .filter_map(|(seam, text)| text.map(|t| (seam, t)))
+        .collect()
+}
+
+/// The honest answer when there is no report is to publish nothing. Today both
+/// functions that publish receive no report and publish anyway.
 #[test]
 fn nothing_is_endorsed_when_nothing_was_measured() {
-    assert_eq!(
-        MergeEnlister::approval_summary(None),
-        None,
-        "with no certification report there is nothing to derive a claim from, so \
-         Anvil must publish no approving review at all"
-    );
+    for (seam, text) in publication(None) {
+        assert_eq!(
+            text, None,
+            "`{seam}` was given no certification report and still produced text to \
+             publish. With nothing to derive a claim from, Anvil must publish \
+             nothing at all"
+        );
+    }
 }
 
 /// Publishing nothing at all is always honest, so two `None`s assert nothing.
-/// Anything else must differ: an endorsement present on one report and absent
-/// on the other has already discriminated.
-fn assert_endorsements_differ(
+/// Anything else must differ: a publication present on one report and absent on
+/// the other has already discriminated.
+fn assert_publications_differ(
     a: &PreMergeCertificationReport,
     b: &PreMergeCertificationReport,
     what: &str,
 ) {
-    let on_a = MergeEnlister::approval_summary(Some(a));
-    let on_b = MergeEnlister::approval_summary(Some(b));
-    if on_a.is_none() && on_b.is_none() {
-        return;
+    let on_a = publication(Some(a));
+    let on_b = publication(Some(b));
+    for ((seam, text_a), (_, text_b)) in on_a.into_iter().zip(on_b) {
+        if text_a.is_none() && text_b.is_none() {
+            continue;
+        }
+        assert_ne!(text_a, text_b, "`{seam}`: {what}");
     }
-    assert_ne!(on_a, on_b, "{what}");
 }
 
 /// P8. The defect is not the wording, it is that the wording is a constant: the
 /// same sentence is signed onto every pull request in the fleet whatever its
-/// gates did. Two reports that differ must not produce one endorsement.
+/// gates did. Two reports that differ must not produce one publication.
 ///
 /// The second pair is the one that bites. Both reports are admissible, so an
-/// implementation that endorses only admissible pull requests publishes a
-/// sentence for each and has to make them differ — which a constant cannot do.
-/// A pair with an inadmissible side lets that implementation answer `None` and
-/// assert nothing.
+/// implementation that publishes only for admissible pull requests produces a
+/// sentence for each and has to make them differ — which a constant cannot do,
+/// and neither can `gate_counts()`, which scores both at 72 of 72. A pair with
+/// an inadmissible side lets that implementation answer `None` and assert
+/// nothing.
 #[test]
 fn the_endorsement_differs_when_the_evidence_differs() {
     let clean = every_gate_passing();
@@ -876,12 +1357,12 @@ fn the_endorsement_differs_when_the_evidence_differs() {
     ragged.kani_status = not_measured("kani_status");
     ragged.coverage_status = GateStatus::Failed("coverage below the ratchet".into());
     ragged.seal();
-    assert_endorsements_differ(
+    assert_publications_differ(
         &clean,
         &ragged,
-        "the same endorsement was produced for a pull request whose gates all \
-         passed and for one with a failed gate and a gate that produced no \
-         measurement. A claim identical across both is derived from neither",
+        "the same text was published for a pull request whose gates all passed and \
+         for one with a failed gate and a gate that produced no measurement. A \
+         claim identical across both is derived from neither",
     );
 
     let mut warned = every_gate_passing();
@@ -890,22 +1371,22 @@ fn the_endorsement_differs_when_the_evidence_differs() {
     assert!(
         warned.is_admissible(),
         "fixture sanity: a Warning is acceptable and measured, so this report is \
-         still admissible — whatever the clean report is endorsed with, this one \
-         is endorsed with too"
+         still admissible — whatever the clean report is published with, this one \
+         is published with too"
     );
-    assert_endorsements_differ(
+    assert_publications_differ(
         &clean,
         &warned,
-        "the same endorsement was produced for a pull request with a clean bench \
-         gate and for one whose bench gate reported a warning. Both are \
-         admissible, so both are signed — with one constant sentence, which is \
-         issue #18 restored verbatim",
+        "the same text was published for a pull request with a clean bench gate and \
+         for one whose bench gate reported a warning. Both are admissible, so both \
+         are published — with one constant sentence, which is issue #18 restored \
+         verbatim",
     );
 }
 
 /// P8. The only test that reads the text Anvil publishes onto a pull request it
-/// actually admits. A warning is not a pass, so an endorsement written over one
-/// must not sweep the corpus into a total.
+/// actually admits. A warning is not a pass, so nothing written over one may
+/// sweep the corpus into a total.
 #[test]
 fn an_endorsement_asserts_no_total_when_a_gate_only_warned() {
     let mut report = every_gate_passing();
@@ -913,20 +1394,20 @@ fn an_endorsement_asserts_no_total_when_a_gate_only_warned() {
     report.seal();
     assert!(
         report.is_admissible(),
-        "fixture sanity: this pull request is admitted, so whatever Anvil signs \
-         onto it is signed onto a merge that really happens"
+        "fixture sanity: this pull request is admitted, so whatever Anvil publishes \
+         onto it is published onto a merge that really happens"
     );
 
-    if let Some(text) = MergeEnlister::approval_summary(Some(&report)) {
-        assert_no_blanket_claim(&text, "bench_status reported a warning, not a pass");
+    for (seam, text) in published_texts(&report) {
+        assert_no_blanket_claim(&text, seam, "bench_status reported a warning, not a pass");
     }
 }
 
 /// P6 and P10. A gate reporting `NotMeasured` made no claim in either
-/// direction. An endorsement that sweeps it into a total — "all gates", "100%"
-/// — asserts on its behalf something nobody measured; and one built from
-/// `gate_counts()`, which scores `NotMeasured` as acceptable, does the same
-/// thing in arithmetic instead of adjectives.
+/// direction. Text that sweeps it into a total — "all gates", "100%" — asserts
+/// on its behalf something nobody measured; and text built from `gate_counts()`,
+/// which scores `NotMeasured` as acceptable, does the same thing in arithmetic
+/// instead of adjectives.
 ///
 /// So the ban on totality wording is paired with a positive obligation. That
 /// pins no wording: naming the gates, or saying how many produced nothing, both
@@ -948,32 +1429,31 @@ fn an_endorsement_asserts_no_total_when_a_gate_was_not_measured() {
         report.gate_counts().0,
         TOTAL_GATES,
         "fixture sanity: gate_counts() scores NotMeasured as acceptable, so its \
-         ready-made figure here is the whole corpus — that is the number an \
-         endorsement must not publish as what passed"
+         ready-made figure here is the whole corpus — that is the number a \
+         publication must not publish as what passed"
     );
 
-    let Some(text) = MergeEnlister::approval_summary(Some(&report)) else {
-        return;
-    };
-    assert_no_blanket_claim(&text, "three gates produced no measurement");
-    assert!(
-        report
-            .unmeasured_gates
-            .iter()
-            .any(|gate| text.contains(gate.as_str()))
-            || mentions_number(&text, report.unmeasured_gates.len()),
-        "the approving review Anvil signs says nothing about the {} gates that \
-         produced no measurement: it names none of {:?} and states no count. A \
-         reader is told how many gates passed and cannot discover that part of \
-         the evidence is missing. Body was:\n{text}",
-        report.unmeasured_gates.len(),
-        report.unmeasured_gates
-    );
+    for (seam, text) in published_texts(&report) {
+        assert_no_blanket_claim(&text, seam, "three gates produced no measurement");
+        assert!(
+            report
+                .unmeasured_gates
+                .iter()
+                .any(|gate| text.contains(gate.as_str()))
+                || mentions_number(&text, report.unmeasured_gates.len()),
+            "the text `{seam}` publishes says nothing about the {} gates that \
+             produced no measurement: it names none of {:?} and states no count. A \
+             reader is told how many gates passed and cannot discover that part of \
+             the evidence is missing. Text was:\n{text}",
+            report.unmeasured_gates.len(),
+            report.unmeasured_gates
+        );
+    }
 }
 
-/// P9 and P10. `unmeasured_gates` tracks `NotMeasured` only. An endorsement
-/// derived from that field alone still describes an `Errored` gate —
-/// configured, attempted, no result — as one of the gates that passed.
+/// P9 and P10. `unmeasured_gates` tracks `NotMeasured` only. Text derived from
+/// that field alone still describes an `Errored` gate — configured, attempted,
+/// no result — as one of the gates that passed.
 #[test]
 fn an_endorsement_asserts_no_total_when_a_gate_errored() {
     let mut report = every_gate_passing();
@@ -983,51 +1463,50 @@ fn an_endorsement_asserts_no_total_when_a_gate_errored() {
 
     assert!(
         report.unmeasured_gates.is_empty(),
-        "fixture sanity: `unmeasured_gates` records NotMeasured only, so a body \
+        "fixture sanity: `unmeasured_gates` records NotMeasured only, so text \
          derived from that field alone sees nothing wrong with this report"
     );
 
-    let Some(text) = MergeEnlister::approval_summary(Some(&report)) else {
-        return;
-    };
-    assert_no_blanket_claim(&text, "two gates errored");
-    assert!(
-        text.contains("security_scan_status")
-            || text.contains("bench_status")
-            || mentions_number(&text, 2),
-        "the approving review Anvil signs says nothing about the two gates that \
-         errored: it names neither and states no count. Body was:\n{text}"
-    );
-}
-
-/// Totality words, in the sense the published approval uses them. A body that
-/// reports "69 of 72 gates passed, 3 produced no measurement" trips none of
-/// these; the sentence in the tree today trips two.
-fn assert_no_blanket_claim(text: &str, context: &str) {
-    let lower = text.to_lowercase();
-    for claim in TOTALITY {
+    for (seam, text) in published_texts(&report) {
+        assert_no_blanket_claim(&text, seam, "two gates errored");
         assert!(
-            !lower.contains(claim),
-            "the approving review Anvil signs asserts \"{claim}\" while {context}. \
-             The review record is permanent and a reader cannot check it against \
-             anything. Either derive the sentence from the report — asserting \
-             nothing about gates that produced no measurement — or publish no \
-             approval. Body was:\n{text}"
+            text.contains("security_scan_status")
+                || text.contains("bench_status")
+                || mentions_number(&text, 2),
+            "the text `{seam}` publishes says nothing about the two gates that \
+             errored: it names neither and states no count. Text was:\n{text}"
         );
     }
 }
 
-/// P6, at source level. Two literals live in `merge_enlister.rs` today: one in
-/// the approval body, one in the enlistment note posted immediately after it.
-/// Deleting the first and leaving the second fixes nothing, and neither does
-/// moving either into a `const`, a helper or a sibling file.
+/// Totality words, in the sense a published claim uses them. Text reporting
+/// "69 of 72 gates passed, 3 produced no measurement" trips none of these; the
+/// two sentences in the tree today trip two each.
+fn assert_no_blanket_claim(text: &str, seam: &str, context: &str) {
+    let lower = text.to_lowercase();
+    for claim in TOTALITY {
+        assert!(
+            !lower.contains(claim),
+            "the text `{seam}` publishes asserts \"{claim}\" while {context}. It is \
+             written onto the pull request permanently and a reader cannot check it \
+             against anything. Either derive it from the report — asserting nothing \
+             about gates that produced no measurement — or publish nothing. Text \
+             was:\n{text}"
+        );
+    }
+}
+
+/// A backstop, and only that: eight words that must not be welded into a
+/// literal anywhere on the path that publishes onto a pull request, because
+/// what Anvil may not assert at runtime it may not ship as a constant either.
 ///
-/// It reads the same `TOTALITY` vocabulary `assert_no_blanket_claim` uses, so a
-/// sentence that would be refused at runtime cannot be welded into a literal
-/// instead. Rewording is not a fix either: what is banned is a *fixed* sentence
-/// asserting a total, whatever words it picks. A derived body —
-/// `format!("{n} of {TOTAL_GATES} gates passed, {m} produced no measurement")` —
-/// contains none of them.
+/// It does *not* pin derivation and must not be mistaken for doing so — a
+/// reworded constant ("Pre-Merge Certification Green") passes it untouched.
+/// Derivation is pinned by `the_endorsement_differs_when_the_evidence_differs`
+/// on the seams and by
+/// `nothing_anvil_publishes_is_written_by_a_function_that_holds_no_report` on
+/// the functions that publish. This test is cheap, catches the copy-paste, and
+/// keeps the vocabulary in one place.
 #[test]
 fn no_published_string_claims_a_compliance_total_that_no_gate_produced() {
     let files = published_text_files();
@@ -1065,73 +1544,208 @@ fn no_published_string_claims_a_compliance_total_that_no_gate_produced() {
     );
 }
 
-/// P7. `approval_summary` can be implemented perfectly and never reached: the
-/// production path keeps building its own sentence in a function that, as issue
-/// #18 puts it, "receives no report — nothing measurable is in scope".
+/// One function that hands text to GitHub, and the seam that must have written
+/// that text.
+struct Publisher {
+    /// The function that hands the text over.
+    function: &'static str,
+    /// The seam that derives it from the report.
+    seam: &'static str,
+    /// The call that publishes it.
+    handover: &'static str,
+}
+
+const PUBLISHERS: [Publisher; 2] = [
+    Publisher {
+        function: "fn ensure_approving_review(",
+        seam: "approval_summary(",
+        handover: ".submit_pr_review(",
+    },
+    Publisher {
+        function: "fn post_enlistment_note(",
+        seam: "enlistment_note(",
+        handover: ".post_pr_comment(",
+    },
+];
+
+/// P6 and P7. Both seams can be implemented perfectly and never reached: the
+/// production path keeps building its own sentence in functions that, as issue
+/// #18 puts it, "receive no report — nothing measurable is in scope".
 ///
-/// The link is what is pinned, not vocabulary: the submitting method must call
-/// `approval_summary`, must not paper over an absent summary with a fallback,
-/// and must not hand a string literal to the review it submits. Vacuously
-/// satisfied if the self-approval is dropped — nothing submits a review, so
-/// nothing has to hold a report.
+/// What is pinned is the data flow, not vocabulary. The publishing function
+/// must call the seam; it must call it with a report rather than with a literal
+/// `None`, so a report-free signature no longer satisfies this test; and the
+/// value the seam returns must be the value that reaches GitHub — followed
+/// through the rebindings and the struct it gets carried in, so that a `const`,
+/// a helper or a second literal cannot be substituted for it. An absent text
+/// must mean nothing is published: `unwrap_or*`, `map_or` and a `match` whose
+/// other arm does not leave the function all restore the defect one statement
+/// further down, which is where the previous version of this test stopped
+/// looking.
+///
+/// Vacuously satisfied where a publication is dropped altogether — nothing
+/// hands text over, so nothing has to hold a report.
 #[test]
-fn the_approving_review_is_not_written_by_a_function_that_holds_no_report() {
-    const SUBMIT: &str = ".submit_pr_review(";
-    let files = published_text_files();
-    let submitting: Vec<&String> = files
-        .iter()
-        .filter(|f| production_source(f).contains(SUBMIT))
-        .collect();
-    if submitting.is_empty() {
+fn nothing_anvil_publishes_is_written_by_a_function_that_holds_no_report() {
+    let source = production_source("src/merge_enlister.rs");
+    for publisher in &PUBLISHERS {
+        assert_publication_is_derived(&source, publisher);
+    }
+}
+
+fn assert_publication_is_derived(source: &str, publisher: &Publisher) {
+    let Publisher {
+        function,
+        seam,
+        handover,
+    } = *publisher;
+
+    // Nothing is published this way any more: an honest way to close issue #18.
+    if !source.contains(handover) {
+        assert!(
+            published_text_files()
+                .iter()
+                .all(|f| f == "src/merge_enlister.rs" || !production_source(f).contains(handover)),
+            "`{handover}` moved out of src/merge_enlister.rs. Relocating a \
+             publication does not make it honest and this test must follow it"
+        );
         return;
     }
 
-    let source = production_source("src/merge_enlister.rs");
-    assert!(
-        source.contains(SUBMIT),
-        "an approving review is submitted from {submitting:?} rather than from \
-         src/merge_enlister.rs; relocating it does not make it honest and this \
-         test must follow it"
-    );
-
-    let body = method_body(&source, "fn ensure_approving_review(");
-    assert!(
-        body.contains(SUBMIT),
-        "the approving review is submitted from somewhere other than \
-         `ensure_approving_review`; this test must follow it"
-    );
-
-    let derived = body.find("approval_summary(").unwrap_or_else(|| {
+    let body = find_fn(source, function).unwrap_or_else(|| {
         panic!(
-            "`ensure_approving_review` submits a formal GitHub APPROVE without \
-             calling `approval_summary`, so every word of the body it signs is \
-             asserted from nothing. Derive the text from the report, or stop \
-             self-approving."
+            "src/merge_enlister.rs still calls `{handover}` but `{function}` is \
+             gone; this test must follow the publication to wherever it now lives"
         )
     });
-    let span = decision_span(&body, derived);
     assert!(
-        !discards_result(&span) && !span.contains("unwrap_or"),
-        "an absent summary is Anvil saying it measured nothing worth signing. \
-         Falling back to a sentence of its own restores the defect one line \
-         further down; publish no review instead. Got: {span}"
-    );
-    assert!(
-        body[derived..].contains(SUBMIT),
-        "`approval_summary` is called after the review is submitted, so its \
-         result cannot be what was signed"
+        body.contains(handover),
+        "`{handover}` is called from src/merge_enlister.rs but not from \
+         `{function}`; this test must follow it"
     );
 
-    // String-literal contents are blanked above, so a surviving `"` on the line
-    // that hands the body over is a fixed sentence reaching the review record.
-    let literal_body: Vec<&str> = body
-        .lines()
-        .map(str::trim)
-        .filter(|l| (l.starts_with("summary:") || l.contains(SUBMIT)) && l.contains('"'))
-        .collect();
+    let call = find_call(&body, seam, 0).unwrap_or_else(|| {
+        panic!(
+            "`{function}` publishes onto the pull request without calling `{seam}`, \
+             so every word of what it publishes is asserted from nothing. Derive \
+             the text from the report, or publish nothing."
+        )
+    });
+
+    let arguments = call_arguments(&body, &call);
     assert!(
-        literal_body.is_empty(),
-        "a string literal is handed straight to the review Anvil submits: {literal_body:?}\n\
-         Whatever `approval_summary` returns, this is what gets signed."
+        !arguments.iter().any(|a| a == "None"),
+        "`{function}` calls `{seam}` with a literal `None`. Passing the literal for \
+         \"no evidence\" \
+         is how a function with no report in its signature keeps its signature and \
+         publishes anyway — the seam dutifully answers `None`, and whatever is \
+         published next came from somewhere else. The function that publishes must \
+         hold the report: as a parameter, as a field, or as the value of a fetch it \
+         performs."
     );
+
+    assert!(
+        !discards_call_result(&body, &call),
+        "`{function}` throws away what `{seam}` returned and publishes anyway."
+    );
+    let call_statement = statement(&body, call.idx);
+    for fallback in [".unwrap_or", ".map_or", ".unwrap()", ".expect("] {
+        assert!(
+            !call_statement.contains(fallback),
+            "`{function}` falls back to a text of its own with `{fallback}` when \
+             `{seam}` has nothing to say. An absent text is Anvil reporting that it \
+             measured nothing worth publishing; publish nothing instead. Got: \
+             {call_statement}"
+        );
+    }
+
+    assert!(
+        body[call.idx..].contains(handover),
+        "`{seam}` is called after the text is published, so its result cannot be \
+         what was published"
+    );
+
+    let aliases = value_aliases(&body, call.idx);
+    for alias in &aliases {
+        assert_absent_text_is_not_papered_over(&body, call.idx, alias, function, seam);
+    }
+
+    let mut from = 0usize;
+    while let Some(hand) = find_call(&body, handover, from) {
+        from = hand.idx + handover.len();
+        // What is handed over, not the statement around it: the error handling
+        // that follows a publish call carries literals of its own, and none of
+        // them reaches the pull request.
+        let handed = &body[hand.open..=hand.close];
+        let carries = if aliases.is_empty() {
+            handed.contains(seam)
+        } else {
+            aliases.iter().any(|a| mentions_ident(handed, a))
+        };
+        assert!(
+            carries,
+            "`{function}` publishes something that did not come from `{seam}`. \
+             What `{seam}` returned is bound as {aliases:?} and none of those \
+             reaches the call that publishes:\n  {}\n\
+             A constant, a helper or a second literal has been substituted for the \
+             derived text, which is issue #18 with an honest-looking seam beside \
+             it.",
+            handed.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
+        assert!(
+            !handed.contains('"'),
+            "`{function}` hands a string literal straight to `{handover}`:\n  {}\n\
+             String contents are blanked before this scan, so a surviving quote is \
+             a fixed sentence reaching the pull request whatever `{seam}` returned.",
+            handed.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
+    }
+}
+
+/// Whether the absent case of a derived text is turned back into a text.
+///
+/// `let Some(x) = .. else { .. }` needs no check: the compiler requires that
+/// block to diverge, so it cannot produce a value. What can is `unwrap_or*`,
+/// `map_or`, and a `match` whose other arm returns something instead of
+/// leaving.
+fn assert_absent_text_is_not_papered_over(
+    body: &str,
+    from: usize,
+    alias: &str,
+    function: &str,
+    seam: &str,
+) {
+    let tail = &body[from..];
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut at = 0usize;
+    while let Some(off) = tail[at..].find(alias) {
+        let idx = at + off;
+        at = idx + alias.len();
+        if tail[..idx].chars().next_back().is_some_and(is_word) {
+            continue;
+        }
+        let rest = &tail[at..];
+        for fallback in [".unwrap_or", ".map_or", ".unwrap()", ".expect("] {
+            assert!(
+                !rest.starts_with(fallback),
+                "`{function}` turns an absent `{seam}` back into a text with \
+                 `{alias}{fallback}`. Anvil publishing nothing is the honest \
+                 outcome when it has nothing to derive a claim from; a fallback is \
+                 the constant sentence again, one statement further down."
+            );
+        }
+        let before = tail[..idx].trim_end();
+        if before.ends_with("match") {
+            let arm = statement(tail, idx);
+            assert!(
+                ["return", "bail!", "continue"]
+                    .iter()
+                    .any(|exit| arm.contains(exit)),
+                "`{function}` matches on `{alias}` and its absent arm does not \
+                 leave the function, so something is published even when `{seam}` \
+                 produced nothing:\n  {}",
+                arm.split_whitespace().collect::<Vec<_>>().join(" ")
+            );
+        }
+    }
 }

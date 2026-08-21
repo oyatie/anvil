@@ -156,7 +156,6 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         merge_queue_depth: total_merge_queue_depth,
         quota_spent_usd: state.self_governor.quota.current_spend_usd(),
         quota_budget_usd: 100.0,
-        active_processes_count: state.self_governor.registry.active_task_count().await,
         fleet_repos,
         gate_heatmap,
         ai_bandit_models,

@@ -86,7 +86,36 @@
 //!      passing, and the all-deferral counterparts as failing, so the rule the
 //!      suite means — strip what is not content, then judge what is left — is
 //!      the only rule that satisfies it.
-//!   9. **The marker is a heading line, not a phrase.** Until this revision no
+//!   9. **Every must-fail token is also pinned INSIDE real content.** This is
+//!      the same property as (8) applied to the vocabulary rather than to the
+//!      line, and the revision before this one had it for the invisible
+//!      characters and the deferral prefixes and for nothing else. Three
+//!      must-fail families were pinned only as whole sections, so a gate could
+//!      satisfy each of them by rejecting on sight, and each rejection then
+//!      blocked an ordinary pull request:
+//!      * the **checkbox**. `"[ ]"`, `"[x]"`, `"- [x]"`, `"- [ ] "` and `"- [ ]"`
+//!        all had to fail, and nothing anywhere required `- [ ] p99 < 5ms` to be
+//!        read as content — so a gate treating the checkbox prefix as announcing
+//!        a deferral the way `TODO: ` does was green across the file and then
+//!        rejected the single commonest spelling of an acceptance bar there is,
+//!        the one every PR template produces.
+//!      * the **pointer**. No passing fixture contained `http`, a bare domain or
+//!        a `#1234`, so rejecting any line *containing* one satisfied
+//!        `a_pointer_to_somewhere_else_is_not_the_artifact` and then killed a bar
+//!        that cites the panel it will be checked on and a body that opens
+//!        `Fixes #4192:`. Same shape for `PHRASE_DEFERRALS`:
+//!        `section.contains("same as above")` satisfied the derived family and
+//!        rejected a bar saying the retry budget behaves the same as above.
+//!      * the **template comment**. It was pinned only as a whole section, so a
+//!        section-level `!s.contains("<!--")` passed everything here and then
+//!        failed the commonest filled-in template body there is — a prompt
+//!        comment left in place with the author's text typed under it.
+//!
+//!      Every one now has its mirror, so the rule those pairs state together —
+//!      a section whose whole content is the token is no artifact; the token
+//!      beside real content does not erase the content — is the only one that
+//!      satisfies the file.
+//!  10. **The marker is a heading line, not a phrase.** Until this revision no
 //!      passing fixture contained the words "problem" or "done when" anywhere
 //!      except on a marker line, so `normalise(line).contains("done when")` —
 //!      the cheapest way to satisfy the marker cross-product — was unfalsified
@@ -95,14 +124,14 @@
 //!      paragraph as the acceptance bar of an empty section.
 //!      `the_marker_is_a_heading_line_not_a_phrase_anywhere_in_the_prose` pins
 //!      both.
-//!  10. **The marker's own formatting is pinned in all three spacings.** Every
+//!  11. **The marker's own formatting is pinned in all three spacings.** Every
 //!      passing body used to put a blank line between the marker and its
 //!      content, so `**Done when**` above a list that starts on the next line,
 //!      and `## Done when: p99 < 5ms` with the bar on the marker's own line,
 //!      were unpinned — and the boundary rule this file forces pushes an
 //!      implementer straight into rejecting both. The marker family now runs
 //!      all three, with the empty and deferred mirrors under each.
-//!  11. **The deferral vocabulary is bounded from below as well as above.**
+//!  12. **The deferral vocabulary is bounded from below as well as above.**
 //!      `PLACEHOLDERS` forces `"TODO: write the acceptance criteria here"` to
 //!      fail while `derived_deferrals()` forbids an enumeration, and the
 //!      cheapest implementation satisfying both is a prefix test on the
@@ -111,7 +140,7 @@
 //!      `real_content_that_merely_begins_with_a_deferral_stem_passes` forces
 //!      token-level matching, and pins the same-line case where a deferral
 //!      token opens a line of real content.
-//!  12. **Every family that can be line-ending-sensitive runs over both.** The
+//!  13. **Every family that can be line-ending-sensitive runs over both.** The
 //!      boundary and marker families are where CRLF actually bites: a trailing
 //!      `\r` defeats the `ends_with` test that recognises `**Testing**`,
 //!      `Testing:` and `**Done when**`, and `body.split('\n')` instead of
@@ -145,12 +174,44 @@
 //! own account. See `message_residue` and
 //! `three_shapes_of_absence_produce_three_distinct_messages`.
 //!
+//! Subtracting the body cuts both ways, and the revision before this one was
+//! cut by it. Every `expect_missing` with one artifact PRESENT wrote that
+//! present section under the byte-identical heading `## Problem` or
+//! `## Done when` — the marker cross-product varies the spelling only on the
+//! MISSING side — so a constant message spelling the two artifacts with those
+//! two literals was subtracted out of the residue for exactly the bodies where
+//! the negative rule bites. Positive naming held (`"## Problem"` lowercases to
+//! contain `problem`), the negative held because the surviving heading was in
+//! the body, and the three "distinct" messages differed only by which heading
+//! got subtracted. The author whose problem statement was present was still
+//! told to write one. `the_message_holds_its_ground_however_the_surviving_section_is_headed`
+//! runs the one-artifact-missing families over all thirteen heading spellings
+//! on the surviving side: no constant can embed thirteen spellings, so the
+//! residue now really does hold the gate to what it measured.
+//!
 //! # The marker vocabulary is open; the marker *formatting* is not
 //!
 //! Which words announce the two sections is left to the implementer: an
 //! implementation that also recognises `## Acceptance criteria`, `## Why`, a
 //! YAML block or unheaded prose passes unchanged, because no test here requires
 //! a body that genuinely states both artifacts to fail.
+//!
+//! That promise was false in the revision before this one, in the one place it
+//! mattered most. `a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it`
+//! required `## Problem` / a real problem / `## Done when` / `**Acceptance
+//! criteria**` / three real checkable criteria to be reported as missing its
+//! acceptance bar — a body that genuinely states both artifacts, failed, over
+//! the first synonym these docs name as free to recognise. An implementer who
+//! took the promise at face value wrote `is_done_when_marker(t) = t == "done
+//! when" || t == "acceptance criteria"`, produced a correct and more forgiving
+//! gate, and was told by a settled specification test that it was broken —
+//! which leaves them editing the spec mid-implementation, the one thing this
+//! project's method forbids. That test now uses sub-labels no reading makes a
+//! synonym for either artifact (`**Testing**`, `**Rollout**`, `**Notes**`) over
+//! testing prose rather than over an acceptance bar, so it pins the boundary
+//! rule it claims to pin and closes no vocabulary. The promise above is true
+//! again, and it is the load-bearing one: a gate more generous about *which
+//! words* announce a section is a better gate, and nothing here may punish it.
 //!
 //! What is no longer left open is the markdown *around* the same two words.
 //! A previous revision built every one of its passing bodies from the
@@ -1518,6 +1579,40 @@ fn a_pointer_to_somewhere_else_is_not_the_artifact() {
     for pointer in pointers {
         assert_placeholder_fails_in_both_sections(pointer, "a pointer to somewhere else");
     }
+
+    // THE MIRROR, and the reason this family had none until now. Every other
+    // must-fail family in this file is paired with one: `UNICODE_BLANKS` with
+    // real prose carrying an NBSP, a ZWSP and a BOM; `DEFERRAL_STEMS` with
+    // `REAL_CONTENT_WITH_A_DEFERRAL_PREFIX`. The pointers got nothing, and no
+    // passing fixture anywhere in the file contained `http`, a bare domain or a
+    // `#1234` issue reference. So
+    //
+    //     !(line.contains("http") || ISSUE_RE.is_match(line)) && …
+    //
+    // — reject any line CONTAINING a pointer, rather than a line that IS one —
+    // passed the whole suite, and then reported a missing acceptance bar for a
+    // bar that cites the dashboard it will be checked on, and a missing problem
+    // for a body that opens `Fixes #4192:`. Both are ordinary writing; a
+    // done-when that names the panel you will read is a BETTER bar, not a
+    // deferred one.
+    //
+    // The same hole existed for `PHRASE_DEFERRALS`, where `section.contains("same
+    // as above")` satisfied the derived family and then killed a bar saying the
+    // retry budget behaves the same as above for the plaintext listener.
+    //
+    // The rule the pair states — a section whose WHOLE content is a pointer has
+    // not produced the artifact; a pointer beside real content does not erase
+    // the content — is the only rule that satisfies both halves.
+    for content in [
+        "- the checkout p99 panel at https://grafana.invalid/d/canary shows under 5ms for two \
+         windows",
+        "Fixes #4192: the canary gate rebuilds its verdict from `passed`, which is true for a \
+         canary nobody queried.",
+        "- the retry budget behaves the same as above for the plaintext listener",
+        "- the example.invalid/d/canary panel stays under 5ms for two consecutive windows",
+    ] {
+        assert_real_content_passes_in_both_sections(content, "real content citing a pointer");
+    }
 }
 
 #[test]
@@ -1624,6 +1719,84 @@ fn a_section_mixing_a_deferral_with_real_content_is_judged_on_the_real_content()
     expect_passed(
         &body_with(&format!("{PROBLEM}\n\nTBD"), BAR),
         "a problem section that states the problem and then trails a leftover TBD",
+    );
+
+    // A CHECKBOX THAT CARRIES CONTENT, which is the commonest spelling of an
+    // acceptance bar there is and the one every pull request template produces.
+    //
+    // Until this family existed, the only checkbox lines anywhere in the file
+    // were EMPTY ones that had to fail: `"[ ]"`, `"[x]"` and `"- [x]"` are
+    // deferral stems, `"- [ ] "` is an enumerated placeholder, `"- [ ]"` is one
+    // of the fillers in `a_third_section_does_not_hide_an_empty_one`, and
+    // `all_deferral` below opens with three empty boxes. Nothing anywhere
+    // required a checkbox line to be read as content, so
+    //
+    //     !DEFERRAL_STEMS.iter().any(|s| n == *s || n.starts_with(&format!("{s} ")))
+    //
+    // — treating `- [ ] ` as announcing a deferral the way `TODO: ` does — was
+    // green across the whole file, and then reported a missing acceptance bar
+    // for `- [ ] p99 < 5ms`. That is the fabricated accusation at very high
+    // incidence, which this file names as equal in severity to a false green.
+    //
+    // The two families together state the rule the suite means: strip the
+    // checkbox marker, then judge the remainder. Not: a checkbox announces a
+    // deferral. Run through both sections, so the rule is not applied to the bar
+    // and forgotten on the bet.
+    for checklist in [
+        "- [ ] p99 < 5ms\n- [ ] the scorecard names the canary it queried",
+        "- [x] p99 < 5ms\n- [ ] the scorecard names the canary it queried",
+        "- [X] p99 < 5ms\n- [ ] the scorecard names the canary it queried",
+    ] {
+        assert_real_content_passes_in_both_sections(checklist, "a checklist carrying criteria");
+    }
+
+    // A checklist whose first box is empty and whose remaining boxes carry
+    // criteria: the partially-filled template, with the marker on every line.
+    expect_passed(
+        &body_with(
+            PROBLEM,
+            "- [ ]\n- [x] p99 < 5ms\n- [ ] the scorecard names the canary it queried",
+        ),
+        "an empty checkbox above two checkboxes that carry real criteria",
+    );
+
+    // AN UNFILLED TEMPLATE COMMENT ABOVE REAL CONTENT, which is what a filled-in
+    // template actually looks like: authors overwhelmingly leave the prompt
+    // comment where it is and type underneath it.
+    //
+    // `"<!-- what problem does this solve? -->"` is pinned in `PLACEHOLDERS` and
+    // in the `exactly_both` body of `a_real_pull_request_body_with_no_bar_fails_closed`
+    // as a WHOLE section, and nowhere as a line beside content. So a section-level
+    // reject — `!s.contains("<!--") && s.lines().any(is_content)` — passed every
+    // fixture in this file, including every mixed-content case above (which mix
+    // checkboxes and `TBD` and never a comment), and then reported BOTH artifacts
+    // missing from the commonest filled-in template body there is.
+    //
+    // The `any` rule has to cover an HTML comment exactly the way it covers a
+    // leftover `TBD`: strip the line that is not content, judge what is left.
+    expect_passed(
+        &body_with(
+            &format!("<!-- what problem does this solve? -->\n{PROBLEM}"),
+            &format!("<!-- how will we know this is done? -->\n{MULTILINE_BAR}"),
+        ),
+        "a filled-in template whose prompt comments were left above the content the \
+         author typed under them",
+    );
+    expect_passed(
+        &body_with(
+            &format!("{PROBLEM}\n<!-- what problem does this solve? -->"),
+            &format!("{MULTILINE_BAR}\n<!-- how will we know this is done? -->"),
+        ),
+        "the same template comments left trailing below the content instead of above \
+         it",
+    );
+    expect_passed(
+        &body_with(
+            &format!("<!-- what problem does this solve? -->\n\n{PROBLEM}"),
+            &format!("<!-- how will we know this is done? -->\n\n{MULTILINE_BAR}"),
+        ),
+        "the same template comments with a blank line between the prompt and the \
+         content",
     );
 
     // And the bound on `any`, so it cannot be satisfied by a stray word: a
@@ -1760,27 +1933,69 @@ fn a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it() {
     // The veto is in BOUNDARY_HEADERS' docs: drop `"**Testing**"` from that
     // list and flip these two fixtures to `expect_passed`, which re-opens the
     // bold-third-section fail-open in exchange.
+    //
+    // WHY THE SUB-LABELS ARE `**Testing**`, `**Rollout**` AND `**Notes**`, AND
+    // WHY WHAT SITS UNDER THEM IS TESTING PROSE.
+    //
+    // The previous revision wrote this test with `**Acceptance criteria**` above
+    // a real three-item bar, and `**Background**` above a real problem
+    // statement. Both bodies genuinely state both artifacts — `MULTILINE_BAR` is
+    // three checkable criteria and `PROBLEM` is a written problem — so the test
+    // contradicted this file's own promise that "no test here requires a body
+    // that genuinely states both artifacts to fail", and it quietly closed the
+    // marker vocabulary the module docs leave open: `acceptance criteria` is the
+    // first synonym those docs name as free to recognise, so an implementer who
+    // took the promise at face value, wrote a more forgiving and entirely
+    // correct gate, and was told by a settled specification test that it was
+    // broken. Editing the spec mid-implementation is the one thing this
+    // project's method forbids, so the collision is removed rather than
+    // documented.
+    //
+    // The boundary decision is unchanged and still pinned in the direction that
+    // costs an author something: the labels below name a DIFFERENT topic (no
+    // reading of "Testing", "Rollout" or "Notes" is a synonym for the bet or the
+    // bar), and what sits under them is testing prose, not an acceptance bar. If
+    // a bold-only line does not end the section above it, the done-when section
+    // is that label plus real prose and this body passes; if it does, the bar is
+    // empty and it fails. The discrimination is intact and the vocabulary
+    // freedom survives.
+    //
+    // `**Rollout**` and `**Notes**` are outside `BOUNDARY_HEADERS` on purpose:
+    // the rule is that ANY bold-only line is a heading, not that the four
+    // enumerated ones are.
     assert_the_boundary_families_state_one_consistent_rule();
 
     for eol in BOTH_EOLS {
-        expect_missing(
-            &as_eol(
-                &format!(
-                    "## Problem\n\n{PROBLEM}\n\n## Done when\n\n**Acceptance criteria**\n\n{MULTILINE_BAR}\n"
+        for label in ["**Testing**", "**Rollout**"] {
+            expect_missing(
+                &as_eol(
+                    &format!(
+                        "## Problem\n\n{PROBLEM}\n\n## Done when\n\n{label}\n\n{THIRD_SECTION_BODY}\n"
+                    ),
+                    eol,
                 ),
-                eol,
-            ),
-            &[Artifact::DoneWhenBar],
-            &format!("a bold-only sub-label under an otherwise empty done-when heading, {eol:?}"),
-        );
-        expect_missing(
-            &as_eol(
-                &format!("## Problem\n\n**Background**\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n"),
-                eol,
-            ),
-            &[Artifact::WrittenProblem],
-            &format!("a bold-only sub-label under an otherwise empty problem heading, {eol:?}"),
-        );
+                &[Artifact::DoneWhenBar],
+                &format!(
+                    "the bold-only sub-label {label:?} under an otherwise empty done-when \
+                     heading, {eol:?}"
+                ),
+            );
+        }
+        for label in ["**Testing**", "**Notes**"] {
+            expect_missing(
+                &as_eol(
+                    &format!(
+                        "## Problem\n\n{label}\n\n{THIRD_SECTION_BODY}\n\n## Done when\n\n{BAR}\n"
+                    ),
+                    eol,
+                ),
+                &[Artifact::WrittenProblem],
+                &format!(
+                    "the bold-only sub-label {label:?} under an otherwise empty problem \
+                     heading, {eol:?}"
+                ),
+            );
+        }
     }
 }
 
@@ -2086,6 +2301,91 @@ fn three_shapes_of_absence_produce_three_distinct_messages() {
          the GATE says, not merely in the section it quoted: {no_bar:?} vs \
          {no_problem:?}"
     );
+}
+
+#[test]
+fn the_message_holds_its_ground_however_the_surviving_section_is_headed() {
+    // THE HOLE THE RESIDUE RULE DID NOT ACTUALLY CLOSE.
+    //
+    // `assert_failed_naming` subtracts the body's own non-blank lines from the
+    // message before asking whether the gate named an artifact the author did
+    // write. That is what makes quoting the offending section legal. But every
+    // `expect_missing` call in this file that had one artifact PRESENT wrote
+    // that present section under the byte-identical heading `## Problem` or
+    // `## Done when` — the marker cross-product varies the spelling only on the
+    // MISSING side. So a constant that spells the two artifacts using those two
+    // literals was subtracted out of the residue for exactly the bodies where
+    // the negative rule applies:
+    //
+    //     GateStatus::Failed(
+    //         "This change does not carry the Product artifact. Add a `## Problem` \
+    //          section stating the bet and a `## Done when` section stating the \
+    //          acceptance bar.".to_string())
+    //
+    // returned whenever `missing_artifacts` is non-empty. The positive holds
+    // ("## Problem" lowercases to contain `problem`; "## Done when" contains
+    // `done when`). The negative holds because the present section's heading
+    // line is in the body and is therefore subtracted. And
+    // `three_shapes_of_absence_produce_three_distinct_messages` passes, because
+    // the three residues differ purely by WHICH heading got subtracted, not by
+    // anything the gate measured. The author whose problem statement is present
+    // is still told to go and write one — the exact defect the residue mechanism
+    // was introduced to prevent.
+    //
+    // Varying the surviving section's spelling closes it. A constant cannot
+    // embed thirteen heading spellings, so subtracting the body can no longer
+    // subtract the message, and the residue really does hold the gate to what it
+    // said on its own account.
+    assert_the_content_fixtures_carry_none_of_the_message_vocabulary();
+
+    for problem_marker in PROBLEM_MARKERS {
+        expect_missing(
+            &format!("{problem_marker}\n\n{PROBLEM}\n\n## Done when\n\nTBD\n"),
+            &[Artifact::DoneWhenBar],
+            &format!(
+                "a written problem headed {problem_marker:?} above a deferred done-when: \
+                 the message must name the missing bar without accusing the author over \
+                 the problem statement they wrote"
+            ),
+        );
+    }
+
+    for done_when_marker in DONE_WHEN_MARKERS {
+        expect_missing(
+            &format!("## Problem\n\nTBD\n\n{done_when_marker}\n\n{BAR}\n"),
+            &[Artifact::WrittenProblem],
+            &format!(
+                "a real bar headed {done_when_marker:?} below a deferred problem section: \
+                 the message must name the missing problem without accusing the author \
+                 over the bar they wrote"
+            ),
+        );
+    }
+
+    // And the same for the two heading depths crossed, so the surviving heading
+    // is never the one the missing heading is spelled with either — a constant
+    // that embedded `### Problem` instead would otherwise be subtracted by the
+    // loops above.
+    for problem_marker in PROBLEM_MARKERS {
+        for done_when_marker in DONE_WHEN_MARKERS {
+            expect_missing(
+                &format!("{problem_marker}\n\n{PROBLEM}\n\n{done_when_marker}\n\nTBD\n"),
+                &[Artifact::DoneWhenBar],
+                &format!(
+                    "a written problem headed {problem_marker:?} above a done-when headed \
+                     {done_when_marker:?} that defers"
+                ),
+            );
+            expect_missing(
+                &format!("{problem_marker}\n\nTBD\n\n{done_when_marker}\n\n{BAR}\n"),
+                &[Artifact::WrittenProblem],
+                &format!(
+                    "a real bar headed {done_when_marker:?} below a problem headed \
+                     {problem_marker:?} that defers"
+                ),
+            );
+        }
+    }
 }
 
 #[test]
@@ -3003,6 +3303,54 @@ fn binding_statement(src: &str, name: &str) -> Option<String> {
     None
 }
 
+/// Every line of `src` that assigns to `name` WITHOUT introducing it.
+///
+/// `binding_statement` stops at the semicolon that closes the `let` — its own
+/// parser test requires that, or every binding would look as though it were
+/// built from every later value — so `unmeasured_alternatives_in` sees only
+/// what the initialiser does. A fail-open written as a later REASSIGNMENT is
+/// therefore invisible to it, and `let_binding_before` strips `mut ` on
+/// purpose, so `let mut product_bar_status = …` is an accepted binding:
+///
+///     let mut product_bar_status = product_bar::judge(&diff_ctx.pr_body);
+///     if diff_ctx.pr_body.trim().is_empty() {
+///         product_bar_status = GateStatus::NotMeasured { .. };
+///     }
+///
+/// binds the right name, calls `judge` over the body, leaves nothing behind
+/// when the call is cut out of the `let`, and hands the struct the shorthand.
+/// Every wiring assertion passes, `judge` stays perfectly correct so every
+/// behavioural test passes — and every pull request opened with an empty body
+/// certifies the Product seat as `NotMeasured`, which `is_acceptable()` returns
+/// true for. One line away from the `if` form the guard already closes.
+///
+/// The `let` line itself is not an assignment by this reading: its left-hand
+/// side trims to `let name`, or `let mut name`, or `let name: GateStatus`, none
+/// of which equals `name`. Comparisons are excluded so `product_bar_status ==
+/// GateStatus::Passed` is not mistaken for a write, because a guard that
+/// misreads a correct implementation and reports it as the defect it does not
+/// have is worse than no guard.
+fn assignments_to(src: &str, name: &str) -> Vec<String> {
+    src.lines()
+        .filter(|line| {
+            let Some((lhs, rhs)) = line.split_once('=') else {
+                return false;
+            };
+            // `==` — a comparison, not a write.
+            if rhs.starts_with('=') {
+                return false;
+            }
+            // `!=`, `<=`, `>=`, `+=`-style compounds: the operator's first
+            // character sits at the end of what `split_once` called the LHS.
+            if lhs.ends_with(['!', '<', '>', '+', '-', '*', '/', '%', '&', '|', '^']) {
+                return false;
+            }
+            lhs.trim() == name
+        })
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
 /// `text` with every product_bar `judge(..)` call expression cut out of it.
 ///
 /// What is left of a statement once the measurement is removed is everything
@@ -3264,6 +3612,39 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
              the body can legitimately be absent, say so in `judge`, where \
              a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured can see it"
         );
+
+        // AND NOTHING LATER OVERWRITES IT. The check above reads the `let`
+        // statement and stops at its semicolon, because `binding_statement`
+        // must stop there or every binding looks as though it were built from
+        // every later value. So the same fail-open, written as a reassignment
+        // one line down, walks straight past it:
+        //
+        //     let mut product_bar_status = product_bar::judge(&diff_ctx.pr_body);
+        //     if diff_ctx.pr_body.trim().is_empty() {
+        //         product_bar_status = GateStatus::NotMeasured { .. };
+        //     }
+        //
+        // `let_binding_before` strips `mut ` deliberately, so that binding is
+        // accepted; the initialiser residue is empty; the struct takes the
+        // shorthand. Every wiring assertion passes and every pull request with
+        // an empty body certifies the Product seat as NotMeasured — which is
+        // `a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured`
+        // reinstated at the one seam no behavioural test reaches.
+        if !is_a_product_bar_judge_call(&src, init) {
+            let bound = leading_ident(init);
+            let overwrites = assignments_to(&src, &bound);
+            assert!(
+                overwrites.is_empty(),
+                "product_bar_status is measured and then written over: {overwrites:?} \
+                 assign to {bound:?} after the let that binds it to the judge call. The \
+                 field's value must be the measurement, full stop — a later branch that \
+                 substitutes NotMeasured (or Passed, or Warning) for a body the gate \
+                 found nothing in certifies every change whose author wrote nothing, \
+                 which is the one case this seat exists for. If the body can \
+                 legitimately be absent, say so in `judge`, where \
+                 a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured can see it"
+            );
+        }
     }
 }
 
@@ -3620,4 +4001,53 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         "the conditional fail-open must be visible once the judge call is cut out; \
          found {found:?}"
     );
+
+    // THE REASSIGNMENT FORM OF THE SAME FAIL-OPEN, which is one line away from
+    // the conditional above and invisible to every other check in these guards:
+    // `binding_statement` stops at the `;` that closes the `let` (its own parser
+    // test three blocks up requires that), and `let_binding_before` strips
+    // `mut ` on purpose, so this shape binds the right name, calls judge over
+    // the body, leaves an empty residue and hands the struct the shorthand.
+    let reassigned = "    let mut product_bar_status = product_bar::judge(&diff_ctx.pr_body);\n\
+                      \x20   if diff_ctx.pr_body.trim().is_empty() {\n\
+                      \x20       product_bar_status = GateStatus::NotMeasured { gate_id: \"product_bar_status\".to_string(), reason: \"the pull request has no body\".to_string() };\n\
+                      \x20   }\n";
+    assert_eq!(
+        unmeasured_alternatives_in(
+            reassigned,
+            &binding_statement(reassigned, "product_bar_status").expect("bound by a let"),
+        ),
+        Vec::<&str>::new(),
+        "sanity, and the reason this check exists: the initialiser reader sees NOTHING \
+         wrong with the reassignment fail-open, because the statement it reads ends at \
+         the semicolon"
+    );
+    assert_eq!(
+        assignments_to(reassigned, "product_bar_status").len(),
+        1,
+        "the reassignment that substitutes NotMeasured for the measurement must be \
+         seen; got {:?}",
+        assignments_to(reassigned, "product_bar_status")
+    );
+
+    // And the mirror, so the new check cannot fail a correct wiring for its
+    // spelling. A plain `let`, an annotated `let`, a `let mut` that is never
+    // written over, and a comparison are all correct and none of them is an
+    // overwrite.
+    for clean in [
+        straight,
+        annotated,
+        "let mut product_bar_status = product_bar::judge(pr_body);\n",
+        "if product_bar_status == GateStatus::Passed {\n",
+        "    product_bar_status != GateStatus::Passed\n",
+        "let product_bar_status: GateStatus = product_bar::judge(&diff_ctx.pr_body);\n",
+    ] {
+        assert_eq!(
+            assignments_to(clean, "product_bar_status"),
+            Vec::<String>::new(),
+            "assignments_to saw a write in {clean:?}, which introduces or merely reads \
+             the binding. A guard that misreads a correct wiring and reports it as the \
+             defect it does not have is worse than no guard"
+        );
+    }
 }

@@ -1,4 +1,5 @@
-//! PreMergeGuard: 70-Gate Quality Certification & Governance Matrix
+//! PreMergeGuard: the live gate corpus, certification, and governance matrix.
+//! The count is `TOTAL_GATES`, never a number written in prose.
 
 pub mod evaluator;
 pub mod matrix;

@@ -26,16 +26,16 @@
 //! race against any other thread reading it, and a `cargo test` binary runs its
 //! cases in parallel threads.
 //!
-//! ## Why one `#[test]` and fourteen case functions
+//! ## Why one `#[test]` and fifteen case functions
 //!
 //! The environment mutation is only sound if nothing else in this process is
-//! running while it happens. Fourteen `#[test]` functions each neutralising
+//! running while it happens. Fifteen `#[test]` functions each neutralising
 //! `PATH` under a `Once` would still race the first mutation against every other
 //! case's `tempdir()` (which reads `TMPDIR`), which is precisely the race the
 //! three-binary split exists to avoid. One `#[test]` gives a single-threaded
 //! binary and makes the mutation sound by construction.
 //!
-//! The cost is that the fourteen behaviours share one test name, and it is paid
+//! The cost is that the fifteen behaviours share one test name, and it is paid
 //! down rather than hidden: each case is a named function with its own doc
 //! comment, they are run through `catch_unwind` so **one failure does not mask
 //! the others**, every case is reported individually as `ok` or `FAILED`, and the
@@ -55,11 +55,11 @@
 //! `tests/docguard_oracle_repair_test.rs`, because none of them can reach the
 //! probe at all.
 //!
-//! ## Three of the fourteen cases here are FENCES, not red evidence
+//! ## Four of the fifteen cases here are FENCES, not red evidence
 //!
 //! Every case in this binary is currently blocked at `with_probe_override`'s
-//! `todo!()` (`src/doc_guard/mod.rs:163`), so a run reports 14/14 failing. That
-//! number must not be read as fourteen behaviours failing against the three live
+//! `todo!()` (`src/doc_guard/mod.rs:163`), so a run reports 15/15 failing. That
+//! number must not be read as fifteen behaviours failing against the three live
 //! defects, and this file used to let it be read that way.
 //!
 //! Measured, not assumed: with ONLY the two scaffolding bodies filled in
@@ -67,11 +67,12 @@
 //! the `Probe::Overridden` arm in `evaluate_doc_parity` ->
 //! `return outcome.clone().map_err(anyhow::Error::msg)`) and nothing else
 //! touched — no defect repaired — this binary reports **11 failing on test-file
-//! assertion lines and these three passing**:
+//! assertion lines and these four passing**:
 //!
 //! * `a_probe_that_produced_no_judgement_is_errored_and_never_a_pass`
 //! * `a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do`
 //! * `a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate`
+//! * `published_drift_the_sync_could_not_repair_fails_anvils_own_gate`
 //!
 //! They are regression fences on arms of `ensure_documentation_parity` that are
 //! already CORRECT on `main` — the same category, and the same disclosure, that
@@ -95,10 +96,19 @@
 //!   through it — which propagates the error out of the gate instead of mapping
 //!   it onto `errored`, or, with the `?` swallowed, reports a corpus the gate
 //!   could not read as sufficient.
+//! * The fourth fences the DRIFT arm of that same match: published claims the
+//!   sync rewrote the page for and still could not make honest fail the gate,
+//!   with an empty `files_created_or_updated`. It is the sibling of the third
+//!   and it falls to the same flattening refactor — and it is the more dangerous
+//!   loss of the two, because `rewritten` is non-empty on its fixture, so the
+//!   arm's disappearance does not merely stop failing the pull request, it
+//!   announces the unrepaired page as a completed documentation update and
+//!   certifies. See `unrepairable_drift_page()` for why a fixture that reaches
+//!   this arm has to be built rather than merely written down.
 //!
 //! Nothing about them needs to change; they are correctly aimed and correctly
-//! falsifiable. What was wrong was publishing "14/14 red" as behavioural red
-//! evidence when three of the fourteen prove only that the seam is unimplemented
+//! falsifiable. What was wrong was publishing "15/15 red" as behavioural red
+//! evidence when four of the fifteen prove only that the seam is unimplemented
 //! and then go green. On a branch whose subject is ADR-0002's honesty law, a
 //! published number that does not match the measurement is that same defect one
 //! level up.
@@ -178,6 +188,38 @@ fn watched_repo_page() -> String {
 /// same work to report on it — none.
 fn already_honest_page() -> String {
     format!("# Page\n\nShips behind a {TOTAL_GATES}-gate release check.\n")
+}
+
+/// An Anvil page the corpus sync writes and still cannot vouch for.
+///
+/// Building one takes care, and the care is the point. `rewrite_page` and
+/// `remaining_claim` share `count_regex` and `sixty_regex`, so every claim the
+/// checker can see the rewriter has already normalised: no page can simply
+/// *arrive* carrying drift that survives its own repair. A previous round of
+/// this suite concluded from that that the drift arm was unreachable and left it
+/// unpinned. It is not unreachable — the drift a correct sync is left holding is
+/// drift its own edit CREATES.
+///
+/// Here the exemption sentence occupies a whole line between `Anvil ships 12`
+/// and `-gate release check.`. Deleting it closes the gap, and `count_regex`'s
+/// `\s*-\s*gate` spans the newline, so the repaired page publishes a `12`-gate
+/// claim that was not there before and that nothing will rewrite. `12` is not
+/// `TOTAL_GATES`, so the sync reports it as remaining drift.
+///
+/// The shape is deliberately independent of HOW issue #28's deletion is
+/// repaired. Whether the deletion consumes the marker's trailing newline, leaves
+/// the line blank, or leaves a space behind, `\s*` spans all three and the joined
+/// claim still reads `12`. And the case does not assume it: it asserts the drift
+/// at the sync before it asserts anything about the gate, so a future rewriter
+/// that did normalise this fails the fixture loudly instead of letting the gate
+/// assertions pass vacuously.
+fn unrepairable_drift_page() -> String {
+    "# Anvil\n\
+     \n\
+     Anvil ships 12\n\
+     It does **not** yet amend existing documents.\n\
+     -gate release check.\n"
+        .to_string()
 }
 
 fn write(path: &Path, body: &str) {
@@ -266,6 +308,41 @@ fn skipped_sync_reason(repo: &str) -> String {
         "{repo:?}: the stated reason must actually say something"
     );
     reason
+}
+
+/// The drift entry the sync reports for `unrepairable_drift_page()`, read back
+/// from the sync itself so the assertion that it reaches the gate's summary pins
+/// pass-through rather than wording.
+///
+/// STATED REQUIREMENT: a drift entry names the owned page *relative to the
+/// checkout* and the claim that page still makes. It is derived here in a
+/// tempdir other than the one the gate under test runs in, so an entry that
+/// carried an absolute path would not satisfy this suite — which is the right
+/// requirement independently, since this string is published into a pull
+/// request's scorecard and a reviewer's machine paths do not belong there.
+fn unrepaired_drift_entry() -> String {
+    let dir = tempdir().unwrap();
+    write(&dir.path().join("README.md"), &unrepairable_drift_page());
+    let sync = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES)
+        .expect("the fixture is readable, so the sync itself must succeed");
+    assert_eq!(
+        sync.remaining_drift.len(),
+        1,
+        "fence: `unrepairable_drift_page()` exists to leave exactly one claim the \
+         sync wrote and cannot vouch for. If this is empty the rewriter now \
+         normalises the fixture and the case below would pass vacuously; the \
+         fixture must be rebuilt, not deleted, because the gate arm it drives is \
+         still live. got: {:?}",
+        sync.remaining_drift
+    );
+    assert_eq!(
+        sync.rewritten,
+        vec!["README.md".to_string()],
+        "fence: the sync must actually have WRITTEN this page — that is what makes \
+         the case discriminating, because the gate must report the page it wrote \
+         as no work done"
+    );
+    sync.remaining_drift.into_iter().next().unwrap()
 }
 
 fn diff_ctx(repo: &str, repo_dir: &Path, changed: &[&str]) -> PrDiffContext {
@@ -984,6 +1061,74 @@ fn a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate() {
     );
 }
 
+/// Published drift the sync could not repair fails Anvil's own gate, and the
+/// page it rewrote on the way is never reported as work done.
+///
+/// This is the `Ok(sync) if !sync.remaining_drift.is_empty()` arm of the
+/// corpus-sync match. It is the arm this branch is REWRITING — `not_applicable`
+/// has to be threaded through that same match — and until now nothing anywhere
+/// pinned it: every Anvil fixture in this suite carries drift the rewriter fully
+/// repairs, and every non-Anvil fixture asserts empty drift by design.
+///
+/// The refactor that drops it is not exotic. Threading the skip through is most
+/// naturally written as
+/// `let sync = sync_published_counts(repo, repo_dir, TOTAL_GATES)?; let skip =
+/// sync.not_applicable; let rewritten = sync.rewritten;`, which flattens three
+/// arms into one and loses this one as a casualty. Anvil's own gate 1 then stops
+/// failing on published drift it could not repair. It does not even go
+/// `AutoUpdated`: `rewritten` is non-empty on this fixture, so the page the sync
+/// wrote and cannot vouch for is announced as a completed documentation update
+/// and the pull request is certified.
+///
+/// So the probe is given the SUFFICIENT verdict. Everything the gate is told
+/// about this diff says pass; the only thing that must stop it is the corpus the
+/// sync itself flagged.
+fn published_drift_the_sync_could_not_repair_fails_anvils_own_gate() {
+    let drift = unrepaired_drift_entry();
+
+    let dir = tempdir().unwrap();
+    write(&dir.path().join("README.md"), &unrepairable_drift_page());
+
+    let report = run_gate(sufficient(), ANVIL, dir.path(), &["src/lib.rs"]);
+
+    assert!(
+        !report.is_sufficient,
+        "the sync wrote Anvil's own README.md and still reports a claim it could \
+         not make honest; a page the gate cannot vouch for is not a documented \
+         diff, whatever the probe said about the diff itself: {}",
+        report.summary
+    );
+    // Drift is a FINDING, not missing evidence. The sync ran, read the page, and
+    // reported what it found, so this must be `Failed`, not `Errored` — the two
+    // block alike today, but `Errored` says the gate could not judge, and a gate
+    // that cannot distinguish "I found a problem" from "I could not look" cannot
+    // be trusted by anything downstream of it.
+    assert!(
+        report.errored.is_none(),
+        "the sync ran and reported a finding; that is an adverse judgement, not \
+         absent evidence: {:?}",
+        report.errored
+    );
+    // The heart of it, and the reason the arm returns an empty list rather than
+    // `sync.rewritten`: the evaluator maps a non-empty file list onto
+    // `GateStatus::AutoUpdated`, and `AutoUpdated.is_acceptable()` is `true`. A
+    // report that listed the page it rewrote would certify this pull request
+    // while saying, in the same breath, that the page is still wrong.
+    assert!(
+        report.files_created_or_updated.is_empty(),
+        "the sync rewrote README.md but could not finish the job, so nothing may \
+         be reported as an update — a non-empty list here is read as AutoUpdated \
+         and AutoUpdated certifies: {:?}",
+        report.files_created_or_updated
+    );
+    assert!(
+        report.summary.contains(&drift),
+        "the gate must name the drift it is failing on so a contributor can fix \
+         it; expected the summary to carry {drift:?}, got: {}",
+        report.summary
+    );
+}
+
 // =========================================================================
 // Issue #29 — absent or failed evidence is never a pass
 // =========================================================================
@@ -1487,6 +1632,10 @@ fn the_documentation_gate_is_pinned_with_no_agy_reachable_on_path() {
             a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate,
         ),
         (
+            "published_drift_the_sync_could_not_repair_fails_anvils_own_gate",
+            published_drift_the_sync_could_not_repair_fails_anvils_own_gate,
+        ),
+        (
             "an_under_documented_diff_does_not_pass_through_the_public_gate",
             an_under_documented_diff_does_not_pass_through_the_public_gate,
         ),
@@ -1520,7 +1669,7 @@ fn the_documentation_gate_is_pinned_with_no_agy_reachable_on_path() {
         ),
     ];
 
-    // `catch_unwind` so that one red case does not hide the other thirteen: a
+    // `catch_unwind` so that one red case does not hide the other fourteen: a
     // run of this binary reports every behaviour that is failing, which is the
     // property a single aggregating test would otherwise cost.
     let mut failures: Vec<String> = Vec::new();

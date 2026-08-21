@@ -28,6 +28,12 @@ pub struct ChaosMutationGuard {
     mutator_engine: AstMutatorEngine,
 }
 
+impl Default for ChaosMutationGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChaosMutationGuard {
     pub fn new() -> Self {
         let mutator_engine = AstMutatorEngine::new();
@@ -61,8 +67,8 @@ impl ChaosMutationGuard {
         let mut current_file = String::new();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 continue;
             }
 

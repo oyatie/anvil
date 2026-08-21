@@ -17,6 +17,12 @@ pub struct MigrationPhaseFinding {
 
 pub struct MigrationPhaseValidator;
 
+impl Default for MigrationPhaseValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MigrationPhaseValidator {
     pub fn new() -> Self {
         Self
@@ -42,13 +48,11 @@ impl MigrationPhaseValidator {
                         violation: "Destructive `DROP COLUMN` attempted without explicit `-- PHASE: CONTRACT` annotation and 30-day bake confirmation.".to_string(),
                     });
                 }
-            } else if drop_table_re.is_match(line) {
-                if !sql_content.contains("-- PHASE: CONTRACT") {
-                    findings.push(MigrationPhaseFinding {
+            } else if drop_table_re.is_match(line) && !sql_content.contains("-- PHASE: CONTRACT") {
+                findings.push(MigrationPhaseFinding {
                         file_path: file_path.to_string(),
                         violation: "Destructive `DROP TABLE` attempted without explicit `-- PHASE: CONTRACT` annotation.".to_string(),
                     });
-                }
             }
         }
 

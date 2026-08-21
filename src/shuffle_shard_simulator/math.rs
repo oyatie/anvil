@@ -1,4 +1,3 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +72,29 @@ impl ShuffleShardMath {
             single_cell_outage_impact_ratio,
         }
     }
+
+    /// Selects deterministic shuffle shard cells for a tenant using FNV-1a 64-bit hashing
+    pub fn select_tenant_cells(
+        tenant_id: &str,
+        total_cells: usize,
+        cells_per_tenant: usize,
+    ) -> Vec<usize> {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in tenant_id.as_bytes() {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        let bytes = hash.to_le_bytes();
+
+        let mut available: Vec<usize> = (1..=total_cells).collect();
+        let mut selected = Vec::new();
+        for i in 0..cells_per_tenant.min(total_cells) {
+            let idx = (bytes[i % bytes.len()] as usize + i) % available.len();
+            selected.push(available.remove(idx));
+        }
+        selected.sort();
+        selected
+    }
 }
 
 #[cfg(test)]
@@ -95,5 +117,17 @@ mod tests {
         };
         let overlap = ShuffleShardMath::evaluate_overlap(&[t1, t2]);
         assert_eq!(overlap, 2);
+    }
+
+    #[test]
+    fn test_deterministic_subset_selection() {
+        let cells1 = ShuffleShardMath::select_tenant_cells("tenant-alpha", 8, 2);
+        let cells2 = ShuffleShardMath::select_tenant_cells("tenant-alpha", 8, 2);
+        assert_eq!(cells1, cells2);
+        assert_eq!(cells1.len(), 2);
+        assert!(cells1[0] <= 8 && cells1[1] <= 8);
+
+        let cells_beta = ShuffleShardMath::select_tenant_cells("tenant-beta", 8, 2);
+        assert_eq!(cells_beta.len(), 2);
     }
 }

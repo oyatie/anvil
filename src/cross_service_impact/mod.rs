@@ -19,6 +19,12 @@ pub struct CrossServiceImpactEngine {
     validator: ServiceGraphValidator,
 }
 
+impl Default for CrossServiceImpactEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CrossServiceImpactEngine {
     pub fn new() -> Self {
         let validator = ServiceGraphValidator::new();
@@ -41,10 +47,10 @@ impl CrossServiceImpactEngine {
         for file_diff in diff_ctx.diff_content.split("diff --git") {
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "api.yaml".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let file_findings = self

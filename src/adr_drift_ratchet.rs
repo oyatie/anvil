@@ -17,6 +17,12 @@ pub struct AdrReport {
 
 pub struct AdrDriftRatchet;
 
+impl Default for AdrDriftRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdrDriftRatchet {
     pub fn new() -> Self {
         Self

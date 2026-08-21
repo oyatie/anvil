@@ -19,6 +19,12 @@ pub struct ConstantWorkGuard {
     checker: BufferLimitsChecker,
 }
 
+impl Default for ConstantWorkGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConstantWorkGuard {
     pub fn new() -> Self {
         let checker = BufferLimitsChecker::new();
@@ -45,10 +51,10 @@ impl ConstantWorkGuard {
 
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "unknown.rs".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let findings = self

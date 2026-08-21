@@ -1,0 +1,14 @@
+#!/bin/bash
+# Conventional Commits, so history stays machine-readable.
+set -uo pipefail
+if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
+first=$(head -n 1 "$1")
+case "$first" in
+    Merge*|Revert*|fixup!*|squash!*) exit 0 ;;
+esac
+if ! echo "$first" | grep -qE '^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)(\([a-zA-Z0-9_./-]+\))?!?: .+'; then
+    echo "[commit-msg] REFUSED: '$first'"
+    echo "             Expected: <type>(<scope>): <summary>"
+    exit 1
+fi
+exit 0

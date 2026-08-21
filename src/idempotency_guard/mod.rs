@@ -19,6 +19,12 @@ pub struct IdempotencyGuard {
     engine: OutboxRulesEngine,
 }
 
+impl Default for IdempotencyGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IdempotencyGuard {
     pub fn new() -> Self {
         let engine = OutboxRulesEngine::new();
@@ -45,10 +51,10 @@ impl IdempotencyGuard {
 
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "unknown.rs".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let file_findings = self

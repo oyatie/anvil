@@ -129,24 +129,40 @@ fn anvil_ownership_is_a_compile_time_constant_not_a_process_environment_variable
     // either. A `Config::self_repo` predicate fails here too — it would now
     // decline to repair Anvil's own published counts, silently removing gate
     // 1's corpus enforcement from every Anvil pull request.
+    //
+    // Every entry of `OWNED_PAGES`, not just `README.md`: `OWNED_PAGES` appears
+    // above only in the negative direction, and a sync that keeps working for
+    // `oyatie/anvil` but has quietly narrowed to one page is the same silent
+    // drift, reached from the other side.
     let anvil_dir = tempdir().unwrap();
-    write(&anvil_dir.path().join("README.md"), &drifting_page());
+    for owned in OWNED_PAGES {
+        write(&anvil_dir.path().join(owned), &drifting_page());
+    }
 
     let anvil = sync_published_counts(ANVIL, anvil_dir.path(), TOTAL_GATES).unwrap();
-    let got = std::fs::read_to_string(anvil_dir.path().join("README.md")).unwrap();
 
+    for owned in OWNED_PAGES {
+        assert!(
+            anvil.rewritten.contains(&(*owned).to_string()),
+            "SELF_REPO={IMPERSONATED} must not disown oyatie/anvil, and every owned \
+             page that carried drift must be rewritten: {owned} missing from {:?}",
+            anvil.rewritten
+        );
+        let got = std::fs::read_to_string(anvil_dir.path().join(owned)).unwrap();
+        assert!(
+            got.contains(&format!("{TOTAL_GATES}-gate")),
+            "Anvil's own {owned} must still be rewritten to TOTAL_GATES: {got}"
+        );
+        assert!(
+            !got.to_lowercase().contains("sixty-gate"),
+            "Anvil's own spelled-out claim must still be repaired in {owned}: {got}"
+        );
+    }
     assert_eq!(
-        anvil.rewritten,
-        vec!["README.md".to_string()],
-        "SELF_REPO={IMPERSONATED} must not disown oyatie/anvil"
-    );
-    assert!(
-        got.contains(&format!("{TOTAL_GATES}-gate")),
-        "Anvil's own README must still be rewritten to TOTAL_GATES: {got}"
-    );
-    assert!(
-        !got.contains("sixty-gate"),
-        "Anvil's own spelled-out claim must still be repaired: {got}"
+        anvil.rewritten.len(),
+        OWNED_PAGES.len(),
+        "exactly the pages that were written may be reported: {:?}",
+        anvil.rewritten
     );
     assert!(
         anvil.not_applicable.is_none(),

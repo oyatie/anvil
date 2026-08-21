@@ -81,6 +81,18 @@ use tempfile::tempdir;
 
 const ANVIL: &str = "oyatie/anvil";
 
+/// Every page `collect_owned_pages` claims. The fixture below is written to all
+/// five rather than to `README.md` alone, so the fence that neither run changes
+/// the checkout covers every owned page kind — including the two that are not
+/// markdown or not at the repository root.
+const OWNED_PAGES: &[&str] = &[
+    "README.md",
+    "docs/doctrine.md",
+    "openapi/openapi.yaml",
+    "docs/adr/0001-console.md",
+    "docs/decisions/0001-console.md",
+];
+
 /// Mirrors `MISSING_REASON` in the gate suite.
 const MISSING_REASON: &str = "newly_public is a new public API with no reference page";
 
@@ -300,20 +312,33 @@ fn the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate() {
 
     for (label, outcome, check) in cases {
         let dir = tempdir().unwrap();
-        write(&dir.path().join("README.md"), &page);
+        for owned in OWNED_PAGES {
+            write(&dir.path().join(owned), &page);
+        }
 
         let (first, second) = run_gate_twice(outcome, ANVIL, dir.path(), &["src/lib.rs"]);
 
         check(&first, "first run");
         check(&second, "second run");
 
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("README.md")).unwrap(),
-            page,
-            "{label}: fence — this page already publishes TOTAL_GATES, so neither \
-             run may change it and any difference between the two reports below \
-             is the seam's, not the checkout's"
-        );
+        for owned in OWNED_PAGES {
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join(owned)).unwrap(),
+                page,
+                "{label}: fence — {owned} already publishes TOTAL_GATES, so neither \
+                 run may change it and any difference between the two reports below \
+                 is the seam's, not the checkout's"
+            );
+        }
+        for report in [&first, &second] {
+            assert!(
+                report.files_created_or_updated.is_empty(),
+                "{label}: every owned page already publishes TOTAL_GATES and no \
+                 outcome here names a file, so nothing may be reported as \
+                 touched: {:?}",
+                report.files_created_or_updated
+            );
+        }
         assert_eq!(
             first.is_sufficient, second.is_sufficient,
             "{label}: the same guard was asked the same question twice and gave \

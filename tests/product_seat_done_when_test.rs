@@ -56,9 +56,21 @@
 //!      revision before last, and `&pr_body[..2100.min(pr_body.len())]` and
 //!      `pr_body.lines().take(50)` passed the last one, because no must-pass
 //!      body put its bar further in than that. Three magnitudes an order of
-//!      magnitude apart, each with its emptied mirror, leave no fixed byte
-//!      count or line count that passes the passing side and fails the failing
-//!      side.
+//!      magnitude apart, each with its emptied mirror, close every clamp
+//!      between them — but only between them, and the previous revision
+//!      overstated what that reached. Review measured the residual in both
+//!      units: `pr_body.lines().take(3000)` and `.take(5000)` passed all
+//!      forty-one tests, because x64 of a thirty-eight-line background is only
+//!      about twenty-five hundred lines while a GitHub body may hold 65,536
+//!      characters and therefore up to 65,536 LINES; and a byte clamp at
+//!      200,000 passed too, because GitHub's limit is 65,536 CHARACTERS and a
+//!      character may be four bytes. So the family gains a fourth member built
+//!      the other way round, out of sixty-six thousand short lines
+//!      (`TALL_BACKGROUND_LINES`), and the fixture invariants now bound the
+//!      passing side in both units against the real limit:
+//!      `GITHUB_MAX_BODY_BYTES` in bytes and `GITHUB_MAX_BODY_CHARS` in lines.
+//!      A clamp that survives this family sits above every body the guard layer
+//!      can be handed, in either unit, and truncates nothing.
 //!   2. **Length is not monotone per section, in either direction either.**
 //!      `"TODO: write the acceptance criteria here"` is a thirty-nine-byte
 //!      placeholder that must fail, so no minimum section length can be the
@@ -267,6 +279,41 @@
 //!      those rules is exercised on both sides in
 //!      `assert_the_wiring_parsers_read_a_real_wiring`, because a guard that
 //!      misreads a correct wiring is worse than no guard.
+//!  19. **The wiring guards' universe is the whole value chain, not one file
+//!      and one call site.** The rules in (17) were applied only to text inside
+//!      `src/pre_merge_guard/evaluator.rs`, so every one of them was open one
+//!      line up or one hop out, and review measured all three against a working
+//!      reference gate:
+//!      * **The call site.** `truncated_argument` and `shadowed_argument` never
+//!        ran on the argument the *pipeline* passes. Changing it from `body,` to
+//!        `&body[..body.len().min(4000)],` gave `41 passed; 0 failed` —
+//!        `root_ident` is still `body`, the position check still lines up, and
+//!        `judge` stays perfectly correct. A named local
+//!        (`let body_excerpt = &body[..2000];`) slipped through the same way, so
+//!        `shadowed_argument` now follows the value under a new name as well as
+//!        under a shadow. `assignments_to` had the same blind spot:
+//!        `cert_report.product_bar_status = GateStatus::Warning(..)` written in
+//!        the pipeline after the call was invisible to every guard.
+//!      * **Around the call rather than after it.** `post_processing_after`
+//!        reads only what FOLLOWS the closing paren and treats `)` as clean,
+//!        and cutting the call out of `soften(product_bar::judge(pr_body))`
+//!        leaves `soften( )`, which held none of the four entries in the
+//!        denylist that used to stand in for this rule.
+//!        `residue_beyond_the_measurement` replaces the denylist with the rule
+//!        itself: once the call and the syntax that binds it are removed,
+//!        nothing may be left. `41 passed; 0 failed` before, with every change
+//!        certifying because `Warning` is `is_acceptable()`.
+//!      * **One hop further up the chain.** The argument for forcing the body
+//!        through a parameter — "a parameter is not a grep; it can hold only
+//!        what the caller passed" — applies just as hard to
+//!        `execute_pr_review`'s own `body: &str`, and there a caller was
+//!        already passing `""`: the outage-recovery startup sweep at
+//!        `src/cli/server.rs`. Wiring the gate arms it, and every pull request
+//!        certified through that path is then told it wrote neither artifact.
+//!        `every_caller_of_the_review_pipeline_hands_it_the_change_body`
+//!        enumerates every call site under `src/` and holds each to an effect
+//!        rule, because the correct call sites do not agree on one spelling:
+//!        three reach the body through a field, one through a local.
 //!  18. **The change's body reaches the gate as a PARAMETER.** The guards used
 //!      to accept a second route — a body field on `PrDiffContext`, the
 //!      change-under-review struct the evaluator already takes — because
@@ -291,21 +338,33 @@
 //! either, and an implementer should not read the silence as an accident. It is
 //! listed in open_questions.
 //!
-//! Truncation IS closed, in both the places it can be written. At the call site
-//! `truncated_argument` forbids slicing the argument and forbids a shadowing
-//! `let` that clamps the parameter one line above the call (see
-//! `shadowed_argument`). Inside `judge`, the close is a fixture property rather
-//! than a source scan:
+//! One more combination is deliberately open, and it is recorded here for the
+//! same reason: an inline deferral on a colon marker line WITH real content
+//! under it — `## Done when: TBD` followed by a genuine, checkable bar. Reading
+//! only the inline remainder makes that a failure; reading the union of the
+//! marker line and the lines below it makes it a pass; and both readings satisfy
+//! every fixture in this file. Review found it unpinned and undisclosed, which
+//! is the worse half: the silence now says so. Listed in open_questions.
+//!
+//! Truncation IS closed, in every place it can be written. At the two call
+//! sites — the pipeline's argument to the evaluator, and every caller's argument
+//! to the pipeline — `truncated_argument` and `truncating_token_in` forbid
+//! slicing the argument, and `shadowed_argument` forbids a `let` that clamps the
+//! value one line above the call, whether it shadows the parameter or gives the
+//! clamped value a new name. Inside `judge`, the close is a fixture property
+//! rather than a source scan:
 //! `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact` runs the complete
-//! artifact at three magnitudes an order of magnitude apart, each with its
-//! emptied mirror, so a clamp at any fixed byte count or line count must sit
-//! above the largest fixture to pass the passing side and below the smallest to
-//! fail the failing side, and no number does both. The largest passing body is
-//! longer than `GITHUB_MAX_BODY_CHARS`, so a clamp that does survive this file
-//! is above every body the guard layer can be handed and cannot truncate
-//! anything. The previous revision pinned one magnitude and conceded the gap;
-//! review then measured it, and `&pr_body[..2100.min(pr_body.len())]` inside
-//! `missing_artifacts` passed all forty tests.
+//! artifact at four magnitudes, each with its emptied mirror, so a clamp at any
+//! fixed byte count or line count must sit above the largest fixture to pass the
+//! passing side and below the smallest to fail the failing side, and no number
+//! does both. The passing side clears `GITHUB_MAX_BODY_BYTES` in bytes and
+//! `GITHUB_MAX_BODY_CHARS` in lines — the largest body GitHub can deliver, in
+//! each unit — so a clamp that does survive this file is above every body the
+//! guard layer can be handed and cannot truncate anything. Every step of that
+//! was measured rather than argued: the revision before last conceded one
+//! magnitude and `&pr_body[..2100.min(pr_body.len())]` passed; the last one
+//! pinned three magnitudes of PROSE and `pr_body.lines().take(5000)` and a byte
+//! clamp at 200,000 both passed.
 //!
 //! Character count and byte count are also deliberately decoupled: the Korean
 //! fixtures are short in characters and long in bytes, so a heuristic in either
@@ -348,12 +407,22 @@
 //! on the surviving side: no constant can embed thirteen spellings, so the
 //! residue now really does hold the gate to what it measured.
 //!
-//! # The marker vocabulary is open; the marker *formatting* is not
+//! # The marker vocabulary is open above a floor; the marker *formatting* is not
 //!
 //! Which words announce the two sections is left to the implementer: an
 //! implementation that also recognises `## Acceptance criteria`, `## Why`, a
 //! YAML block or unheaded prose passes unchanged, because no test here requires
 //! a body that genuinely states both artifacts to fail.
+//!
+//! Open ABOVE A FLOOR, and the floor is a decision this file makes on the
+//! implementer's behalf: the English words "Problem" and "Done when" must be
+//! among the markers recognised, in the thirteen formattings
+//! `the_same_two_words_are_the_marker_however_the_author_formats_them` runs.
+//! Every passing fixture in the file is headed with one of them, so nothing here
+//! obliges a gate to recognise a body headed `## 문제` / `## 완료 조건`, even
+//! though the Korean CONTENT fixtures require the content itself to be read in
+//! any script. That is a real product decision — an English-only marker
+//! vocabulary — and it belongs in open_questions rather than only in these docs.
 //!
 //! With ONE bound, added this revision, and it is a bound on the artifact and
 //! not on the vocabulary: a section that says what the author RAN is not a
@@ -808,7 +877,7 @@ const THIRD_SECTION_HEADERS: &[&str] = &[
 /// `"Testing:"` back and pinning the lead-in family as failing; the veto for
 /// the second is dropping `"**Testing**"` from this list and pinning the bold
 /// lead-in as passing. Whichever a human picks, the pair has to stay
-/// consistent, which is what `the_boundary_families_state_one_consistent_rule`
+/// consistent, which is what `assert_the_boundary_families_state_one_consistent_rule`
 /// asserts.
 const BOUNDARY_HEADERS: &[&str] = &["# Testing", "## Testing", "### Testing", "**Testing**"];
 
@@ -1009,12 +1078,38 @@ const LONG_BACKGROUND_LINES: &[&str] = &[
     "that cannot tell how old its evidence is must not report a verdict at all.",
 ];
 
-/// GitHub's documented maximum pull request body length, in characters.
+/// GitHub's documented maximum pull request body length, in CHARACTERS.
 ///
-/// The guard layer cannot be handed a body longer than this, so a clamp above
-/// it cannot truncate anything. That is what turns the long-body family from a
+/// The guard layer cannot be handed a body longer than this, so a clamp above it
+/// cannot truncate anything. That is what turns the long-body family from a
 /// widening into a close: see `LONG_BODY_SCALES`.
+///
+/// It also bounds the LINE count, because a body cannot hold more lines than it
+/// holds characters — every line costs at least its own terminator. That is the
+/// bound the tall fixture has to clear, and the one the previous revision
+/// claimed to have closed without measuring: `LONG_BACKGROUND_LINES` is
+/// thirty-eight lines, so even x64 is about twenty-five hundred, and review
+/// confirmed that `pr_body.lines().take(3000)` and `.take(5000)` both left all
+/// forty-one tests green while telling every author of a long, line-heavy pull
+/// request that they wrote no acceptance bar.
 const GITHUB_MAX_BODY_CHARS: usize = 65_536;
+
+/// The same bound in BYTES, which is the unit a Rust clamp is written in.
+///
+/// `&pr_body[..N]`, `pr_body.len()` and `String::len()` are all byte counts, and
+/// a character in GitHub's limit may be up to four bytes of UTF-8 — the Korean
+/// fixtures in this file are three bytes each. So a body inside GitHub's
+/// character limit can be four times `GITHUB_MAX_BODY_CHARS` bytes long, and a
+/// byte clamp is only above every body the guard layer can receive if it is
+/// above THIS. Review measured the residual: with the passing side topping out
+/// around a hundred and thirty kilobytes, a byte clamp at 200,000 passed all
+/// forty-one tests.
+///
+/// The previous revision's invariant compared `String::len()` — bytes — against
+/// `GITHUB_MAX_BODY_CHARS` — characters. It happened to hold because
+/// `LONG_BACKGROUND_LINES` is pure ASCII, so the two units coincided, but it
+/// read as a stronger claim than it made.
+const GITHUB_MAX_BODY_BYTES: usize = GITHUB_MAX_BODY_CHARS * 4;
 
 /// How many times over the long background is repeated, for the family that
 /// brackets the passing set from below.
@@ -1051,12 +1146,82 @@ const GITHUB_MAX_BODY_CHARS: usize = 65_536;
 /// That makes it fixture work.
 ///
 /// Three magnitudes an order of magnitude apart, each with its mirror, so no
-/// clamp at any FIXED byte count or line count can satisfy the family: it must
-/// sit above the largest to pass the passing side and below the smallest to
-/// fail the failing side, and no number does both. And the largest is longer
-/// than `GITHUB_MAX_BODY_CHARS`, so a clamp that does survive this file cannot
-/// truncate any body the guard layer is able to receive.
+/// clamp at any fixed BYTE count below a hundred and thirty kilobytes can
+/// satisfy the family: it must sit above the largest to pass the passing side
+/// and below the smallest to fail the failing side.
+///
+/// # What these three do NOT close, and what does
+///
+/// The previous revision's docs said "no clamp at any FIXED byte count or line
+/// count". The byte half was true up to a point and the LINE half was false, and
+/// review measured both. `LONG_BACKGROUND_LINES` is thirty-eight lines, so even
+/// x64 is roughly two and a half thousand lines — while a GitHub pull request
+/// body may hold 65,536 characters and therefore up to 65,536 lines. Any line
+/// clamp between the two survived the whole file:
+///
+/// ```text
+/// pr_body.lines().take(200)   -> test result: FAILED. 40 passed; 1 failed
+/// pr_body.lines().take(3000)  -> test result: ok. 41 passed; 0 failed
+/// pr_body.lines().take(5000)  -> test result: ok. 41 passed; 0 failed
+/// ```
+///
+/// `for line in pr_body.lines().take(5000)` is exactly the one-line safety clamp
+/// this file's own commentary says an engineer writes without thinking. The byte
+/// direction had a smaller residual for the same reason in the other unit: the
+/// limit is 65,536 CHARACTERS, so a body of four-byte characters reaches 262,144
+/// bytes, and a byte clamp at 200,000 also passed all forty-one.
+///
+/// Repeating this background is the wrong tool for either gap — sixty-five
+/// thousand lines of it would be a megabyte and a half of prose. So the family
+/// gains one more member built the other way round, out of short single-token
+/// lines: see `TALL_BACKGROUND_LINES`. Between them the passing side now clears
+/// `GITHUB_MAX_BODY_BYTES` in bytes AND `GITHUB_MAX_BODY_CHARS` in lines, which
+/// is every body the guard layer can ever be handed, in both units. A clamp that
+/// survives this file cannot truncate anything.
 const LONG_BODY_SCALES: [usize; 3] = [1, 8, 64];
+
+/// How many short lines the tall background is written over.
+///
+/// Above `GITHUB_MAX_BODY_CHARS` on purpose, and that is the whole argument: a
+/// body cannot hold more lines than characters, so a line clamp that passes this
+/// fixture sits above every body GitHub can deliver and truncates nothing. It is
+/// a floor to clear, not a size chosen for its own sake.
+const TALL_BACKGROUND_LINES: usize = 66_000;
+
+/// The rotating content of `tall_background`, one short line each.
+///
+/// Real content — no deferral, no placeholder, no pointer, nothing blank — so
+/// the section that carries it reads as substantive and the tall fixture's
+/// mirror is missing its acceptance bar and nothing else. Short, because the
+/// point of this fixture is a line count that outruns its byte count. And none
+/// of the vocabulary the failure message is judged on, like every other content
+/// fixture here — `assert_the_content_fixtures_carry_none_of_the_message_vocabulary`
+/// pins that.
+const TALL_BACKGROUND_STEMS: &[&str] = &[
+    "- ring {} held",
+    "- ring {} was served from cache",
+    "- ring {} polled and timed out",
+    "- ring {} rolled back inside the hour",
+    "- ring {} queued against a closed window",
+    "- ring {} read a stale document",
+    "- ring {} showed nine green gates",
+];
+
+/// `TALL_BACKGROUND_LINES` short lines of genuine background, saying nothing
+/// about what done looks like.
+///
+/// The line-count half of the long-body family. `long_background_at` grows the
+/// byte count fastest; this grows the line count fastest, and the two together
+/// leave no fixed clamp in either unit that can pass the passing side and fail
+/// the failing side.
+fn tall_background() -> String {
+    (0..TALL_BACKGROUND_LINES)
+        .map(|i| {
+            TALL_BACKGROUND_STEMS[i % TALL_BACKGROUND_STEMS.len()].replace("{}", &i.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// The long background written `times` over, paragraph by paragraph.
 fn long_background_at(times: usize) -> String {
@@ -1082,10 +1247,13 @@ fn long_background() -> String {
 /// in this file that must fail; passed `""` it is the same body with the section
 /// emptied, and must still fail.
 fn long_body_with_bar_at_the_end(times: usize, done_when: &str) -> String {
-    format!(
-        "## Problem\n\n{}\n\n## Done when\n\n{done_when}\n",
-        long_background_at(times)
-    )
+    body_around(&long_background_at(times), done_when)
+}
+
+/// A body whose problem section is `background` and whose done-when section is
+/// `done_when` — a real bar, or `""` for the emptied mirror.
+fn body_around(background: &str, done_when: &str) -> String {
+    format!("## Problem\n\n{background}\n\n## Done when\n\n{done_when}\n")
 }
 
 /// `stem` in lower case, upper case and sentence case — the three shapes a
@@ -1412,6 +1580,16 @@ fn assert_the_content_fixtures_carry_none_of_the_message_vocabulary() {
             "fixture invariant: {name} must contain none of the vocabulary the failure \
              message is judged on, or subtracting it from the message exempts the gate \
              from the rule that message is held to. Fixture: {fixture:?}"
+        );
+    }
+
+    // The tall background is checked stem by stem rather than whole: it is
+    // sixty-six thousand lines, and its content is these seven strings.
+    for stem in TALL_BACKGROUND_STEMS {
+        assert!(
+            !names_the_problem(stem) && !names_the_bar(stem),
+            "fixture invariant: TALL_BACKGROUND_STEMS must contain none of the \
+             vocabulary the failure message is judged on. Stem: {stem:?}"
         );
     }
 }
@@ -1915,8 +2093,8 @@ fn a_third_section_does_not_hide_an_empty_one() {
     // longer required to end a section, because the rule that makes it end one
     // also rejects `Acceptance criteria:` above a real list of bullets. See
     // BOUNDARY_HEADERS' own docs for that decision and its veto, and
-    // `the_boundary_families_state_one_consistent_rule` for the invariant that
-    // stops the two families drifting apart.
+    // `assert_the_boundary_families_state_one_consistent_rule` for the invariant
+    // that stops the two families drifting apart.
     for eol in BOTH_EOLS {
         for header in BOUNDARY_HEADERS {
             let third = third_section(header);
@@ -2240,17 +2418,43 @@ fn a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact() {
     //
     // A clamp at any fixed byte count or line count now has to sit above the
     // largest fixture to pass the passing side and below the smallest to fail
-    // the failing side. No number does both. See `LONG_BODY_SCALES`.
-    let fixtures: Vec<(usize, String, String)> = LONG_BODY_SCALES
+    // the failing side. No number does both.
+    //
+    // AND IN BOTH UNITS, which is what the previous revision claimed and did not
+    // measure. `LONG_BACKGROUND_LINES` is thirty-eight lines, so even x64 is
+    // about two and a half thousand — while a GitHub body may hold 65,536
+    // characters and therefore up to 65,536 LINES. Review inserted a line clamp
+    // at the top of `missing_artifacts` against a working reference gate:
+    //
+    //     pr_body.lines().take(200)   -> FAILED. 40 passed; 1 failed
+    //     pr_body.lines().take(3000)  -> ok. 41 passed; 0 failed
+    //     pr_body.lines().take(5000)  -> ok. 41 passed; 0 failed
+    //
+    // The byte direction had the same gap in the other unit: the limit is 65,536
+    // CHARACTERS, and a character may be four bytes, so a body inside GitHub's
+    // limit reaches 262,144 bytes and a byte clamp at 200,000 also passed all
+    // forty-one. Repeating this prose background is the wrong tool for either —
+    // sixty-five thousand lines of it is a megabyte and a half. So the family
+    // gains one more member built the other way round, out of short single-token
+    // lines: enough of them to clear `GITHUB_MAX_BODY_CHARS` in LINES, and
+    // enough bytes with it to clear `GITHUB_MAX_BODY_BYTES`. See
+    // `TALL_BACKGROUND_LINES`.
+    let mut fixtures: Vec<(String, String, String)> = LONG_BODY_SCALES
         .iter()
         .map(|&times| {
             (
-                times,
+                format!("x{times} of prose background"),
                 long_body_with_bar_at_the_end(times, MULTILINE_BAR),
                 long_body_with_bar_at_the_end(times, ""),
             )
         })
         .collect();
+    let tall = tall_background();
+    fixtures.push((
+        format!("{TALL_BACKGROUND_LINES} short lines of background"),
+        body_around(&tall, MULTILINE_BAR),
+        body_around(&tall, ""),
+    ));
 
     // The fixture invariants first, so they are exercised rather than stranded
     // behind the measurement.
@@ -2275,10 +2479,10 @@ fn a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact() {
 
     let mut marker_bytes: Vec<usize> = Vec::new();
     let mut marker_lines: Vec<usize> = Vec::new();
-    for (times, passing, mirror) in &fixtures {
+    for (name, passing, mirror) in &fixtures {
         assert!(
             passing.len() > longest_failing && mirror.len() > longest_failing,
-            "fixture invariant: the long body at x{times} ({} bytes) has to be longer \
+            "fixture invariant: the long body of {name} ({} bytes) has to be longer \
              than every body that must fail on its own account ({longest_failing} \
              bytes), or the two sets do not overlap in length at this end and a gate \
              that reads only a prefix of the change is unfalsifiable",
@@ -2296,8 +2500,14 @@ fn a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact() {
         marker_lines.push(marker_line);
     }
 
-    let (shallowest_byte, deepest_byte) = (marker_bytes[0], *marker_bytes.last().unwrap());
-    let (shallowest_line, deepest_line) = (marker_lines[0], *marker_lines.last().unwrap());
+    let (shallowest_byte, deepest_byte) = (
+        *marker_bytes.iter().min().unwrap(),
+        *marker_bytes.iter().max().unwrap(),
+    );
+    let (shallowest_line, deepest_line) = (
+        *marker_lines.iter().min().unwrap(),
+        *marker_lines.iter().max().unwrap(),
+    );
     assert!(
         shallowest_byte > 1500 && shallowest_line > 25,
         "fixture invariant: even the smallest of these must put the acceptance bar deep \
@@ -2326,35 +2536,64 @@ fn a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact() {
          ({longest_failing_anywhere} bytes), or a threshold on total length still \
          separates the two sets"
     );
+
+    // THE TWO ABSOLUTE BOUNDS, one per unit, which is what makes this family a
+    // CLOSE rather than a widening. A clamp low enough to be a real defect fails
+    // one of these fixtures; a clamp high enough to survive them is above every
+    // body the guard layer can ever be handed, and truncates nothing.
+    //
+    // In BYTES against `GITHUB_MAX_BODY_BYTES` and not against
+    // `GITHUB_MAX_BODY_CHARS`: `String::len()` counts bytes, GitHub's limit
+    // counts characters, and a character may be four bytes. The previous
+    // revision compared the two directly and read as a stronger claim than it
+    // made.
     assert!(
-        longest_passing > GITHUB_MAX_BODY_CHARS,
+        longest_passing > GITHUB_MAX_BODY_BYTES,
         "fixture invariant: the longest body that must PASS ({longest_passing} bytes) \
-         has to exceed GitHub's maximum pull request body length \
-         ({GITHUB_MAX_BODY_CHARS} characters). That is what makes this family a CLOSE \
-         rather than a widening: a clamp low enough to be a real defect fails one of \
-         these fixtures, and a clamp high enough to survive them is above every body \
-         the guard layer can ever be handed and cannot truncate anything"
+         has to exceed the longest body GitHub can deliver, in BYTES \
+         ({GITHUB_MAX_BODY_BYTES} = {GITHUB_MAX_BODY_CHARS} characters at up to four \
+         bytes each). Anything less leaves a byte clamp above the fixtures and below \
+         a real body — review measured one at 200,000 that passed the whole file"
     );
 
-    for (times, passing, mirror) in &fixtures {
+    // And in LINES, which the previous revision claimed and did not have. A body
+    // cannot hold more lines than characters, so clearing
+    // `GITHUB_MAX_BODY_CHARS` lines puts every fixed line clamp that survives
+    // this family above every body GitHub can deliver.
+    let most_lines = fixtures
+        .iter()
+        .map(|(_, p, _)| p.lines().count())
+        .max()
+        .unwrap();
+    assert!(
+        most_lines > GITHUB_MAX_BODY_CHARS,
+        "fixture invariant: the passing side has to reach more LINES ({most_lines}) \
+         than a GitHub pull request body can hold characters \
+         ({GITHUB_MAX_BODY_CHARS}), or a line clamp between the tallest fixture and \
+         the real bound survives this file and silently truncates real bodies. Review \
+         measured `pr_body.lines().take(3000)` and `.take(5000)` passing all \
+         forty-one tests against a working gate"
+    );
+
+    for (name, passing, mirror) in &fixtures {
         for eol in BOTH_EOLS {
             expect_passed(
                 &as_eol(passing, eol),
                 &format!(
-                    "x{times} of genuine background with a real acceptance bar at the \
-                     end of it ({} bytes); reading only the opening of a change and \
-                     reporting the rest absent is a fabricated accusation aimed \
-                     squarely at the authors who wrote the most, {eol:?}",
-                    passing.len()
+                    "{name}, with a real acceptance bar at the end of it ({} bytes, {} \
+                     lines); reading only the opening of a change and reporting the \
+                     rest absent is a fabricated accusation aimed squarely at the \
+                     authors who wrote the most, {eol:?}",
+                    passing.len(),
+                    passing.lines().count()
                 ),
             );
             expect_missing(
                 &as_eol(mirror, eol),
                 &[Artifact::DoneWhenBar],
                 &format!(
-                    "the same x{times} of background with the done-when section \
-                     emptied; length is not the measurement in this direction either, \
-                     {eol:?}"
+                    "the same {name} with the done-when section emptied; length is not \
+                     the measurement in this direction either, {eol:?}"
                 ),
             );
         }
@@ -4625,14 +4864,24 @@ fn a_missing_product_bar_withholds_certification() {
 //     unpopulated field reads as `""` for every pull request. See
 //     `evaluator_body_parameters`;
 //   * `product_bar_status` is derived from a call to product_bar's `judge` —
-//     qualified (`product_bar::judge(...)`) or imported (`use
-//     super::product_bar::judge;` then `judge(...)`), directly or through a
-//     `let` binding, with or without a type annotation;
-//   * the pipeline hands that call site the change's body.
+//     qualified (`product_bar::judge(...)`, `crate::pre_merge_guard::
+//     product_bar::judge(...)`) or imported (`use super::product_bar::judge;`
+//     then `judge(...)`), directly or through a `let` binding, with or without a
+//     type annotation — and the field's value is that call and nothing else:
+//     nothing wrapped around it, nothing chained onto it, nothing written over
+//     it afterwards in the evaluator or in the pipeline;
+//   * the pipeline hands that call site the change's body, whole, and no `let`
+//     between the parameter and the call clamps it — under the same name or
+//     under a new one;
+//   * and every caller of the pipeline hands IT the change's body, for the same
+//     reason the evaluator takes a parameter rather than reading a field: a
+//     value chain is only as good as its weakest link, and this one had a caller
+//     passing `""`. See
+//     `every_caller_of_the_review_pipeline_hands_it_the_change_body`.
 //
-// `the_wiring_parsers_read_the_shapes_a_wiring_is_actually_written_in` exercises
-// those parsers against the realistic spellings, so the guard is tested rather
-// than assumed.
+// `assert_the_wiring_parsers_read_a_real_wiring` exercises every one of those
+// parsers on BOTH sides — the spellings a correct wiring is written in, and the
+// fail-opens each rule exists for — so the guard is tested rather than assumed.
 
 fn source(rel: &str) -> String {
     let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
@@ -5289,13 +5538,48 @@ fn signature_parameters(signature: &str) -> Vec<String> {
         .collect()
 }
 
-/// The declared signature of `evaluate_pre_merge_gates`, from `pub fn` to the
-/// `)` that closes its parameter list.
-fn evaluator_signature(src: &str) -> Option<String> {
-    let start = src.find("pub fn evaluate_pre_merge_gates(")?;
+/// The declared signature that opens at `anchor`, from the `fn` line to the `)`
+/// that closes its parameter list.
+fn signature_of(src: &str, anchor: &str) -> Option<String> {
+    let start = src.find(anchor)?;
     let tail = &src[start..];
     let end = tail.find(") -> ")?;
     Some(tail[..end].to_string())
+}
+
+/// The declared signature of `evaluate_pre_merge_gates`, from `pub fn` to the
+/// `)` that closes its parameter list.
+fn evaluator_signature(src: &str) -> Option<String> {
+    signature_of(src, "pub fn evaluate_pre_merge_gates(")
+}
+
+/// The arguments of the call whose opening paren ends `call` at `start`, one per
+/// line — the way every call this file reads is actually written.
+///
+/// `Err` when the call is NOT written one argument per line. A wiring guard that
+/// cannot read the wiring must say so, rather than quietly find no arguments and
+/// pass, or report a swap that is not there.
+fn one_argument_per_line(src: &str, start: usize, call: &str) -> Result<Vec<String>, String> {
+    let after_open = start + call.len();
+    let line_end = src[after_open..]
+        .find('\n')
+        .map(|i| after_open + i)
+        .unwrap_or(src.len());
+    let first_line_tail = &src[after_open..line_end];
+    if !first_line_tail.trim().is_empty() {
+        return Err(format!(
+            "this test reads one argument per line, and a call to {call} carries \
+             {first_line_tail:?} on its opening line. Fix the test to parse the new \
+             shape rather than let it mis-parse — a wiring guard that cannot read the \
+             wiring is worse than none"
+        ));
+    }
+    Ok(src[start..]
+        .lines()
+        .skip(1)
+        .take_while(|l| !l.trim_start().starts_with(')'))
+        .map(|l| l.trim().trim_end_matches(',').to_string())
+        .collect())
 }
 
 /// The parameters of `evaluate_pre_merge_gates` whose names say body.
@@ -5442,23 +5726,48 @@ fn mentions_ident(expr: &str, name: &str) -> bool {
 /// pr_body.trim();` — stays clean, because `truncated_argument` judges the
 /// effect and not the spelling.
 ///
-/// A `let` of the same name whose initialiser does NOT mention `root` is not a
-/// shadow of the parameter at all: it is an unrelated binding, and the shape
-/// that occurs in practice is a fixture in the file's own `#[cfg(test)]` module.
-/// Flagging those would be exactly the fabricated accusation this file forbids,
-/// so they are left alone. See open_questions.
+/// A `let` of the same name whose initialiser does NOT mention `root` and names
+/// no other body either is not a shadow of the parameter at all: it is an
+/// unrelated binding, and the shape that occurs in practice is a fixture in the
+/// file's own `#[cfg(test)]` module. Flagging those would be exactly the
+/// fabricated accusation this file forbids, so they are left alone, and the
+/// contents of every string literal are blanked before the question is asked —
+/// `let body = "- [ ] p99 < 5ms";` is markdown, not an index expression.
+///
+/// # The clamp under a NEW name
+///
+/// Review found the same defect wearing a different label:
+///
+/// ```text
+/// let body_excerpt = &body[..2000];
+/// … evaluate_pre_merge_gates(…, body_excerpt, …)
+/// ```
+///
+/// `root_ident("body_excerpt")` still contains "body", so the argument is the
+/// one the guards pick up and it reads as a plain path; the clamp is one line up
+/// under a name that shadows nothing. That arm is judged by the EFFECT rule
+/// alone (`truncating_token_in`) rather than by the plain-path rule, because
+/// `let pr_body = meta.body.unwrap_or_default();` drops none of the text and is
+/// an ordinary correct binding that the strict rule would accuse.
 fn shadowed_argument(src: &str, root: &str) -> Option<String> {
     for statement in binding_statements(src, root) {
-        let Some(initialiser) = binding_initialiser(&statement) else {
+        let Some(raw) = binding_initialiser(&statement) else {
             continue;
         };
-        if !mentions_ident(&initialiser, root) {
-            continue;
-        }
-        if let Some(defect) = truncated_argument(&initialiser) {
+        let initialiser = without_string_literals(&raw);
+        if mentions_ident(&initialiser, root) {
+            if let Some(defect) = truncated_argument(&initialiser) {
+                return Some(format!(
+                    "{statement:?} rebinds {root:?} from itself before the gate sees \
+                     it, and {defect}"
+                ));
+            }
+        } else if names_the_change_body(&initialiser)
+            && let Some(defect) = truncating_token_in(&initialiser)
+        {
             return Some(format!(
-                "{statement:?} rebinds {root:?} from itself before the gate sees it, \
-                 and {defect}"
+                "{statement:?} binds {root:?} to less than the whole change body \
+                 before the gate sees it, and {defect}"
             ));
         }
     }
@@ -5594,40 +5903,132 @@ fn without_judge_calls(src: &str, text: &str) -> String {
             }
         }
         let cut_to = end.unwrap_or(out.len() - 1);
-        out.replace_range(start..=cut_to, " ");
+        // The whole PATH, not just the anchor. `crate::pre_merge_guard::
+        // product_bar::judge(pr_body)` is a correct and ordinary spelling, and a
+        // cut that starts at `product_bar::judge(` leaves `crate::pre_merge_guard::`
+        // behind — which the residue rule below would then report as something
+        // the statement does BESIDES measuring. A guard that misreads a correct
+        // wiring is worse than no guard.
+        let from = path_start(&out, start);
+        out.replace_range(from..=cut_to, " ");
     }
 }
 
-/// The ways a statement can hold a value in reserve beside the measurement.
+/// Where the module path leading into a call at `at` begins.
 ///
-/// A conditional is the shape an engineer actually writes, and it is the one
-/// the previous revision of these guards could not see:
-///
-///     let product_bar_status = if pr_body.trim().is_empty() {
-///         GateStatus::NotMeasured { .. }
-///     } else {
-///         product_bar::judge(pr_body)
-///     };
-///
-/// `judge` itself stays perfectly correct, so every behavioural test in this
-/// file is green; the binding is `product_bar_status`, the only judge call's
-/// arguments name the body, and the struct initialiser is the shorthand. All
-/// three wiring assertions pass — and every pull request opened with an empty
-/// body then certifies the Product seat as `NotMeasured`, which
-/// `is_acceptable()` returns true for. That is this file's headline defect
-/// (`a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured`) reinstated
-/// one layer up, at the one seam no behavioural test can reach.
-const UNMEASURED_ALTERNATIVES: &[&str] = &["GateStatus::", "if ", "match ", "unwrap_or"];
+/// `crate::pre_merge_guard::product_bar::judge(..)` is one expression, and a cut
+/// that starts at the anchor leaves the front of the path standing.
+fn path_start(text: &str, at: usize) -> usize {
+    let mut start = at;
+    while let Some(head) = text[..start].strip_suffix("::") {
+        let segment = head
+            .char_indices()
+            .rev()
+            .take_while(|(_, c)| c.is_alphanumeric() || *c == '_')
+            .last();
+        match segment {
+            Some((i, _)) => start = i,
+            None => return start,
+        }
+    }
+    start
+}
 
-/// Whichever of `UNMEASURED_ALTERNATIVES` survive in `statement` once every
-/// product_bar `judge(..)` call has been cut out of it.
-fn unmeasured_alternatives_in(src: &str, statement: &str) -> Vec<&'static str> {
-    let residue = without_judge_calls(src, statement);
-    UNMEASURED_ALTERNATIVES
-        .iter()
-        .copied()
-        .filter(|marker| residue.contains(marker))
-        .collect()
+/// The syntax that BINDS a value to a name and nothing else — `let`, an
+/// optional `mut`, the bound identifier, an optional type annotation, and the
+/// `=` that opens the initialiser — stripped off the front of `text`.
+///
+/// `None` when `text` opens with no binding head at all (a struct-literal
+/// initialiser has none) or with one this parser cannot read. The caller keeps
+/// the whole text in that case, so an unreadable head surfaces as a residue and
+/// fails loudly rather than being quietly skipped.
+fn binding_head_of(text: &str) -> Option<&str> {
+    let rest = text.trim_start().strip_prefix("let ")?.trim_start();
+    let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let name_end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    if name_end == 0 {
+        return None;
+    }
+    let rest = rest[name_end..].trim_start();
+    let rest = match rest.strip_prefix(':') {
+        Some(annotated) => {
+            let eq = annotated.find('=')?;
+            let ty = annotated[..eq].trim();
+            // A type, not an expression: no call, no block, no index, no
+            // arithmetic. `GateStatus`, `Option<GateStatus>` and
+            // `crate::pre_merge_guard::GateStatus` are types; `soften(x)` is not,
+            // and an annotation is the one place a wrapper could otherwise hide
+            // from the residue.
+            if ty.is_empty()
+                || !ty
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || " _:<>&,'".contains(c))
+            {
+                return None;
+            }
+            &annotated[eq..]
+        }
+        None => rest,
+    };
+    rest.strip_prefix('=')
+}
+
+/// What is left of `statement` once the measurement AND the syntax that binds
+/// it to a name have both been removed. Empty is the only acceptable answer.
+///
+/// # Why a residue and not a denylist
+///
+/// The previous revision asked whether any of four substrings — `GateStatus::`,
+/// `if `, `match `, `unwrap_or` — survived the cut. That catches the shapes it
+/// enumerates and nothing else, and review measured what it misses. A softening
+/// wrapper written AROUND the call rather than chained onto it:
+///
+/// ```text
+/// product_bar_status: soften(product_bar::judge(pr_body)),
+/// ```
+///
+/// where `soften` maps `Failed(m)` onto `Warning(m)`, leaves the residue
+/// `soften( )`, which holds none of the four. `post_processing_after` cannot see
+/// it either: it inspects only what FOLLOWS the call's closing paren, and it
+/// treats `)` as clean because that is what an argument looks like. So the
+/// byte-identical fail-open this file already closes for `.softened()` stood
+/// open one keystroke to the LEFT of the call, and review confirmed it against a
+/// working reference gate — `test result: ok. 41 passed; 0 failed`, with every
+/// change certifying the Product seat because `Warning` is `is_acceptable()`.
+/// `GateStatus::from(product_bar::judge(pr_body))` is the same shape, and so is
+/// any wrapper nobody has thought of yet.
+///
+/// A denylist can only ever name the wrappers someone thought of. The residue
+/// states the rule instead: the field's value IS the measurement, so a statement
+/// that does anything besides bind it has something left over.
+fn residue_beyond_the_measurement(src: &str, statement: &str) -> String {
+    let cut = without_judge_calls(src, statement);
+    let tail = binding_head_of(&cut).unwrap_or(cut.as_str()).to_string();
+    tail.trim().trim_end_matches([';', ',']).trim().to_string()
+}
+
+/// Whether any identifier in `expr` is named for the change's body.
+///
+/// Identifier-wise rather than substring-wise, and over EVERY identifier rather
+/// than only the root: `&meta.body.unwrap_or_default()` is the body reached
+/// through a field and `&pr_body` is the body reached through a local, and both
+/// are ordinary correct spellings at a call site. `&pr.title` and `"main"` are
+/// neither. Callers that care whether the expression is a literal ask that
+/// separately, because a literal can spell any word it likes.
+fn names_the_change_body(expr: &str) -> bool {
+    let mut identifier = String::new();
+    let mut found = false;
+    for c in expr.chars().chain(std::iter::once(' ')) {
+        if c.is_alphanumeric() || c == '_' {
+            identifier.push(c);
+        } else {
+            found |= identifier.to_lowercase().contains("body");
+            identifier.clear();
+        }
+    }
+    found
 }
 
 /// Argument syntax that hands the gate LESS than the whole change body.
@@ -5685,13 +6086,8 @@ const WHOLE_VALUE_ADAPTERS: &[&str] = &[
 /// no acceptance bar. `judge(&pr_body.lines().take(40).collect::<String>())`
 /// is the same defect in the other unit.
 fn truncated_argument(arg: &str) -> Option<String> {
-    for token in TRUNCATING_TOKENS {
-        if arg.contains(token) {
-            return Some(format!(
-                "it carries {token:?}, which slices, skips or shortens the body before \
-                 the gate ever sees it"
-            ));
-        }
+    if let Some(defect) = truncating_token_in(arg) {
+        return Some(defect);
     }
 
     let mut expr = arg.trim();
@@ -5724,6 +6120,29 @@ fn truncated_argument(arg: &str) -> Option<String> {
          identifier or field access itself — `pr_body`, `&self.pr_body` — possibly \
          through one of {WHOLE_VALUE_ADAPTERS:?}, none of which can drop any of the text"
     ))
+}
+
+/// The first of `TRUNCATING_TOKENS` in `text`, and why it is one.
+///
+/// The EFFECT half of the argument rule, split out because it is the only half
+/// that survives being applied one hop further up the value chain.
+/// `truncated_argument` additionally demands a PLAIN PATH, which is exactly
+/// right for the expression handed straight to `judge` and wrong for a caller's
+/// `&meta.body.unwrap_or_default()` — an ordinary, correct spelling of "the body
+/// this pull request carries" that drops none of the text and is not a plain
+/// path. Applying the strict rule up there would be the fabricated accusation
+/// this file forbids; applying the effect rule catches `&body[..4000]` at the
+/// same call sites without touching the correct ones.
+fn truncating_token_in(text: &str) -> Option<String> {
+    TRUNCATING_TOKENS
+        .iter()
+        .find(|token| text.contains(**token))
+        .map(|token| {
+            format!(
+                "it carries {token:?}, which slices, skips or shortens the body before \
+                 the gate ever sees it"
+            )
+        })
 }
 
 /// Whether `expr` is a bare identifier or a field access: `pr_body`,
@@ -5960,23 +6379,44 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
         // file exists to close, reintroduced at the one seam no behavioural
         // test reaches: an empty body is precisely the change with no bar.
         //
-        // So the statement is asked what is left of it once the measurement is
-        // removed. For a correct wiring, nothing.
+        // AND THE WRAPPING FORM OF THE SAME THING, which is where the previous
+        // revision of this guard stopped. It asked whether any of four
+        // substrings survived the cut — `GateStatus::`, `if `, `match `,
+        // `unwrap_or` — and review measured what a denylist of four misses:
+        //
+        //     product_bar_status: soften(product_bar::judge(pr_body)),
+        //
+        // with `fn soften(s: GateStatus) -> GateStatus` mapping `Failed(m)` onto
+        // `Warning(m)`. The residue is `soften( )`, which holds none of the
+        // four; `post_processing_after` cannot see it either, because it reads
+        // only what FOLLOWS the closing paren and treats `)` as clean — that is
+        // what an argument looks like. So the byte-identical fail-open this
+        // file already closes for `.softened()` stood open one keystroke to the
+        // LEFT of the call. Review confirmed it against a working reference
+        // gate: `test result: ok. 41 passed; 0 failed`, with `Warning`
+        // `is_acceptable()` and every change certifying the Product seat.
+        //
+        // So the statement is asked what is left of it once the measurement AND
+        // the syntax that binds the measurement to a name are both removed. For
+        // a correct wiring, nothing at all — and that rule needs no list of the
+        // wrappers anybody happened to think of.
         let statement = if is_a_product_bar_judge_call(&src, init) {
             init.clone()
         } else {
             binding_statement(&src, &leading_ident(init)).unwrap_or_else(|| init.clone())
         };
-        let smuggled = unmeasured_alternatives_in(&src, &statement);
+        let residue = residue_beyond_the_measurement(&src, &statement);
         assert!(
-            smuggled.is_empty(),
-            "product_bar_status is not simply the measurement: {smuggled:?} survive in \
-             {statement:?} once the product_bar::judge call is cut out of it. The \
-             field's value must be the judge call and nothing else. A branch that \
-             answers NotMeasured for a body the gate found nothing in certifies every \
-             change whose author wrote nothing, which is the one case this seat is \
-             for — absence of the bar IS the defect, not an unread measurement. If \
-             the body can legitimately be absent, say so in `judge`, where \
+            residue.is_empty(),
+            "product_bar_status is not simply the measurement: {residue:?} is left of \
+             {statement:?} once the product_bar::judge call and the syntax binding it \
+             to a name are cut out of it. The field's value must be the judge call and \
+             nothing else. A wrapper around the call maps Failed onto a status \
+             `is_acceptable()` returns true for and certifies every change; a branch \
+             that answers NotMeasured for a body the gate found nothing in certifies \
+             every change whose author wrote nothing, which is the one case this seat \
+             is for — absence of the bar IS the defect, not an unread measurement. If \
+             a change can legitimately pass, say so in `judge`, where \
              a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured can see it"
         );
 
@@ -6038,27 +6478,7 @@ fn the_review_pipeline_hands_the_evaluator_the_change_body() {
     // This parser reads one argument per line. If the call is ever collapsed
     // onto a single line it must fail loudly here rather than silently find no
     // arguments and pass, or report a swap that is not there.
-    let after_open = start + CALL.len();
-    let first_line_tail = &src[after_open
-        ..src[after_open..]
-            .find('\n')
-            .map(|i| after_open + i)
-            .unwrap_or(src.len())];
-    assert!(
-        first_line_tail.trim().is_empty(),
-        "this test reads one argument per line, and the call to \
-         evaluate_pre_merge_gates now carries {first_line_tail:?} on its opening \
-         line. Fix the test to parse the new shape rather than let it mis-parse — a \
-         wiring guard that cannot read the wiring is worse than none"
-    );
-
-    let tail = &src[start..];
-    let args: Vec<String> = tail
-        .lines()
-        .skip(1)
-        .take_while(|l| !l.trim_start().starts_with(')'))
-        .map(|l| l.trim().trim_end_matches(',').to_string())
-        .collect();
+    let args = one_argument_per_line(&src, start, CALL).unwrap_or_else(|why| panic!("{why}"));
 
     // CORRESPONDENCE, NOT PRESENCE. The previous revision asserted only that
     // SOME argument in this list was rooted at a name containing "body", while
@@ -6168,6 +6588,228 @@ fn the_review_pipeline_hands_the_evaluator_the_change_body() {
         declared[0],
         parameters[declared[0]]
     );
+
+    // AND THE WHOLE OF IT, AT THE CALL SITE. Everything above establishes WHICH
+    // argument is meant to be the body and that it lines up with the parameter.
+    // Nothing above asks what was DONE to it — and the truncation rule this file
+    // spends three magnitudes of fixtures closing, and then closes a second time
+    // inside the evaluator, was applied only to the text between `judge`'s own
+    // parentheses. The identical clamp written one line up, here, was fully
+    // open. Review measured it against a working reference gate: changing this
+    // argument from `body,` to `&body[..body.len().min(4000)],` gave
+    // `test result: ok. 41 passed; 0 failed`, because `root_ident` of that
+    // expression is still `body`, the position check still lines up, and `judge`
+    // stays perfectly correct. Every author of a pull request body over four
+    // kilobytes is then told they wrote no acceptance bar — the fabricated
+    // accusation this file names as equal in severity to a false green.
+    let handed = &args[handed_over[0]];
+    if let Some(defect) = truncated_argument(handed) {
+        panic!(
+            "the review pipeline hands the evaluator less than the change's body: it \
+             passes {handed:?} at the body position — {defect}. A bar written at the \
+             far end of a long pull request is still the artifact, and `judge` stays \
+             perfectly correct while a clamp here tells every author of a long, \
+             careful change that they wrote no acceptance bar. Pass the body whole; if \
+             something downstream needs a shorter string, shorten it downstream"
+        );
+    }
+
+    // AND NOTHING CLAMPED IT ON THE WAY IN, here either. The rule above reads
+    // the literal text of the argument, so a `let` on the line above defeats it,
+    // and at a call site the clamp need not even shadow the parameter to do it:
+    //
+    //     let body_excerpt = &body[..2000];
+    //     … evaluate_pre_merge_gates(…, body_excerpt, …)
+    //
+    // `root_ident("body_excerpt")` contains "body", so the argument is the one
+    // every rule above picks up, and it reads as a plain path. See
+    // `shadowed_argument`, which follows the value under both names.
+    let handed_root = root_ident(handed);
+    if let Some(defect) = shadowed_argument(&src, &handed_root) {
+        panic!(
+            "the review pipeline hands the evaluator less than the change's body: \
+             {defect}. The argument {handed:?} reads as a plain path only because the \
+             clamp was written above the call. A bar written at the far end of a long \
+             pull request is still the artifact"
+        );
+    }
+
+    // AND NOTHING HERE WRITES THE VERDICT AFTERWARDS. `assignments_to` was run
+    // over the evaluator in the test above and over nothing else, so the same
+    // fail-open written in THIS file — `cert_report.product_bar_status =
+    // GateStatus::Warning(..)`, one line after the call and before the report is
+    // sealed — was invisible to every guard in the suite. The scan has to cover
+    // the file that holds the report between the measurement and the seal, not
+    // only the file that computes it.
+    let overwrites = assignments_to(&src, "product_bar_status");
+    assert!(
+        overwrites.is_empty(),
+        "the review pipeline writes over the Product seat's measurement after the \
+         evaluator computed it: {overwrites:?}. Between `evaluate_pre_merge_gates` and \
+         the sealed report, nothing may substitute a status for the one the gate \
+         measured — Warning, NotMeasured and Passed are all `is_acceptable()`, so any \
+         of them certifies a change whose author wrote no acceptance bar, with every \
+         behavioural test in this file green. If a change can legitimately pass, say \
+         so in `judge`"
+    );
+}
+
+#[test]
+fn every_caller_of_the_review_pipeline_hands_it_the_change_body() {
+    assert_the_wiring_parsers_read_a_real_wiring();
+
+    // THE VALUE CHAIN, ONE HOP FURTHER UP. The whole argument for forcing the
+    // body through a PARAMETER rather than a field on `PrDiffContext` is that "a
+    // parameter is not a grep: it can hold only what the caller passed" — see
+    // `evaluator_body_parameters`. That argument applies with exactly the same
+    // force to `execute_pr_review`'s own `body: &str`, and there it is not
+    // hypothetical: review found a caller already passing the empty-string
+    // literal.
+    //
+    //     // src/cli/server.rs — the outage-recovery startup sweep, which
+    //     // dispatches a full review and certification for every uncertified
+    //     // pull request after a restart
+    //     let _ = crate::webhook::pipelines::review::execute_pr_review(
+    //         &task_state, &repo, pr.number, &pr.title,
+    //         "",
+    //         "main", "HEAD", &pr.head_sha, false,
+    //     )
+    //
+    // That is live code on this branch, and wiring the Product gate is what
+    // arms it. Every pull request certified through that path would be handed
+    // `product_bar_status = Failed("…no written problem statement and no
+    // done-when acceptance bar…")` no matter what its author actually wrote,
+    // `is_certified_ready` would go false, and the merge queue would block —
+    // the fabricated accusation at 100% incidence on that path, which this file
+    // names as equal in severity to a false green. Nothing else in this suite
+    // reads `src/cli/server.rs`, so the whole file stays green while it ships.
+    //
+    // The rule is stated as an EFFECT and not as a spelling, because the four
+    // correct call sites do not agree on one. Three of them reach the body
+    // through a field (`&meta.body.unwrap_or_default()`), one through a local
+    // (`&pr_body`), and a fifth could reasonably do something else again. What
+    // every correct one has in common is that the argument is derived from the
+    // pull request's own body — some identifier in it says so — that it is not a
+    // literal, and that nothing along the way drops any of the text.
+    const DEFINITION: &str = "pub async fn execute_pr_review(";
+    const CALL: &str = "execute_pr_review(";
+
+    let review_src = without_line_comments(&source("src/webhook/pipelines/review.rs"));
+    let signature = signature_of(&review_src, DEFINITION)
+        .expect("src/webhook/pipelines/review.rs declares execute_pr_review");
+    let parameters = signature_parameters(&signature);
+    assert!(
+        parameters.len() > 4,
+        "this test reads one parameter per line and found only {parameters:?} on \
+         execute_pr_review. Fix the test to parse the new shape rather than let it \
+         mis-parse — a wiring guard that cannot read the wiring is worse than none. \
+         Signature: {signature:?}"
+    );
+
+    let declared: Vec<usize> = parameters
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.contains("body"))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        declared.len(),
+        1,
+        "execute_pr_review must declare exactly one parameter whose name says body, or \
+         this scan cannot tell which argument position each caller is supposed to be \
+         filling. Parameters: {parameters:?}"
+    );
+    let position = declared[0];
+
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    collect_rust_sources(&manifest.join("src"), &mut files);
+    files.sort();
+
+    let mut sites: Vec<(String, usize, String)> = Vec::new();
+    for path in &files {
+        let rel = path
+            .strip_prefix(&manifest)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let text = without_line_comments(
+            &std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{rel}: {e}")),
+        );
+        for (at, _) in text.match_indices(CALL) {
+            // The declaration is not a call site. A `use` line carries no
+            // parenthesis and never matches at all.
+            if text[..at].trim_end().ends_with("fn") {
+                continue;
+            }
+            let line = text[..at].lines().count();
+            let args = one_argument_per_line(&text, at, CALL)
+                .unwrap_or_else(|why| panic!("{rel}:{line}: {why}"));
+            assert_eq!(
+                args.len(),
+                parameters.len(),
+                "{rel}:{line}: this call passes {} arguments to an execute_pr_review \
+                 that declares {} parameters. Fix the test to parse the new shape \
+                 rather than let it compare positions that do not line up. Arguments: \
+                 {args:?}. Parameters: {parameters:?}",
+                args.len(),
+                parameters.len()
+            );
+            sites.push((rel.clone(), line, args[position].clone()));
+        }
+    }
+
+    // Non-vacuity. A scan that finds no call sites reports every caller correct
+    // without having read one, which is the "answers without looking" failure
+    // this file spends a page on. The floor is a floor and not an equality
+    // because callers may legitimately be added or merged; if the pipeline
+    // really does end up with fewer than three, lower it deliberately rather
+    // than let the guard go quiet.
+    assert!(
+        sites.len() >= 3,
+        "this scan found only {} call sites of execute_pr_review under src/, which is \
+         fewer than this repository has. A call-site scan that finds nothing answers \
+         \"every caller is correct\" without looking at one. Found: {sites:?}",
+        sites.len()
+    );
+
+    for (rel, line, arg) in &sites {
+        assert!(
+            !arg.contains('"'),
+            "{rel}:{line} hands execute_pr_review the string literal {arg:?} where the \
+             pull request body belongs. Once the Product gate is wired, every change \
+             certified through this path is told it carries no written problem \
+             statement and no done-when acceptance bar, whatever its author actually \
+             wrote — a fabricated accusation at 100% incidence on this path, which \
+             blocks the merge queue for changes that did nothing wrong. Fetch the \
+             body (the sibling call sites do it with \
+             `&meta.body.unwrap_or_default()` off the metadata this path can also \
+             fetch) and pass it. A literal cannot hold what the author wrote. All call \
+             sites: {sites:?}"
+        );
+        assert!(
+            names_the_change_body(arg),
+            "{rel}:{line} hands execute_pr_review {arg:?} at the body position, and no \
+             identifier in it names the pull request's body. Rust binds arguments to \
+             parameters BY POSITION and the neighbouring parameters take the same \
+             type, so passing the title, the base branch or the head sha here compiles \
+             — and the Product seat then measures that string instead of the change \
+             under review, reporting both artifacts missing on every pull request \
+             through this path. Parameter at {position}: {:?}. All call sites: \
+             {sites:?}",
+            parameters[position]
+        );
+        if let Some(defect) = truncating_token_in(arg) {
+            panic!(
+                "{rel}:{line} hands execute_pr_review less than the change's body: it \
+                 passes {arg:?} — {defect}. A bar written at the far end of a long \
+                 pull request is still the artifact, so a clamp here tells every \
+                 author of a long, careful change that they wrote no acceptance bar, \
+                 while `judge` stays perfectly correct and every behavioural test in \
+                 this file stays green. All call sites: {sites:?}"
+            );
+        }
+    }
 }
 
 /// Exercises the hand-rolled parsers the wiring guards depend on.
@@ -6379,44 +7021,84 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         "binding_statement must find nothing for an identifier no let binds"
     );
 
-    // The unconditional-initialiser reader. A conditional that keeps a literal
-    // status in reserve is the shape an engineer writes, and it is invisible to
-    // every other check in these guards.
+    // THE RESIDUE READER, which is what the four-entry denylist became. A
+    // conditional that keeps a literal status in reserve is one shape an
+    // engineer writes; a softening WRAPPER around the call is another, and the
+    // denylist could not see it — `soften(product_bar::judge(pr_body))` leaves
+    // `soften( )` behind, which contains none of `GateStatus::`, `if `, `match `
+    // or `unwrap_or`, and `post_processing_after` reads only what follows the
+    // closing paren. Review measured that on a working reference gate and got
+    // all forty-one tests green with every change certifying.
+    //
+    // BOTH SIDES, over both the forms a value reaches this rule in — a `let`
+    // statement and a bare struct-literal initialiser — and over every spelling
+    // of the path this file promises an implementer, because a rule that finds a
+    // residue in `crate::pre_merge_guard::product_bar::judge(pr_body)` accuses
+    // the most explicit correct wiring there is of the defect it does not have.
     let straight = "let product_bar_status = product_bar::judge(pr_body);\n";
-    assert_eq!(
-        unmeasured_alternatives_in(
-            straight,
-            &binding_statement(straight, "product_bar_status").expect("bound by a let")
-        ),
-        Vec::<&str>::new(),
-        "a plain judge call must leave nothing behind when the call is cut out of it"
-    );
-
     let annotated = "let product_bar_status: GateStatus = product_bar::judge(&pr_body);\n";
-    assert_eq!(
-        unmeasured_alternatives_in(
-            annotated,
-            &binding_statement(annotated, "product_bar_status").expect("bound by a let")
+    for (statement, clean) in [
+        (
+            "let product_bar_status = product_bar::judge(pr_body);",
+            true,
         ),
-        Vec::<&str>::new(),
-        "a type annotation is not a value held in reserve, and rejecting it would fail \
-         a correct wiring for its spelling"
-    );
-
-    let conditional = "let product_bar_status = if pr_body.trim().is_empty() {\n\
-                       \x20   GateStatus::NotMeasured { gate_id: \"product_bar_status\".to_string(), reason: \"no body\".to_string() }\n\
-                       \x20} else {\n\
-                       \x20   product_bar::judge(pr_body)\n\
-                       };\n";
-    let found = unmeasured_alternatives_in(
-        conditional,
-        &binding_statement(conditional, "product_bar_status").expect("bound by a let"),
-    );
-    assert!(
-        found.contains(&"if ") && found.contains(&"GateStatus::"),
-        "the conditional fail-open must be visible once the judge call is cut out; \
-         found {found:?}"
-    );
+        (
+            "let mut product_bar_status = product_bar::judge(pr_body);",
+            true,
+        ),
+        (
+            "let product_bar_status: GateStatus = product_bar::judge(&pr_body);",
+            true,
+        ),
+        (
+            "let product_bar_status = super::product_bar::judge(pr_body);",
+            true,
+        ),
+        (
+            "let product_bar_status = crate::pre_merge_guard::product_bar::judge(pr_body);",
+            true,
+        ),
+        ("product_bar::judge(pr_body)", true),
+        ("crate::pre_merge_guard::product_bar::judge(&pr_body)", true),
+        // The WRAPPER, which is the whole reason this stopped being a denylist,
+        // in both the shapes it is written in and in both statement forms.
+        ("soften(product_bar::judge(pr_body))", false),
+        ("GateStatus::from(product_bar::judge(pr_body))", false),
+        (
+            "soften(crate::pre_merge_guard::product_bar::judge(pr_body))",
+            false,
+        ),
+        (
+            "let product_bar_status = soften(product_bar::judge(pr_body));",
+            false,
+        ),
+        // The chaining form, which `post_processing_after` also catches: two
+        // rules covering one defect is not a problem, one covering none is.
+        (
+            "let product_bar_status = product_bar::judge(pr_body).softened();",
+            false,
+        ),
+        // The conditional that keeps a literal status in reserve.
+        (
+            "let product_bar_status = if pr_body.trim().is_empty() { GateStatus::NotMeasured { gate_id: \"product_bar_status\".to_string(), reason: \"no body\".to_string() } } else { product_bar::judge(pr_body) };",
+            false,
+        ),
+        (
+            "let product_bar_status = match pr_body { \"\" => GateStatus::Passed, b => product_bar::judge(b) };",
+            false,
+        ),
+    ] {
+        let residue = residue_beyond_the_measurement(statement, statement);
+        assert_eq!(
+            residue.is_empty(),
+            clean,
+            "residue_beyond_the_measurement({statement:?}) misread the statement; \
+             residue {residue:?}. A rule that finds something left over in a correct \
+             wiring accuses it of the defect it does not have; one that finds nothing \
+             left over in `soften(judge(..))` lets a mapping from Failed onto the \
+             acceptable Warning certify every change"
+        );
+    }
 
     // THE REASSIGNMENT FORM OF THE SAME FAIL-OPEN, which is one line away from
     // the conditional above and invisible to every other check in these guards:
@@ -6428,12 +7110,12 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
                       \x20   if pr_body.trim().is_empty() {\n\
                       \x20       product_bar_status = GateStatus::NotMeasured { gate_id: \"product_bar_status\".to_string(), reason: \"the pull request has no body\".to_string() };\n\
                       \x20   }\n";
-    assert_eq!(
-        unmeasured_alternatives_in(
+    assert!(
+        residue_beyond_the_measurement(
             reassigned,
             &binding_statement(reassigned, "product_bar_status").expect("bound by a let"),
-        ),
-        Vec::<&str>::new(),
+        )
+        .is_empty(),
         "sanity, and the reason this check exists: the initialiser reader sees NOTHING \
          wrong with the reassignment fail-open, because the statement it reads ends at \
          the semicolon"
@@ -6592,6 +7274,44 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
             "pr_body",
             true,
         ),
+        // THE CLAMP UNDER A NEW NAME, which shadows nothing and which the
+        // rebinding rule alone cannot see: the initialiser never mentions
+        // `body_excerpt`, so the "is this a shadow of itself" filter skipped it,
+        // while `root_ident("body_excerpt")` still contains "body" and every
+        // other rule reads the argument as a plain path.
+        (
+            "        let body_excerpt = &body[..2000];\n\
+             \x20       let cert = evaluate_pre_merge_gates(body_excerpt);\n",
+            "body_excerpt",
+            true,
+        ),
+        (
+            "        let pr_body: String = meta.body.lines().take(50).collect();\n",
+            "pr_body",
+            true,
+        ),
+        // And the mirror the new arm must not fail: an ordinary, correct way to
+        // spell "the body this pull request carries", which drops none of the
+        // text and is not a plain path. The strict rule would reject it, so the
+        // new arm applies the EFFECT rule only.
+        (
+            "        let pr_body = meta.body.unwrap_or_default();\n",
+            "pr_body",
+            false,
+        ),
+        (
+            "        let pr_body = pr.body.clone().unwrap_or_default();\n",
+            "pr_body",
+            false,
+        ),
+        // A `#[cfg(test)]` fixture, whose markdown carries both a bracket and
+        // the word this rule keys on. Blanking string literals is what keeps it
+        // off the accusation list.
+        (
+            "        let body = \"## Done when\\n\\n- [ ] the body is under 5ms\\n\";\n",
+            "body",
+            false,
+        ),
     ] {
         assert_eq!(
             shadowed_argument(wiring, root).is_some(),
@@ -6618,6 +7338,109 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
             mentioned,
             "mentions_ident({expr:?}, {name:?}) misread whether the initialiser is \
              derived from the parameter it shadows"
+        );
+    }
+
+    // THE EFFECT HALF OF THE ARGUMENT RULE ON ITS OWN, which is the only half
+    // that can be applied one hop further up the value chain, where the caller
+    // legitimately writes something that is not a plain path. Both sides: a rule
+    // that called `&meta.body.unwrap_or_default()` a truncation would accuse
+    // three correct call sites in this repository of the defect they do not
+    // have, and a rule that called `&body[..4000]` whole lets the clamp through.
+    for (arg, truncating) in [
+        ("body", false),
+        ("&pr_body", false),
+        ("&meta.body.unwrap_or_default()", false),
+        ("&pr_meta.body.unwrap_or_default()", false),
+        ("&pr.body.clone().unwrap_or_default()", false),
+        ("&body[..body.len().min(4000)]", true),
+        ("&body[..4000]", true),
+        ("body_excerpt.lines().take(50).collect::<String>()", true),
+        (
+            "&meta.body.unwrap_or_default().chars().take(2000).collect::<String>()",
+            true,
+        ),
+    ] {
+        assert_eq!(
+            truncating_token_in(arg).is_some(),
+            truncating,
+            "truncating_token_in({arg:?}) misjudged the argument"
+        );
+    }
+
+    // THE BODY-NAMING RULE, which is how a call site says it is passing the
+    // change's body rather than something else in scope. Every identifier, not
+    // just the root: at three of this repository's five call sites the body is
+    // reached through a field on the metadata struct, so a root-only rule would
+    // report `meta` and fabricate an accusation against correct code.
+    for (expr, names_body) in [
+        ("body", true),
+        ("&pr_body", true),
+        ("&meta.body.unwrap_or_default()", true),
+        ("&pr_meta.body.unwrap_or_default()", true),
+        ("body_excerpt", true),
+        ("&pr.title", false),
+        ("&pr.head_sha", false),
+        ("&review_resp.verdict", false),
+        ("&base_branch", false),
+        ("pr.number", false),
+        ("false", false),
+        ("\"\"", false),
+        ("\"main\"", false),
+    ] {
+        assert_eq!(
+            names_the_change_body(expr),
+            names_body,
+            "names_the_change_body({expr:?}) misread whether the call site is passing \
+             the change's body"
+        );
+    }
+
+    // THE ARGUMENT PARSER the call-site scans rest on, on both sides. It reads
+    // one argument per line, and a call written any other way has to make it say
+    // so: a scan that quietly finds no arguments reports every call site correct
+    // without looking at one.
+    let multiline = "    execute_pr_review(\n\
+                     \x20       state,\n\
+                     \x20       repo,\n\
+                     \x20       &meta.body.unwrap_or_default(),\n\
+                     \x20       true,\n\
+                     \x20   )\n\
+                     \x20   .await\n";
+    assert_eq!(
+        one_argument_per_line(multiline, 4, "execute_pr_review("),
+        Ok(vec![
+            "state".to_string(),
+            "repo".to_string(),
+            "&meta.body.unwrap_or_default()".to_string(),
+            "true".to_string(),
+        ]),
+        "one_argument_per_line misread a call written one argument per line"
+    );
+    let collapsed = "    execute_pr_review(state, repo, body, true).await\n";
+    assert!(
+        one_argument_per_line(collapsed, 4, "execute_pr_review(").is_err(),
+        "a collapsed call must be reported as unreadable rather than parsed as though \
+         it carried no arguments at all"
+    );
+
+    // AND THE SIGNATURE READER POINTED AT THE REAL PIPELINE ENTRY POINT, for the
+    // same reason it is pointed at the real evaluator above: the call-site scan
+    // decides WHICH argument position is the body from this signature, so a
+    // reader that finds nothing there would compare position zero on every call
+    // site and answer without looking.
+    let pipeline_signature = signature_of(
+        &without_line_comments(&source("src/webhook/pipelines/review.rs")),
+        "pub async fn execute_pr_review(",
+    )
+    .expect("src/webhook/pipelines/review.rs declares execute_pr_review");
+    let pipeline_parameters = signature_parameters(&pipeline_signature);
+    for parameter in ["state", "repo", "pr_number", "title", "body"] {
+        assert!(
+            pipeline_parameters.iter().any(|p| p == parameter),
+            "src/webhook/pipelines/review.rs no longer declares execute_pr_review with \
+             a {parameter:?} parameter, one per line, so the call-site scan is not \
+             reading the real signature any more. Found: {pipeline_parameters:?}"
         );
     }
 

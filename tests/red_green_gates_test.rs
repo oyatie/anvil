@@ -17,7 +17,6 @@ use anvil::git_manager::PrDiffContext;
 use anvil::gitops_promotion::GitOpsPromotionEngine;
 use anvil::jittered_backoff::JitteredBackoffGuard;
 use anvil::kani_guard::KaniGuard;
-use anvil::microbenchmark_ratchet::{MicroBenchmarkRatchet, MicrobenchmarkSample};
 use anvil::psa_admission_guard::PsaAdmissionGuard;
 use anvil::replay_harness::{DeterministicReplayHarness, ReplayTraceRecord};
 use anvil::rust_language_policy::RustLanguagePolicy;
@@ -576,7 +575,7 @@ fn test_upgrade_train_green_compatible_patch_upgrade() {
 
 #[test]
 fn test_rust_skills_red_flag_unwrap_in_production() {
-    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new();
     // RED: Production unwrap without error handling
     let bad_diff = create_test_diff_context("src/handler.rs", "+ let value = opt_val.unwrap();");
     let report = guard
@@ -590,7 +589,7 @@ fn test_rust_skills_red_flag_unwrap_in_production() {
 
 #[test]
 fn test_rust_skills_green_question_mark_operator() {
-    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new();
     // GREEN: Idiomatic ? error propagation
     let good_diff = create_test_diff_context(
         "src/handler.rs",
@@ -720,42 +719,6 @@ fn test_formal_verification_green_scoped_least_privilege() {
 // =========================================================================
 // 21. Micro-Benchmark & Latency Ratchet
 // =========================================================================
-
-#[test]
-fn test_microbenchmark_red_flag_hotpath_latency_regression() {
-    let ratchet = MicroBenchmarkRatchet::new();
-    // RED: 3x latency regression in hot path (150ns vs baseline 50ns)
-    let degraded_sample = MicrobenchmarkSample {
-        benchmark_name: "order_matching_hotpath".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 150.0,
-        p99_cpu_cycles_base: 120,
-        p99_cpu_cycles_head: 360,
-    };
-    let report = ratchet.evaluate_benchmark_regression(&degraded_sample);
-    assert!(
-        !report.passed,
-        "Expected False Green prevention: 3x hotpath latency regression must FAIL"
-    );
-}
-
-#[test]
-fn test_microbenchmark_green_optimal_latency() {
-    let ratchet = MicroBenchmarkRatchet::new();
-    // GREEN: Latency parity or improvement
-    let optimal_sample = MicrobenchmarkSample {
-        benchmark_name: "order_matching_hotpath".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 48.5,
-        p99_cpu_cycles_base: 120,
-        p99_cpu_cycles_head: 115,
-    };
-    let report = ratchet.evaluate_benchmark_regression(&optimal_sample);
-    assert!(
-        report.passed,
-        "Expected False Red prevention: Optimal latency benchmark must PASS"
-    );
-}
 
 // =========================================================================
 // 22. Living ADR Drift Ratchet
@@ -1236,7 +1199,7 @@ fn test_subtle_cell_isolation_nested_subquery_evasion() {
 #[test]
 fn test_subtle_rust_skills_empty_expect_evasion() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let guard = RustLanguagePolicy::new(temp_dir.path());
+    let guard = RustLanguagePolicy::new();
     // SUBTLE RED: Attempting to bypass unwrap check by using empty expect string
     let subtle_bad_diff =
         create_test_diff_context("src/handler.rs", "+ let value = option_val.expect(\"\");");

@@ -4,10 +4,8 @@ use std::path::Path;
 use tracing::info;
 
 pub mod engine;
-pub mod syncer;
 
 pub use engine::{RustQualityEngine, RustQualityFinding};
-pub use syncer::UpstreamRustSkillsSyncer;
 
 use crate::git_manager::PrDiffContext;
 
@@ -22,41 +20,19 @@ pub struct RustSkillsReport {
 
 pub struct RustLanguagePolicy {
     engine: RustQualityEngine,
-    syncer: UpstreamRustSkillsSyncer,
+}
+
+impl Default for RustLanguagePolicy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RustLanguagePolicy {
-    pub fn new(data_dir: &Path) -> Self {
+    pub fn new() -> Self {
         Self {
             engine: RustQualityEngine::new(),
-            syncer: UpstreamRustSkillsSyncer::new(data_dir),
         }
-    }
-
-    /// Pulls and indexes latest upstream rules from jason931225/rust-skills
-    pub async fn sync_upstream(&self) -> Result<usize> {
-        self.syncer.ensure_synced().await
-    }
-
-    /// Returns matching upstream markdown rule descriptions for specific category prefixes
-    pub async fn get_rule_guidance_for_diff(&self, diff_content: &str) -> Vec<(String, String)> {
-        let mut prefixes = vec!["own", "err", "mem"];
-        if diff_content.contains("async")
-            || diff_content.contains("await")
-            || diff_content.contains("tokio")
-        {
-            prefixes.push("async");
-            prefixes.push("conc");
-        }
-        if diff_content.contains("unsafe") {
-            prefixes.push("unsafe");
-        }
-        if diff_content.contains("pub fn") || diff_content.contains("pub trait") {
-            prefixes.push("api");
-            prefixes.push("type");
-        }
-
-        self.syncer.get_rules_for_prefixes(&prefixes).await
     }
 
     /// Evaluates PR diffs against expert Rust 2024 idioms (380 rules from jason931225/rust-skills)
@@ -143,7 +119,7 @@ mod tests {
     #[test]
     fn test_detects_unwrap_in_prod() {
         let temp_dir = std::env::temp_dir();
-        let guard = RustLanguagePolicy::new(&temp_dir);
+        let guard = RustLanguagePolicy::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
             pr_number: 601,
@@ -168,7 +144,7 @@ mod tests {
     #[test]
     fn test_detects_ref_string_param() {
         let temp_dir = std::env::temp_dir();
-        let guard = RustLanguagePolicy::new(&temp_dir);
+        let guard = RustLanguagePolicy::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
             pr_number: 602,
@@ -192,7 +168,7 @@ mod tests {
     #[test]
     fn test_detects_unsafe_without_safety_comment() {
         let temp_dir = std::env::temp_dir();
-        let guard = RustLanguagePolicy::new(&temp_dir);
+        let guard = RustLanguagePolicy::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
             pr_number: 603,

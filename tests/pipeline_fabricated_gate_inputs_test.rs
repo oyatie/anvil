@@ -24,7 +24,7 @@
 //!     `base_ns_per_op: 50.0` and `head_ns_per_op: 50.0`, `p99_cpu_cycles_base:
 //!     100` and `p99_cpu_cycles_head: 100`. Self-identical operands: the
 //!     percentage change is 0.0 on every execution. (The two cycle fields are
-//!     never read by `evaluate_benchmark_diff` at all -- criterion_diff.rs:31-52
+//!     never read by the analyzer at all
 //!     touches only the ns fields -- so half the fabricated struct is inert
 //!     decoration.)
 //!
@@ -77,7 +77,7 @@
 //! file red for work nobody was asked to do.
 
 use anvil::automated_canary::{AutomatedCanaryAnalysis, MetricDistribution};
-use anvil::microbenchmark_ratchet::{MicroBenchmarkRatchet, MicrobenchmarkSample};
+use anvil::microbenchmark_ratchet::MicroBenchmarkRatchet;
 use anvil::stacked_diffs::StackedDiffsOrchestrator;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -531,28 +531,15 @@ fn automated_canary_does_not_fabricate_an_accusation() {
 /// so there is nothing to ratchet against and the gate must say that rather
 /// than report `Optimal`.
 ///
-/// The sample below is the one `review.rs:351-356` fabricates verbatim, and it
-/// is deliberately self-identical: base equals head on both the ns and the cycle
-/// fields, so `evaluate_benchmark_diff` computes a 0.0% change and returns
-/// `Optimal` on every execution (criterion_diff.rs:36-49). Even a real
-/// regression could not surface here, because the caller never reads a
-/// benchmark.
-///
-/// Why prompting would not prevent this: `base_ns_per_op: 50.0` /
-/// `head_ns_per_op: 50.0` looks like a reasonable neutral default, and the guard
-/// beneath it is genuine arithmetic -- the code is correct in every local sense.
-/// The defect is only visible if you ask where the 50.0 came from, which is a
-/// question a mechanism asks every time and a human asks once.
+/// `review.rs` used to fabricate a self-identical sample here -- base equal to
+/// head on both the ns and the cycle fields -- so the analyzer computed a 0.0%
+/// change and returned `Optimal` on every execution. Even a real regression
+/// could not surface, because the caller never read a benchmark. Both the
+/// sample and the analyzer are gone; this pins the entry point that replaced
+/// them.
 #[test]
 fn microbenchmark_ratchet_publishes_not_measured_without_a_criterion_baseline() {
-    let sample = MicrobenchmarkSample {
-        benchmark_name: "hotpath_throughput".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 50.0,
-        p99_cpu_cycles_base: 100,
-        p99_cpu_cycles_head: 100,
-    };
-    let report = MicroBenchmarkRatchet::new().evaluate_benchmark_regression(&sample);
+    let report = MicroBenchmarkRatchet::new().evaluate_without_criterion_baseline();
     let status = published_status(&report, "gate 51 MicroBenchmarkRatchet");
     assert_not_measured(
         &status,
@@ -565,14 +552,7 @@ fn microbenchmark_ratchet_publishes_not_measured_without_a_criterion_baseline() 
 /// Catches P3 for gate 51.
 #[test]
 fn microbenchmark_ratchet_does_not_fabricate_an_accusation() {
-    let sample = MicrobenchmarkSample {
-        benchmark_name: "hotpath_throughput".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 50.0,
-        p99_cpu_cycles_base: 100,
-        p99_cpu_cycles_head: 100,
-    };
-    let report = MicroBenchmarkRatchet::new().evaluate_benchmark_regression(&sample);
+    let report = MicroBenchmarkRatchet::new().evaluate_without_criterion_baseline();
     let status = published_status(&report, "gate 51 MicroBenchmarkRatchet");
     assert_no_accusation(&status, "gate 51 MicroBenchmarkRatchet");
 }

@@ -91,29 +91,13 @@ impl TraceContextGuard {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_trace_guard_passes_clean_diff() {
-        let guard = TraceContextGuard::new();
-        let diff_ctx = PrDiffContext {
-            repo: "oyatie/oyatie".to_string(),
-            pr_number: 100,
-            base_branch: "dev".to_string(),
-            base_sha: "aaa".to_string(),
-            head_sha: "bbb".to_string(),
-            diff_content: "+ pub fn compute() -> i32 { 42 }".to_string(),
-            changed_files: vec!["src/compute.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
-            is_incremental: false,
-            previous_head_sha: None,
-        };
-
-        let rep = guard
-            .evaluate_trace_propagation(Path::new("."), &diff_ctx)
-            .unwrap();
-        assert!(rep.is_propagated);
-    }
-}
+// `test_trace_guard_passes_clean_diff` used to live here. It fed the gate a
+// diff containing no `.rs` chunk -- so the scan loop never ran, nothing was
+// inspected -- and then asserted `rep.is_propagated`. Issue #14 cites it as the
+// test that exercises the defective path: it did not check that the gate was
+// right, it recorded that the gate said "verified" having looked at nothing,
+// and it fixed `is_propagated == true` as the answer for the nothing-in-scope
+// case, which is precisely the question this lane leaves open for the owner.
+//
+// The behaviours it was reaching for -- and the ones it could not see -- are in
+// `tests/trace_gate_claims_only_what_it_measured_test.rs`.

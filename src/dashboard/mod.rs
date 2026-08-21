@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::response::{Html, IntoResponse, Json};
 pub use ssr_renderer::{
     ActivityEventView, DashboardStateView, DoraMetricsView, FleetRepoView, GateHeatmapItem,
-    LeptosDashboardRenderer, MergeTrainItemView, ModelBanditView,
+    LeptosDashboardRenderer, MergeTrainItemView,
 };
 
 use crate::webhook::AppState;
@@ -54,28 +54,6 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         })
         .collect();
 
-    // Get live AI Bandit model views with Bayesian shrinkage
-    let bandit_views = crate::ai_driver::telemetry_ledger::AdaptiveRoutingBandit::new()
-        .get_live_bandit_evaluation_views();
-
-    let ai_bandit_models = bandit_views
-        .into_iter()
-        .map(|m| ModelBanditView {
-            model_name: m.model_name,
-            empirical_trials: m.empirical_trials,
-            empirical_pass_at_1: m.empirical_pass_at_1,
-            bayesian_posterior_pass_at_1: m.bayesian_posterior_pass_at_1,
-            avg_cost_per_pr: m.avg_cost_per_pr,
-            p99_latency_sec: m.p99_latency_sec,
-            ucb1_score: m.ucb1_score,
-            statistical_power: m.statistical_power,
-            p_value: m.p_value,
-            is_statistically_significant: m.is_statistically_significant,
-            significance_badge: m.significance_badge,
-        })
-        .collect();
-
-    // The gate table is published, so it is derived rather than written down.
     // Names come from the live corpus, not a hand-kept list that was seventy
     // entries against a corpus of TOTAL_GATES. Failure counts come from the
     // telemetry the review pipeline actually records; a gate with no recorded
@@ -87,12 +65,8 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         }
     }
     // The canonical gate names, taken from `GATE_LABELS` rather than from a
-    // report this file constructs. Only the names are wanted, and a report
-    // built here to read its keys is still a report a caller wrote --
-    // `enlist_authority_test` refuses those, and it is right to: the display
-    // path has no business producing the shape that carries evidence.
-    // `GATE_LABELS` is pinned to `named_statuses()` in order and to
-    // `TOTAL_GATES` in length by `pre_merge_guard::matrix` tests.
+    // report this file constructs; `enlist_authority_test` refuses production
+    // files that produce a certification report.
     let gate_heatmap = crate::pre_merge_guard::matrix::GATE_LABELS
         .iter()
         .enumerate()
@@ -158,7 +132,6 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         quota_budget_usd: 100.0,
         fleet_repos,
         gate_heatmap,
-        ai_bandit_models,
         dora_metrics: fleet_overview.as_ref().map(|overview| DoraMetricsView {
             deployment_frequency_per_day: overview.global_dora.deployment_frequency_per_day,
             lead_time_hours: overview.global_dora.lead_time_for_changes_hours,

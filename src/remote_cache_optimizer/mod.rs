@@ -1,67 +1,88 @@
+//! Remote build-cache alignment — the gate that had no cache to look at.
+//!
+//! # What was here
+//!
+//! `evaluate_cache_alignment` built a `CacheHitMetrics` out of four literals and
+//! handed it to a ratchet whose threshold those literals cleared by construction.
+//! It then computed a cache key from a literal lockfile name chosen so that no
+//! file needed to exist, and published that key on the pull request as though a
+//! real lockfile had been hashed.
+//!
+//! Two fabrications, one shape: an identifier and a rate, both invented, both
+//! presented as measurements (I2).
+//!
+//! # What is here now
+//!
+//! Nothing is invented and nothing is guessed. Without sccache or Buck2 CAS
+//! statistics there is no hit rate and no lockfile digest, so the gate reports
+//! `GateStatus::NotMeasured` naming that missing source.
+//!
+//! `CacheHitRateRatchet` and `CacheKeyGenerator` are deliberately retained and
+//! still exported: both are honest pure functions over caller-supplied input,
+//! and they are the seam a real CAS statistics client plugs into. What is
+//! deleted is the caller that supplied itself.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::pre_merge_guard::report::GateStatus;
 
+pub mod bitrot_scrubber;
 pub mod cache_hit_ratchet;
 pub mod cache_keys;
 
-pub use cache_hit_ratchet::{CacheHitDecision, CacheHitMetrics, CacheHitRateRatchet};
+pub use bitrot_scrubber::{CasBitRotScrubber, CasScrubReport};
+pub use cache_hit_ratchet::{CacheHitMetrics, CacheHitRateRatchet};
 pub use cache_keys::CacheKeyGenerator;
+
+/// The data source that must exist before a hit rate can be reported.
+const MISSING_CAS_STATISTICS: &str = "no sccache or Buck2 CAS statistics endpoint is configured, so no cache hit \
+     rate was read and no lockfile was hashed";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheReport {
+    pub status: GateStatus,
+    /// Whether cache alignment was established. False while unmeasured: an
+    /// unread cache cannot be asserted to be aligned.
     pub is_cache_aligned: bool,
-    pub cache_key: String,
-    pub hit_rate_pct: f64,
     pub summary: String,
 }
 
-pub struct RemoteCacheOptimizer {
-    key_gen: CacheKeyGenerator,
-    hit_ratchet: CacheHitRateRatchet,
+pub struct RemoteCacheOptimizer;
+
+impl Default for RemoteCacheOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RemoteCacheOptimizer {
     pub fn new() -> Self {
-        let key_gen = CacheKeyGenerator::new();
-        let hit_ratchet = CacheHitRateRatchet::new();
-        Self {
-            key_gen,
-            hit_ratchet,
-        }
+        Self
     }
 
-    /// 100% Deterministic evaluation of remote compilation cache keys and cache-hit efficiency
+    /// Reports remote cache alignment as unmeasured; see the module docs.
     pub fn evaluate_cache_alignment(
         &self,
         _repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<CacheReport> {
         info!(
-            "Running RemoteCacheOptimizer (Deterministic Sccache & Hit-Rate Ratchet) on {}#{}...",
+            "Running RemoteCacheOptimizer (no CAS statistics source configured) on {}#{}...",
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let cache_key = self
-            .key_gen
-            .compute_cache_key("Cargo.lock.mock", "rustc-1.85.0-nightly");
-        let sample_metrics = CacheHitMetrics {
-            total_compilation_units: 120,
-            cache_hits: 114,
-            cache_misses: 6,
-            hit_rate_pct: 95.0,
-        };
-
-        let decision = self.hit_ratchet.evaluate_cache_efficiency(&sample_metrics);
-        let summary = format!("{} [Cache Key: `{}`]", decision.notice, cache_key);
+        let summary = format!("➖ NOT MEASURED ({})", MISSING_CAS_STATISTICS);
 
         Ok(CacheReport {
-            is_cache_aligned: decision.is_optimal,
-            cache_key,
-            hit_rate_pct: decision.hit_rate_pct,
+            status: GateStatus::NotMeasured {
+                gate_id: "remote_cache_status".to_string(),
+                reason: MISSING_CAS_STATISTICS.to_string(),
+            },
+            is_cache_aligned: false,
             summary,
         })
     }
@@ -72,7 +93,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cache_optimizer_nominal() {
+    fn no_cas_source_means_no_hit_rate_and_no_cache_key() {
+        // Replaces `test_cache_optimizer_nominal`, which asserted
+        // `rep.hit_rate_pct >= 90.0` against a rate the same function had just
+        // written down.
         let opt = RemoteCacheOptimizer::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
@@ -89,8 +113,8 @@ mod tests {
 
         let rep = opt
             .evaluate_cache_alignment(Path::new("."), &diff_ctx)
-            .unwrap();
-        assert!(rep.is_cache_aligned);
-        assert!(rep.hit_rate_pct >= 90.0);
+            .expect("gate runs");
+        assert_eq!(rep.status.unmeasured_gate_id(), Some("remote_cache_status"));
+        assert!(!rep.summary.contains("sccache-v2-"), "{}", rep.summary);
     }
 }

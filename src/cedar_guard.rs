@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -116,6 +116,29 @@ impl CedarGuard {
         diff_ctx: &PrDiffContext,
         pr_title: &str,
     ) -> Result<CedarPolicyEvaluation> {
+        let changed_files_preview = if diff_ctx.changed_files.len() > 100 {
+            format!(
+                "{}\n- ... and {} more files",
+                diff_ctx
+                    .changed_files
+                    .iter()
+                    .take(100)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n- "),
+                diff_ctx.changed_files.len() - 100
+            )
+        } else {
+            diff_ctx.changed_files.join("\n- ")
+        };
+
+        let diff_content_bounded = if diff_ctx.diff_content.chars().count() > 50_000 {
+            let truncated: String = diff_ctx.diff_content.chars().take(50_000).collect();
+            format!("{truncated}\n\n[... remaining diff truncated for cedar evaluation ...]")
+        } else {
+            diff_ctx.diff_content.clone()
+        };
+
         let prompt = format!(
             r#####"You are Oyatie's Principal IAM & Cedar Policy Architect. Evaluate whether new or modified routes/actions in PR #{pr_number} ("{pr_title}") on `{repo}` are covered by AWS Cedar policy rules.
 
@@ -151,8 +174,8 @@ Note: If compliant, output `{{"is_cedar_compliant": true, "missing_policies_summ
             repo = repo,
             pr_number = diff_ctx.pr_number,
             pr_title = pr_title,
-            changed_files = diff_ctx.changed_files.join("\n- "),
-            diff_content = diff_ctx.diff_content
+            changed_files = changed_files_preview,
+            diff_content = diff_content_bounded
         );
 
         let output = self.run_agy_prompt(&prompt, repo_dir).await?;
@@ -162,12 +185,15 @@ Note: If compliant, output `{{"is_cedar_compliant": true, "missing_policies_summ
             Ok(eval) => Ok(eval),
             Err(e) => {
                 warn!(
-                    "Failed to parse CedarGuard JSON: {}. Assuming compliant.",
+                    "Failed to parse CedarGuard JSON response: {}. Failing closed.",
                     e
                 );
                 Ok(CedarPolicyEvaluation {
-                    is_cedar_compliant: true,
-                    missing_policies_summary: None,
+                    is_cedar_compliant: false,
+                    missing_policies_summary: Some(format!(
+                        "CedarGuard evaluation failed to produce valid JSON: {}. Failing closed for zero-trust security.",
+                        e
+                    )),
                     suggested_policy_files: Vec::new(),
                     generated_cedar_policy: None,
                 })
@@ -212,11 +238,16 @@ Write the policy files directly to the workspace now."#####,
         let _ = self.run_agy_prompt(&prompt, repo_dir).await?;
 
         // Check for created or modified .cedar files
-        let status_out = Command::new("git")
+        let mut status_cmd = Command::new("git");
+        status_cmd
             .current_dir(repo_dir)
-            .args(["status", "--porcelain"])
-            .output()
-            .await?;
+            .args(["status", "--porcelain"]);
+        let status_out = crate::exec::run_bounded(
+            status_cmd,
+            crate::exec::ExecClass::Quick,
+            "git status --porcelain (cedar guard)",
+        )
+        .await?;
 
         let modified: Vec<String> = String::from_utf8_lossy(&status_out.stdout)
             .lines()
@@ -238,13 +269,18 @@ Write the policy files directly to the workspace now."#####,
             prompt,
             "--effort",
             &self.agy_effort,
+            "--print-timeout",
+            &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
             "--dangerously-skip-permissions",
         ]);
         cmd.current_dir(working_dir);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd.output().await.context("Failed to run agy command")?;
+        let output =
+            crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy (cedar guard)")
+                .await
+                .context("Failed to run agy command")?;
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -254,27 +290,24 @@ Write the policy files directly to the workspace now."#####,
                 output.status
             );
             warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
         }
 
-        Ok(stdout_str)
+        crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
     }
 }
 
 fn extract_json_block(text: &str) -> String {
     let json_block_re = Regex::new(r"(?s)```(?:json)?\s*(\{.*?\})\s*```").unwrap();
-    if let Some(caps) = json_block_re.captures(text) {
-        if let Some(m) = caps.get(1) {
-            return m.as_str().to_string();
-        }
+    if let Some(caps) = json_block_re.captures(text)
+        && let Some(m) = caps.get(1)
+    {
+        return m.as_str().to_string();
     }
 
-    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}')) {
-        if first < last {
-            return text[first..=last].to_string();
-        }
+    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}'))
+        && first < last
+    {
+        return text[first..=last].to_string();
     }
 
     text.to_string()
@@ -298,9 +331,11 @@ mod tests {
         let parsed: CedarPolicyEvaluation = serde_json::from_str(&json_str).expect("Valid parse");
         assert!(!parsed.is_cedar_compliant);
         assert_eq!(parsed.suggested_policy_files.len(), 1);
-        assert!(parsed
-            .generated_cedar_policy
-            .unwrap()
-            .contains("permit(principal"));
+        assert!(
+            parsed
+                .generated_cedar_policy
+                .unwrap()
+                .contains("permit(principal")
+        );
     }
 }

@@ -19,6 +19,12 @@ pub struct GitOpsDriftReconciler {
     sweeper: OrphanSweeper,
 }
 
+impl Default for GitOpsDriftReconciler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitOpsDriftReconciler {
     pub fn new() -> Self {
         let sweeper = OrphanSweeper::new();

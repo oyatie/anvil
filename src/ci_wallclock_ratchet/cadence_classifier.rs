@@ -18,6 +18,12 @@ pub struct CadenceRoutingFinding {
 
 pub struct CiCadenceClassifier;
 
+impl Default for CiCadenceClassifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CiCadenceClassifier {
     pub const PER_PUSH_MAX_WALLCLOCK_SECONDS: u64 = 300; // 5 minutes
 

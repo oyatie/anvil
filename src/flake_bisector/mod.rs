@@ -19,6 +19,12 @@ pub struct FlakeBisectorEngine {
     bot: FlakeBisectionBot,
 }
 
+impl Default for FlakeBisectorEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FlakeBisectorEngine {
     pub fn new() -> Self {
         let bot = FlakeBisectionBot::new();

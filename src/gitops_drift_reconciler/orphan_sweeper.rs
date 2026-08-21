@@ -9,6 +9,12 @@ pub struct OrphanManifestFinding {
 
 pub struct OrphanSweeper;
 
+impl Default for OrphanSweeper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrphanSweeper {
     pub fn new() -> Self {
         Self

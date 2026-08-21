@@ -24,6 +24,12 @@ pub struct StatutoryViolation {
 
 pub struct RegulatoryEngine;
 
+impl Default for RegulatoryEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegulatoryEngine {
     pub fn new() -> Self {
         Self
@@ -40,8 +46,8 @@ impl RegulatoryEngine {
         let mut current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
                 continue;
             }
@@ -62,16 +68,17 @@ impl RegulatoryEngine {
                     }
 
                     // Regex Pattern check
-                    if let Some(ref pattern) = rule.pattern_regex {
-                        if let Ok(re) = Regex::new(pattern) {
-                            if re.is_match(added_code) {
-                                let severity = if *is_advisory_grace {
-                                    "ADVISORY".to_string()
-                                } else {
-                                    rule.severity.clone()
-                                };
+                    if let Some(ref pattern) = rule.pattern_regex
+                        && let Ok(re) = Regex::new(pattern)
+                        && re.is_match(added_code)
+                    {
+                        let severity = if *is_advisory_grace {
+                            "ADVISORY".to_string()
+                        } else {
+                            rule.severity.clone()
+                        };
 
-                                violations.push(StatutoryViolation {
+                        violations.push(StatutoryViolation {
                                     rule_id: rule.rule_id.clone(),
                                     scope: format!("{:?}", rule.scope),
                                     regulatory_level: format!("{:?}", rule.level),
@@ -89,8 +96,6 @@ impl RegulatoryEngine {
                                         rule.requirement_spec, rule.required_controls, rule.citation
                                     ),
                                 });
-                            }
-                        }
                     }
                 }
             }

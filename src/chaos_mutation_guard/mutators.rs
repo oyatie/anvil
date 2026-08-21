@@ -10,6 +10,12 @@ pub struct AstMutation {
 
 pub struct AstMutatorEngine;
 
+impl Default for AstMutatorEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AstMutatorEngine {
     pub fn new() -> Self {
         Self
@@ -50,9 +56,7 @@ impl AstMutatorEngine {
                     mutated_line: trimmed.replace(" <= ", " < "),
                     mutation_type: "BoundaryShrink (<= -> <)".to_string(),
                 });
-            } else if trimmed.contains(" < ")
-                && !trimmed.contains("<T>")
-                && !trimmed.contains(" < ")
+            } else if trimmed.contains(" < ") && !trimmed.contains("<T>") && !trimmed.contains("<<")
             {
                 mutations.push(AstMutation {
                     file_path: file_path.to_string(),
@@ -95,11 +99,13 @@ pub fn check_bound(val: usize) -> bool {
 "#;
         let muts = engine.generate_mutations("src/bound.rs", code);
         assert!(!muts.is_empty());
-        assert!(muts
-            .iter()
-            .any(|m| m.mutation_type.contains("BoundaryShrink")));
-        assert!(muts
-            .iter()
-            .any(|m| m.mutation_type.contains("InvertBoolLiteral")));
+        assert!(
+            muts.iter()
+                .any(|m| m.mutation_type.contains("BoundaryShrink"))
+        );
+        assert!(
+            muts.iter()
+                .any(|m| m.mutation_type.contains("InvertBoolLiteral"))
+        );
     }
 }

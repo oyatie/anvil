@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod sandbox_pool;
-pub use sandbox_pool::{SandboxInstance, SandboxPool};
+pub use sandbox_pool::SandboxPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxReport {
@@ -18,6 +18,12 @@ pub struct SandboxReport {
 
 pub struct EphemeralSandboxManager {
     pool: SandboxPool,
+}
+
+impl Default for EphemeralSandboxManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EphemeralSandboxManager {

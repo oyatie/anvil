@@ -7,7 +7,6 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod proof_runner;
-pub use proof_runner::KaniProofReport;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KaniGuardReport {
@@ -20,6 +19,12 @@ pub struct KaniGuardReport {
 }
 
 pub struct KaniGuard;
+
+impl Default for KaniGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl KaniGuard {
     pub fn new() -> Self {

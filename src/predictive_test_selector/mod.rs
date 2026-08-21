@@ -13,11 +13,18 @@ pub struct PredictiveTestReport {
     pub is_optimized: bool,
     pub selected_packages: Vec<String>,
     pub skipped_packages_count: usize,
+    pub pruning_ratio: f64,
     pub summary: String,
 }
 
 pub struct PredictiveTestSelector {
     dag_selector: WorkspaceDagSelector,
+}
+
+impl Default for PredictiveTestSelector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PredictiveTestSelector {
@@ -37,25 +44,36 @@ impl PredictiveTestSelector {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let workspace_packages = vec![WorkspacePackage {
-            name: "anvil".to_string(),
-            path: "src/".to_string(),
-            dependencies: vec![],
-        }];
+        let mut workspace_packages =
+            WorkspaceDagSelector::discover_workspace_packages_sync(_repo_dir);
+        if workspace_packages.is_empty() {
+            workspace_packages.push(WorkspacePackage {
+                name: "anvil".to_string(),
+                path: "src/".to_string(),
+                dependencies: vec![],
+            });
+        }
 
         let selected = self
             .dag_selector
             .select_affected_packages(&diff_ctx.changed_files, &workspace_packages);
+        let total_packages = workspace_packages.len();
+        let skipped = total_packages.saturating_sub(selected.len());
+        let pruning_ratio =
+            WorkspaceDagSelector::calculate_pruning_ratio(selected.len(), total_packages);
         let is_optimized = true;
         let summary = format!(
-            "✅ PASSED (Predictive selection targeted {} affected packages; spared full-monorepo rebuild)",
-            selected.len()
+            "✅ PASSED (Predictive selection targeted {} affected packages; spared {} packages, pruning ratio {:.1}%)",
+            selected.len(),
+            skipped,
+            pruning_ratio * 100.0
         );
 
         Ok(PredictiveTestReport {
             is_optimized,
             selected_packages: selected,
-            skipped_packages_count: 0,
+            skipped_packages_count: skipped,
+            pruning_ratio,
             summary,
         })
     }

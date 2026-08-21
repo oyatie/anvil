@@ -47,8 +47,10 @@ mod tests {
             bundle.oidc_issuer,
             "https://token.actions.githubusercontent.com"
         );
-        assert!(bundle
-            .rekor_entry_uuid
-            .starts_with("rekor-log-uuid-sha256:a"));
+        assert!(
+            bundle
+                .rekor_entry_uuid
+                .starts_with("rekor-log-uuid-sha256:a")
+        );
     }
 }

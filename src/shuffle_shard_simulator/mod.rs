@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod math;
-pub use math::{BlastRadiusMetrics, ShuffleShardAllocation, ShuffleShardMath};
+pub use math::{ShuffleShardAllocation, ShuffleShardMath};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShuffleShardReport {
@@ -20,6 +20,12 @@ pub struct ShuffleShardReport {
 }
 
 pub struct ShuffleShardSimulator;
+
+impl Default for ShuffleShardSimulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ShuffleShardSimulator {
     pub fn new() -> Self {
@@ -68,7 +74,8 @@ impl ShuffleShardSimulator {
         let summary = if is_isolated {
             format!(
                 "✅ PASSED (Shuffle sharding verified: {} total combinations, blast radius limited to {:.1}% per cell outage)",
-                metrics.total_combinations, metrics.single_cell_outage_impact_ratio * 100.0
+                metrics.total_combinations,
+                metrics.single_cell_outage_impact_ratio * 100.0
             )
         } else {
             format!(

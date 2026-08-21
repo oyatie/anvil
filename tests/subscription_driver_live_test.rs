@@ -1,8 +1,21 @@
 use anvil::ai_driver::{ModelExecutionConfig, ModelProvider, SubscriptionExecutor};
 use std::path::Path;
 
+fn is_agy_available() -> bool {
+    std::process::Command::new("agy")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[tokio::test]
 async fn test_live_claude_opus5_high() {
+    if !is_agy_available() {
+        println!("Skipping live test: agy CLI is not installed on this runner");
+        return;
+    }
+
     let executor = SubscriptionExecutor::new();
     let config = ModelExecutionConfig {
         provider: ModelProvider::AnthropicClaudeCode,
@@ -32,6 +45,11 @@ async fn test_live_claude_opus5_high() {
 
 #[tokio::test]
 async fn test_live_gpt5_6sol_high_with_fallover() {
+    if !is_agy_available() {
+        println!("Skipping live test: agy CLI is not installed on this runner");
+        return;
+    }
+
     let executor = SubscriptionExecutor::new();
     let config = ModelExecutionConfig {
         provider: ModelProvider::OpenAiCodex,
@@ -57,6 +75,11 @@ async fn test_live_gpt5_6sol_high_with_fallover() {
 
 #[tokio::test]
 async fn test_live_gemini3_7_flash_high() {
+    if !is_agy_available() {
+        println!("Skipping live test: agy CLI is not installed on this runner");
+        return;
+    }
+
     let executor = SubscriptionExecutor::new();
     let config = ModelExecutionConfig {
         provider: ModelProvider::Antigravity,

@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod phase_validator;
-pub use phase_validator::{MigrationPhase, MigrationPhaseFinding, MigrationPhaseValidator};
+pub use phase_validator::{MigrationPhaseFinding, MigrationPhaseValidator};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationLifecycleReport {
@@ -17,6 +17,12 @@ pub struct MigrationLifecycleReport {
 
 pub struct MigrationLifecycleOrchestrator {
     validator: MigrationPhaseValidator,
+}
+
+impl Default for MigrationLifecycleOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MigrationLifecycleOrchestrator {
@@ -45,10 +51,10 @@ impl MigrationLifecycleOrchestrator {
 
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "migration.sql".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let file_findings = self

@@ -16,6 +16,12 @@ pub struct CircuitBreakerDecision {
 
 pub struct CanaryCircuitBreaker;
 
+impl Default for CanaryCircuitBreaker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CanaryCircuitBreaker {
     pub fn new() -> Self {
         Self

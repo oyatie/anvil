@@ -9,6 +9,12 @@ pub struct ProbeFinding {
 
 pub struct FastValidator;
 
+impl Default for FastValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FastValidator {
     pub fn new() -> Self {
         Self

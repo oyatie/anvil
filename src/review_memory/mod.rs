@@ -19,6 +19,12 @@ pub struct ReviewMemoryEngine {
     store: ReviewMemoryStore,
 }
 
+impl Default for ReviewMemoryEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReviewMemoryEngine {
     pub fn new() -> Self {
         let store = ReviewMemoryStore::new();

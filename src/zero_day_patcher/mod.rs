@@ -19,6 +19,12 @@ pub struct ZeroDayAutoPatcher {
     listener: AdvisoryListener,
 }
 
+impl Default for ZeroDayAutoPatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZeroDayAutoPatcher {
     pub fn new() -> Self {
         let listener = AdvisoryListener::new();

@@ -10,6 +10,12 @@ pub struct CedarPdpResult {
 
 pub struct CedarPdpEngine;
 
+impl Default for CedarPdpEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CedarPdpEngine {
     pub fn new() -> Self {
         Self

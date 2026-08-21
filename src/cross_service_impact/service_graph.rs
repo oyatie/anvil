@@ -10,6 +10,12 @@ pub struct CrossServiceFinding {
 
 pub struct ServiceGraphValidator;
 
+impl Default for ServiceGraphValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ServiceGraphValidator {
     pub fn new() -> Self {
         Self

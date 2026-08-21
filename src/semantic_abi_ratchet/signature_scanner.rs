@@ -10,6 +10,12 @@ pub struct BreakingAbiFinding {
 
 pub struct SignatureScanner;
 
+impl Default for SignatureScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SignatureScanner {
     pub fn new() -> Self {
         Self

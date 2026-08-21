@@ -19,6 +19,12 @@ pub struct FinOpsUnitCostRatchet {
     scanner: AllocationScanner,
 }
 
+impl Default for FinOpsUnitCostRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FinOpsUnitCostRatchet {
     pub fn new() -> Self {
         let scanner = AllocationScanner::new();
@@ -41,10 +47,10 @@ impl FinOpsUnitCostRatchet {
         for file_diff in diff_ctx.diff_content.split("diff --git") {
             let lines: Vec<&str> = file_diff.lines().collect();
             let mut current_file = "unknown.rs".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
+            if let Some(first_line) = lines.first()
+                && let Some(path) = first_line.split_whitespace().last()
+            {
+                current_file = path.trim_start_matches("b/").to_string();
             }
 
             let file_findings = self

@@ -1,18 +1,121 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
+use super::executor_port::{ConfiguredPromptExecutor, PromptExecutor};
 use super::provider::{ModelExecutionConfig, ModelProvider};
+use crate::self_governance::account_pool::AccountPoolManager;
 
-pub struct SubscriptionExecutor;
+/// Delivers a prompt to a provider CLI over STDIN instead of argv.
+///
+/// argv is not a safe channel for a review prompt: Linux caps a single
+/// argument at MAX_ARG_STRLEN (~128KB) and Darwin caps the whole argv block at
+/// ARG_MAX (1MB), so a large diff makes the spawn itself fail with E2BIG. That
+/// failure arrives as an empty stdout, which `reviewer::parse_review_response`
+/// then has to interpret -- a spawn error that is indistinguishable from model
+/// output is the shape of defect this crate exists to eliminate.
+///
+/// The bound comes from `crate::exec`, which owns the timeout and
+/// `kill_on_drop` (invariant I5). Nothing in this module spawns a child or
+/// times one out on its own.
+pub async fn run_with_prompt_on_stdin(
+    cmd: Command,
+    prompt: &str,
+    limit: Duration,
+    what: &str,
+) -> Result<std::process::Output> {
+    crate::exec::run_bounded_with_stdin(cmd, prompt, limit, what).await
+}
+
+/// Wraps a prompt in one line of agy's NDJSON stream protocol.
+///
+/// agy is the one provider with no plain "read the prompt from stdin"
+/// spelling: `--print` is a flag that TAKES a value, so omitting the value
+/// makes Go's flag parser swallow the next flag as the prompt and treat
+/// everything after it as positional -- which silently drops
+/// `--dangerously-skip-permissions` and makes the run fail on a permission
+/// check. Its stream protocol is the supported stdin channel, verified
+/// against the installed CLI:
+///
+/// ```text
+/// {"event":"user","message":{"content":"..."}}
+/// ```
+fn agy_stream_input(prompt: &str) -> String {
+    let message = serde_json::json!({
+        "event": "user",
+        "message": { "content": prompt },
+    });
+    format!("{message}\n")
+}
+
+/// Pulls the final response out of agy's NDJSON event stream.
+///
+/// `--input-format stream-json` requires `--output-format stream-json`, so the
+/// answer arrives as a `result` event rather than as plain stdout.
+///
+/// A stream with no `result` event, or one whose result is not `SUCCESS`, is an
+/// error -- never an empty successful review. An empty string here would reach
+/// `reviewer::parse_review_response` as unparseable output, and absent evidence
+/// must not be mistaken for a measurement (invariant I1).
+fn agy_stream_response(stdout: &str) -> Result<String> {
+    let mut failure: Option<String> = None;
+
+    for line in stdout.lines() {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        let Some(result) = event.get("result") else {
+            continue;
+        };
+
+        if result.get("status").and_then(|s| s.as_str()) == Some("SUCCESS") {
+            return Ok(result
+                .get("response")
+                .and_then(|r| r.as_str())
+                .unwrap_or_default()
+                .to_string());
+        }
+        failure = Some(
+            result
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("no error was reported")
+                .to_string(),
+        );
+    }
+
+    match failure {
+        Some(error) => bail!("agy reported a failed turn: {}", error),
+        None => bail!("agy emitted no result event, so no response was obtained"),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SubscriptionExecutor {
+    account_pool: Arc<AccountPoolManager>,
+}
+
+impl Default for SubscriptionExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SubscriptionExecutor {
     pub fn new() -> Self {
-        Self
+        Self {
+            account_pool: Arc::new(AccountPoolManager::new()),
+        }
     }
 
-    /// Executes prompt using the user's logged-in CLI subscription (Claude Code, OpenAI Codex, Cursor Agent, xAI Grok, or Antigravity)
+    pub fn with_pool(account_pool: Arc<AccountPoolManager>) -> Self {
+        Self { account_pool }
+    }
+
+    /// Executes prompt using the user's logged-in CLI subscription with multi-account pooling and failover
     pub async fn execute_prompt(
         &self,
         prompt: &str,
@@ -46,7 +149,7 @@ impl SubscriptionExecutor {
         }
     }
 
-    /// Invokes Anthropic Claude Code subscription CLI (`claude -p <prompt> < /dev/null` e.g. opus5 - high reasoning)
+    /// Invokes Anthropic Claude Code subscription CLI with multi-account pool leasing and failover
     pub async fn run_claude_subscription(
         &self,
         prompt: &str,
@@ -54,34 +157,100 @@ impl SubscriptionExecutor {
         config: &ModelExecutionConfig,
     ) -> Result<String> {
         let model_name = config.resolved_model();
-        info!(
-            "Executing prompt via Anthropic Claude Code subscription (model: {}, effort: {})...",
-            model_name, config.reasoning_effort
-        );
 
+        // Lease account from pool
+        let leased = self
+            .account_pool
+            .lease_account(ModelProvider::AnthropicClaudeCode)
+            .await;
         let mut cmd = Command::new("claude");
-        cmd.args(["-p", prompt]);
+        // `-p` with no positional argument: the prompt arrives on STDIN.
+        cmd.arg("-p");
         cmd.args(["--model", model_name]);
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        match cmd.output().await {
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                info!(
+                    "Leased account '{}' for Claude Code (model: {}, effort: {})...",
+                    acc.account_id, model_name, config.reasoning_effort
+                );
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("CLAUDE_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("CLAUDE_CODE_OAUTH_TOKEN", tok);
+                    cmd.env("ANTHROPIC_AUTH_TOKEN", tok);
+                }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("ANTHROPIC_API_KEY", key);
+                }
+                acc.account_id.clone()
+            }
+            Err(e) => {
+                warn!(
+                    "Claude account pool notice ({}). Falling over to AGY fallback...",
+                    e
+                );
+                "claude-default".to_string()
+            }
+        };
+
+        match run_with_prompt_on_stdin(
+            cmd,
+            prompt,
+            std::time::Duration::from_secs(config.print_timeout_secs),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty()
                     && !stdout.contains("ERROR: You've hit your usage limit")
                 {
+                    // Record token usage in pool
+                    let tokens = ((prompt.len() + stdout.len()) as f64 / 3.8).ceil() as usize;
+                    let cost_usd = (tokens as f64 / 1_000_000.0) * 30.0;
+                    let _ = self
+                        .account_pool
+                        .record_spend(&account_id, model_name, tokens, cost_usd)
+                        .await;
                     return Ok(stdout);
+                } else if stdout.contains("ERROR: You've hit your usage limit") {
+                    warn!(
+                        "Account '{}' hit Claude usage limit. Marking cooldown...",
+                        account_id
+                    );
+                    self.account_pool
+                        .mark_rate_limited(&account_id, Duration::from_secs(300))
+                        .await;
                 }
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                warn!("Claude subscription notice: {}. Falling over to active subscription fallback...", stderr);
+                warn!(
+                    "Claude subscription notice: {}. Falling over to active subscription fallback...",
+                    stderr
+                );
+                self.account_pool
+                    .mark_rate_limited(&account_id, Duration::from_secs(60))
+                    .await;
             }
             Err(e) => {
-                warn!("Claude CLI invocation notice: ({}). Falling over to active subscription fallback...", e);
+                warn!(
+                    "Claude CLI invocation notice: ({}). Falling over to active subscription fallback...",
+                    e
+                );
             }
         }
 
@@ -97,7 +266,7 @@ impl SubscriptionExecutor {
             .await
     }
 
-    /// Invokes OpenAI Codex / ChatGPT subscription CLI (`codex exec <prompt> < /dev/null` e.g. gpt-5.6-sol - high reasoning)
+    /// Invokes OpenAI Codex / ChatGPT subscription CLI with multi-account pool leasing and failover
     pub async fn run_openai_subscription(
         &self,
         prompt: &str,
@@ -105,55 +274,80 @@ impl SubscriptionExecutor {
         config: &ModelExecutionConfig,
     ) -> Result<String> {
         let model_name = config.resolved_model();
-        info!(
-            "Executing prompt via OpenAI Codex / ChatGPT subscription (model: {}, effort: {})...",
-            model_name, config.reasoning_effort
-        );
+        let leased = self
+            .account_pool
+            .lease_account(ModelProvider::OpenAiCodex)
+            .await;
 
         let mut cmd = Command::new("codex");
-        cmd.args(["exec", "-m", model_name]);
-        cmd.arg(prompt);
+        // `-` is codex's explicit "read the prompt from STDIN" argument.
+        cmd.args(["exec", "-"]);
+        cmd.args(["--model", model_name]);
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        match cmd.output().await {
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                info!(
+                    "Leased account '{}' for OpenAI Codex (model: {}, effort: {})...",
+                    acc.account_id, model_name, config.reasoning_effort
+                );
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("CODEX_HOME", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("OPENAI_AUTH_TOKEN", tok);
+                    cmd.env("CODEX_AUTH_TOKEN", tok);
+                }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("OPENAI_API_KEY", key);
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "codex-default".to_string(),
+        };
+
+        match run_with_prompt_on_stdin(
+            cmd,
+            prompt,
+            std::time::Duration::from_secs(config.print_timeout_secs),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                if !stdout.trim().is_empty()
-                    && !stdout.contains("ERROR: You've hit your usage limit")
-                {
+                if !stdout.trim().is_empty() {
+                    let tokens = ((prompt.len() + stdout.len()) as f64 / 3.8).ceil() as usize;
+                    let cost_usd = (tokens as f64 / 1_000_000.0) * 15.0;
+                    let _ = self
+                        .account_pool
+                        .record_spend(&account_id, model_name, tokens, cost_usd)
+                        .await;
                     return Ok(stdout);
-                }
-                if stdout.contains("ERROR: You've hit your usage limit") {
-                    warn!("OpenAI Codex subscription usage limit reached. Falling over to Claude Code (Opus 5) / AGY subscription...");
                 }
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                warn!("Codex subscription notice: {}. Falling over to active subscription fallback...", stderr);
+                warn!("OpenAI Codex subscription notice: {}", stderr);
+                self.account_pool
+                    .mark_rate_limited(&account_id, Duration::from_secs(60))
+                    .await;
             }
             Err(e) => {
-                warn!("Codex CLI invocation notice: ({}). Falling over to active subscription fallback...", e);
+                warn!("OpenAI Codex invocation notice: {}", e);
             }
         }
 
-        // Fallback: Claude Code subscription (Opus 5) or AGY (Gemini 3.7 Flash)
-        let mut claude_config = config.clone();
-        claude_config.provider = ModelProvider::AnthropicClaudeCode;
-        claude_config.specific_model = Some(
-            ModelProvider::AnthropicClaudeCode
-                .default_frontier_model()
-                .to_string(),
-        );
-        if let Ok(res) = self
-            .run_claude_subscription(prompt, working_dir, &claude_config)
-            .await
-        {
-            return Ok(res);
-        }
-
+        // Fallback: AGY with default subscription
         let mut fallback_config = config.clone();
         fallback_config.provider = ModelProvider::Antigravity;
         fallback_config.specific_model = Some(
@@ -165,72 +359,61 @@ impl SubscriptionExecutor {
             .await
     }
 
-    /// Invokes xAI Grok subscription (`grok-4.6` high reasoning)
-    pub async fn run_grok_subscription(
-        &self,
-        prompt: &str,
-        working_dir: &Path,
-        config: &ModelExecutionConfig,
-    ) -> Result<String> {
-        let grok_model = config.resolved_model();
-        info!(
-            "Executing prompt via xAI Grok subscription (model: {}, effort: {})...",
-            grok_model, config.reasoning_effort
-        );
-
-        if let Ok(res) = self
-            .run_cursor_agent_subscription(prompt, working_dir, grok_model)
-            .await
-        {
-            if !res.trim().is_empty() {
-                return Ok(res);
-            }
-        }
-
-        // Fallback: Claude Code (Opus 5) or AGY (Gemini 3.7 Flash)
-        let mut claude_config = config.clone();
-        claude_config.provider = ModelProvider::AnthropicClaudeCode;
-        claude_config.specific_model = Some(
-            ModelProvider::AnthropicClaudeCode
-                .default_frontier_model()
-                .to_string(),
-        );
-        if let Ok(res) = self
-            .run_claude_subscription(prompt, working_dir, &claude_config)
-            .await
-        {
-            return Ok(res);
-        }
-
-        let mut fallback_config = config.clone();
-        fallback_config.provider = ModelProvider::Antigravity;
-        fallback_config.specific_model = Some(
-            ModelProvider::Antigravity
-                .default_frontier_model()
-                .to_string(),
-        );
-        self.run_agy_subscription(prompt, working_dir, &fallback_config)
-            .await
-    }
-
-    /// Invokes Cursor Agent subscription CLI (`cursor-agent --print --model <model> <prompt>`)
+    /// Invokes Cursor Agent subscription CLI
     pub async fn run_cursor_agent_subscription(
         &self,
         prompt: &str,
         working_dir: &Path,
         model: &str,
     ) -> Result<String> {
-        let mut cmd = Command::new("cursor-agent");
-        cmd.args(["--print", "--model", model, prompt]);
+        let leased = self
+            .account_pool
+            .lease_account(ModelProvider::CursorAgent)
+            .await;
+
+        let mut cmd = Command::new("cursor");
+        // No positional prompt: it is written to STDIN below.
+        cmd.args(["agent", "--print"]);
+        if !model.is_empty() && model != "default" {
+            cmd.args(["--model", model]);
+        }
+
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("CURSOR_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("CURSOR_AUTH_TOKEN", tok);
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "cursor-default".to_string(),
+        };
+
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        match cmd.output().await {
+        match run_with_prompt_on_stdin(
+            cmd,
+            prompt,
+            crate::exec::ExecClass::Model.timeout(),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 if !stdout.trim().is_empty() {
+                    let tokens = ((prompt.len() + stdout.len()) as f64 / 3.8).ceil() as usize;
+                    let cost_usd = (tokens as f64 / 1_000_000.0) * 20.0;
+                    let _ = self
+                        .account_pool
+                        .record_spend(&account_id, model, tokens, cost_usd)
+                        .await;
                     return Ok(stdout);
                 }
             }
@@ -246,6 +429,89 @@ impl SubscriptionExecutor {
         bail!("Cursor Agent execution returned empty or non-zero status")
     }
 
+    /// Invokes xAI Grok subscription CLI
+    pub async fn run_grok_subscription(
+        &self,
+        prompt: &str,
+        working_dir: &Path,
+        config: &ModelExecutionConfig,
+    ) -> Result<String> {
+        let model = config.resolved_model();
+
+        let leased = self
+            .account_pool
+            .lease_account(ModelProvider::XAiGrok)
+            .await;
+
+        let mut cmd = Command::new("grok");
+        // grok takes its single-turn prompt as a positional argument or from a
+        // file. `/dev/stdin` is the file that IS the pipe, so the prompt still
+        // travels on STDIN and argv stays a fixed dozen bytes. Verified against
+        // the installed CLI. (The previous `--prompt <text>` was not a flag
+        // this CLI has at all.)
+        cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
+
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("GROK_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("GROK_AUTH_TOKEN", tok);
+                    cmd.env("XAI_API_KEY", tok);
+                }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("XAI_API_KEY", key);
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "grok-default".to_string(),
+        };
+
+        cmd.current_dir(working_dir);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+
+        match run_with_prompt_on_stdin(
+            cmd,
+            prompt,
+            std::time::Duration::from_secs(config.print_timeout_secs),
+            "provider CLI",
+        )
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                if !stdout.trim().is_empty() {
+                    let tokens = ((prompt.len() + stdout.len()) as f64 / 3.8).ceil() as usize;
+                    let cost_usd = (tokens as f64 / 1_000_000.0) * 10.0;
+                    let _ = self
+                        .account_pool
+                        .record_spend(&account_id, model, tokens, cost_usd)
+                        .await;
+                    return Ok(stdout);
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                warn!("xAI Grok subscription notice: {}", stderr);
+            }
+            Err(e) => {
+                warn!("xAI Grok execution notice: {}", e);
+            }
+        }
+
+        // Fallback: AGY
+        self.run_agy_subscription(prompt, working_dir, config).await
+    }
+
     /// Invokes Antigravity subscription CLI (`agy` with Gemini 3.7 Flash - high reasoning effort)
     pub async fn run_agy_subscription(
         &self,
@@ -254,12 +520,27 @@ impl SubscriptionExecutor {
         config: &ModelExecutionConfig,
     ) -> Result<String> {
         let model = config.resolved_model();
+
+        let leased = self
+            .account_pool
+            .lease_account(ModelProvider::Antigravity)
+            .await;
+
+        let turn_limit = std::time::Duration::from_secs(config.print_timeout_secs);
         let mut cmd = Command::new("agy");
+        // `--print ""` keeps the flag parser happy while the real prompt
+        // arrives on STDIN as a stream-json message; see `agy_stream_input`.
         cmd.args([
             "--print",
-            prompt,
+            "",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
             "--effort",
             &config.reasoning_effort,
+            "--print-timeout",
+            &crate::exec::agy_print_timeout_arg(turn_limit),
             "--dangerously-skip-permissions",
         ]);
 
@@ -267,15 +548,43 @@ impl SubscriptionExecutor {
             cmd.args(["--model", model]);
         }
 
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                if let Some(dir) = &acc.config_dir {
+                    cmd.env("ANTIGRAVITY_CONFIG_DIR", dir);
+                    cmd.env("GEMINI_CLI_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    cmd.env("ANTIGRAVITY_AUTH_TOKEN", tok);
+                    cmd.env("GEMINI_API_KEY", tok);
+                }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("GEMINI_API_KEY", key);
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "agy-default".to_string(),
+        };
+
         cmd.current_dir(working_dir);
-        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = cmd
-            .output()
-            .await
-            .context("Failed to run agy subscription CLI")?;
+        // print_timeout_secs was set in 23 places and read nowhere; it now
+        // actually bounds the call (invariant I5).
+        let output = run_with_prompt_on_stdin(
+            cmd,
+            &agy_stream_input(prompt),
+            turn_limit,
+            "agy subscription CLI",
+        )
+        .await?;
 
         let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
@@ -286,12 +595,28 @@ impl SubscriptionExecutor {
                 output.status
             );
             warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
         }
 
-        Ok(stdout_str)
+        // A non-zero exit fails the call outright. This previously fell through
+        // whenever any stdout had been produced, so a stream truncated by
+        // `Error: timeout waiting for response` was handed to the parser below
+        // and became a review verdict -- a judgement assembled from however much
+        // of the model's answer happened to arrive.
+        let stdout_str =
+            crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)?;
+
+        let response = agy_stream_response(&stdout_str)
+            .map_err(|e| anyhow::anyhow!("{}; agy stderr: {}", e, stderr_str.trim()))?;
+
+        // Record token usage in pool
+        let tokens = ((prompt.len() + response.len()) as f64 / 3.8).ceil() as usize;
+        let cost_usd = (tokens as f64 / 1_000_000.0) * 1.50;
+        let _ = self
+            .account_pool
+            .record_spend(&account_id, model, tokens, cost_usd)
+            .await;
+
+        Ok(response)
     }
 
     /// Evaluates prompt using Multi-Model Ensemble across Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash subscriptions
@@ -301,9 +626,53 @@ impl SubscriptionExecutor {
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
-        info!("Executing prompt via Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)...");
+        info!(
+            "Executing prompt via Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)..."
+        );
         self.run_claude_subscription(prompt, working_dir, config)
             .await
+    }
+}
+
+/// Timeout applied when a caller reaches the executor through [`PromptExecutor`],
+/// which carries a model name and nothing else.
+///
+/// 420s, preserving the budget `CrossModelDualValidator` used when it built its own
+/// `ModelExecutionConfig` before the port existed. Callers that need a different
+/// budget go through [`ConfiguredPromptExecutor`], which carries one.
+const PORT_EXECUTION_TIMEOUT_SECS: u64 = 420;
+
+/// The live adapter behind the opaque-model-name port.
+///
+/// Resolving a model name to a provider is the adapter's job, and it uses the
+/// crate's one resolution rule, [`ModelProvider::from_str_name`] — including its
+/// fallback for a name it does not recognise. Nothing about this executor changed
+/// to satisfy the port; the port is a second door onto `execute_prompt`.
+impl PromptExecutor for SubscriptionExecutor {
+    async fn execute(&self, model: &str, prompt: &str, working_dir: &Path) -> Result<String> {
+        let provider = ModelProvider::from_str_name(model);
+        let reasoning_effort = provider.default_reasoning_effort().to_string();
+        let config = ModelExecutionConfig {
+            provider,
+            specific_model: Some(model.to_string()),
+            reasoning_effort,
+            print_timeout_secs: PORT_EXECUTION_TIMEOUT_SECS,
+        };
+        self.execute_prompt(prompt, working_dir, &config).await
+    }
+}
+
+/// The live adapter behind the resolved-config port, used by the per-stage
+/// fallback chain, which has already chosen provider, model, effort and timeout.
+#[async_trait::async_trait]
+impl ConfiguredPromptExecutor for SubscriptionExecutor {
+    async fn execute_configured(
+        &self,
+        prompt: &str,
+        working_dir: &Path,
+        config: &ModelExecutionConfig,
+    ) -> Result<String> {
+        self.execute_prompt(prompt, working_dir, config).await
     }
 }
 
@@ -320,11 +689,6 @@ mod tests {
         assert_eq!(
             ModelProvider::OpenAiCodex.default_frontier_model(),
             "gpt-5.6-sol"
-        );
-        assert_eq!(ModelProvider::XAiGrok.default_frontier_model(), "grok-4.6");
-        assert_eq!(
-            ModelProvider::Antigravity.default_frontier_model(),
-            "gemini-3.7-flash"
         );
     }
 }

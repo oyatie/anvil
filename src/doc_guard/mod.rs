@@ -43,9 +43,6 @@ const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_
 
 /// Where `evaluate_doc_parity` gets its judgement from.
 ///
-/// SCAFFOLDING (`tdd/docguard-oracle-repair`): declaration only. It carries no
-/// logic, and the arm that would return a stored outcome is `todo!()`.
-///
 /// # Contract
 ///
 /// This shape is pinned by `tests/docguard_oracle_repair_test.rs` and
@@ -97,9 +94,6 @@ impl DocGuard {
 
     /// Constructs a guard whose doc-parity probe *outcome* is supplied directly
     /// instead of being obtained by spawning the `agy` probe.
-    ///
-    /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
-    /// the implementer.
     ///
     /// Both of the behaviours the specification asks for on the far side of the
     /// probe — issue #29's "a diff the probe judged insufficient does not yield
@@ -161,9 +155,6 @@ impl DocGuard {
     /// under-documented diff. That is the defect class this branch exists to
     /// remove, so it must not be reintroduced by the seam that tests it.
     ///
-    /// The body stays `todo!()` until then: a seam that stores the outcome
-    /// without anything consulting it would make a live `agy` spawn reachable
-    /// from the suite, and panicking at construction makes that impossible.
     #[allow(unused_variables)]
     pub fn with_probe_override(
         agy_effort: String,
@@ -179,9 +170,6 @@ impl DocGuard {
 
     /// Constructs a guard whose doc-parity probe *ran and produced this output*,
     /// instead of spawning `agy` to produce it.
-    ///
-    /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
-    /// the implementer.
     ///
     /// # Why this exists alongside `with_probe_override`
     ///
@@ -224,10 +212,6 @@ impl DocGuard {
     /// Like `Probe::Overridden`, the output is a **stored value, not a slot that
     /// empties**: there is no state in which spawning `agy` becomes legal again.
     ///
-    /// The body stays `todo!()` until the implementer wires it, for the same
-    /// reason `with_probe_override`'s does: a seam that stores the output
-    /// without anything consulting it would make a live `agy` spawn reachable
-    /// from the suite, and panicking at construction makes that impossible.
     #[allow(unused_variables)]
     pub fn with_probe_output_override(agy_effort: String, output: std::process::Output) -> Self {
         Self {
@@ -493,12 +477,8 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         );
 
         let target = format!("{}#{}", repo, diff_ctx.pr_number);
-        // SCAFFOLDING (`tdd/docguard-oracle-repair`): the `Live` arm is what
-        // this line already did, verbatim. The `Overridden` arm is the seam and
-        // its body is left to the implementer — it must return the stored
-        // outcome from here, at the point the probe's judgement is produced, so
-        // an overridden run and a production run traverse byte-identical code
-        // from the outcome onward. See `with_probe_override`.
+        // The `Live` arm is what this line always did, verbatim. See
+        // `with_probe_override` for why the other two answer from here.
         let (agy_effort, supplied_output) = match &self.probe {
             Probe::Live(effort) => (effort.clone(), None),
             // The stored outcome is answered HERE, at the point the probe's

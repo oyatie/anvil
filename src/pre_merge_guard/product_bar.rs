@@ -14,12 +14,11 @@
 //! The body and nothing else. An earlier revision of these signatures also took
 //! the pull request title, and no test in the suite could tell a gate that read
 //! it from one that ignored it — a named input with no measurement, inside a
-//! gate whose whole subject is named gates with no measurement. The suite
-//! already decides the question behaviourally: a change whose bet appears only
-//! in a descriptive title is still missing its written problem
-//! (`the_bet_and_the_bar_are_written_on_the_change_not_left_to_its_title`), so
-//! the title cannot supply either artifact and is not an input. Listed in
-//! open_questions as a decision a human can veto.
+//! gate whose whole subject is named gates with no measurement. The suite does
+//! not pin this and says so: with no title parameter there is nothing for a
+//! behavioural test to falsify, so it is a decision recorded in that file's
+//! module docs rather than a test. Listed in open_questions as a decision a
+//! human can veto.
 //!
 //! Absence is the defect itself. A change that never wrote a bar has not
 //! produced evidence this gate could not read; it produced no bar. That is

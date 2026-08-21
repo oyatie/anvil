@@ -411,7 +411,7 @@ impl QueueHealer {
         }
         if let Err(e) = self
             .merge_enlister
-            .enlist_into_merge_queue(repo, pr_number)
+            .enlist_into_merge_queue(repo, pr_number, None)
             .await
         {
             warn!(

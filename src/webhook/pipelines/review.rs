@@ -767,7 +767,7 @@ pub async fn execute_pr_review(
         );
         if let Err(e) = state
             .merge_enlister
-            .enlist_into_merge_queue(repo, pr_number)
+            .enlist_into_merge_queue(repo, pr_number, None)
             .await
         {
             warn!("Automatic merge queue enlistment notice: {}", e);

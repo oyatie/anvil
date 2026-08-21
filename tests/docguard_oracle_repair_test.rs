@@ -201,8 +201,8 @@ const OWNED_PAGES: &[&str] = &[
 /// is not doctrine — and the pipeline commits and pushes those edits onto the
 /// contributor's branch.
 ///
-/// Each of the three kills a different way of not maintaining a list, and the
-/// third exists because the first two do not.
+/// Each of the four kills a different way of not maintaining a list, and each
+/// exists because the ones before it do not.
 ///
 /// * `CHANGELOG.md` is chosen deliberately: it is named in the historical
 ///   exemption sentence itself (`such as README.md or CHANGELOG.md`), so
@@ -224,20 +224,40 @@ const OWNED_PAGES: &[&str] = &[
 ///   `docs/notes/roadmap.md` both survive it and every byte-identity and
 ///   `rewritten.len()` assertion in all four binaries holds.
 ///
-/// In the live checkout that shallow glob is currently INDISTINGUISHABLE from
-/// the fixed list, which is what makes it dangerous rather than merely wrong:
-/// `docs/` today contains only `doctrine.md`, `adr/` and `decisions/`. The
-/// moment anyone adds `docs/runbook.md`, or any other page beside doctrine, the
-/// sync starts rewriting that page's gate-count claims and deleting its
-/// exemption sentences on every Anvil pull request, and the pipeline commits and
-/// pushes the edit onto the contributor's branch. That is issue #27's harm aimed
-/// inward — latent, silent, and triggered by an ordinary documentation commit
-/// rather than by any change to this code.
+/// * `openapi/components.yaml` is a SIBLING of `openapi/openapi.yaml` — the
+///   same shape of entry as `docs/runbook.md`, aimed at the OTHER directory the
+///   corpus lives in, and it is here because the first three leave that
+///   directory completely unfenced. `OWNED` names exactly one page under
+///   `openapi/`, so a glob of `openapi/*.yaml` (or `openapi/**`) beside the
+///   README, doctrine and the two ADR directories reaches all five
+///   `OWNED_PAGES`, never touches a root file, never descends into
+///   `docs/notes/`, and never sees `docs/runbook.md`. Every byte-identity
+///   assertion, every `!rewritten.contains(unowned)` assertion and every
+///   `rewritten.len() == OWNED_PAGES.len()` assertion in all four binaries
+///   holds under it.
 ///
-/// All three carry the same drifting bytes as the owned pages, written in the
+/// In the live checkout both of those globs are currently INDISTINGUISHABLE
+/// from the fixed list, which is what makes them dangerous rather than merely
+/// wrong: `docs/` today contains only `doctrine.md`, `adr/` and `decisions/`,
+/// and `openapi/` today contains only `openapi.yaml`. The moment anyone adds
+/// `docs/runbook.md`, or `openapi/webhooks.yaml`, or any other page beside the
+/// ones the corpus names, the sync starts rewriting that page's gate-count
+/// claims and deleting its exemption sentences on every Anvil pull request, the
+/// page is reported in `files_created_or_updated` as a documentation update, and
+/// the pipeline commits and pushes the edit onto the contributor's branch. That
+/// is issue #27's harm aimed inward — latent, silent, and triggered by an
+/// ordinary documentation commit rather than by any change to this code.
+///
+/// All four carry the same drifting bytes as the owned pages, written in the
 /// same checkout in the same run, so the only thing that can separate any of
-/// them from `docs/doctrine.md` is the corpus boundary this constant fences.
-const NOT_OWNED_PAGES: &[&str] = &["CHANGELOG.md", "docs/notes/roadmap.md", "docs/runbook.md"];
+/// them from `docs/doctrine.md` or `openapi/openapi.yaml` is the corpus boundary
+/// this constant fences.
+const NOT_OWNED_PAGES: &[&str] = &[
+    "CHANGELOG.md",
+    "docs/notes/roadmap.md",
+    "docs/runbook.md",
+    "openapi/components.yaml",
+];
 
 const EXEMPTION_MARKER: &str = "does **not** yet amend existing documents";
 const PLAIN_EXEMPTION_MARKER: &str = "does not yet amend existing documents";
@@ -1121,7 +1141,15 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
 //     rather than left open, and the cost is stated: it forbids leaving the
 //     indentation, which on a page nobody re-indents is only diff noise —
 //     but diff noise on a page the pipeline commits and pushes is still a
-//     change nobody asked for.
+//     change nobody asked for. The converse is the same decision seen from the
+//     other side and is pinned with it: when the newline is NOT consumed the
+//     leading whitespace is NOT touched, because the line survives. Both
+//     directions are byte-exact fixtures in
+//     `the_trailing_newline_goes_only_when_the_deletion_started_at_a_line_start`,
+//     because an implementation that takes the start adjustment as a separate
+//     unconditional tidy-up — rather than as one of two assignments guarded by
+//     one condition — gets the first direction right and destroys a YAML block
+//     scalar's indentation in the second.
 //   * "nothing survives on that line after `end`" means nothing but WHITESPACE
 //     follows it on that line, and when the newline is consumed that trailing
 //     whitespace goes with it. This is the exact mirror of the bullet above and
@@ -1141,7 +1169,9 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
 //     `the_trailing_newline_goes_only_when_the_deletion_started_at_a_line_start`
 //     now carries a fixture that does not.
 //   * The mirror of the mirror, and the reason both bullets say "when the
-//     newline is consumed": whitespace on a line that SURVIVES is not touched.
+//     newline is consumed": whitespace on a line that SURVIVES is not touched,
+//     at EITHER end of it — the indentation in front of a surviving suffix as
+//     much as the hard break behind a surviving prefix.
 //     A hard line break at the end of a line whose prefix survives belonged to
 //     that line before the deletion and still does after it — removing it would
 //     change how the page renders, on a line the deletion was never asked to
@@ -1780,7 +1810,133 @@ fn the_trailing_newline_goes_only_when_the_deletion_started_at_a_line_start() {
     );
     assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
 
-    // The fourth and fifth layouts, and the ones that settle what "nothing
+    // The leading-side MIRROR of the layout above, and what makes the indented
+    // case pin a CONDITION rather than a single index. Same indented owned page,
+    // same sentence beginning the line's content — but this time prose SURVIVES
+    // after the sentence's terminator on the same line, so the newline is not
+    // consumed and therefore neither is the indentation.
+    //
+    // The rule is two assignments made at two indices, and each is guarded by
+    // BOTH halves of one condition. The natural error is to hoist the start
+    // adjustment out of the guard, because on its own it reads like a separate
+    // tidy-up:
+    //
+    //     let line_start = out[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    //     if out[line_start..start].trim().is_empty() { start = line_start; }
+    //     if nothing_after_on_line { end = (line_end + 1).min(out.len()); }
+    //
+    // Every other fixture in all four binaries survives that. The two with a
+    // surviving suffix are at byte 0 with no indentation to lose, or are
+    // compared through `normalise`, which trims each line and so cannot see
+    // leading whitespace at all. These two are the only place a hoisted start
+    // is visible.
+    //
+    // What the hoisted start ships: Anvil's own `openapi/openapi.yaml` is an
+    // owned page and it is indented throughout. A block scalar whose indentation
+    // is destroyed stops the OpenAPI document parsing; the rewriter still
+    // reports the page in `rewritten`, `remaining_drift` is empty so gate 1
+    // reports the corpus clean, and the pipeline commits and pushes the broken
+    // document onto the contributor's branch.
+    //
+    // Driven twice, because the two questions are separable and this suite
+    // decides only one of them. `normalise`'s own contract is that interior
+    // spacing — "whether the implementation leaves one space or two where a
+    // sentence used to be" — is NOT decided here, and in this layout the space
+    // that followed the deleted sentence's terminator sits immediately after the
+    // line's indentation, so a single byte-exact assertion over a
+    // space-separated fixture would decide it by accident. So:
+    //
+    //   * the space-separated fixture asserts the indentation byte-exactly and
+    //     the words through `normalise`, which is exactly the leading-whitespace
+    //     question and nothing else; and
+    //   * a fixture whose sentence ends in `。`, which the rule makes a
+    //     terminator regardless of what follows it and which therefore leaves no
+    //     separator to argue about, is asserted byte-exactly end to end.
+    //
+    // Together they pin the surviving direction of the leading half without
+    // this suite deciding a question it elsewhere declares open.
+    let indented_with_a_survivor = "openapi: 3.1.0\n\
+                                    info:\n\
+                                    \x20 description: |\n\
+                                    \x20   DocGuard does **not** yet amend existing documents. Support is planned.\n\
+                                    \x20   Gamma line.\n";
+    let (got, remaining_drift) =
+        rewrite_anvil_page("openapi/openapi.yaml", indented_with_a_survivor);
+
+    assert!(
+        !got.contains(EXEMPTION_MARKER),
+        "the exemption marker is the thing being removed: {got:?}"
+    );
+    assert_eq!(
+        normalise(&got),
+        normalise(
+            "openapi: 3.1.0\n\
+             info:\n\
+             \x20 description: |\n\
+             \x20   Support is planned.\n\
+             \x20   Gamma line.\n"
+        ),
+        "the exemption sentence goes and the prose after it on the same line \
+         stays: {got:?}"
+    );
+    assert_eq!(
+        got.lines().count(),
+        indented_with_a_survivor.lines().count(),
+        "no line may be lost here — the exemption line had other prose on \
+         it: {got:?}"
+    );
+    let survivor = got
+        .lines()
+        .find(|l| l.contains("Support is planned."))
+        .unwrap_or_else(|| panic!("the prose after the sentence must survive: {got:?}"));
+    assert!(
+        survivor.starts_with("    "),
+        "the exemption sentence began this line's CONTENT, but prose survives \
+         after its terminator, so the line survives — and a line that survives \
+         keeps its own leading whitespace. This is the assertion `normalise` \
+         cannot make, because it trims each line before comparing, and it is the \
+         only one in the suite that can see a start adjustment applied outside \
+         the guard: on this page, a YAML block scalar, the four spaces are what \
+         keep the document parsing, and the pipeline commits and pushes whatever \
+         the rewriter leaves: {survivor:?}"
+    );
+    assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
+
+    // The same layout with `。` closing the sentence, so there is no separator
+    // between the deletion's end and the surviving prose and the whole page can
+    // be compared byte for byte. `。` terminates regardless of what follows it —
+    // that is the rule, pinned on both sides by
+    // `the_exemption_sentence_ends_at_whatever_terminates_it` — and Anvil's own
+    // corpus really does carry Korean.
+    let indented_cjk = "openapi: 3.1.0\n\
+                        info:\n\
+                        \x20 description: |\n\
+                        \x20   DocGuard does **not** yet amend existing documents。Support is planned.\n\
+                        \x20   Gamma line.\n";
+    let (got, remaining_drift) = rewrite_anvil_page("openapi/openapi.yaml", indented_cjk);
+
+    assert!(
+        !got.contains(EXEMPTION_MARKER),
+        "the exemption marker is the thing being removed: {got:?}"
+    );
+    assert_eq!(
+        got,
+        "openapi: 3.1.0\n\
+         info:\n\
+         \x20 description: |\n\
+         \x20   Support is planned.\n\
+         \x20   Gamma line.\n",
+        "byte-exact, and the only fixture in the suite that is byte-exact over a \
+         surviving INDENTED line: the sentence's own bytes go, its terminator \
+         goes with it, and the four spaces in front of it — which belong to a \
+         line that survives — do not. An implementation that moves `start` back \
+         to the line start unconditionally, rather than only when it is also \
+         about to consume the newline, emits this page with the block scalar's \
+         indentation gone: {got:?}"
+    );
+    assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
+
+    // The last two layouts, and the ones that settle what "nothing
     // survives on that line after `end`" means: the sentence occupies a whole
     // line and that line ends in WHITESPACE before its newline.
     //
@@ -1801,7 +1957,8 @@ fn the_trailing_newline_goes_only_when_the_deletion_started_at_a_line_start() {
     // same over-reach that fuses lines in the negative below. They are here to
     // constrain the REPAIR, which narrows `end` to the sentence terminator and
     // must then decide this question explicitly, not to report a live defect.
-    // The red evidence in this case is the second and fifth layouts.
+    // The red evidence in this case is the second layout, the two
+    // leading-side mirrors above, and the last layout below.
     //
     // Two trailing spaces first, because that is not a typo in markdown: it is
     // an ordinary hard line break, and Anvil's own README carries them.

@@ -541,6 +541,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn point_at_tracked_hooks_sets_core_hooks_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = dir.path();
+        std::fs::create_dir(repo.join(".githooks")).expect("githooks dir");
+        let init = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(repo)
+            .output()
+            .expect("git init");
+        assert!(init.status.success(), "git init failed: {init:?}");
+
+        let pointed = GitManager::point_at_tracked_hooks(repo)
+            .await
+            .expect("point_at_tracked_hooks");
+        assert!(pointed, "installer must succeed when .githooks exists");
+
+        let out = std::process::Command::new("git")
+            .args(["-C"])
+            .arg(repo)
+            .args(["config", "--local", "core.hooksPath"])
+            .output()
+            .expect("git config");
+        let configured = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert_eq!(
+            configured, ".githooks",
+            "managed-clone install must issue `git config core.hooksPath .githooks`"
+        );
+    }
+
+    #[tokio::test]
     async fn test_git_manager_creates_and_cleans_abandoned_worktrees() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let git_mgr = GitManager::new(temp_dir.path().to_path_buf());

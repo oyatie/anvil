@@ -13,7 +13,7 @@
 //!
 //! Invariant I5: every subprocess has a timeout AND `kill_on_drop(true)`.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::process::Output;
 use std::time::Duration;
 use tokio::process::Command;
@@ -57,6 +57,28 @@ impl ExecClass {
             ExecClass::Model => "model",
         }
     }
+}
+
+/// Margin between agy's own `--print-timeout` and Anvil's kill for the same
+/// turn, so agy ends the turn itself (exit 1, stderr says why) before Anvil
+/// drops it with no output at all.
+pub const AGY_PRINT_TIMEOUT_MARGIN: Duration = Duration::from_secs(30);
+
+/// agy's `--print-timeout` value (Go duration syntax) for a turn Anvil bounds
+/// at `limit`.
+///
+/// agy's default is 5m0s and fires as `Error: timeout waiting for response`
+/// (exit 1) no matter how long Anvil is willing to wait; seventeen stage
+/// configs and every `ExecClass::Model` spawn allowed more than that and were
+/// cut off by the default anyway. Every agy spawn passes this explicitly so
+/// the two deadlines agree and the default never silently wins. Never yields
+/// `0s`, which agy reads as "do not wait".
+pub fn agy_print_timeout_arg(limit: Duration) -> String {
+    let secs = limit
+        .saturating_sub(AGY_PRINT_TIMEOUT_MARGIN)
+        .as_secs()
+        .max(1);
+    format!("{}s", secs)
 }
 
 /// Runs a command to completion under a class-appropriate timeout.
@@ -180,8 +202,44 @@ pub async fn run_bounded_with_stdin(
     }
 }
 
+/// Lives here rather than in one of its callers. It was defined in
+/// `queue_healer` and called from `cedar_guard`, `ci_triager`, `fixer::engine`
+/// and `ai_driver::router` -- which made `cedar_guard` depend on the queue
+/// healer to decide what an exit status means. The rule is an execution
+/// concern and belongs beside `ExecClass` and `run_bounded`.
+///
+/// Result policy for a model turn that edits the workspace: any non-zero exit
+/// is a failed turn. Partial stdout from a process that died mid-edit is not a
+/// partial repair; it is a tree in a state nobody chose. Shared with
+/// `fixer::engine`, which has the same shape and failed the same way.
+pub fn interpret_agy_outcome(status_success: bool, stdout: &str, stderr: &str) -> Result<String> {
+    if !status_success {
+        let why = stderr.trim();
+        if why.is_empty() {
+            bail!("agy exited non-zero with no stderr");
+        }
+        bail!("agy exited non-zero: {}", why);
+    }
+    Ok(stdout.to_string())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agy_print_timeout_sits_a_margin_under_anvils_bound() {
+        use super::{ExecClass, agy_print_timeout_arg};
+        use std::time::Duration;
+        assert_eq!(
+            agy_print_timeout_arg(ExecClass::Model.timeout()),
+            "570s",
+            "600s Model bound minus the 30s margin"
+        );
+        assert_eq!(agy_print_timeout_arg(Duration::from_secs(420)), "390s");
+        // Never 0s: agy reads that as "do not wait" and the turn dies at once.
+        assert_eq!(agy_print_timeout_arg(Duration::from_secs(5)), "1s");
+        assert_eq!(agy_print_timeout_arg(Duration::ZERO), "1s");
+    }
+
     use super::*;
 
     #[tokio::test]

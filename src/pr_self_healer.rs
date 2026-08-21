@@ -42,10 +42,10 @@ impl PrSelfHealer {
         )
         .await;
 
-        if let Ok(out) = fmt_out {
-            if out.status.success() {
-                report.files_formatted = 1;
-            }
+        if let Ok(out) = fmt_out
+            && out.status.success()
+        {
+            report.files_formatted = 1;
         }
 
         // Pass 2: Missing OWNERS File Stamping for Crate/Library Directories
@@ -133,14 +133,14 @@ impl PrSelfHealer {
             )
             .await;
 
-            if let Ok(p) = push_out {
-                if !p.status.success() {
-                    warn!(
-                        "Failed to push self-healing commit to origin/{}: {:?}",
-                        branch,
-                        String::from_utf8_lossy(&p.stderr)
-                    );
-                }
+            if let Ok(p) = push_out
+                && !p.status.success()
+            {
+                warn!(
+                    "Failed to push self-healing commit to origin/{}: {:?}",
+                    branch,
+                    String::from_utf8_lossy(&p.stderr)
+                );
             }
         }
 

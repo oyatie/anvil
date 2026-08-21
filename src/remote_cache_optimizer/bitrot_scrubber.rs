@@ -27,28 +27,28 @@ impl CasBitRotScrubber {
         let mut corrupted = 0;
         let auto_repaired = 0;
 
-        if cas_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(cas_dir) {
-                for entry in entries.flatten() {
-                    if let Ok(file_type) = entry.file_type() {
-                        if file_type.is_file() {
-                            total_blobs += 1;
-                            let file_name = entry.file_name().to_string_lossy().to_string();
-                            if let Ok(data) = std::fs::read(entry.path()) {
-                                // If filename has 16-hex hash prefix, verify content matches
-                                if file_name.starts_with("sccache-") || file_name.len() >= 16 {
-                                    let mut hash: u64 = 0xcbf29ce484222325;
-                                    for byte in &data {
-                                        hash ^= *byte as u64;
-                                        hash = hash.wrapping_mul(0x100000001b3);
-                                    }
-                                    let computed = format!("{:016x}", hash);
-                                    if file_name.contains("corrupted")
-                                        || (file_name.len() == 16 && computed != file_name)
-                                    {
-                                        corrupted += 1;
-                                    }
-                                }
+        if cas_dir.exists()
+            && let Ok(entries) = std::fs::read_dir(cas_dir)
+        {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_file()
+                {
+                    total_blobs += 1;
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    if let Ok(data) = std::fs::read(entry.path()) {
+                        // If filename has 16-hex hash prefix, verify content matches
+                        if file_name.starts_with("sccache-") || file_name.len() >= 16 {
+                            let mut hash: u64 = 0xcbf29ce484222325;
+                            for byte in &data {
+                                hash ^= *byte as u64;
+                                hash = hash.wrapping_mul(0x100000001b3);
+                            }
+                            let computed = format!("{:016x}", hash);
+                            if file_name.contains("corrupted")
+                                || (file_name.len() == 16 && computed != file_name)
+                            {
+                                corrupted += 1;
                             }
                         }
                     }

@@ -20,9 +20,9 @@
 //!   6. One status glyph, at the start. No decorative emoji.
 //!   7. Signature last, always.
 
-use crate::fidelity::{registry::AUDITED_GATES, Fidelity};
-use crate::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
-use crate::publish::{body, AnvilAction};
+use crate::fidelity::{Fidelity, registry::AUDITED_GATES};
+use crate::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport};
+use crate::publish::{AnvilAction, body};
 
 /// Remediation per gate id. Absent where no concrete action is known --
 /// invented advice sends the reader somewhere wrong, which is worse than none.
@@ -63,6 +63,10 @@ const REMEDIATION: &[(&str, &str)] = &[
         "test_suite_status",
         "fix the failing tests locally before pushing",
     ),
+    (
+        "shape_status",
+        "run `anvil shape plan --repo-dir <clone>` for the move plan; a regression on a blocking rule needs an entry in .anvil/baselines/shape.signoff.json",
+    ),
 ];
 
 fn remediation_for(gate_id: &str) -> Option<&'static str> {
@@ -93,13 +97,13 @@ fn finding_line(gate_id: &str, kind: &str, detail: &str) -> String {
     if let Some(fix) = remediation_for(gate_id) {
         s.push_str(&format!("\n  - fix: {}", fix));
     }
-    if let Some(f) = fidelity_for(gate_id) {
-        if f < Fidelity::Measured {
-            s.push_str(&format!(
-                "\n  - note: this gate is {} fidelity and does not fully measure what its name implies",
-                f.label().to_lowercase()
-            ));
-        }
+    if let Some(f) = fidelity_for(gate_id)
+        && f < Fidelity::Measured
+    {
+        s.push_str(&format!(
+            "\n  - note: this gate is {} fidelity and does not fully measure what its name implies",
+            f.label().to_lowercase()
+        ));
     }
     s
 }

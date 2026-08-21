@@ -47,7 +47,9 @@ impl SelfGovernor {
     pub fn spawn_monitoring_daemon(&self) {
         let governor = self.clone();
         tokio::spawn(async move {
-            info!("🛡️ [Self-Governor] Autonomous Self-Monitoring Daemon initialized (10s heartbeat cadence)");
+            info!(
+                "🛡️ [Self-Governor] Autonomous Self-Monitoring Daemon initialized (10s heartbeat cadence)"
+            );
             let mut interval = tokio::time::interval(Duration::from_secs(10));
             loop {
                 interval.tick().await;

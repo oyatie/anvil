@@ -135,7 +135,10 @@ impl OutageRecoveryReconciler {
 
         info!(
             "🎉 [Outage Recovery] Sweep complete in {:.2}s. Inspected {} PRs ({} uncertified), reconciled {} issues.",
-            report.duration_secs, report.total_prs_inspected, report.prs_requiring_certification.len(), report.issues_reconciled
+            report.duration_secs,
+            report.total_prs_inspected,
+            report.prs_requiring_certification.len(),
+            report.issues_reconciled
         );
 
         Ok(report)

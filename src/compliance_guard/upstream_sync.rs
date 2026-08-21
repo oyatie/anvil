@@ -71,16 +71,15 @@ impl UpstreamRegulatorySync {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(rule) = serde_json::from_str::<DynamicRegulatoryRule>(&content) {
-                            let mut snap = self.snapshot.write().unwrap();
-                            snap.rules.retain(|r| r.rule_id != rule.rule_id);
-                            snap.rules.push(rule);
-                            snap.total_rules = snap.rules.len();
-                            loaded += 1;
-                        }
-                    }
+                if path.extension().and_then(|s| s.to_str()) == Some("json")
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                    && let Ok(rule) = serde_json::from_str::<DynamicRegulatoryRule>(&content)
+                {
+                    let mut snap = self.snapshot.write().unwrap();
+                    snap.rules.retain(|r| r.rule_id != rule.rule_id);
+                    snap.rules.push(rule);
+                    snap.total_rules = snap.rules.len();
+                    loaded += 1;
                 }
             }
         }
@@ -219,7 +218,7 @@ impl UpstreamRegulatorySync {
             },
 
             // -------------------------------------------------------------
-            // 5. INTERNAL ENTERPRISE POLICY: Oyatie Living Security & Architecture Doctrine
+            // 5. INTERNAL POLICY: Oyatie living security & architecture doctrine
             // -------------------------------------------------------------
             DynamicRegulatoryRule {
                 rule_id: "INTERNAL_OYATIE_TENANT_ISOLATION_ADR_014".to_string(),

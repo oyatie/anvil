@@ -1,9 +1,9 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::info;
 
-use crate::exec::{run_bounded, ExecClass};
+use crate::exec::{ExecClass, run_bounded};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewThreadNode {

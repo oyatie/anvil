@@ -1,7 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, warn};
 
 use super::account_pool::AccountPoolManager;
@@ -141,8 +141,10 @@ mod tests {
         assert_eq!(rep3.estimated_cost_usd, 46.50);
 
         // Next 1M tokens of Opus ($30) breaches $50 limit
-        assert!(enforcer
-            .record_model_spend("claude-opus-5", 1_000_000)
-            .is_err());
+        assert!(
+            enforcer
+                .record_model_spend("claude-opus-5", 1_000_000)
+                .is_err()
+        );
     }
 }

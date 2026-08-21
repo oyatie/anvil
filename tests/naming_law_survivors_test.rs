@@ -47,7 +47,7 @@
 use anvil::brand_absence::{
     BrandAbsenceGate, BrandViolation, BrandViolationKind, VOCABULARY_DEFINITION_PATH,
 };
-use anvil::migration::{Verdict, MIGRATION_LEDGER};
+use anvil::migration::{MIGRATION_LEDGER, Verdict};
 use anvil::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -242,7 +242,7 @@ fn strip_cfg_test_items(source: &str) -> (String, usize) {
 /// [`SUPERSEDED_OFF_LIMITS`], applied per check below, not the warn-only debt
 /// ledger the gate ships with.
 fn scan_production() -> Vec<BrandViolation> {
-    let gate = BrandAbsenceGate::with_allowlist(&[]);
+    let gate = BrandAbsenceGate::with_allowlist(Vec::new());
     let mut out = Vec::new();
     for (path, body) in production_sources() {
         out.extend(gate.scan_source(&path, &body).new_violations);
@@ -663,6 +663,10 @@ fn live_gate_count() -> usize {
         zero_day_status: GateStatus::Passed,
         formal_verification_status: GateStatus::Passed,
         deadlock_status: GateStatus::Passed,
+        review_verdict_status: GateStatus::Passed,
+        brand_absence_status: GateStatus::Passed,
+        migration_boundary_status: GateStatus::Passed,
+        shape_status: GateStatus::Passed,
         automated_canary_status: GateStatus::Passed,
         progressive_ring_status: GateStatus::Passed,
         hermetic_build_status: GateStatus::Passed,
@@ -745,7 +749,7 @@ fn every_gate_count_claim_equals_the_live_gate_count() {
          against and every assertion below would be vacuous"
     );
     assert_eq!(
-        BrandAbsenceGate::with_allowlist(&[]).real_gate_count(),
+        BrandAbsenceGate::with_allowlist(Vec::new()).real_gate_count(),
         real,
         "the brand-absence gate's corpus size disagrees with the live gate API. Two sources \
          of truth means the check can pass against the wrong one."
@@ -883,7 +887,7 @@ fn surviving_components_adopt_the_established_term_instead_of_coining_a_synonym(
 /// is wrong in a direction nobody audits.
 #[test]
 fn the_gate_does_not_count_a_stamp_that_lives_only_in_a_cfg_test_module() {
-    let gate = BrandAbsenceGate::with_allowlist(&[]);
+    let gate = BrandAbsenceGate::with_allowlist(Vec::new());
 
     let source = r#"
 pub struct StageModelRouter;

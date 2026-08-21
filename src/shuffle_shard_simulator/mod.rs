@@ -74,7 +74,8 @@ impl ShuffleShardSimulator {
         let summary = if is_isolated {
             format!(
                 "✅ PASSED (Shuffle sharding verified: {} total combinations, blast radius limited to {:.1}% per cell outage)",
-                metrics.total_combinations, metrics.single_cell_outage_impact_ratio * 100.0
+                metrics.total_combinations,
+                metrics.single_cell_outage_impact_ratio * 100.0
             )
         } else {
             format!(

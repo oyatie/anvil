@@ -90,44 +90,44 @@ impl UpstreamRustSkillsSyncer {
 
         let mut indexed = HashMap::new();
 
-        if skill_md_path.exists() {
-            if let Ok(content) = tokio::fs::read_to_string(&skill_md_path).await {
-                let mut current_category = "General".to_string();
+        if skill_md_path.exists()
+            && let Ok(content) = tokio::fs::read_to_string(&skill_md_path).await
+        {
+            let mut current_category = "General".to_string();
 
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if let Some(stripped) = trimmed.strip_prefix("### ") {
-                        current_category = stripped.trim().to_string();
-                        continue;
-                    }
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if let Some(stripped) = trimmed.strip_prefix("### ") {
+                    current_category = stripped.trim().to_string();
+                    continue;
+                }
 
-                    if trimmed.starts_with("- [`") && trimmed.contains("`](") {
-                        // - [`own-borrow-over-clone`](rules/own-borrow-over-clone.md) - Prefer `&T` borrowing over `.clone()`
-                        if let Some(end_id) = trimmed[4..].find("`]") {
-                            let rule_id = &trimmed[4..4 + end_id];
-                            let rest = &trimmed[4 + end_id + 2..];
+                if trimmed.starts_with("- [`") && trimmed.contains("`](") {
+                    // - [`own-borrow-over-clone`](rules/own-borrow-over-clone.md) - Prefer `&T` borrowing over `.clone()`
+                    if let Some(end_id) = trimmed[4..].find("`]") {
+                        let rule_id = &trimmed[4..4 + end_id];
+                        let rest = &trimmed[4 + end_id + 2..];
 
-                            let file_path = rules_dir.join(format!("{}.md", rule_id));
-                            let summary = if let Some(dash_idx) = rest.find(" - ") {
-                                rest[dash_idx + 3..].to_string()
-                            } else {
-                                rest.to_string()
-                            };
+                        let file_path = rules_dir.join(format!("{}.md", rule_id));
+                        let summary = if let Some(dash_idx) = rest.find(" - ") {
+                            rest[dash_idx + 3..].to_string()
+                        } else {
+                            rest.to_string()
+                        };
 
-                            let prefix = rule_id.split('-').next().unwrap_or("").to_string();
+                        let prefix = rule_id.split('-').next().unwrap_or("").to_string();
 
-                            indexed.insert(
-                                rule_id.to_string(),
-                                UpstreamRuleMeta {
-                                    rule_id: rule_id.to_string(),
-                                    category: current_category.clone(),
-                                    prefix,
-                                    title: rule_id.replace('-', " "),
-                                    summary,
-                                    file_path,
-                                },
-                            );
-                        }
+                        indexed.insert(
+                            rule_id.to_string(),
+                            UpstreamRuleMeta {
+                                rule_id: rule_id.to_string(),
+                                category: current_category.clone(),
+                                prefix,
+                                title: rule_id.replace('-', " "),
+                                summary,
+                                file_path,
+                            },
+                        );
                     }
                 }
             }
@@ -135,7 +135,10 @@ impl UpstreamRustSkillsSyncer {
 
         let count = indexed.len();
         if count > 0 {
-            info!("UpstreamRustSkillsSyncer: Indexed {} live rules from upstream rust-skills repository.", count);
+            info!(
+                "UpstreamRustSkillsSyncer: Indexed {} live rules from upstream rust-skills repository.",
+                count
+            );
             let mut w = self.rules.write().unwrap();
             *w = indexed;
         }

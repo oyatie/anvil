@@ -16,10 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
+      # A fresh clone does not carry core.hooksPath, so the tracked hooks in
+      # .githooks are not the ones git would run here. `git_hooks_installed_test`
+      # asserts this repository actually uses them; point the config at them
+      # rather than exempting CI from a rule Anvil enforces on everyone else.
+      - name: Use the repository's tracked git hooks
+        run: git config core.hooksPath .githooks
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
-          toolchain: stable
+          toolchain: "1.97.1"
           components: rustfmt, clippy
 
       - name: Rust Cache
@@ -29,8 +36,11 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Run Full Test Suite (Unit + Integration + Adversarial Red/Green Gates)
-        run: cargo test --all-targets --all-features -- --nocapture
+        run: cargo test --all-targets --locked -- --nocapture
+
+      - name: Release Build (the artifact scripts/start.sh deploys)
+        run: cargo build --release --locked
 

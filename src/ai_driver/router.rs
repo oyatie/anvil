@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -185,10 +185,13 @@ impl SubscriptionExecutor {
                     cmd.env("CLAUDE_CODE_OAUTH_TOKEN", tok);
                     cmd.env("ANTHROPIC_AUTH_TOKEN", tok);
                 }
-                if let Some(key) = &acc.auth_profile_or_key {
-                    if !key.starts_with("HOST_") {
-                        cmd.env("ANTHROPIC_API_KEY", key);
-                    }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("ANTHROPIC_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
@@ -235,13 +238,19 @@ impl SubscriptionExecutor {
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                warn!("Claude subscription notice: {}. Falling over to active subscription fallback...", stderr);
+                warn!(
+                    "Claude subscription notice: {}. Falling over to active subscription fallback...",
+                    stderr
+                );
                 self.account_pool
                     .mark_rate_limited(&account_id, Duration::from_secs(60))
                     .await;
             }
             Err(e) => {
-                warn!("Claude CLI invocation notice: ({}). Falling over to active subscription fallback...", e);
+                warn!(
+                    "Claude CLI invocation notice: ({}). Falling over to active subscription fallback...",
+                    e
+                );
             }
         }
 
@@ -292,10 +301,13 @@ impl SubscriptionExecutor {
                     cmd.env("OPENAI_AUTH_TOKEN", tok);
                     cmd.env("CODEX_AUTH_TOKEN", tok);
                 }
-                if let Some(key) = &acc.auth_profile_or_key {
-                    if !key.starts_with("HOST_") {
-                        cmd.env("OPENAI_API_KEY", key);
-                    }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("OPENAI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
@@ -449,10 +461,13 @@ impl SubscriptionExecutor {
                     cmd.env("GROK_AUTH_TOKEN", tok);
                     cmd.env("XAI_API_KEY", tok);
                 }
-                if let Some(key) = &acc.auth_profile_or_key {
-                    if !key.starts_with("HOST_") {
-                        cmd.env("XAI_API_KEY", key);
-                    }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("XAI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
@@ -511,6 +526,7 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::Antigravity)
             .await;
 
+        let turn_limit = std::time::Duration::from_secs(config.print_timeout_secs);
         let mut cmd = Command::new("agy");
         // `--print ""` keeps the flag parser happy while the real prompt
         // arrives on STDIN as a stream-json message; see `agy_stream_input`.
@@ -523,6 +539,8 @@ impl SubscriptionExecutor {
             "stream-json",
             "--effort",
             &config.reasoning_effort,
+            "--print-timeout",
+            &crate::exec::agy_print_timeout_arg(turn_limit),
             "--dangerously-skip-permissions",
         ]);
 
@@ -541,10 +559,13 @@ impl SubscriptionExecutor {
                     cmd.env("ANTIGRAVITY_AUTH_TOKEN", tok);
                     cmd.env("GEMINI_API_KEY", tok);
                 }
-                if let Some(key) = &acc.auth_profile_or_key {
-                    if !key.starts_with("HOST_") {
-                        cmd.env("GEMINI_API_KEY", key);
-                    }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    cmd.env("GEMINI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
@@ -560,7 +581,7 @@ impl SubscriptionExecutor {
         let output = run_with_prompt_on_stdin(
             cmd,
             &agy_stream_input(prompt),
-            std::time::Duration::from_secs(config.print_timeout_secs),
+            turn_limit,
             "agy subscription CLI",
         )
         .await?;
@@ -574,10 +595,15 @@ impl SubscriptionExecutor {
                 output.status
             );
             warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
         }
+
+        // A non-zero exit fails the call outright. This previously fell through
+        // whenever any stdout had been produced, so a stream truncated by
+        // `Error: timeout waiting for response` was handed to the parser below
+        // and became a review verdict -- a judgement assembled from however much
+        // of the model's answer happened to arrive.
+        let stdout_str =
+            crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)?;
 
         let response = agy_stream_response(&stdout_str)
             .map_err(|e| anyhow::anyhow!("{}; agy stderr: {}", e, stderr_str.trim()))?;
@@ -600,7 +626,9 @@ impl SubscriptionExecutor {
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
-        info!("Executing prompt via Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)...");
+        info!(
+            "Executing prompt via Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)..."
+        );
         self.run_claude_subscription(prompt, working_dir, config)
             .await
     }
@@ -620,7 +648,6 @@ const PORT_EXECUTION_TIMEOUT_SECS: u64 = 420;
 /// crate's one resolution rule, [`ModelProvider::from_str_name`] — including its
 /// fallback for a name it does not recognise. Nothing about this executor changed
 /// to satisfy the port; the port is a second door onto `execute_prompt`.
-#[async_trait::async_trait]
 impl PromptExecutor for SubscriptionExecutor {
     async fn execute(&self, model: &str, prompt: &str, working_dir: &Path) -> Result<String> {
         let provider = ModelProvider::from_str_name(model);

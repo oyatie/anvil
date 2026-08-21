@@ -45,6 +45,30 @@ pub struct PreMergeCertificationReport {
     pub zero_day_status: GateStatus,
     pub formal_verification_status: GateStatus,
     pub deadlock_status: GateStatus,
+    /// Verdict of the AI code review and 16-lens matrix.
+    ///
+    /// This was computed in the evaluator and then thrown away: it never became
+    /// a field, so `all_statuses()` could not see it and `seal()` could not gate
+    /// on it. A pull request whose review returned REQUEST_CHANGES or REJECT was
+    /// still certified. The original chain in 117a1f6 ended
+    /// `&& review_verdict_status.is_acceptable()`; when certification moved to
+    /// `seal()`, the value was left behind rather than carried across.
+    ///
+    /// Nothing failed when that happened -- the gate simply stopped mattering,
+    /// silently, which is why an unused-variable lint found it and no review did.
+    pub review_verdict_status: GateStatus,
+    /// Names and PR-visible strings must describe what the code verifies, not
+    /// stamp an aspiration onto it. Anvil enforced naming discipline on other
+    /// repositories while carrying `hyperscaler_consensus_guard` and
+    /// `EnterpriseAgenticPipelineRouter` itself.
+    pub brand_absence_status: GateStatus,
+    /// Code that is migrating to oyatie must not depend on code oyatie
+    /// supersedes -- it cannot migrate while anchored to something being
+    /// deleted.
+    pub migration_boundary_status: GateStatus,
+    /// Distance to the tenant's shape spec, judged against the baseline frozen
+    /// at the merge-base (Shape Program). Blocking rules may not regress.
+    pub shape_status: GateStatus,
     pub automated_canary_status: GateStatus,
     pub progressive_ring_status: GateStatus,
     pub hermetic_build_status: GateStatus,
@@ -90,7 +114,7 @@ pub struct PreMergeCertificationReport {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 68;
+pub const TOTAL_GATES: usize = 72;
 
 impl PreMergeCertificationReport {
     /// Every gate status on this report, in declaration order.
@@ -138,6 +162,10 @@ impl PreMergeCertificationReport {
             &self.zero_day_status,
             &self.formal_verification_status,
             &self.deadlock_status,
+            &self.review_verdict_status,
+            &self.brand_absence_status,
+            &self.migration_boundary_status,
+            &self.shape_status,
             &self.automated_canary_status,
             &self.progressive_ring_status,
             &self.hermetic_build_status,
@@ -217,6 +245,10 @@ impl PreMergeCertificationReport {
                 &self.formal_verification_status,
             ),
             ("deadlock_status", &self.deadlock_status),
+            ("review_verdict_status", &self.review_verdict_status),
+            ("brand_absence_status", &self.brand_absence_status),
+            ("migration_boundary_status", &self.migration_boundary_status),
+            ("shape_status", &self.shape_status),
             ("automated_canary_status", &self.automated_canary_status),
             ("progressive_ring_status", &self.progressive_ring_status),
             ("hermetic_build_status", &self.hermetic_build_status),
@@ -285,6 +317,110 @@ impl PreMergeCertificationReport {
     /// Invariant I1 — absent evidence must not merge.
     pub fn is_admissible(&self) -> bool {
         self.is_certified_ready && self.unmeasured_gates.is_empty()
+    }
+
+    /// A report in which nothing has been measured: every gate is
+    /// `NotMeasured` with `reason`, nothing is certified, nothing is
+    /// admissible. The honest starting point for a fixture or a preview —
+    /// there is deliberately no "all passed" constructor (I2).
+    pub fn unmeasured(reason: &str) -> Self {
+        let nm = |gate_id: &str| GateStatus::NotMeasured {
+            gate_id: gate_id.to_string(),
+            reason: reason.to_string(),
+        };
+        let mut r = PreMergeCertificationReport {
+            is_certified_ready: false,
+            doc_parity_status: nm("doc_parity_status"),
+            cedar_status: nm("cedar_status"),
+            compliance_status: nm("compliance_status"),
+            api_contract_status: nm("api_contract_status"),
+            cell_isolation_status: nm("cell_isolation_status"),
+            supply_chain_status: nm("supply_chain_status"),
+            clean_arch_status: nm("clean_arch_status"),
+            monorepo_status: nm("monorepo_status"),
+            debt_shrink_status: nm("debt_shrink_status"),
+            modularization_status: nm("modularization_status"),
+            coverage_status: nm("coverage_status"),
+            rust_skills_status: nm("rust_skills_status"),
+            kani_status: nm("kani_status"),
+            slo_status: nm("slo_status"),
+            adr_status: nm("adr_status"),
+            shuffle_status: nm("shuffle_status"),
+            trace_status: nm("trace_status"),
+            constant_work_status: nm("constant_work_status"),
+            idempotency_status: nm("idempotency_status"),
+            finops_status: nm("finops_status"),
+            ghost_migration_status: nm("ghost_migration_status"),
+            gitops_promo_status: nm("gitops_promo_status"),
+            gitops_drift_status: nm("gitops_drift_status"),
+            canary_status: nm("canary_status"),
+            cluster_audit_status: nm("cluster_audit_status"),
+            migration_orch_status: nm("migration_orch_status"),
+            ci_wallclock_status: nm("ci_wallclock_status"),
+            predictive_test_status: nm("predictive_test_status"),
+            compile_profile_status: nm("compile_profile_status"),
+            remote_cache_status: nm("remote_cache_status"),
+            runner_economics_status: nm("runner_economics_status"),
+            sandbox_status: nm("sandbox_status"),
+            cross_service_status: nm("cross_service_status"),
+            ephemeral_secret_status: nm("ephemeral_secret_status"),
+            psa_status: nm("psa_status"),
+            shadow_traffic_status: nm("shadow_traffic_status"),
+            unresolved_review_status: nm("unresolved_review_status"),
+            local_probe_status: nm("local_probe_status"),
+            semantic_abi_status: nm("semantic_abi_status"),
+            zero_day_status: nm("zero_day_status"),
+            formal_verification_status: nm("formal_verification_status"),
+            deadlock_status: nm("deadlock_status"),
+            review_verdict_status: nm("review_verdict_status"),
+            brand_absence_status: nm("brand_absence_status"),
+            migration_boundary_status: nm("migration_boundary_status"),
+            shape_status: nm("shape_status"),
+            automated_canary_status: nm("automated_canary_status"),
+            progressive_ring_status: nm("progressive_ring_status"),
+            hermetic_build_status: nm("hermetic_build_status"),
+            openvex_status: nm("openvex_status"),
+            cosign_status: nm("cosign_status"),
+            chaos_injection_status: nm("chaos_injection_status"),
+            stacked_diffs_status: nm("stacked_diffs_status"),
+            microbench_status: nm("microbench_status"),
+            jittered_backoff_status: nm("jittered_backoff_status"),
+            schema_evolution_status: nm("schema_evolution_status"),
+            auto_rollback_status: nm("auto_rollback_status"),
+            wasm_sandbox_status: nm("wasm_sandbox_status"),
+            consistency_status: nm("consistency_status"),
+            flake_quarantine_status: nm("flake_quarantine_status"),
+            zero_trust_workload_status: nm("zero_trust_workload_status"),
+            carbon_compute_status: nm("carbon_compute_status"),
+            replay_harness_status: nm("replay_harness_status"),
+            upgrade_train_status: nm("upgrade_train_status"),
+            mutation_status: nm("mutation_status"),
+            feature_flag_status: nm("feature_flag_status"),
+            bench_status: nm("bench_status"),
+            attestation_status: nm("attestation_status"),
+            security_scan_status: nm("security_scan_status"),
+            schema_compat_status: nm("schema_compat_status"),
+            performance_concurrency_status: nm("performance_concurrency_status"),
+            test_suite_status: nm("test_suite_status"),
+            unmeasured_gates: Vec::new(),
+            summary_markdown: String::new(),
+        };
+        r.seal();
+        r
+    }
+
+    /// Derives every summary field from the gate statuses.
+    ///
+    /// `is_certified_ready` is the conjunction of `all_statuses()`, so a gate
+    /// added to the struct is in the verdict by construction. The evaluator
+    /// previously held a hand-written 68-term conjunction that was computed
+    /// before the two self-directed gates existed, so `brand_absence_status`
+    /// and `migration_boundary_status` could fail while the report certified.
+    /// The field list is pinned to `TOTAL_GATES` by test; the verdict now
+    /// reads that list rather than a second copy of it.
+    pub fn seal(&mut self) {
+        self.recompute_unmeasured();
+        self.is_certified_ready = self.all_statuses().iter().all(|s| s.is_acceptable());
     }
 }
 
@@ -401,6 +537,10 @@ mod tests {
             zero_day_status: GateStatus::Passed,
             formal_verification_status: GateStatus::Passed,
             deadlock_status: GateStatus::Passed,
+            review_verdict_status: GateStatus::Passed,
+            brand_absence_status: GateStatus::Passed,
+            migration_boundary_status: GateStatus::Passed,
+            shape_status: GateStatus::Passed,
             automated_canary_status: GateStatus::Passed,
             progressive_ring_status: GateStatus::Passed,
             hermetic_build_status: GateStatus::Passed,
@@ -513,9 +653,9 @@ mod tests {
     #[test]
     fn gate_counts_reflect_reality_not_a_constant() {
         let mut r = sample_report();
-        // All 68 gates passing.
+        // Every gate passing; pinned to the corpus constant, not a literal.
         let (p, f) = r.gate_counts();
-        assert_eq!((p, f), (68, 0));
+        assert_eq!((p, f), (TOTAL_GATES, 0));
 
         // Three genuinely failing gates must report three, not the old constant 1.
         r.cedar_status = GateStatus::Failed("policy gap".into());
@@ -523,7 +663,7 @@ mod tests {
         r.slo_status = GateStatus::Errored("probe timed out".into());
         let (p, f) = r.gate_counts();
         assert_eq!(f, 3, "must count every failing gate, not a hardcoded 1");
-        assert_eq!(p, 65);
+        assert_eq!(p, TOTAL_GATES - 3, "the rest still pass");
         assert_eq!(p + f, r.all_statuses().len());
     }
 
@@ -573,5 +713,105 @@ mod total_gates_pin {
             "the gate corpus changed but TOTAL_GATES did not; every PR-visible count \
              claim is now wrong"
         );
+    }
+}
+
+#[cfg(test)]
+mod seal_tests {
+    use super::GateStatus;
+    use super::tests::sample_report;
+
+    #[test]
+    fn seal_derives_the_verdict_from_every_gate_including_the_self_directed_ones() {
+        // The defect: brand_absence_status and migration_boundary_status were
+        // computed after the certification conjunction, so they never blocked.
+        let mut r = sample_report();
+        r.brand_absence_status = GateStatus::Failed("stamp".into());
+        r.is_certified_ready = true;
+        r.seal();
+        assert!(
+            !r.is_certified_ready,
+            "a failing brand_absence_status must uncertify"
+        );
+
+        let mut r = sample_report();
+        r.migration_boundary_status = GateStatus::Failed("edge".into());
+        r.seal();
+        assert!(
+            !r.is_certified_ready,
+            "a failing migration_boundary_status must uncertify"
+        );
+    }
+
+    #[test]
+    fn seal_certifies_an_all_passing_report_and_withholds_an_unmeasured_one() {
+        let mut r = sample_report();
+        r.is_certified_ready = false;
+        r.seal();
+        assert!(r.is_certified_ready);
+        assert!(r.is_admissible());
+
+        let mut r = sample_report();
+        r.slo_status = GateStatus::NotMeasured {
+            gate_id: "slo_status".into(),
+            reason: "no endpoint".into(),
+        };
+        r.seal();
+        assert!(
+            r.is_certified_ready,
+            "NotMeasured is individually acceptable"
+        );
+        assert!(!r.is_admissible(), "but it withholds admission (I1)");
+        assert_eq!(r.unmeasured_gates, vec!["slo_status".to_string()]);
+    }
+
+    #[test]
+    fn seal_overrides_a_stale_precomputed_verdict() {
+        let mut r = sample_report();
+        r.test_suite_status = GateStatus::Errored("did not run".into());
+        r.is_certified_ready = true; // a caller's stale opinion
+        r.seal();
+        assert!(!r.is_certified_ready);
+    }
+}
+
+#[cfg(test)]
+mod review_verdict_is_binding {
+    use super::*;
+
+    /// A blocking review verdict must prevent certification.
+    ///
+    /// It did not. `review_verdict_status` was computed in the evaluator and
+    /// never became a field, so `all_statuses()` could not see it and `seal()`
+    /// could not gate on it. A pull request whose 16-lens review returned
+    /// REQUEST_CHANGES or REJECT was certified anyway.
+    ///
+    /// The original chain ended `&& review_verdict_status.is_acceptable()`.
+    /// When certification moved into `seal()`, the value was left behind. No
+    /// test failed, because no test asserted the gate was reachable -- it simply
+    /// stopped mattering. An unused-variable lint found it; no review did.
+    #[test]
+    fn a_blocking_review_verdict_prevents_certification() {
+        let mut r = tests::sample_report();
+        r.seal();
+        assert!(r.is_certified_ready, "the clean fixture must certify");
+
+        r.review_verdict_status =
+            GateStatus::Failed("16-Lens Matrix issued blocking verdict: REJECT".to_string());
+        r.seal();
+        assert!(
+            !r.is_certified_ready,
+            "a REJECT review certified the pull request anyway; the review gate is not wired"
+        );
+    }
+
+    /// An unobtained review is Errored, not Failed -- the model did not judge
+    /// the code adversely, the review did not happen -- and both must block.
+    #[test]
+    fn a_review_that_never_completed_also_blocks() {
+        let mut r = tests::sample_report();
+        r.review_verdict_status = GateStatus::Errored("no parseable verdict".to_string());
+        r.seal();
+        assert!(!r.is_certified_ready, "absent evidence must not certify");
     }
 }

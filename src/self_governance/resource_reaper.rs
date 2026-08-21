@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::{info, warn};
 
-use super::worktree_lease::{judge, process_is_alive, LeaseStore, LeaseVerdict, WorktreeLease};
+use super::worktree_lease::{LeaseStore, LeaseVerdict, WorktreeLease, judge, process_is_alive};
 
 #[derive(Debug, Clone, Default)]
 pub struct GarbageCollectionReport {
@@ -117,21 +117,19 @@ impl AutonomousResourceReaper {
         // 2. Clean temporary scratch directories older than 1 hour.
         let now = SystemTime::now();
         for dir in &self.staging_dirs {
-            if dir.exists() {
-                if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
-                    while let Ok(Some(entry)) = entries.next_entry().await {
-                        let path = entry.path();
-                        if let Ok(meta) = entry.metadata().await {
-                            if let Ok(modified) = meta.modified() {
-                                if let Ok(age) = now.duration_since(modified) {
-                                    if age > std::time::Duration::from_secs(3600) {
-                                        let _ = tokio::fs::remove_dir_all(&path).await;
-                                        report.temporary_directories_reaped += 1;
-                                        report.freed_bytes_estimate += meta.len();
-                                    }
-                                }
-                            }
-                        }
+            if dir.exists()
+                && let Ok(mut entries) = tokio::fs::read_dir(dir).await
+            {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    if let Ok(meta) = entry.metadata().await
+                        && let Ok(modified) = meta.modified()
+                        && let Ok(age) = now.duration_since(modified)
+                        && age > std::time::Duration::from_secs(3600)
+                    {
+                        let _ = tokio::fs::remove_dir_all(&path).await;
+                        report.temporary_directories_reaped += 1;
+                        report.freed_bytes_estimate += meta.len();
                     }
                 }
             }

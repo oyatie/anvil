@@ -27,14 +27,13 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod traffic_mirror;
 pub use traffic_mirror::{ShadowTrafficMetrics, TrafficMirrorComparator};
 
 /// The infrastructure that must exist before response parity can be compared.
-const MISSING_TRAFFIC_MIRROR: &str =
-    "no traffic mirror and no replay target are configured, so no production \
+const MISSING_TRAFFIC_MIRROR: &str = "no traffic mirror and no replay target are configured, so no production \
      requests were sampled and no responses were compared";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

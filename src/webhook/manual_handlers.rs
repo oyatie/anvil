@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
@@ -360,7 +360,9 @@ pub async fn manual_reconcile_handler(
 }
 
 pub async fn drain_handler(State(_state): State<AppState>) -> impl IntoResponse {
-    info!("👋 [Blue/Green Handover] Graceful drain requested via /api/drain. Initiating zero-loss retirement...");
+    info!(
+        "👋 [Blue/Green Handover] Graceful drain requested via /api/drain. Initiating zero-loss retirement..."
+    );
 
     tokio::spawn(async move {
         // Allow in-flight requests to complete within 3 seconds
@@ -532,4 +534,12 @@ pub async fn task_sweep_handler(
             message: format!("Autonomous ADR task sweep dispatched for {}", payload.repo),
         }),
     )
+}
+
+/// Latest shape measurement per repository, straight from the telemetry
+/// journal — a trend endpoint, never a prior (I2).
+pub async fn fleet_shape_handler(
+    axum::extract::State(state): axum::extract::State<crate::webhook::AppState>,
+) -> axum::Json<std::collections::HashMap<String, crate::telemetry_store::ShapeMeasurementRecord>> {
+    axum::Json(state.telemetry_store.latest_shape_measurements().await)
 }

@@ -175,9 +175,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Verify documentation parity with the change, and amend affected documents.",
         reference: "docs-as-code; Google g3doc",
         fidelity: Fidelity::Partial,
-        gap: "Now fails closed after the Phase 0a fix, and creates missing ADRs. It cannot AMEND an existing \
-              document: generate_and_write_docs writes only when a file does not exist \
-              (doc_guard/mod.rs:306-328).",
+        gap: "Fails closed, creates missing ADRs, and corpus_sync amends owned pages so published \
+              gate counts match TOTAL_GATES. generate_and_write_docs still writes only when a file \
+              does not exist (doc_guard/mod.rs:350-375); it does not rewrite existing documents.",
         blocked_on: None,
     },
     GateFidelity {
@@ -211,7 +211,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               arithmetic means against a fixed relative bound \
               (automated_canary/statistical_engine.rs:43). With no baseline_samples and no canary_samples \
               the gate now reports NotMeasured instead of a pass.",
-        blocked_on: Some("a canary deployment with a queryable Prometheus or OpenTelemetry endpoint"),
+        blocked_on: Some(
+            "a canary deployment with a queryable Prometheus or OpenTelemetry endpoint",
+        ),
     },
     GateFidelity {
         gate_id: "stacked_diffs_status",
@@ -238,6 +240,21 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               p99_cpu_cycles_base nor p99_cpu_cycles_head \
               (microbenchmark_ratchet/criterion_diff.rs:35-44).",
         blocked_on: Some("a criterion benchmark harness and a published trunk baseline"),
+    },
+    GateFidelity {
+        gate_id: "shape_status",
+        aspiration: "Measure a repository's distance to its declared monorepo shape — unit skeleton, \
+                     satellite placement, root hygiene, naming, and the Dependency Rule over real \
+                     build edges — and refuse any regression past a baseline frozen at the merge-base.",
+        reference: "oyatie ADR-0562 placement rule and ci/facade/baseline-ratchet; Google Rosie/Tricorder \
+                    ratchets; ArchUnit FreezingArchRule",
+        fidelity: Fidelity::Partial,
+        gap: "Placement, skeleton, root and naming rules are measured from the tree at the PR head with \
+              seeded-defect fixtures. Dependency rules read Cargo path dependencies, Buck2 labels and \
+              `use crate::` paths; TypeScript imports are declared unavailable, so a spec naming \
+              ts-workspace gets NotMeasured for those rules. The adapter-naming rule is not implemented. \
+              Contention metrics are not yet collected.",
+        blocked_on: None,
     },
 ];
 

@@ -32,7 +32,8 @@ pub struct DocGuardReport {
     /// timeout, unparseable response). Distinct from `is_sufficient: false`,
     /// which is a real adverse finding.
     ///
-    /// Invariant I1: absent evidence is never a pass. Maps to `GateStatus::Errored`.
+    /// Invariant I1: absent evidence is never a pass — but nor is it a
+    /// fabricated accusation, so this maps to `GateStatus::Errored`.
     pub errored: Option<String>,
 }
 
@@ -99,20 +100,18 @@ impl DocGuard {
         // Step 1: Validate frontmatters on all modified documentation and config files
         for file in &diff_ctx.changed_files {
             let file_full = repo_dir.join(file);
-            if file_full.exists() {
-                if let Ok(content) = tokio::fs::read_to_string(&file_full).await {
-                    if let Err(err) =
-                        FrontmatterValidator::validate_doc_frontmatter(file, &content, repo_dir)
-                    {
-                        warn!("DocGuard frontmatter violation: {}", err);
-                        return Ok(DocGuardReport {
-                            errored: None,
-                            is_sufficient: false,
-                            files_created_or_updated: Vec::new(),
-                            summary: format!("Frontmatter & SSOT validation failed: {}", err),
-                        });
-                    }
-                }
+            if file_full.exists()
+                && let Ok(content) = tokio::fs::read_to_string(&file_full).await
+                && let Err(err) =
+                    FrontmatterValidator::validate_doc_frontmatter(file, &content, repo_dir)
+            {
+                warn!("DocGuard frontmatter violation: {}", err);
+                return Ok(DocGuardReport {
+                    errored: None,
+                    is_sufficient: false,
+                    files_created_or_updated: Vec::new(),
+                    summary: format!("❌ Frontmatter & SSOT validation failed: {}", err),
+                });
             }
         }
 
@@ -277,13 +276,30 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             std::time::Duration::from_secs(30),
             move || async move {
                 let mut cmd = Command::new("agy");
+                // Match the invocation form used by every other agy call site
+                // (`--print <prompt> --effort <e>`); the previous
+                // `prompt --raw` form was unique to this guard.
                 cmd.args([
                     "--print",
                     &prompt_clone,
                     "--effort",
                     &agy_effort,
+                    "--print-timeout",
+                    &crate::exec::agy_print_timeout_arg(DOC_PARITY_PROBE_TIMEOUT),
+                    // Required for agy to read the repository at all. Omitting it
+                    // in the Phase 0a rewrite made every doc-parity probe fail
+                    // with "permission check failed for command", which the
+                    // fail-closed change then surfaced as a blocked gate --
+                    // correctly, but for a reason this code introduced.
+                    //
+                    // This probe only READS, so a scoped read-only agy mode would
+                    // be the right long-term fix; passing the blanket flag here
+                    // widens the S5 surface by one more call site.
                     "--dangerously-skip-permissions",
                 ]);
+                // Run inside the repository under review. Previously unset, so
+                // this probe executed in anvil's own working directory and
+                // judged the wrong tree.
                 cmd.current_dir(&repo_dir_owned);
 
                 match crate::exec::run_bounded_for(
@@ -295,12 +311,13 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                 {
                     Ok(output) if output.status.success() => {
                         let stdout = String::from_utf8_lossy(&output.stdout);
-                        if let Some(json_str) = extract_json_block(&stdout) {
-                            if let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
-                            {
-                                return Ok(eval);
-                            }
+                        if let Some(json_str) = extract_json_block(&stdout)
+                            && let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
+                        {
+                            return Ok(eval);
                         }
+                        // Ran successfully but produced nothing parseable: we
+                        // have no judgement, so we must not claim sufficiency.
                         anyhow::bail!(
                             "doc parity probe returned no parseable evaluation (stdout {} bytes)",
                             stdout.len()
@@ -311,10 +328,16 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                         output.status,
                         String::from_utf8_lossy(&output.stderr).trim()
                     ),
+                    // `run_bounded_for` already distinguishes "failed to run"
+                    // from "timed out" in its message, and both stay errors.
                     Err(e) => Err(e),
                 }
             },
             |err| {
+                // No deterministic local fallback exists for doc parity, so the
+                // watchdog path must report the failure rather than manufacture
+                // a pass. This arm previously returned is_doc_sufficient: true,
+                // which made gate 1 unfailable.
                 Err(anyhow::anyhow!(
                     "doc parity probe supervision failed: {}",
                     err

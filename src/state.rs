@@ -51,21 +51,21 @@ impl StateManager {
         };
 
         // Replay WAL journal if present (Crash Recovery)
-        if wal_path.exists() {
-            if let Ok(wal_content) = tokio::fs::read_to_string(&wal_path).await {
-                let mut replayed_count = 0;
-                for line in wal_content.lines() {
-                    if let Ok(entry) = serde_json::from_str::<WalEntry>(line) {
-                        states.insert(entry.key, entry.state);
-                        replayed_count += 1;
-                    }
+        if wal_path.exists()
+            && let Ok(wal_content) = tokio::fs::read_to_string(&wal_path).await
+        {
+            let mut replayed_count = 0;
+            for line in wal_content.lines() {
+                if let Ok(entry) = serde_json::from_str::<WalEntry>(line) {
+                    states.insert(entry.key, entry.state);
+                    replayed_count += 1;
                 }
-                if replayed_count > 0 {
-                    info!(
-                        "🔄 [State WAL Replay] Successfully recovered {} uncheckpointed state mutations from WAL.",
-                        replayed_count
-                    );
-                }
+            }
+            if replayed_count > 0 {
+                info!(
+                    "🔄 [State WAL Replay] Successfully recovered {} uncheckpointed state mutations from WAL.",
+                    replayed_count
+                );
             }
         }
 

@@ -18,10 +18,14 @@ fn test_whole_file_expansion_catches_dark_code_violations() {
     let violations =
         WholeFileExpansion::evaluate_whole_file(dir.path(), "finance/core/src/account.rs");
     assert_eq!(violations.len(), 2);
-    assert!(violations
-        .iter()
-        .any(|v| v.category == "OVERSIZED_WHOLE_FILE"));
-    assert!(violations
-        .iter()
-        .any(|v| v.category == "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION"));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.category == "OVERSIZED_WHOLE_FILE")
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.category == "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION")
+    );
 }

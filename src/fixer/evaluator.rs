@@ -107,16 +107,16 @@ Return strictly valid JSON matching this schema:
 
 pub fn extract_json_block(text: &str) -> String {
     let json_block_re = Regex::new(r"(?s)```(?:json)?\s*(\{.*?\})\s*```").unwrap();
-    if let Some(caps) = json_block_re.captures(text) {
-        if let Some(m) = caps.get(1) {
-            return m.as_str().to_string();
-        }
+    if let Some(caps) = json_block_re.captures(text)
+        && let Some(m) = caps.get(1)
+    {
+        return m.as_str().to_string();
     }
 
-    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}')) {
-        if first < last {
-            return text[first..=last].to_string();
-        }
+    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}'))
+        && first < last
+    {
+        return text[first..=last].to_string();
     }
 
     text.to_string()
@@ -129,6 +129,8 @@ async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<Strin
         prompt,
         "--effort",
         effort,
+        "--print-timeout",
+        &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
         "--dangerously-skip-permissions",
     ]);
     cmd.current_dir(working_dir);

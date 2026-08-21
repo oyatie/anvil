@@ -37,8 +37,8 @@
 //! reaper is always built with an EMPTY staging dir list so it can never touch
 //! $TMPDIR/anvil* on a developer's machine.
 
-use anvil::self_governance::worktree_lease::{LeaseStore, WorktreeLease};
 use anvil::self_governance::AutonomousResourceReaper;
+use anvil::self_governance::worktree_lease::{LeaseStore, WorktreeLease};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, SystemTime};

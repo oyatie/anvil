@@ -86,6 +86,16 @@ impl DocGuard {
     /// `evaluate_doc_parity` — so that the failure handling the suite exercises
     /// is the failure handling production runs.
     ///
+    /// The outcome is a **stored value, not a slot that empties**. Every call to
+    /// `ensure_documentation_parity` on a guard built this way observes it, and
+    /// there is no "override exhausted" state in which spawning `agy` becomes
+    /// legal again. A `take()`-able slot that falls through to the real spawn
+    /// once drained passes every case in the suite as written today and puts
+    /// `agy --dangerously-skip-permissions`, on a 120-second budget, one retry
+    /// loop or one shared guard away from running inside `cargo test`.
+    /// `the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate` pins
+    /// this: the gate is run twice on one guard and the two reports must agree.
+    ///
     /// The stored outcome must be consulted **inside `evaluate_doc_parity`**,
     /// at the point where the `agy` probe's judgement is produced and returned,
     /// so that an overridden run and a production run traverse byte-identical

@@ -71,6 +71,7 @@ impl DocGuard {
         // without being reported as AutoUpdated (the evaluator treats a
         // non-empty files list as AutoUpdated).
         let rewritten = match corpus_sync::sync_published_counts(
+            repo,
             repo_dir,
             crate::pre_merge_guard::report::TOTAL_GATES,
         ) {
@@ -185,6 +186,28 @@ impl DocGuard {
             files_created_or_updated: updated_files,
             summary,
         })
+    }
+
+    /// Applies a `DocParityEvaluation` that judged the diff under-documented,
+    /// and composes the report for it.
+    ///
+    /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
+    /// the implementer. This exists because the tail of
+    /// `ensure_documentation_parity` — the code issue #29 is about — is only
+    /// reachable after the `agy` probe has run, and a test must never spawn the
+    /// probe. The implementer moves that tail here, fixes it, and calls this
+    /// from `ensure_documentation_parity`.
+    #[allow(dead_code, unused_variables)]
+    async fn apply_doc_parity_evaluation(
+        &self,
+        repo: &str,
+        repo_dir: &Path,
+        diff_ctx: &PrDiffContext,
+        pr_title: &str,
+        pr_body: &str,
+        eval: &DocParityEvaluation,
+    ) -> DocGuardReport {
+        todo!("compose the report for a diff the probe judged under-documented")
     }
 
     async fn evaluate_doc_parity(
@@ -372,6 +395,149 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             }
         }
         Ok(updated)
+    }
+}
+
+#[cfg(test)]
+mod insufficient_docs_tests {
+    //! Issue #29: absent or failed evidence is never a pass.
+    //!
+    //! These drive `apply_doc_parity_evaluation` directly. The public entry
+    //! point, `ensure_documentation_parity`, reaches this behaviour only after
+    //! spawning the `agy` doc-parity probe, and a test must never spawn a model.
+
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn diff_ctx(repo: &str) -> PrDiffContext {
+        PrDiffContext {
+            repo: repo.to_string(),
+            pr_number: 4242,
+            base_branch: "main".to_string(),
+            base_sha: "base-sha".to_string(),
+            head_sha: "head-sha".to_string(),
+            is_incremental: false,
+            previous_head_sha: None,
+            diff_content: "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn newly_public() {}\n"
+                .to_string(),
+            changed_files: vec!["src/lib.rs".to_string()],
+            repo_working_dir: PathBuf::from("."),
+        }
+    }
+
+    fn insufficient(files: &[&str]) -> DocParityEvaluation {
+        DocParityEvaluation {
+            is_doc_sufficient: false,
+            missing_doc_summary: Some(
+                "newly_public is a new public API with no reference page".to_string(),
+            ),
+            doc_files_to_update: files.iter().map(|f| (*f).to_string()).collect(),
+            suggested_adr_title: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_diff_the_probe_judged_under_documented_does_not_yield_a_sufficient_report() {
+        let dir = tempdir().unwrap();
+        let guard = DocGuard::new("low".to_string());
+
+        let report = guard
+            .apply_doc_parity_evaluation(
+                "oyatie/anvil",
+                dir.path(),
+                &diff_ctx("oyatie/anvil"),
+                "feat: add a public API",
+                "no docs",
+                &insufficient(&["docs/reference/newly-public.md"]),
+            )
+            .await;
+
+        assert!(
+            !report.is_sufficient,
+            "the probe judged the diff under-documented; the report must not claim \
+             sufficiency. summary was: {}",
+            report.summary
+        );
+    }
+
+    #[tokio::test]
+    async fn naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass() {
+        let dir = tempdir().unwrap();
+        let readme = dir.path().join("README.md");
+        let before = "# Watched\n\nNothing here mentions newly_public.\n";
+        std::fs::write(&readme, before).unwrap();
+
+        let guard = DocGuard::new("low".to_string());
+        let report = guard
+            .apply_doc_parity_evaluation(
+                "oyatie/anvil",
+                dir.path(),
+                &diff_ctx("oyatie/anvil"),
+                "feat: add a public API",
+                "no docs",
+                // One file that does not exist and one that does. Creating a
+                // stub for the first must not license passing on the second.
+                &insufficient(&["docs/reference/newly-public.md", "README.md"]),
+            )
+            .await;
+
+        let after = std::fs::read_to_string(&readme).unwrap();
+        if after == before {
+            assert!(
+                !report.is_sufficient,
+                "README.md was named as needing an update and was never amended; \
+                 that is absent evidence, not a pass. summary was: {}",
+                report.summary
+            );
+            assert!(
+                !report
+                    .files_created_or_updated
+                    .contains(&"README.md".to_string()),
+                "README.md is byte-identical, so it must not be reported as updated: {:?}",
+                report.files_created_or_updated
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_documentation_write_that_failed_is_errored_and_never_reported_as_updated() {
+        let dir = tempdir().unwrap();
+        // `docs` is a regular file, so no file under `docs/reference/` can be
+        // created: every write to that path fails.
+        std::fs::write(dir.path().join("docs"), "not a directory\n").unwrap();
+
+        let guard = DocGuard::new("low".to_string());
+        let report = guard
+            .apply_doc_parity_evaluation(
+                "oyatie/anvil",
+                dir.path(),
+                &diff_ctx("oyatie/anvil"),
+                "feat: add a public API",
+                "no docs",
+                &insufficient(&["docs/reference/newly-public.md"]),
+            )
+            .await;
+
+        assert!(
+            !dir.path().join("docs/reference/newly-public.md").exists(),
+            "precondition: the write cannot have succeeded"
+        );
+        assert!(
+            report.errored.is_some(),
+            "a write that failed is absent evidence and must be Errored. summary was: {}",
+            report.summary
+        );
+        assert!(
+            !report.is_sufficient,
+            "a failed write must not pass the gate. summary was: {}",
+            report.summary
+        );
+        assert!(
+            report.files_created_or_updated.is_empty(),
+            "nothing was written, so nothing may be reported as AutoUpdated: {:?}",
+            report.files_created_or_updated
+        );
     }
 }
 

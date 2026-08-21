@@ -206,6 +206,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn remaining_claim_still_catches_the_spelled_out_count_and_both_exemption_markers() {
+        // `remaining_claim` is a fail-closed NET, not a summary of what
+        // `rewrite_page` happens to do. It is what turns "the rewriter missed an
+        // occurrence on a page layout nobody wrote a fixture for" into a blocked
+        // pull request instead of a page published mangled and reported clean —
+        // and it is the whole basis of the stated exclusion in
+        // `tests/docguard_oracle_repair_test.rs`, which declines to drive the
+        // gate's `remaining_drift` arm precisely because this net exists.
+        //
+        // Until now only the digit-count arm was pinned. The `sixty-gate` arm and
+        // both `EXEMPTION_MARKERS` arms had no assertion anywhere: every
+        // integration case asserts the marker and the `sixty-gate` phrase are
+        // GONE FROM DISK, which a correct rewriter satisfies whether or not the
+        // checker still looks for them.
+        //
+        // The implementation that removes the net: an implementer rewriting
+        // `rewrite_page` for issue #28 simplifies `remaining_claim` alongside it
+        // — "the new rewriter removes every marker, so the marker check is dead
+        // code" — and leaves only the count check. Every integration case and
+        // every other in-module test stays green, and the first layout the new
+        // sentence scan does not handle is published mangled, or still exempted,
+        // with gate 1 reporting it clean.
+        //
+        // `is_some()` rather than an exact string: the wording of a drift reason
+        // is the implementer's, the fact that the claim is CAUGHT is not. The
+        // count arm keeps its exact-string case above, so the two together pin
+        // presence without freezing three sentences of prose.
+        const TOTAL: usize = crate::pre_merge_guard::report::TOTAL_GATES;
+
+        assert!(
+            remaining_claim("It replaced the sixty-gate pilot programme.", TOTAL).is_some(),
+            "a page still publishing the spelled-out `sixty-gate` claim is drift, \
+             whatever the rewriter did or did not do to it"
+        );
+        assert!(
+            remaining_claim(
+                "DocGuard does **not** yet amend existing documents such as README.md.",
+                TOTAL,
+            )
+            .is_some(),
+            "a page still carrying the bold exemption marker is drift: the marker \
+             says Anvil does not amend existing documents, which is the claim this \
+             module exists to have stopped being true"
+        );
+        assert!(
+            remaining_claim(
+                "DocGuard does not yet amend existing documents such as README.md.",
+                TOTAL,
+            )
+            .is_some(),
+            "the unbolded variant is the same claim and must be caught the same way; \
+             a net that covers only the variant the fixtures happen to use is not a net"
+        );
+    }
+
     fn assert_published_page_has_no_count_drift(rel: &str, page: &str) {
         assert_eq!(
             remaining_claim(page, crate::pre_merge_guard::report::TOTAL_GATES),

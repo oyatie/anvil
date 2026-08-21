@@ -226,8 +226,24 @@ use std::sync::Arc;
 /// may not assert about a report at runtime is what it may not weld into a
 /// literal either. An honest derived body — "69 of 72 gates passed, 3 produced
 /// no measurement" — contains none of them.
-const TOTALITY: [&str; 8] = [
-    "100%",
+///
+/// Each entry is a *claim*, not a token. A bare "100%" is not one: the report's
+/// own rendered gate matrix carries it twice, inside the descriptions of two
+/// gates (`matrix.rs`: "100% parity between live cluster and Git trunk" and
+/// "100% of review comments and threads must be resolved"). Banning the number
+/// makes the most honest derivation available — publishing what the report
+/// itself says about every gate — an accusation of asserting something no gate
+/// measured, about a word the report wrote. The two sentences in the tree today
+/// assert completeness *about this report* — "100% compliance", "100% Green" —
+/// and that is what is banned.
+const TOTALITY: [&str; 14] = [
+    "100% compliance",
+    "100% compliant",
+    "100% green",
+    "100% certified",
+    "100% pass",
+    "100% clean",
+    "100% of gates",
     "all automated",
     "all gates",
     "all checks",
@@ -238,9 +254,16 @@ const TOTALITY: [&str; 8] = [
 ];
 
 /// The merge strategy the enlistment note is written about. Held constant
-/// wherever two notes are compared, so any difference between them comes from
-/// the report and not from this.
+/// wherever two notes are compared for what the *report* says, so any
+/// difference between them comes from the report and not from this. The one
+/// place it is varied is
+/// `the_endorsement_differs_when_the_evidence_differs`, where the report is
+/// held constant instead and the difference can only come from the strategy.
 const STRATEGY: &str = "Squash & Merge";
+
+/// The other strategy `enlist_into_merge_queue` merges under: its retry path
+/// takes this one whenever GitHub refuses `--squash`.
+const OTHER_STRATEGY: &str = "Merge Commit";
 
 // -------------------------------------------------------------------------
 // Report fixtures
@@ -1233,9 +1256,62 @@ fn mentions_ident(text: &str, ident: &str) -> bool {
     false
 }
 
+/// The identifier a `match` arm binds out of `Some(..)` or `Ok(..)`.
+///
+/// `match seam() { Some(note) => publish(&note), None => return Ok(()) }` binds
+/// the derived value exactly as `if let Some(note) = seam()` does, and
+/// `assert_absent_text_is_not_papered_over` already anticipates and permits the
+/// spelling. A `binder` blind to it reports that the seam's value is bound as
+/// nothing at all, the publisher falls back to the substring test, and a
+/// function that publishes that value and nothing else is accused of
+/// substituting a constant for it — a rejection turning on the spelling and on
+/// nothing else.
+fn match_arm_binder(statement: &str) -> Option<String> {
+    let after = statement.strip_prefix("match ")?;
+    // The brace that opens the arms, not one inside the scrutinee.
+    let mut depth = 0i32;
+    let mut arms = None;
+    for (i, c) in after.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '{' if depth == 0 => {
+                arms = Some(&after[i + 1..]);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let arms = arms?;
+    let mut from = 0usize;
+    loop {
+        let (at, len) = ["Some(", "Ok("]
+            .iter()
+            .filter_map(|p| arms[from..].find(p).map(|off| (from + off, p.len())))
+            .min_by_key(|(at, _)| *at)?;
+        from = at + len;
+        let inner = &arms[from..];
+        let name: String = inner
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let tail = inner[name.len()..].trim_start();
+        // A pattern, not a call: `Some(x) =>` binds a value, `Some(f())` does
+        // not, and neither does `Ok(())`.
+        if !name.is_empty()
+            && name != "_"
+            && tail.starts_with(')')
+            && tail[1..].trim_start().starts_with("=>")
+        {
+            return Some(name);
+        }
+    }
+}
+
 /// The identifier a statement binds, in the spellings a value that may be
 /// absent is bound with: `let x =`, `let mut x =`, `let Some(x) = .. else`,
-/// `if let Some(x) =`, and the let-chain `if <cond> && let Some(x) =`.
+/// `if let Some(x) =`, the let-chain `if <cond> && let Some(x) =`, and the
+/// `match` arm `Some(x) =>`.
 ///
 /// All of them are the same act. A check that reads one of them and not the
 /// others does not pin behaviour, it picks a favourite: the let-chain is the
@@ -1255,6 +1331,9 @@ fn binder(statement: &str) -> Option<String> {
                 }
             }
         }
+    }
+    if rest.starts_with("match ") {
+        return match_arm_binder(rest);
     }
     let mut rest = rest.strip_prefix("let ")?.trim_start();
     for pattern in ["Some(", "Ok("] {
@@ -1571,6 +1650,128 @@ fn a_report_that_certifies_while_a_gate_errored_is_still_refused() {
     );
 }
 
+/// P5 at its own seam: the provenance mark is only worth what the constructor
+/// that confers it demands in return.
+///
+/// `from_gate_outcomes` is the one way gate outcomes enter a report and the one
+/// mark `admission_refusal` can trust absolutely, because no caller can type
+/// it. Everything else in this suite hands it the whole corpus and reads the
+/// report back, which leaves the overlay spelling green:
+///
+/// ```ignore
+/// let mut r = Self { doc_parity_status: GateStatus::Passed, /* ..71 more.. */ };
+/// for (name, s) in outcomes { r.set(name, s.clone()); }
+/// r.seal();
+/// Ok(r)
+/// ```
+///
+/// Seeded from an optimistic skeleton rather than from `unmeasured`. Handed all
+/// seventy-two outcomes the skeleton is entirely overwritten and nothing
+/// observes it; handed one, it mints a report with seventy-one hardcoded
+/// `Passed` gates, a real provenance mark, `is_admissible() == true` and an
+/// `admission_refusal` that says `Ok`. That is worse than the `optimistic`
+/// fabricator the forgery scan was built to kill, because it carries the mark
+/// nothing else can forge — and
+/// `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`
+/// cannot see it either: the door traces to a genuine certification run, and
+/// the hole is inside the constructor that run uses.
+///
+/// So the corpus is the obligation. An outcome for every gate, named once, or
+/// no report. The positive case is kept beside the three refusals so the rule
+/// cannot be satisfied by refusing everything — a constructor that never
+/// answers `Ok` stops the fleet as surely as one that always does admits it.
+#[test]
+fn a_report_is_not_produced_from_gate_outcomes_that_do_not_cover_the_corpus() {
+    let base = PreMergeCertificationReport::unmeasured("fixture baseline");
+    let names: Vec<&'static str> = base.named_statuses().into_iter().map(|(n, _)| n).collect();
+    assert_eq!(
+        names.len(),
+        TOTAL_GATES,
+        "this test must cover the whole corpus; it found {} named gates against \
+         TOTAL_GATES={}",
+        names.len(),
+        TOTAL_GATES
+    );
+    let full: Vec<(&str, GateStatus)> = names.iter().map(|n| (*n, GateStatus::Passed)).collect();
+
+    assert!(
+        PreMergeCertificationReport::from_gate_outcomes(&full).is_ok(),
+        "one outcome per gate is exactly what a certification run hands over. A \
+         constructor that refuses the whole corpus refuses everything, and the \
+         rule below would be satisfied by a function that never produces a \
+         report at all"
+    );
+
+    let nothing: [(&str, GateStatus); 0] = [];
+    let err = PreMergeCertificationReport::from_gate_outcomes(&nothing).expect_err(
+        "no gate outcome at all is not a report on a passing pull request, it is \
+         no report. Answering `Ok` here hands back a corpus nobody measured, \
+         carrying the one mark that says somebody did",
+    );
+    assert!(
+        !err.to_string().trim().is_empty(),
+        "the refusal must say why"
+    );
+
+    let dropped = names[names.len() / 2];
+    let short: Vec<(&str, GateStatus)> = full
+        .iter()
+        .filter(|(name, _)| *name != dropped)
+        .cloned()
+        .collect();
+    assert_eq!(
+        short.len(),
+        TOTAL_GATES - 1,
+        "fixture sanity: this is the whole corpus with `{dropped}` taken out"
+    );
+    let err = PreMergeCertificationReport::from_gate_outcomes(&short).expect_err(
+        "a report with a gate missing is a report with a hole in it, and every \
+         predicate downstream reads the hole as whatever the constructor seeded \
+         it with rather than as something nothing measured",
+    );
+    // Named under either of the two names Anvil has for a gate: the field it is
+    // carried under and the label it is published under.
+    let text = err.to_string();
+    let label = label_for(dropped).map(|(l, _)| l).unwrap_or("");
+    assert!(
+        text.contains(dropped) || (!label.is_empty() && text.contains(label)),
+        "the refusal does not say which gate is missing: it names `{dropped}` \
+         neither by its field nor as `{label}`, so a caller is told a report \
+         could not be built and cannot discover what was not measured. Error \
+         was:\n{text}"
+    );
+
+    // The right number of outcomes is not the same question as the right
+    // outcomes. Seventy-two entries naming one gate twice is a seventy-one gate
+    // report with a hole, and a length check alone waves it through.
+    let mut duplicated = short.clone();
+    duplicated.push((names[0], GateStatus::Passed));
+    assert_eq!(
+        duplicated.len(),
+        TOTAL_GATES,
+        "fixture sanity: the corpus count is right and the coverage is not"
+    );
+    assert!(
+        PreMergeCertificationReport::from_gate_outcomes(&duplicated).is_err(),
+        "`{}` was named twice and `{dropped}` not at all, and the report came \
+         back anyway. Whatever the second mention overwrote, nothing measured \
+         `{dropped}` — and the report now carries the mark that says a run did",
+        names[0]
+    );
+
+    let mut unknown = short.clone();
+    unknown.push((
+        "a_gate_that_is_not_in_the_corpus_status",
+        GateStatus::Passed,
+    ));
+    assert!(
+        PreMergeCertificationReport::from_gate_outcomes(&unknown).is_err(),
+        "an outcome for a gate that does not exist was accepted in place of the \
+         one for `{dropped}`, which does. An unrecognised name silently dropped \
+         is how a renamed gate stops being measured without anything saying so"
+    );
+}
+
 /// P5, in process, and the reason a report has to know where its statuses came
 /// from.
 ///
@@ -1806,6 +2007,39 @@ fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
              forging the evidence it just obtained: {signature}"
         );
     }
+    // The same calibration for the rule below on who may hand out a report.
+    // Being told what a gate measured is one way to be entitled to produce one;
+    // running the gates is the other, and a parameter list cannot see it. The
+    // second case is the round's own fabricator: named after the run, reaching
+    // nothing that measures anything.
+    for (expected, code) in [
+        (
+            true,
+            "async fn certify_pull_request(g: &PreMergeGuard, d: &PrDiffContext) \
+             -> Result<PreMergeCertificationReport> { evaluate_pre_merge_gates(g, d).await }",
+        ),
+        (
+            false,
+            "fn evaluate_pre_merge_gates_from_cache(reason: &str) \
+             -> PreMergeCertificationReport { \
+             let base = PreMergeCertificationReport::unmeasured(reason); \
+             serde_json::from_value(all_passing(&base)).unwrap() }",
+        ),
+    ] {
+        let name = code[code.find("fn ").unwrap() + 3..]
+            .split('(')
+            .next()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            runs_the_certification(code, &name, ""),
+            expected,
+            "the exemption for a function that runs the gates reads `{name}` \
+             wrongly. Read too narrowly it accuses the extraction the three \
+             ungated doors need; read too widely it exempts a helper merely \
+             named after the run"
+        );
+    }
 
     let doors = merge_queue_doors();
     assert!(
@@ -1815,6 +2049,8 @@ fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
          is broken — a mechanism that cannot find its subject reports nothing \
          wrong with anything"
     );
+
+    let everywhere = all_production_source();
 
     // I2, across the whole guard rather than beside the type. `report.rs` said
     // in a comment that "there is deliberately no 'all passed' constructor" and
@@ -1843,8 +2079,11 @@ fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
     }
     let fabricators: Vec<String> = producers
         .iter()
-        .filter(|(_, name, params)| {
-            name != "unmeasured" && name != CERTIFICATION_RUN && !params.contains("GateStatus")
+        .filter(|(rel, name, params)| {
+            name != "unmeasured"
+                && name != CERTIFICATION_RUN
+                && !params.contains("GateStatus")
+                && !runs_the_certification(&production_source(rel), name, &everywhere)
         })
         .map(|(rel, name, params)| {
             format!(
@@ -1860,7 +2099,8 @@ fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
          A report is what a certification run produced; a constructor that fills \
          the corpus in from a reason string produces the caller's opinion in the \
          shape of evidence, and `admission_refusal` cannot tell the difference. \
-         Two exceptions: `{CERTIFICATION_RUN}`, which is the run, and \
+         Exempt: `{CERTIFICATION_RUN}`, which is the run; anything that reaches \
+         it, which is running it; a constructor told what a gate measured; and \
          `unmeasured`, which can admit nothing.",
         fabricators.join("\n")
     );
@@ -1916,7 +2156,6 @@ fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
         forged.join("\n")
     );
 
-    let everywhere = all_production_source();
     let empty_handed: Vec<String> = doors
         .iter()
         .filter_map(|d| {
@@ -1991,6 +2230,31 @@ fn evidence_is_certified(door: &MergeQueueDoor, argument: &str, everywhere: &str
         queue.extend(identifiers(&rhs));
     }
     false
+}
+
+/// Whether the body of `name`, defined in `rel`, reaches a call to the
+/// certification run — directly, or through a helper it calls.
+///
+/// A parameter list cannot see this, and reading only the parameter list is how
+/// the rule accuses the fix it demands. The three ungated doors have to obtain
+/// evidence from somewhere, and the shortest honest way to give it to them is
+/// one helper that runs the gates and hands back what they produced; placed
+/// beside `{CERTIFICATION_RUN}` — the obvious home for it — a signature-only
+/// rule reports it as a constructor that "fills the corpus in from a reason
+/// string", while accepting the identical helper anywhere outside
+/// `src/pre_merge_guard/`. That is the rule dictating which file the fix may
+/// live in and misdiagnosing when it does not.
+///
+/// The exemption is for *running* the gates, not for being named after them:
+/// `evaluate_pre_merge_gates_from_cache`, which round-trips `unmeasured` into
+/// all-`Passed`, calls nothing that measures anything and is still reported.
+/// This is the same splice `evidence_is_certified` performs at the doors.
+fn runs_the_certification(source: &str, name: &str, everywhere: &str) -> bool {
+    let Some(body) = find_fn(source, &format!("fn {name}(")) else {
+        return false;
+    };
+    let spliced = with_called_bodies(everywhere, &body, 3);
+    find_call(&spliced, &format!("{CERTIFICATION_RUN}("), 0).is_some()
 }
 
 /// Whether `code` builds a certification report literally, `Type { field: .. }`,
@@ -2371,6 +2635,12 @@ fn assert_publications_differ(
 /// and neither can `gate_counts()`, which scores both at 72 of 72. A pair with
 /// an inadmissible side lets that implementation answer `None` and assert
 /// nothing.
+///
+/// The third comparison turns it around: one report, two merge strategies. The
+/// note is written about how the pull request went into the queue as well as
+/// about what was measured, and `enlistment_note` is handed that. A parameter
+/// no test can make matter is scaffolding — and this one can be got wrong, on
+/// the retry path, permanently, on the pull request.
 #[test]
 fn the_endorsement_differs_when_the_evidence_differs() {
     let clean = every_gate_passing();
@@ -2404,6 +2674,49 @@ fn the_endorsement_differs_when_the_evidence_differs() {
          are published — with one constant sentence, which is issue #18 restored \
          verbatim",
     );
+
+    // The strategy is the one field of the note that production can genuinely
+    // get wrong. `enlist_into_merge_queue` retries as a merge commit whenever
+    // `--squash` is refused, and `post_enlistment_note` is handed whichever one
+    // happened — so a note that keeps today's welded `- **Strategy**: Squash &
+    // Merge` line, or derives every gate honestly and hardcodes the strategy
+    // beside it, tells the reader the pull request was squashed when it was
+    // not. That is this lane's defect class exactly: a claim Anvil signs onto a
+    // pull request that is not derived from what actually happened. Here the
+    // report is the constant and the strategy is the variable, so a difference
+    // can come from nowhere else.
+    //
+    // Publishing no note at all remains honest, and two `None`s assert nothing.
+    let squashed = MergeEnlister::enlistment_note(Some(&clean), STRATEGY);
+    let committed = MergeEnlister::enlistment_note(Some(&clean), OTHER_STRATEGY);
+    if squashed.is_some() || committed.is_some() {
+        assert_ne!(
+            squashed, committed,
+            "`enlistment_note` published the same note for a pull request merged \
+             as `{STRATEGY}` and for one merged as `{OTHER_STRATEGY}`. The \
+             strategy is a parameter it was handed and did not read; the note it \
+             signs now says how the merge happened on the authority of nothing"
+        );
+        for (strategy, other, note) in [
+            (STRATEGY, OTHER_STRATEGY, &squashed),
+            (OTHER_STRATEGY, STRATEGY, &committed),
+        ] {
+            let Some(note) = note else { continue };
+            let lower = note.to_lowercase();
+            assert!(
+                lower.contains(&strategy.to_lowercase()),
+                "the note published for a pull request merged as `{strategy}` does \
+                 not say so. A reader of the pull request cannot discover how it \
+                 went in. Note was:\n{note}"
+            );
+            assert!(
+                !lower.contains(&other.to_lowercase()),
+                "the note published for a pull request merged as `{strategy}` says \
+                 `{other}`. It is written onto the pull request permanently and it \
+                 is not what happened. Note was:\n{note}"
+            );
+        }
+    }
 }
 
 /// P8 and P10, on the only report that reaches a publication at all.
@@ -2490,7 +2803,7 @@ fn an_endorsement_accounts_for_the_gate_that_did_not_simply_pass() {
     }
 }
 
-/// P1, P9 and P11. Anvil does not endorse a change it will not admit.
+/// P1, P5, P9 and P11. Anvil does not endorse a change it will not admit.
 ///
 /// Both defects are the same sentence read twice: absent evidence must not
 /// merge, and absent evidence must not be signed for either. A report with a
@@ -2528,10 +2841,32 @@ fn nothing_is_endorsed_on_evidence_that_cannot_admit_the_pull_request() {
          reports are wrong in ways a single field cannot both see"
     );
 
+    // The two reports the admission decision and `is_admissible()` disagree
+    // about, in the permissive direction. Without them every case here is one
+    // both predicates already refuse, and a publisher written as
+    // `report.filter(|r| r.is_admissible())?` passes this test, every other
+    // endorsement test, and then signs a formal APPROVE onto a pull request
+    // that zero gates were run for. The publishers have to be held to the same
+    // decision as the door, not to a weaker one that agrees with it most of the
+    // time.
+    let forged = forged_all_passing();
+    let certified_but_errored = certified_while_a_gate_errored();
+    assert!(
+        forged.is_admissible() && certified_but_errored.is_admissible(),
+        "fixture sanity: these two are the reports `is_admissible()` says yes to \
+         and `admission_refusal` refuses. If they stop disagreeing, this test is \
+         back to asserting only what both predicates already agree on"
+    );
+
     for (what, report) in [
         ("a gate that failed", &failed),
         ("three gates that produced no measurement", &unmeasured),
         ("two gates that errored", &errored),
+        ("no certification run behind it at all", &forged),
+        (
+            "certification asserted over a gate that errored",
+            &certified_but_errored,
+        ),
     ] {
         assert!(
             MergeEnlister::admission_refusal(Some(report)).is_err(),

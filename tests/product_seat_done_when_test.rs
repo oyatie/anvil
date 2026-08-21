@@ -1439,6 +1439,10 @@ fn a_pointer_to_somewhere_else_is_not_the_artifact() {
         "See https://example.invalid/issues/4192",
         "#4192",
         "example.invalid/issues/4192",
+        // The only fixture that reaches the pointer path THROUGH strip_list_markers.
+        // Drop it and a gate that stops stripping bullets certifies a bulleted
+        // pointer body while this test still passes.
+        "- https://example.invalid/issues/4192",
     ];
 
     for pointer in pointers {
@@ -2098,8 +2102,15 @@ fn the_bet_and_the_bar_are_written_on_the_change_not_left_to_its_title() {
     // the compiler enforces: there is no parameter through which TITLE could
     // reach the gate. What is left to assert is the product half — a change
     // whose bet exists only in its title is still missing the written problem.
-    // The empty-body case is pinned by
-    // a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured.
+    // The empty body is asserted here as well as in
+    // a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured: without it
+    // this test stops detecting a gate that early-returns "nothing missing" on
+    // an empty body.
+    expect_missing(
+        "",
+        &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
+        "an empty body, where the bet exists only in the title",
+    );
     expect_missing(
         &bar_only(BAR),
         &[Artifact::WrittenProblem],

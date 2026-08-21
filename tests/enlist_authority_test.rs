@@ -1681,6 +1681,110 @@ fn a_report_that_certifies_while_a_gate_errored_is_still_refused() {
 /// cannot be satisfied by refusing everything — a constructor that never
 /// answers `Ok` stops the fleet as surely as one that always does admits it.
 #[test]
+/// The constructor carries the STATUS it was handed, on the gate it was named for.
+///
+/// Every other call in this suite hands `from_gate_outcomes` a uniformly
+/// passing corpus, which pins the names half of each outcome and leaves the
+/// status half free: a constructor that ignored the status entirely and wrote
+/// `Passed` into every slot satisfied the whole suite, and so did one whose
+/// name-to-field mapping was shifted by a field. Both are invisible under
+/// uniform input. A ragged corpus, read back by name, is what tells them apart.
+#[test]
+fn a_report_carries_back_the_status_each_named_gate_was_given() {
+    let base = PreMergeCertificationReport::unmeasured("fixture baseline");
+    let names: Vec<&'static str> = base.named_statuses().into_iter().map(|(n, _)| n).collect();
+
+    let failed_on = names[3];
+    let errored_on = names[11];
+    let warned_on = names[29];
+    let unmeasured_on = names[47];
+
+    let ragged: Vec<(&str, GateStatus)> = names
+        .iter()
+        .map(|n| {
+            let status = if *n == failed_on {
+                GateStatus::Failed("a defect was found".to_string())
+            } else if *n == errored_on {
+                GateStatus::Errored("the probe could not run".to_string())
+            } else if *n == warned_on {
+                GateStatus::Warning("worth a look".to_string())
+            } else if *n == unmeasured_on {
+                GateStatus::NotMeasured {
+                    gate_id: (*n).to_string(),
+                    reason: "no telemetry endpoint configured".to_string(),
+                }
+            } else {
+                GateStatus::Passed
+            };
+            (*n, status)
+        })
+        .collect();
+
+    let report = PreMergeCertificationReport::from_gate_outcomes(&ragged)
+        .expect("a full, well-formed corpus is exactly what a run hands over");
+
+    let back: std::collections::HashMap<&str, &GateStatus> =
+        report.named_statuses().into_iter().collect();
+
+    assert!(
+        matches!(back.get(failed_on), Some(GateStatus::Failed(_))),
+        "{failed_on} was handed Failed and came back {:?}. A constructor that \
+         writes Passed into every slot, or one whose name-to-field mapping is \
+         shifted, reads exactly like this",
+        back.get(failed_on)
+    );
+    assert!(
+        matches!(back.get(errored_on), Some(GateStatus::Errored(_))),
+        "{errored_on} was handed Errored and came back {:?}",
+        back.get(errored_on)
+    );
+    assert!(
+        matches!(back.get(warned_on), Some(GateStatus::Warning(_))),
+        "{warned_on} was handed Warning and came back {:?}",
+        back.get(warned_on)
+    );
+    assert!(
+        matches!(
+            back.get(unmeasured_on),
+            Some(GateStatus::NotMeasured { .. })
+        ),
+        "{unmeasured_on} was handed NotMeasured and came back {:?}",
+        back.get(unmeasured_on)
+    );
+
+    assert!(
+        !report.is_certified_ready,
+        "a corpus carrying a Failed and an Errored gate is not certified"
+    );
+    assert_eq!(
+        report.unmeasured_gates.len(),
+        1,
+        "one gate was NotMeasured; unmeasured_gates should name it and only it, \
+         and it named {:?}",
+        report.unmeasured_gates
+    );
+    assert!(
+        report
+            .unmeasured_gates
+            .iter()
+            .any(|g| g.contains(unmeasured_on) || unmeasured_on.contains(g.as_str())),
+        "unmeasured_gates should name {unmeasured_on}, and it holds {:?}",
+        report.unmeasured_gates
+    );
+    assert_ne!(
+        report.gate_counts(),
+        (TOTAL_GATES, 0),
+        "a ragged corpus counted as a clean sweep means the counts are derived \
+         from something other than the statuses"
+    );
+
+    assert!(
+        MergeEnlister::admission_refusal(Some(&report)).is_err(),
+        "this report carries a Failed, an Errored and an unmeasured gate. \
+         Admitting it is admitting on evidence Anvil does not have"
+    );
+}
+
 fn a_report_is_not_produced_from_gate_outcomes_that_do_not_cover_the_corpus() {
     let base = PreMergeCertificationReport::unmeasured("fixture baseline");
     let names: Vec<&'static str> = base.named_statuses().into_iter().map(|(n, _)| n).collect();

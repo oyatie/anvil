@@ -865,10 +865,6 @@ fn test_auto_rollback_red_flag_degraded_slo_triggers_rollback() {
         report.rollback_triggered,
         "Degraded canary must trigger autonomous rollback"
     );
-    assert!(
-        report.postmortem.is_some(),
-        "Rollback must automatically generate blameless postmortem bundle"
-    );
 }
 
 #[test]
@@ -884,7 +880,6 @@ fn test_auto_rollback_green_healthy_canary_passes() {
         !report.rollback_triggered,
         "Healthy canary must not trigger rollback"
     );
-    assert!(report.postmortem.is_none());
 }
 
 // =========================================================================

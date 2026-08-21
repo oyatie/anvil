@@ -104,6 +104,39 @@ pub struct PreMergeCertificationReport {
     /// must fail to parse, not arrive looking measured.
     pub unmeasured_gates: Vec<String>,
     pub summary_markdown: String,
+    /// Where the seventy-two statuses above came from.
+    ///
+    /// A report that a certification run produced and a report a caller wrote
+    /// are the same fields: `is_admissible()` says yes to both and
+    /// `gate_counts()` scores both at the whole corpus. Only this says which
+    /// one is in hand, and it is deliberately not serialisable -- a report that
+    /// arrived over a wire or out of a cache is a copy of a measurement, not
+    /// one.
+    #[serde(skip)]
+    pub provenance: GateProvenance,
+}
+
+/// Whether a report's gate statuses were handed to it by a certification run.
+///
+/// The inner flag cannot be written outside this module and
+/// `certification_run()` cannot be named outside `pre_merge_guard`, so no
+/// caller can mint a report that claims a measurement nothing performed.
+/// `Default` -- what a deserialised or hand-built report gets -- is "no run
+/// produced this".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GateProvenance(bool);
+
+impl GateProvenance {
+    /// Minted only where gate outcomes become a report: `from_gate_outcomes`
+    /// and the evaluator that runs the corpus.
+    pub(super) fn certification_run() -> Self {
+        Self(true)
+    }
+
+    /// Whether the statuses on this report were produced by a certification run.
+    pub fn is_from_a_certification_run(self) -> bool {
+        self.0
+    }
 }
 
 /// Size of the gate corpus.
@@ -339,96 +372,162 @@ impl PreMergeCertificationReport {
     /// implementer's choice; what is fixed is that it cannot be typed at a
     /// keyboard outside this function, and that `unmeasured` does not confer
     /// it.
-    pub fn from_gate_outcomes(_outcomes: &[(&str, GateStatus)]) -> anyhow::Result<Self> {
-        todo!("spec: a report is what a certification run produced, not what a caller wrote")
+    pub fn from_gate_outcomes(outcomes: &[(&str, GateStatus)]) -> anyhow::Result<Self> {
+        let mut by_gate: std::collections::HashMap<&str, GateStatus> =
+            std::collections::HashMap::with_capacity(outcomes.len());
+        let mut named_twice: Vec<&str> = Vec::new();
+        for (gate, status) in outcomes {
+            if by_gate.insert(gate, status.clone()).is_some() {
+                named_twice.push(gate);
+            }
+        }
+
+        // Every field asks for its own outcome, so a gate nobody reported is
+        // discovered by the construction rather than by a length check: the
+        // right *number* of outcomes naming one gate twice is still a corpus
+        // with a hole in it.
+        let mut unreported: Vec<&'static str> = Vec::new();
+        let mut report = Self::build(&mut |gate| match by_gate.remove(gate) {
+            Some(status) => status,
+            None => {
+                unreported.push(gate);
+                GateStatus::Errored(format!("no gate outcome was reported for `{gate}`"))
+            }
+        });
+        let mut not_in_the_corpus: Vec<&str> = by_gate.keys().copied().collect();
+        not_in_the_corpus.sort_unstable();
+
+        if !unreported.is_empty() || !not_in_the_corpus.is_empty() || !named_twice.is_empty() {
+            let mut why: Vec<String> = Vec::new();
+            if !unreported.is_empty() {
+                why.push(format!(
+                    "{} gate(s) reported no outcome: {}",
+                    unreported.len(),
+                    unreported.join(", ")
+                ));
+            }
+            if !named_twice.is_empty() {
+                why.push(format!("named more than once: {}", named_twice.join(", ")));
+            }
+            if !not_in_the_corpus.is_empty() {
+                why.push(format!(
+                    "not gates in this corpus: {}",
+                    not_in_the_corpus.join(", ")
+                ));
+            }
+            anyhow::bail!(
+                "a certification report covers every one of the {} gates in the corpus, and \
+                 these outcomes do not: {}",
+                TOTAL_GATES,
+                why.join("; ")
+            );
+        }
+
+        report.provenance = GateProvenance::certification_run();
+        report.seal();
+        report.summary_markdown = super::matrix::MatrixRenderer::render(&report);
+        Ok(report)
+    }
+
+    /// The one place the seventy-two gate fields are written down as a
+    /// construction, so a gate added to the struct has to be given a value here
+    /// or the build fails. `status_for` is asked for each gate by its field
+    /// name, in declaration order.
+    ///
+    /// The report it returns carries no provenance and no verdict: sealing and
+    /// the provenance mark belong to the constructors that know where the
+    /// statuses came from.
+    fn build(status_for: &mut dyn FnMut(&'static str) -> GateStatus) -> Self {
+        PreMergeCertificationReport {
+            is_certified_ready: false,
+            doc_parity_status: status_for("doc_parity_status"),
+            cedar_status: status_for("cedar_status"),
+            compliance_status: status_for("compliance_status"),
+            api_contract_status: status_for("api_contract_status"),
+            cell_isolation_status: status_for("cell_isolation_status"),
+            supply_chain_status: status_for("supply_chain_status"),
+            clean_arch_status: status_for("clean_arch_status"),
+            monorepo_status: status_for("monorepo_status"),
+            debt_shrink_status: status_for("debt_shrink_status"),
+            modularization_status: status_for("modularization_status"),
+            coverage_status: status_for("coverage_status"),
+            rust_skills_status: status_for("rust_skills_status"),
+            kani_status: status_for("kani_status"),
+            slo_status: status_for("slo_status"),
+            adr_status: status_for("adr_status"),
+            shuffle_status: status_for("shuffle_status"),
+            trace_status: status_for("trace_status"),
+            constant_work_status: status_for("constant_work_status"),
+            idempotency_status: status_for("idempotency_status"),
+            finops_status: status_for("finops_status"),
+            ghost_migration_status: status_for("ghost_migration_status"),
+            gitops_promo_status: status_for("gitops_promo_status"),
+            gitops_drift_status: status_for("gitops_drift_status"),
+            canary_status: status_for("canary_status"),
+            cluster_audit_status: status_for("cluster_audit_status"),
+            migration_orch_status: status_for("migration_orch_status"),
+            ci_wallclock_status: status_for("ci_wallclock_status"),
+            predictive_test_status: status_for("predictive_test_status"),
+            compile_profile_status: status_for("compile_profile_status"),
+            remote_cache_status: status_for("remote_cache_status"),
+            runner_economics_status: status_for("runner_economics_status"),
+            sandbox_status: status_for("sandbox_status"),
+            cross_service_status: status_for("cross_service_status"),
+            ephemeral_secret_status: status_for("ephemeral_secret_status"),
+            psa_status: status_for("psa_status"),
+            shadow_traffic_status: status_for("shadow_traffic_status"),
+            unresolved_review_status: status_for("unresolved_review_status"),
+            local_probe_status: status_for("local_probe_status"),
+            semantic_abi_status: status_for("semantic_abi_status"),
+            zero_day_status: status_for("zero_day_status"),
+            formal_verification_status: status_for("formal_verification_status"),
+            deadlock_status: status_for("deadlock_status"),
+            review_verdict_status: status_for("review_verdict_status"),
+            brand_absence_status: status_for("brand_absence_status"),
+            migration_boundary_status: status_for("migration_boundary_status"),
+            shape_status: status_for("shape_status"),
+            automated_canary_status: status_for("automated_canary_status"),
+            progressive_ring_status: status_for("progressive_ring_status"),
+            hermetic_build_status: status_for("hermetic_build_status"),
+            openvex_status: status_for("openvex_status"),
+            cosign_status: status_for("cosign_status"),
+            chaos_injection_status: status_for("chaos_injection_status"),
+            stacked_diffs_status: status_for("stacked_diffs_status"),
+            microbench_status: status_for("microbench_status"),
+            jittered_backoff_status: status_for("jittered_backoff_status"),
+            schema_evolution_status: status_for("schema_evolution_status"),
+            auto_rollback_status: status_for("auto_rollback_status"),
+            wasm_sandbox_status: status_for("wasm_sandbox_status"),
+            consistency_status: status_for("consistency_status"),
+            flake_quarantine_status: status_for("flake_quarantine_status"),
+            zero_trust_workload_status: status_for("zero_trust_workload_status"),
+            carbon_compute_status: status_for("carbon_compute_status"),
+            replay_harness_status: status_for("replay_harness_status"),
+            upgrade_train_status: status_for("upgrade_train_status"),
+            mutation_status: status_for("mutation_status"),
+            feature_flag_status: status_for("feature_flag_status"),
+            bench_status: status_for("bench_status"),
+            attestation_status: status_for("attestation_status"),
+            security_scan_status: status_for("security_scan_status"),
+            schema_compat_status: status_for("schema_compat_status"),
+            performance_concurrency_status: status_for("performance_concurrency_status"),
+            test_suite_status: status_for("test_suite_status"),
+            unmeasured_gates: Vec::new(),
+            summary_markdown: String::new(),
+            provenance: GateProvenance::default(),
+        }
     }
 
     /// A report in which nothing has been measured: every gate is
     /// `NotMeasured` with `reason`, nothing is certified, nothing is
     /// admissible. The honest starting point for a fixture or a preview —
-    /// there is deliberately no "all passed" constructor (I2).
+    /// there is deliberately no "all passed" constructor (I2), and this one
+    /// confers no provenance: nothing ran.
     pub fn unmeasured(reason: &str) -> Self {
-        let nm = |gate_id: &str| GateStatus::NotMeasured {
+        let mut r = Self::build(&mut |gate_id| GateStatus::NotMeasured {
             gate_id: gate_id.to_string(),
             reason: reason.to_string(),
-        };
-        let mut r = PreMergeCertificationReport {
-            is_certified_ready: false,
-            doc_parity_status: nm("doc_parity_status"),
-            cedar_status: nm("cedar_status"),
-            compliance_status: nm("compliance_status"),
-            api_contract_status: nm("api_contract_status"),
-            cell_isolation_status: nm("cell_isolation_status"),
-            supply_chain_status: nm("supply_chain_status"),
-            clean_arch_status: nm("clean_arch_status"),
-            monorepo_status: nm("monorepo_status"),
-            debt_shrink_status: nm("debt_shrink_status"),
-            modularization_status: nm("modularization_status"),
-            coverage_status: nm("coverage_status"),
-            rust_skills_status: nm("rust_skills_status"),
-            kani_status: nm("kani_status"),
-            slo_status: nm("slo_status"),
-            adr_status: nm("adr_status"),
-            shuffle_status: nm("shuffle_status"),
-            trace_status: nm("trace_status"),
-            constant_work_status: nm("constant_work_status"),
-            idempotency_status: nm("idempotency_status"),
-            finops_status: nm("finops_status"),
-            ghost_migration_status: nm("ghost_migration_status"),
-            gitops_promo_status: nm("gitops_promo_status"),
-            gitops_drift_status: nm("gitops_drift_status"),
-            canary_status: nm("canary_status"),
-            cluster_audit_status: nm("cluster_audit_status"),
-            migration_orch_status: nm("migration_orch_status"),
-            ci_wallclock_status: nm("ci_wallclock_status"),
-            predictive_test_status: nm("predictive_test_status"),
-            compile_profile_status: nm("compile_profile_status"),
-            remote_cache_status: nm("remote_cache_status"),
-            runner_economics_status: nm("runner_economics_status"),
-            sandbox_status: nm("sandbox_status"),
-            cross_service_status: nm("cross_service_status"),
-            ephemeral_secret_status: nm("ephemeral_secret_status"),
-            psa_status: nm("psa_status"),
-            shadow_traffic_status: nm("shadow_traffic_status"),
-            unresolved_review_status: nm("unresolved_review_status"),
-            local_probe_status: nm("local_probe_status"),
-            semantic_abi_status: nm("semantic_abi_status"),
-            zero_day_status: nm("zero_day_status"),
-            formal_verification_status: nm("formal_verification_status"),
-            deadlock_status: nm("deadlock_status"),
-            review_verdict_status: nm("review_verdict_status"),
-            brand_absence_status: nm("brand_absence_status"),
-            migration_boundary_status: nm("migration_boundary_status"),
-            shape_status: nm("shape_status"),
-            automated_canary_status: nm("automated_canary_status"),
-            progressive_ring_status: nm("progressive_ring_status"),
-            hermetic_build_status: nm("hermetic_build_status"),
-            openvex_status: nm("openvex_status"),
-            cosign_status: nm("cosign_status"),
-            chaos_injection_status: nm("chaos_injection_status"),
-            stacked_diffs_status: nm("stacked_diffs_status"),
-            microbench_status: nm("microbench_status"),
-            jittered_backoff_status: nm("jittered_backoff_status"),
-            schema_evolution_status: nm("schema_evolution_status"),
-            auto_rollback_status: nm("auto_rollback_status"),
-            wasm_sandbox_status: nm("wasm_sandbox_status"),
-            consistency_status: nm("consistency_status"),
-            flake_quarantine_status: nm("flake_quarantine_status"),
-            zero_trust_workload_status: nm("zero_trust_workload_status"),
-            carbon_compute_status: nm("carbon_compute_status"),
-            replay_harness_status: nm("replay_harness_status"),
-            upgrade_train_status: nm("upgrade_train_status"),
-            mutation_status: nm("mutation_status"),
-            feature_flag_status: nm("feature_flag_status"),
-            bench_status: nm("bench_status"),
-            attestation_status: nm("attestation_status"),
-            security_scan_status: nm("security_scan_status"),
-            schema_compat_status: nm("schema_compat_status"),
-            performance_concurrency_status: nm("performance_concurrency_status"),
-            test_suite_status: nm("test_suite_status"),
-            unmeasured_gates: Vec::new(),
-            summary_markdown: String::new(),
-        };
+        });
         r.seal();
         r
     }
@@ -611,6 +710,7 @@ mod tests {
             test_suite_status: GateStatus::Passed,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
+            provenance: GateProvenance::default(),
         }
     }
 

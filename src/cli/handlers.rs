@@ -606,14 +606,22 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 "Running on-demand merge queue enlistment for {}#{}",
                 repo, pr
             );
+            // This path has not reviewed the pull request, so it runs the
+            // certification corpus and hands over what that produced.
+            let evidence =
+                crate::webhook::pipelines::certify::evidence_for_enlistment(&state, &repo, pr)
+                    .await;
             state
                 .merge_enlister
-                .enlist_into_merge_queue(&repo, pr, None)
+                .enlist_into_merge_queue(&repo, pr, evidence.as_ref())
                 .await?;
         }
         Commands::HealQueue { repo, pr } => {
             info!("Running on-demand merge queue healer for {}#{}", repo, pr);
-            state.queue_healer.heal_ejected_pr(&repo, pr).await?;
+            state
+                .queue_healer
+                .heal_ejected_pr(&state, &repo, pr)
+                .await?;
         }
         Commands::Reconcile { repo, pr } => {
             info!(

@@ -4,7 +4,7 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::github::GitHubClient;
-use crate::pre_merge_guard::report::PreMergeCertificationReport;
+use crate::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport};
 use crate::reviewer::ReviewResponse;
 
 pub struct MergeEnlister {
@@ -22,28 +22,110 @@ impl MergeEnlister {
     /// report at all -- it was never computed, or computing it failed.
     /// `Ok(())` admits; `Err` refuses and says why.
     ///
-    /// SCAFFOLDING: signature only, so the spec suite can state the invariant
-    /// before anything implements it. The decision itself is not optional and
-    /// neither is where it is reached: `enlist_into_merge_queue` must reach it
-    /// for the evidence it was handed, so that a pull request cannot be admitted
-    /// by a path that skipped the caller who checks. What remains the
-    /// implementer's choice is how the refusal is phrased and how each caller
-    /// obtains the report it passes down.
-    pub fn admission_refusal(_report: Option<&PreMergeCertificationReport>) -> Result<()> {
-        todo!("spec: Anvil admits nothing to the merge queue on evidence it does not have")
+    /// Four ways evidence can be absent, and all four withhold the merge
+    /// (invariant I1):
+    ///
+    /// 1. there is no report;
+    /// 2. the report did not come from a certification run, so its statuses
+    ///    are somebody's opinion in the shape of a measurement;
+    /// 3. a gate produced no measurement -- `NotMeasured`, which is
+    ///    individually acceptable and still absent evidence, or `Errored`,
+    ///    which `unmeasured_gates` does not record at all;
+    /// 4. the report does not certify.
+    ///
+    /// The refusal names the gates, because an operator watching a pull
+    /// request sit in the queue has nothing else to act on.
+    pub fn admission_refusal(report: Option<&PreMergeCertificationReport>) -> Result<()> {
+        let Some(report) = report else {
+            bail!(
+                "merge queue admission withheld: no pre-merge certification report was \
+                 obtained for this pull request. Absent evidence is not permission."
+            );
+        };
+
+        if !report.provenance.is_from_a_certification_run() {
+            bail!(
+                "merge queue admission withheld: this certification report was not produced \
+                 by a certification run, so nothing in it was measured."
+            );
+        }
+
+        let without_a_measurement: Vec<&str> = report
+            .named_statuses()
+            .into_iter()
+            .filter(|(_, status)| {
+                matches!(
+                    status,
+                    GateStatus::Errored(_) | GateStatus::NotMeasured { .. }
+                )
+            })
+            .map(|(gate, _)| gate)
+            .collect();
+        if !without_a_measurement.is_empty() {
+            bail!(
+                "merge queue admission withheld: {} gate(s) produced no measurement: {}",
+                without_a_measurement.len(),
+                without_a_measurement.join(", ")
+            );
+        }
+
+        if !report.is_certified_ready {
+            let blocking: Vec<&str> = report
+                .named_statuses()
+                .into_iter()
+                .filter(|(_, status)| !status.is_acceptable())
+                .map(|(gate, _)| gate)
+                .collect();
+            bail!(
+                "merge queue admission withheld: the pull request is not certified; {} gate(s) \
+                 did not pass: {}",
+                blocking.len(),
+                blocking.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
+    /// What the report says about the corpus, in the only terms Anvil measured
+    /// it in: how many gates passed outright, and every gate that did not.
+    ///
+    /// Deliberately not `gate_counts()`, which scores a `Warning` as
+    /// acceptable and would report the whole corpus as passing for a report
+    /// where a gate regressed.
+    fn measured_lines(report: &PreMergeCertificationReport) -> String {
+        let named = report.named_statuses();
+        let passed = named
+            .iter()
+            .filter(|(_, status)| matches!(status, GateStatus::Passed | GateStatus::AutoUpdated))
+            .count();
+        let mut lines = vec![format!("- {} of {} gates passed", passed, named.len())];
+        lines.extend(
+            named
+                .iter()
+                .filter(|(_, status)| {
+                    !matches!(status, GateStatus::Passed | GateStatus::AutoUpdated)
+                })
+                .map(|(gate, status)| format!("- {}: {}", gate, status.badge())),
+        );
+        lines.join("\n")
     }
 
     /// The body of the approving review Anvil publishes for a pull request,
     /// derived from what it actually measured.
     ///
     /// `None` means Anvil publishes no approving review at all -- the honest
-    /// answer when there is nothing to derive a claim from.
-    ///
-    /// SCAFFOLDING: signature only. Dropping self-approval entirely is a valid
-    /// implementation of this seam (return `None` throughout); what is fixed is
-    /// that no sentence Anvil signs may assert more than the report contains.
-    pub fn approval_summary(_report: Option<&PreMergeCertificationReport>) -> Option<String> {
-        todo!("spec: Anvil endorses nothing it did not measure")
+    /// answer when there is nothing to derive a claim from, and the only
+    /// answer for a pull request Anvil is refusing to admit: a review signed
+    /// onto a change that is not going through says, permanently and in
+    /// Anvil's name, that it is.
+    pub fn approval_summary(report: Option<&PreMergeCertificationReport>) -> Option<String> {
+        let report = report?;
+        Self::admission_refusal(Some(report)).ok()?;
+        Some(format!(
+            "### 🟢 Pre-Merge Certification\n\n{}\n\nCertified for merge queue admission.",
+            Self::measured_lines(report)
+        ))
     }
 
     /// The note Anvil posts onto a pull request it has just handed to the merge
@@ -51,17 +133,21 @@ impl MergeEnlister {
     ///
     /// `None` means Anvil posts no note -- the honest answer when there is
     /// nothing to derive a claim from. `strategy` is the merge strategy the
-    /// queue accepted ("Squash & Merge", "Merge Commit").
-    ///
-    /// SCAFFOLDING: signature only. The note lands on the same pull request as
-    /// the approving review and is read by the same people, so it is bound by
-    /// the same rule -- see `post_enlistment_note`, which today welds
-    /// "Pre-Merge Certification 100% Green" into every note it posts.
+    /// queue accepted ("Squash & Merge", "Merge Commit"), and it is read
+    /// rather than assumed: the enlistment retries as a merge commit whenever
+    /// GitHub refuses `--squash`, and a note naming the wrong one is a claim
+    /// about what happened that did not happen.
     pub fn enlistment_note(
-        _report: Option<&PreMergeCertificationReport>,
-        _strategy: &str,
+        report: Option<&PreMergeCertificationReport>,
+        strategy: &str,
     ) -> Option<String> {
-        todo!("spec: Anvil publishes no certification claim it did not measure")
+        let report = report?;
+        Self::admission_refusal(Some(report)).ok()?;
+        Some(format!(
+            "🚀 **Enlisted in Merge Queue**\n\n- **Strategy**: {}\n{}\n\n---\n*🤖 [Enlisted] by Oyatie Anvil*\n",
+            strategy,
+            Self::measured_lines(report)
+        ))
     }
 
     /// Enlists a certified Pull Request into the repository's Merge Queue, ensuring an Approving Review is present
@@ -69,15 +155,20 @@ impl MergeEnlister {
     /// `report` is the certification report the caller obtained for this pull
     /// request, and `None` when it could not obtain one at all.
     ///
-    /// SCAFFOLDING: the parameter exists so that "no evidence" is a value this
-    /// entry point must answer for rather than a state it cannot observe.
-    /// Nothing reads it yet, and every caller passes `None`.
+    /// The admission decision is taken here rather than left to the caller.
+    /// Three of the four callers used to take it nowhere at all, and a guard
+    /// each door is trusted to reach is a convention; this one cannot be
+    /// walked past, because "no evidence" is a value this function is handed
+    /// rather than a state it cannot observe.
     pub async fn enlist_into_merge_queue(
         &self,
         repo: &str,
         pr_number: u64,
-        _report: Option<&PreMergeCertificationReport>,
+        report: Option<&PreMergeCertificationReport>,
     ) -> Result<()> {
+        // Invariant I1: absent evidence must never merge.
+        Self::admission_refusal(report)?;
+
         info!(
             "Enlisting certified PR {}#{} into GitHub Merge Queue...",
             repo, pr_number
@@ -87,7 +178,8 @@ impl MergeEnlister {
         self.reconcile_pr_title_and_scope(repo, pr_number).await?;
 
         // Step 1: Ensure PR has an official Approving Review submitted on GitHub
-        self.ensure_approving_review(repo, pr_number).await?;
+        self.ensure_approving_review(repo, pr_number, report)
+            .await?;
 
         // Step 2: Enlist into Merge Queue using `gh pr merge --auto`
         let mut cmd = Command::new("gh");
@@ -114,7 +206,7 @@ impl MergeEnlister {
                 "Successfully enlisted {}#{} into Merge Queue (squash)",
                 repo, pr_number
             );
-            self.post_enlistment_note(repo, pr_number, "Squash & Merge")
+            self.post_enlistment_note(repo, pr_number, "Squash & Merge", report)
                 .await?;
             return Ok(());
         }
@@ -147,7 +239,7 @@ impl MergeEnlister {
                 "Successfully enlisted {}#{} into Merge Queue (standard merge)",
                 repo, pr_number
             );
-            self.post_enlistment_note(repo, pr_number, "Merge Commit")
+            self.post_enlistment_note(repo, pr_number, "Merge Commit", report)
                 .await?;
             return Ok(());
         }
@@ -171,7 +263,12 @@ impl MergeEnlister {
     /// Verifies if PR has an approving review; if not, submits a formal APPROVE review
     /// Verifies if PR has an approving review; if not, submits a formal APPROVE review.
     /// Strictly fails closed if CHANGES_REQUESTED exists or if any review comment threads are unresolved.
-    pub async fn ensure_approving_review(&self, repo: &str, pr_number: u64) -> Result<()> {
+    pub async fn ensure_approving_review(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        report: Option<&PreMergeCertificationReport>,
+    ) -> Result<()> {
         info!(
             "Verifying approving review requirement for {}#{}...",
             repo, pr_number
@@ -274,8 +371,15 @@ impl MergeEnlister {
                 "Submitting formal GitHub APPROVE review for {}#{} before merge queue admission...",
                 repo, pr_number
             );
+            let Some(summary) = Self::approval_summary(report) else {
+                info!(
+                    "No approving review published for {}#{}: nothing was measured that Anvil could sign for.",
+                    repo, pr_number
+                );
+                return Ok(());
+            };
             let approval = ReviewResponse {
-                summary: "### 🟢 Pre-Merge Quality Approval\n\nAll automated review, documentation parity, clean architecture, and safety gates have passed with 100% compliance. Certified for merge queue admission.".to_string(),
+                summary,
                 verdict: "APPROVE".to_string(),
                 comments: Vec::new(),
             };
@@ -351,11 +455,20 @@ impl MergeEnlister {
         Ok(())
     }
 
-    async fn post_enlistment_note(&self, repo: &str, pr_number: u64, strategy: &str) -> Result<()> {
-        let note = format!(
-            "🚀 **Enlisted in Merge Queue:**\n\n- **Approval State**: ✅ Official Approving Review Verified\n- **Strategy**: {}\n- **Status**: Pre-Merge Certification 100% Green\n\n---\n*🤖 [Enlisted] by Oyatie Anvil*\n",
-            strategy
-        );
+    async fn post_enlistment_note(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        strategy: &str,
+        report: Option<&PreMergeCertificationReport>,
+    ) -> Result<()> {
+        let Some(note) = Self::enlistment_note(report, strategy) else {
+            info!(
+                "No enlistment note posted on {}#{}: nothing was measured that Anvil could report.",
+                repo, pr_number
+            );
+            return Ok(());
+        };
         self.github_client
             .post_pr_comment(repo, pr_number, &note)
             .await?;

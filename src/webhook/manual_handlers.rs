@@ -261,24 +261,42 @@ pub async fn manual_enlist_handler(
         req.repo, req.pr_number
     );
 
-    let state_clone = state.clone();
     let repo = req.repo.clone();
     let pr_number = req.pr_number;
 
-    tokio::spawn(async move {
-        let _ = state_clone
-            .merge_enlister
-            .enlist_into_merge_queue(&repo, pr_number, None)
-            .await;
-    });
+    // This path has not reviewed the pull request, so it runs the certification
+    // corpus and hands over what that produced.
+    let evidence =
+        crate::webhook::pipelines::certify::evidence_for_enlistment(&state, &repo, pr_number).await;
 
-    (
-        StatusCode::ACCEPTED,
-        Json(ApiResponse {
-            success: true,
-            message: format!("Enlistment queued for {}#{}", req.repo, req.pr_number),
-        }),
-    )
+    // Answered on the request's own thread, with the outcome. The enlistment
+    // used to be detached and the response asserted success before anything had
+    // happened, so a refusal reached a log line inside a dropped task and never
+    // the person who asked for the merge.
+    let outcome = state
+        .merge_enlister
+        .enlist_into_merge_queue(&repo, pr_number, evidence.as_ref())
+        .await;
+
+    match outcome {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(ApiResponse {
+                success: true,
+                message: format!("Enlisted {}#{} in the merge queue", req.repo, req.pr_number),
+            }),
+        ),
+        Err(e) => (
+            StatusCode::CONFLICT,
+            Json(ApiResponse {
+                success: false,
+                message: format!(
+                    "Merge queue enlistment refused for {}#{}: {}",
+                    req.repo, req.pr_number, e
+                ),
+            }),
+        ),
+    }
 }
 
 pub async fn manual_heal_queue_handler(
@@ -307,7 +325,7 @@ pub async fn manual_heal_queue_handler(
     tokio::spawn(async move {
         let _ = state_clone
             .queue_healer
-            .heal_ejected_pr(&repo, pr_number)
+            .heal_ejected_pr(&state_clone, &repo, pr_number)
             .await;
     });
 

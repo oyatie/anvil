@@ -126,7 +126,16 @@ impl QueueHealer {
     }
 
     /// Heals an ejected or failed merge queue PR
-    pub async fn heal_ejected_pr(&self, repo: &str, pr_number: u64) -> Result<()> {
+    ///
+    /// `state` is threaded through so the re-enlistment at the end can run the
+    /// certification corpus for the healed head. A local `cargo check` is not
+    /// certification, and re-enlisting on it was issue #17's fourth door.
+    pub async fn heal_ejected_pr(
+        &self,
+        state: &crate::webhook::AppState,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<()> {
         info!("Starting Merge Queue Healer for {}#{}...", repo, pr_number);
 
         let meta = self
@@ -171,6 +180,7 @@ impl QueueHealer {
             .await?;
         let result = self
             .heal_in_worktree(
+                state,
                 repo,
                 pr_number,
                 &meta,
@@ -189,6 +199,7 @@ impl QueueHealer {
 
     async fn heal_in_worktree(
         &self,
+        state: &crate::webhook::AppState,
         repo: &str,
         pr_number: u64,
         meta: &PrMetadata,
@@ -409,9 +420,15 @@ impl QueueHealer {
         {
             warn!("Could not post heal note on {}#{}: {}", repo, pr_number, e);
         }
+        // The healed head is a different commit from the one any earlier
+        // certification judged, so the corpus is run again for it. The local
+        // test gate above is not certification and never was.
+        let evidence =
+            crate::webhook::pipelines::certify::evidence_for_enlistment(state, repo, pr_number)
+                .await;
         if let Err(e) = self
             .merge_enlister
-            .enlist_into_merge_queue(repo, pr_number, None)
+            .enlist_into_merge_queue(repo, pr_number, evidence.as_ref())
             .await
         {
             warn!(

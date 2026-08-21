@@ -477,7 +477,7 @@ pub async fn webhook_handler(
         tokio::spawn(async move {
             let _ = state_clone
                 .queue_healer
-                .heal_ejected_pr(&repo_clone, pr_number)
+                .heal_ejected_pr(&state_clone, &repo_clone, pr_number)
                 .await;
         });
 

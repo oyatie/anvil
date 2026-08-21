@@ -8,15 +8,12 @@ use tracing::{info, warn};
 
 use super::defaults::bootstrap_default_accounts;
 use super::quota_view::compute_quota_view;
-use super::types::{
-    AccountPoolMap, AccountQuotaView, AffinityCacheMap, ManagedAccount, UsageRecord,
-};
+use super::types::{AccountPoolMap, AccountQuotaView, ManagedAccount, UsageRecord};
 use crate::ai_driver::provider::ModelProvider;
 
 #[derive(Debug, Clone)]
 pub struct AccountPoolManager {
     pools: Arc<RwLock<AccountPoolMap>>,
-    affinity_cache: Arc<RwLock<AffinityCacheMap>>,
 }
 
 impl Default for AccountPoolManager {
@@ -34,7 +31,6 @@ impl AccountPoolManager {
 
         Self {
             pools: Arc::new(RwLock::new(pools)),
-            affinity_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -96,73 +92,6 @@ impl AccountPoolManager {
             }
         }
         bail!("Account '{}' not found in any pool", account_id)
-    }
-
-    /// Leases an account with context-aware prompt-cache affinity
-    pub async fn lease_account_with_affinity(
-        &self,
-        provider: ModelProvider,
-        context_affinity_key: Option<&str>,
-    ) -> Result<Arc<RwLock<ManagedAccount>>> {
-        let now = Instant::now();
-        let utc_now = Utc::now();
-        let five_hours_ago = utc_now - ChronoDuration::hours(5);
-
-        // 1. Check prompt-cache affinity table
-        if let Some(key) = context_affinity_key {
-            let mut cache_guard = self.affinity_cache.write().await;
-            if let Some((acc_id, expires_at)) = cache_guard.get(key)
-                && now < *expires_at
-            {
-                let pool_guard = self.pools.read().await;
-                if let Some(accounts) = pool_guard.get(&provider) {
-                    for acc_arc in accounts {
-                        let mut acc = acc_arc.write().await;
-                        if acc.account_id == *acc_id
-                            && !acc.is_draining
-                            && (acc.cooldown_until.is_none() || now >= acc.cooldown_until.unwrap())
-                        {
-                            let used_5hr: usize = acc
-                                .usage_history
-                                .iter()
-                                .filter(|r| r.timestamp >= five_hours_ago)
-                                .map(|r| r.tokens_consumed)
-                                .sum();
-
-                            let has_headroom = match acc.max_5hr_tokens {
-                                Some(max) => used_5hr < max,
-                                None => true,
-                            };
-
-                            if has_headroom {
-                                acc.last_leased_at = now;
-                                cache_guard.insert(
-                                    key.to_string(),
-                                    (acc.account_id.clone(), now + Duration::from_secs(300)),
-                                );
-                                info!(
-                                    "⚡ [Prompt Cache Hit] Routed to warm affinity '{}' for '{}'",
-                                    acc.account_id, key
-                                );
-                                return Ok(Arc::clone(acc_arc));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Standard Least-Loaded Leasing
-        let leased = self.lease_account(provider).await?;
-
-        // 3. Record new affinity mapping if key provided
-        if let Some(key) = context_affinity_key {
-            let acc_id = leased.read().await.account_id.clone();
-            let mut cache_guard = self.affinity_cache.write().await;
-            cache_guard.insert(key.to_string(), (acc_id, now + Duration::from_secs(300)));
-        }
-
-        Ok(leased)
     }
 
     /// Leases the healthiest, least-loaded account in the provider's pool

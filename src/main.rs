@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
     let debt_shrink_guard = Arc::new(DebtShrinkGuard::new());
     let modularization_guard = Arc::new(ModularizationGuard::new());
     let coverage_guard = Arc::new(CoverageGuard::new());
-    let rust_language_policy = Arc::new(RustLanguagePolicy::new(&config.data_dir));
+    let rust_language_policy = Arc::new(RustLanguagePolicy::new());
     let kani_guard = Arc::new(KaniGuard::new());
     let slo_canary_guard = Arc::new(SloCanaryGuard::new());
     let adr_drift_ratchet = Arc::new(AdrDriftRatchet::new());

@@ -196,7 +196,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         reference: "internal CI wallclock budgets; ADR-0718",
         fidelity: Fidelity::Aspirational,
         gap: "Without GitHub Actions timing API access, reports `NotMeasured` rather than measuring real \
-              build duration or cost (ci_wallclock_ratchet/mod.rs:83-86).",
+              build duration or cost (ci_wallclock_ratchet/mod.rs:71-74).",
         blocked_on: Some("GitHub Actions timing API"),
     },
     GateFidelity {
@@ -310,10 +310,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         fidelity: Fidelity::Aspirational,
         gap: "Executes no benchmark: this repository declares no criterion dependency and has no benches \
               directory, so there is no baseline to ratchet against and the review pipeline used to write \
-              a base_ns_per_op equal to its own head_ns_per_op. evaluate_benchmark_diff is honest \
-              arithmetic over a caller-supplied sample and is retained as the seam, but it reads neither \
-              p99_cpu_cycles_base nor p99_cpu_cycles_head \
-              (microbenchmark_ratchet/criterion_diff.rs:35-44).",
+              a base_ns_per_op equal to its own head_ns_per_op. Both that sample and the analyzer that \
+              read it are deleted; the gate reports NotMeasured.",
         blocked_on: Some("a criterion benchmark harness and a published trunk baseline"),
     },
     GateFidelity {

@@ -71,13 +71,14 @@ fn ci_installs_the_pinned_toolchain_not_stable() {
     let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
     // rust-toolchain.toml is the pin. Repeating the version in YAML is a drift
     // surface; dtolnay/rust-toolchain with no `toolchain:` input honours the file.
+    let channel = toolchain_channel();
+    assert!(
+        ci.contains(&format!("toolchain: \"{channel}\"")),
+        "dtolnay/rust-toolchain@pinned SHA requires toolchain: \"{channel}\"; omitting it installs '' and rustup default becomes stable"
+    );
     assert!(
         !ci.contains("toolchain: stable"),
         "ci.yml must not install `stable`; rust-toolchain.toml is the pin"
-    );
-    assert!(
-        ci.contains("dtolnay/rust-toolchain"),
-        "ci.yml must install rustc via rust-toolchain.toml (dtolnay/rust-toolchain)"
     );
 }
 

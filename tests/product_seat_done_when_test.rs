@@ -15,11 +15,15 @@
 //! let every change certify while the seat measures nothing, which is the
 //! "named gate, no measurement" pattern the ADR's honesty law forbids.
 //!
-//! This is the whole ballgame, so it is pinned on the input shape where a
+//! This is the whole ballgame, so it is pinned on the input shapes where a
 //! hurried gate is most tempted to fail open: a body that uses none of the
-//! headings the gate happens to recognise. Ordinary prose and an unfilled
-//! template are the two commonest real pull request bodies there are, and both
-//! must be `Failed` — see `a_real_pull_request_body_with_no_bar_fails_closed`.
+//! headings the gate happens to recognise, and a body whose headings are real,
+//! well-filled and simply not the Product artifact. Ordinary prose, an unfilled
+//! template, and a `## Summary` over a `## Test plan` are the commonest real
+//! pull request bodies there are, and every one of them must be `Failed` — see
+//! `a_real_pull_request_body_with_no_bar_fails_closed`. A test plan says what
+//! the author ran; it is not a statement of what done looks like, and reading
+//! it as one certifies a very large fraction of real changes with no bar.
 //!
 //! # Why an empty heading must fail
 //!
@@ -123,10 +127,20 @@
 //!        `Fixes #4192:`. Same shape for `PHRASE_DEFERRALS`:
 //!        `section.contains("same as above")` satisfied the derived family and
 //!        rejected a bar saying the retry budget behaves the same as above.
-//!      * the **template comment**. It was pinned only as a whole section, so a
-//!        section-level `!s.contains("<!--")` passed everything here and then
-//!        failed the commonest filled-in template body there is — a prompt
-//!        comment left in place with the author's text typed under it.
+//!      * the **template comment**, IN BOTH ITS SHAPES. It was pinned only as a
+//!        whole section, so a section-level `!s.contains("<!--")` passed
+//!        everything here and then failed the commonest filled-in template body
+//!        there is — a prompt comment left in place with the author's text typed
+//!        under it. And every comment fixture in the file opened and closed on
+//!        ONE line, so the only rule the suite required was line-local:
+//!        `t.starts_with("<!--") && t.ends_with("-->")`, which is what an
+//!        implementer writes once property (8) has made `is_content` per-line.
+//!        Handed the multi-line form GitHub's own template documentation uses,
+//!        the inner prompt line matches neither delimiter, both sections read as
+//!        carrying content, and the completely unfilled template certifies whole.
+//!        Both forms now have both halves — see `MULTILINE_PROMPT_PROBLEM`,
+//!        `an_unfilled_template_whose_prompts_are_multi_line_comments_fails_closed`
+//!        and its passing mirrors.
 //!
 //!      Every one now has its mirror, so the rule those pairs state together —
 //!      a section whose whole content is the token is no artifact; the token
@@ -216,9 +230,9 @@
 //!      to its RESULT, not only what survives the call's deletion.**
 //!      `unmeasured_alternatives_in` cuts the whole `judge(..)` expression out
 //!      before it looks, so it was blind on both sides of the call.
-//!      `judge(&diff_ctx.pr_body[..2000.min(..)])` reinstates the truncation
+//!      `judge(&pr_body[..2000.min(..)])` reinstates the truncation
 //!      that (1) exists to close, one layer up where `judge` stays perfectly
-//!      correct; `judge(&diff_ctx.pr_body).softened()`, mapping `Failed` onto
+//!      correct; `judge(&pr_body).softened()`, mapping `Failed` onto
 //!      the acceptable `Warning`, certifies every change from one method call
 //!      to the right of both the conditional and the reassignment guards.
 //!      `truncated_argument` and `post_processing_after` close them, and
@@ -234,6 +248,29 @@
 //!      those rules is exercised on both sides in
 //!      `assert_the_wiring_parsers_read_a_real_wiring`, because a guard that
 //!      misreads a correct wiring is worse than no guard.
+//!  18. **The change's body reaches the gate as a PARAMETER.** The guards used
+//!      to accept a second route — a body field on `PrDiffContext`, the
+//!      change-under-review struct the evaluator already takes — because
+//!      forcing a sixty-ninth positional argument decides the implementer's
+//!      surface for them. Review found that route's last link unassertable:
+//!      nothing readable from source establishes that `prepare_pr_diff` STORES
+//!      the body it was handed, so `pr_body: String::new()` satisfies every
+//!      wiring assertion, leaves `judge` perfectly correct, and reports both
+//!      artifacts missing on 100% of pull requests. A parameter is not a grep:
+//!      it can hold only what the caller passed. See
+//!      `evaluator_body_parameters`, and open_questions for the veto.
+//!
+//! # What this suite does NOT close
+//!
+//! Truncation is bounded, not closed. `truncated_argument` forbids slicing at
+//! the call site, and `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact`
+//! carries its bar past byte 1500 and line 25 of a two-kilobyte body — so the
+//! passing and failing sets overlap in length over roughly a two-kilobyte
+//! window. A clamp written INSIDE `judge` with a limit above that window
+//! survives this file, and real pull request bodies exceed two kilobytes
+//! regularly. Closing it needs either a much longer fixture or a stated maximum
+//! body size, and both are decisions for a human rather than for the test
+//! author; it is listed in open_questions.
 //!
 //! Character count and byte count are also deliberately decoupled: the Korean
 //! fixtures are short in characters and long in bytes, so a heuristic in either
@@ -282,6 +319,20 @@
 //! implementation that also recognises `## Acceptance criteria`, `## Why`, a
 //! YAML block or unheaded prose passes unchanged, because no test here requires
 //! a body that genuinely states both artifacts to fail.
+//!
+//! With ONE bound, added this revision, and it is a bound on the artifact and
+//! not on the vocabulary: a section that says what the author RAN is not a
+//! statement of what done looks like. `## Test plan` over `- cargo test --all`
+//! and `## Testing` over test notes must both leave the acceptance bar missing
+//! (`a_real_pull_request_body_with_no_bar_fails_closed`). Without that, the
+//! generosity this section invites steers an implementer at a marker table
+//! including `"test plan"` and `"testing"`, which then certifies a very large
+//! fraction of real pull requests that carry no acceptance bar at all — the
+//! exact false green this seat exists to prevent, with every test here green.
+//! It is the same decision `a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it`
+//! already states in prose ("no reading of 'Testing', 'Rollout' or 'Notes' is a
+//! synonym for the bet or the bar"), made enforceable when the marker is absent
+//! rather than only when it is present and empty. Listed in open_questions.
 //!
 //! That promise was false in the revision before this one, in the one place it
 //! mattered most. `a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it`
@@ -473,6 +524,44 @@ const PLACEHOLDERS: &[&str] = &[
     "TBD - will fill this in before merge",
     "TODO: write the acceptance criteria here",
 ];
+
+/// The prompt block a real pull request template ships, written the way
+/// GitHub's own template documentation writes it: an HTML comment spread over
+/// several lines, with the prompt on its own line between the delimiters.
+///
+/// # Why the multi-line form has to be pinned separately
+///
+/// Every HTML-comment fixture in this file used to open and close on ONE line.
+/// So the only rule the suite required was a line-local predicate —
+///
+///     let t = line.trim();
+///     (t.starts_with("<!--") && t.ends_with("-->")) || ..
+///
+/// — which is the obvious thing to write once `is_content` is a per-line
+/// function, and `a_section_mixing_a_deferral_with_real_content_is_judged_on_the_real_content`
+/// forces `is_content` to be per-line by deciding the `any(substantive)` rule.
+/// Handed a completely unfilled template whose prompts are multi-line, the
+/// inner prompt line starts with neither delimiter and ends with neither, so
+/// both sections read as carrying real content and the body certifies whole.
+/// That is the pasted-template false green this file's module docs call the
+/// whole ballgame, on the single commonest unfilled body there is, with all of
+/// the rest of this suite green while it ships.
+///
+/// Both halves are pinned, as with every other must-fail token (module-doc
+/// property 9): a section whose whole content is the prompt block is no
+/// artifact, and the same block left above or below the author's own text
+/// erases nothing. The passing mirror is what stops the fix degenerating into
+/// "reject any section containing `<!--`", or "reject any section holding a
+/// line that opens a comment it does not close" — either of which fails the
+/// commonest FILLED-IN template body there is.
+const MULTILINE_PROMPT_PROBLEM: &str =
+    "<!--\nWhat problem does this solve? Why does it matter?\n-->";
+
+/// The done-when half of the same template. Neither prompt uses any of the
+/// vocabulary the failure message is judged on beyond the word this file
+/// already subtracts from the body, so both blocks are run through both
+/// sections.
+const MULTILINE_PROMPT_BAR: &str = "<!--\nHow will a reviewer check this is done?\n-->";
 
 /// Deferral stems. These are never enumerated as finished strings: the tests
 /// multiply them out by trailing punctuation, letter case and bullet wrapping,
@@ -1756,21 +1845,22 @@ fn a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured() {
 fn a_real_pull_request_body_with_no_bar_fails_closed() {
     // THE HEADLINE CASE. Every other failing fixture in this file is built from
     // this file's own heading template, which is the one input shape where an
-    // implementation has no temptation to fail open. These are the two bodies
-    // people actually submit: ordinary prose with no headings at all, and a
-    // template nobody filled in. A gate that answers `NotMeasured` here — "the
-    // body carries no section I recognise" — is acceptable to
-    // `is_certified_ready`, so it certifies the majority of real pull requests
-    // while the scorecard names a Product gate that measured nothing. That is
-    // precisely the false green this seat exists to prevent.
+    // implementation has no temptation to fail open. These are the bodies
+    // people actually submit: ordinary prose with no headings at all, a
+    // template nobody filled in, and a template filled in beautifully under
+    // headings that are not the Product artifact. A gate that answers
+    // `NotMeasured` here — "the body carries no section I recognise" — is
+    // acceptable to `is_certified_ready`, so it certifies the majority of real
+    // pull requests while the scorecard names a Product gate that measured
+    // nothing. That is precisely the false green this seat exists to prevent.
     //
     // None of these bodies states an acceptance criterion in any spelling, so
     // none of them collides with the gate's freedom over the marker format: the
     // point is that no bar exists, not that no heading exists. For the same
-    // reason the first three are pinned with `expect_at_least_missing` —
-    // whether unheaded prose also counts as the written problem is a
-    // recognition choice this suite leaves open, while the absence of the bar is
-    // not open at all.
+    // reason all of them but the last two are pinned with
+    // `expect_at_least_missing` — whether unheaded prose, or a `## Summary`,
+    // also counts as the written problem is a recognition choice this suite
+    // leaves open, while the absence of the bar is not open at all.
     let at_least: Vec<(&str, String)> = vec![
         (
             "plain prose with no headings — the commonest real body there is",
@@ -1788,6 +1878,78 @@ fn a_real_pull_request_body_with_no_bar_fails_closed() {
         ),
     ];
 
+    // A FULLY-FILLED TEMPLATE WHOSE HEADINGS ARE REAL AND ARE NOT THE PRODUCT
+    // ARTIFACT. Everything else on this test's failing side is header-less —
+    // plain prose, a one-liner, an emoji and a link, an unfilled comment
+    // template, whitespace — and `THIRD_SECTION_BODY` is pinned as not-an-
+    // artifact only in bodies that ALSO carry a done-when marker with nothing
+    // under it. So no fixture anywhere required a body with real, well-written,
+    // non-Product headings and no done-when marker in any spelling to fail.
+    //
+    // The module docs deliberately leave the marker vocabulary open and invite
+    // generosity — "an implementation that also recognises `## Acceptance
+    // criteria`, `## Why`, a YAML block or unheaded prose passes unchanged" —
+    // which steers an implementer straight at
+    //
+    //     matches!(t, "done when" | "acceptance criteria" | "acceptance"
+    //                | "test plan" | "testing" | "validation" | "verification")
+    //
+    // and a test plan is not an acceptance bar: it says what the author ran,
+    // not what done looks like. Handed the bodies below, that gate reports the
+    // bar PRESENT and certifies a very large fraction of real pull requests
+    // that state no acceptance bar at all, with all of this suite green.
+    //
+    // These sit in `at_least`, not in `exactly_both`, so the same freedom stays
+    // open over the PROBLEM half: whether `## Summary` prose counts as the
+    // written problem is a recognition choice this suite leaves to the
+    // implementer. The absence of the bar is not open.
+    //
+    // This is the decision `a_bold_only_lead_in_line_is_a_heading_and_ends_the_section_above_it`
+    // already made in prose — "no reading of 'Testing', 'Rollout' or 'Notes' is
+    // a synonym for the bet or the bar" — made enforceable when the done-when
+    // marker is ABSENT rather than only when it is present and empty.
+    let real_headings_no_bar: Vec<(&str, String)> = vec![
+        (
+            "a well-written template stating a summary and a test plan, and no \
+             acceptance bar in any spelling",
+            "## Summary\n\nRefactors the canary poller onto the shared HTTP client so \
+             the retry budget is configured in one place instead of three.\n\n\
+             ## Test plan\n\n- `cargo test --all`\n- manual smoke on staging\n"
+                .to_string(),
+        ),
+        (
+            "the same shape under `## Testing`, the other spelling every template \
+             ships",
+            format!(
+                "## Summary\n\nBumps the tracing subscriber to 0.3.19 and drops the \
+                 vendored fork it was pinned to.\n\n## Testing\n\n{THIRD_SECTION_BODY}\n"
+            ),
+        ),
+    ];
+
+    for (context, body) in &real_headings_no_bar {
+        let lowered = body.to_lowercase();
+        assert!(
+            !lowered.contains("done when")
+                && !lowered.contains("done-when")
+                && !lowered.contains("acceptance"),
+            "fixture invariant: {context} must state no acceptance bar in any \
+             spelling, or it stops pinning the absence of the ARTIFACT and starts \
+             pinning the absence of a heading this file happens to know. body={body:?}"
+        );
+        assert!(
+            body.matches("\n## ").count() >= 1 && body.starts_with("## "),
+            "fixture invariant: {context} must carry two real headings over real \
+             content, or it stops separating 'this body states no acceptance bar' \
+             from 'this body has no headings'. body={body:?}"
+        );
+        assert!(
+            body.lines().filter(|l| !l.trim().is_empty()).count() >= 4,
+            "fixture invariant: {context} must be a filled-in template, not an empty \
+             one; an empty heading is already pinned elsewhere. body={body:?}"
+        );
+    }
+
     // These two carry nothing at all, under any reading, so the set is exact.
     let exactly_both: Vec<(&str, String)> = vec![
         (
@@ -1800,7 +1962,11 @@ fn a_real_pull_request_body_with_no_bar_fails_closed() {
         ),
     ];
 
-    for (context, body) in at_least.iter().chain(exactly_both.iter()) {
+    for (context, body) in at_least
+        .iter()
+        .chain(real_headings_no_bar.iter())
+        .chain(exactly_both.iter())
+    {
         assert!(
             !body.contains("Done when") || body.starts_with("<!--"),
             "fixture invariant: {context} must not carry this file's heading over real \
@@ -1808,7 +1974,7 @@ fn a_real_pull_request_body_with_no_bar_fails_closed() {
         );
     }
 
-    for (context, body) in &at_least {
+    for (context, body) in at_least.iter().chain(real_headings_no_bar.iter()) {
         expect_at_least_missing(body, &[Artifact::DoneWhenBar], context);
     }
     for (context, body) in &exactly_both {
@@ -2043,6 +2209,79 @@ fn a_placeholder_fails_in_either_section_however_much_the_other_one_says() {
             &[Artifact::WrittenProblem],
             &format!("the placeholder {placeholder:?} above four paragraphs of bar"),
         );
+    }
+}
+
+#[test]
+fn an_unfilled_template_whose_prompts_are_multi_line_comments_fails_closed() {
+    // The single commonest unfilled pull request body there is, written in the
+    // form GitHub's own template documentation uses and the form most real
+    // templates ship: the prompt sits on its own line between the delimiters.
+    //
+    // See MULTILINE_PROMPT_PROBLEM for what this closes. A line-local
+    // `starts_with("<!--") && ends_with("-->")` predicate — the obvious thing
+    // to write once `is_content` is per-line, which the `any(substantive)` rule
+    // makes it — reads the inner prompt line as real content and certifies this
+    // body whole, with every other test in this file green.
+    //
+    // The fixture invariants first, so they are exercised rather than stranded
+    // behind the `todo!()` while the gate is unwritten.
+    for (label, block) in [
+        ("the problem prompt", MULTILINE_PROMPT_PROBLEM),
+        ("the done-when prompt", MULTILINE_PROMPT_BAR),
+    ] {
+        assert!(
+            block.lines().count() > 2,
+            "fixture invariant: {label} must span more than two lines, or it stops \
+             being the multi-line shape this test exists for and collapses back onto \
+             the single-line form already pinned in PLACEHOLDERS"
+        );
+        assert!(
+            block
+                .lines()
+                .any(|l| !l.trim().starts_with("<!--") && !l.trim().ends_with("-->")),
+            "fixture invariant: {label} must carry a line that neither opens nor \
+             closes a comment, or a line-local delimiter predicate still reads the \
+             whole block as a comment and this test pins nothing new"
+        );
+    }
+
+    // Over both line endings, because the closing delimiter is exactly the kind
+    // of `ends_with` test a trailing `\r` defeats, and this body reaches the
+    // guard layer from the GitHub web UI with CRLF.
+    for eol in BOTH_EOLS {
+        expect_missing(
+            &as_eol(
+                &body_with(MULTILINE_PROMPT_PROBLEM, MULTILINE_PROMPT_BAR),
+                eol,
+            ),
+            &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
+            &format!(
+                "a template nobody filled in, its prompts written as multi-line HTML \
+                 comments, {eol:?}"
+            ),
+        );
+    }
+
+    // The same body with no headings at all, which is what a template leading
+    // with its prompts produces before the author types anything.
+    for eol in BOTH_EOLS {
+        expect_missing(
+            &as_eol(
+                &format!("{MULTILINE_PROMPT_PROBLEM}\n\n{MULTILINE_PROMPT_BAR}\n"),
+                eol,
+            ),
+            &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
+            &format!("multi-line template prompts and nothing else, {eol:?}"),
+        );
+    }
+
+    // And each block judged in the bet position as well as the bar position, so
+    // an implementation cannot screen one section for substance and settle for
+    // "non-empty" on the other — module-doc property 3, applied to the token
+    // this test exists for.
+    for block in [MULTILINE_PROMPT_PROBLEM, MULTILINE_PROMPT_BAR] {
+        assert_placeholder_fails_in_both_sections(block, "a multi-line template prompt");
     }
 }
 
@@ -2362,6 +2601,33 @@ fn a_section_mixing_a_deferral_with_real_content_is_judged_on_the_real_content()
          content",
     );
 
+    // THE SAME PAIR FOR THE MULTI-LINE PROMPT BLOCK, which is the form GitHub's
+    // own template documentation writes and the form most real templates ship.
+    // `an_unfilled_template_whose_prompts_are_multi_line_comments_fails_closed`
+    // pins the failing half; without this half the fix for it degenerates into
+    // "reject any section containing `<!--`", or "reject any section holding a
+    // line that opens a comment and does not close it" — and either of those
+    // reports both artifacts missing from the commonest FILLED-IN template body
+    // there is, which is the fabricated accusation this file names as equal in
+    // severity to a false green. Above the author's text and below it, the same
+    // two positions the single-line form is pinned in.
+    expect_passed(
+        &body_with(
+            &format!("{MULTILINE_PROMPT_PROBLEM}\n\n{PROBLEM}"),
+            &format!("{MULTILINE_PROMPT_BAR}\n\n{MULTILINE_BAR}"),
+        ),
+        "a filled-in template whose multi-line prompt blocks were left above the \
+         content the author typed under them",
+    );
+    expect_passed(
+        &body_with(
+            &format!("{PROBLEM}\n\n{MULTILINE_PROMPT_PROBLEM}"),
+            &format!("{MULTILINE_BAR}\n\n{MULTILINE_PROMPT_BAR}"),
+        ),
+        "the same multi-line prompt blocks left trailing below the author's own \
+         content instead of above it",
+    );
+
     // And the bound on `any`, so it cannot be satisfied by a stray word: a
     // section several lines long, every line of which is a deferral, is still
     // no artifact. This is the fully-unfilled checklist, which is a template
@@ -2466,16 +2732,37 @@ fn a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary() {
     // The mirror in the other direction, so this cannot be satisfied by reading
     // a colon-terminated line as content: a lead-in with nothing to lead in to
     // is still an empty section, whichever spacing follows it.
-    expect_missing(
-        &body_with(PROBLEM, "Acceptance:"),
-        &[Artifact::DoneWhenBar],
-        "a done-when section holding a lead-in line and nothing to lead in to",
-    );
-    expect_missing(
-        &body_with(PROBLEM, "Acceptance criteria:\n\n"),
-        &[Artifact::DoneWhenBar],
-        "a done-when section holding a lead-in line, a blank line, and nothing else",
-    );
+    //
+    // IN BOTH POSITIONS. This half used to be pinned only in the done-when
+    // section, which is module-doc property 3 — "both sections are held to one
+    // standard" — broken by the file that states it: a gate that read a bare
+    // lead-in as content in the PROBLEM section satisfied the whole suite.
+    for (label, lead_in) in [
+        ("with nothing to lead in to", "Acceptance:".to_string()),
+        (
+            "with a blank line and nothing else",
+            "Acceptance criteria:\n\n".to_string(),
+        ),
+    ] {
+        expect_missing(
+            &body_with(PROBLEM, &lead_in),
+            &[Artifact::DoneWhenBar],
+            &format!("a done-when section holding a lead-in line {label}"),
+        );
+    }
+    for (label, lead_in) in [
+        ("with nothing to lead in to", "Background:".to_string()),
+        (
+            "with a blank line and nothing else",
+            "Today:\n\n".to_string(),
+        ),
+    ] {
+        expect_missing(
+            &body_with(&lead_in, BAR),
+            &[Artifact::WrittenProblem],
+            &format!("a problem section holding a lead-in line {label}"),
+        );
+    }
 }
 
 #[test]
@@ -2756,6 +3043,23 @@ fn assert_the_marker_prose_is_followed_by_content(body: &str, marker_prose: &str
 /// same reason: a rule applied to the bar and not to the bet is half a gate.
 #[track_caller]
 fn assert_real_content_passes_in_both_sections(content: &str, family: &str) {
+    // The message-vocabulary invariant, applied where the content actually
+    // enters rather than to a hand-kept list beside it.
+    // `assert_the_content_fixtures_carry_none_of_the_message_vocabulary` names
+    // fifteen constants and misses every fixture written inline at a call site
+    // — the checklists, the pointer mirrors,
+    // `REAL_CONTENT_WITH_A_DEFERRAL_PREFIX`. All of those pass through here, so
+    // asserting it here cannot silently exempt one: a fixture that itself said
+    // "problem" or "acceptance" would be subtracted from the failure message by
+    // `message_residue` and would exempt the gate from the naming rule it is
+    // held to.
+    assert!(
+        !names_the_problem(content) && !names_the_bar(content),
+        "fixture invariant: {family} must carry none of the vocabulary the failure \
+         message is judged on, or subtracting it from the message exempts the gate \
+         from the rule that message is held to. Content: {content:?}"
+    );
+
     expect_passed(
         &body_with(PROBLEM, content),
         &format!("{family}: the done-when section holds {content:?}"),
@@ -3474,7 +3778,7 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     );
 
     for (rel, raw) in &sources {
-        let src = without_line_comments(raw);
+        let src = without_block_comments(&without_string_literals(&without_line_comments(raw)));
         for line in src.lines() {
             let trimmed = line.trim();
             for path in imported_paths(trimmed) {
@@ -3542,6 +3846,50 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         );
     }
 
+    // AND THE BLOCK-COMMENT STRIPPER, exercised before it is trusted for the
+    // same reason as every other parser here: the sweep below bans eighteen
+    // substrings, and prose is not an effect. A stripper that ate the code
+    // after a comment would silence the sweep; one that ate nothing would fail
+    // a correct gate for explaining itself.
+    for (src_text, keep, lose) in [
+        ("/* Command */\nlet x = 1;", "let x = 1;", "Command"),
+        (
+            "let a = 1; /* std::fs::read_to_string */ let b = 2;",
+            "let b = 2;",
+            "fs::",
+        ),
+        (
+            "/* outer /* Instant */ still a comment */ let c = 3;",
+            "let c = 3;",
+            "Instant",
+        ),
+        (
+            "/*\n * tokio\n */\nstd::process::Command::new(\"git\")",
+            "Command::new",
+            "tokio",
+        ),
+    ] {
+        let stripped = without_block_comments(src_text);
+        assert!(
+            stripped.contains(keep),
+            "without_block_comments({src_text:?}) swallowed the code after the \
+             comment; a stripper that can blank the rest of a file silences the only \
+             sweep that catches I/O reached without a `use` line. Got {stripped:?}"
+        );
+        assert!(
+            !stripped.contains(lose),
+            "without_block_comments({src_text:?}) left {lose:?} behind, so a gate that \
+             explains itself in a block comment fails this test for its prose. Got \
+             {stripped:?}"
+        );
+        assert_eq!(
+            stripped.lines().count(),
+            src_text.lines().count(),
+            "without_block_comments must preserve line structure, or the per-line \
+             import scan reads the wrong lines"
+        );
+    }
+
     // The things reachable with a `use` that `impure_import` admits — `use std;`
     // followed by a full path, or `use std::sync;` followed by `sync::mpsc` —
     // are caught here rather than by widening the import rule back into a ban on
@@ -3549,7 +3897,7 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     // an ordinary identifier ending in those two letters (`Ratio::new`) is not
     // mistaken for a syscall.
     for (rel, raw) in &sources {
-        let src = without_string_literals(&without_line_comments(raw));
+        let src = without_block_comments(&without_string_literals(&without_line_comments(raw)));
         for forbidden in [
             "env!",
             "option_env!",
@@ -3704,13 +4052,13 @@ fn a_missing_product_bar_withholds_certification() {
 // worse than no guard, so each assertion below is anchored on the loosest
 // spelling that still carries the fact:
 //
-//   * the evaluator receives the change's **body** — either as a parameter
-//     whose name says body (`pr_body`, `body`), or as a field whose name says
-//     body on `PrDiffContext`, the change-under-review struct the evaluator
-//     already takes. Both are read, and the check is the claim: an earlier
-//     revision promised the struct route in this comment and then asserted a
-//     literal `"body"` inside the parameter list, so it failed a correct
-//     `diff_ctx.pr_body` wiring while accusing it of gating nothing;
+//   * the evaluator receives the change's **body** as a parameter whose name
+//     says body (`pr_body`, `body`), and the judge call is rooted at that
+//     parameter. The route through a body field on `PrDiffContext` is closed —
+//     not for its spelling, but because its last link, that the constructor
+//     stores the body it was handed, cannot be asserted from source, and an
+//     unpopulated field reads as `""` for every pull request. See
+//     `evaluator_body_parameters`;
 //   * `product_bar_status` is derived from a call to product_bar's `judge` —
 //     qualified (`product_bar::judge(...)`) or imported (`use
 //     super::product_bar::judge;` then `judge(...)`), directly or through a
@@ -3733,6 +4081,51 @@ fn without_line_comments(src: &str) -> String {
         .map(strip_line_comment)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `src` with `/* .. */` block comments blanked, newlines preserved so the
+/// per-line scans keep their line numbers.
+///
+/// # Why this exists
+///
+/// `without_line_comments` handles `//` and nothing else, and the determinism
+/// sweep below bans eighteen substrings — `Command`, `Instant`, `::var(` among
+/// them — from what is left. So an ordinary Rust block comment in
+/// `product_bar.rs` explaining, say, why the gate runs no `Command`, would fail
+/// the test for its prose. That is the "a guard that misreads what it guards is
+/// worse than none" failure this file spends a page warning about, left open in
+/// the one comment syntax the stripper did not know.
+///
+/// Run AFTER `without_string_literals`, so a `/*` inside an author-facing
+/// message cannot open a comment that swallows the rest of the file — the same
+/// failure mode the raw-string and char-literal cases of that parser exist for.
+/// Rust block comments nest, so the depth is counted rather than toggled.
+fn without_block_comments(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+            depth += 1;
+            out.push_str("  ");
+            i += 2;
+            continue;
+        }
+        if depth > 0 && chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+            depth -= 1;
+            out.push_str("  ");
+            i += 2;
+            continue;
+        }
+        if depth > 0 {
+            out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+        } else {
+            out.push(chars[i]);
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Every source file the Product gate's own code can be reached from, as
@@ -4293,20 +4686,33 @@ fn leading_ident(expr: &str) -> String {
         .collect()
 }
 
-/// The field names declared by `struct <name> { .. }` in `src`.
+/// The identifier an expression is rooted at: `pr_body` in `&pr_body.trim()`.
 ///
-/// One level of braces, which is all a plain data struct has.
-fn struct_fields(src: &str, name: &str) -> Vec<String> {
-    let anchor = format!("struct {name} {{");
-    let Some(start) = src.find(&anchor) else {
-        return Vec::new();
-    };
-    let body = &src[start + anchor.len()..];
-    let end = body.find('}').unwrap_or(body.len());
-    body[..end]
+/// `&`, `&mut ` and surrounding space are stripped first, because all three are
+/// how a caller spells "this value" rather than something done to it.
+fn root_ident(expr: &str) -> String {
+    let e = expr
+        .trim()
+        .trim_start_matches('&')
+        .trim_start()
+        .trim_start_matches("mut ")
+        .trim_start();
+    leading_ident(e)
+}
+
+/// The parameter names declared by a signature that writes one parameter per
+/// line, which is how `evaluate_pre_merge_gates` is written.
+///
+/// The first line is the `fn name(` itself, and `&self` carries no colon, so
+/// both drop out. A signature this parser cannot read produces an empty list,
+/// and `the_evaluator_receives_the_change_under_review` fails loudly on that
+/// rather than letting the guard answer "no" without looking.
+fn signature_parameters(signature: &str) -> Vec<String> {
+    signature
         .lines()
+        .skip(1)
         .filter_map(|l| {
-            let t = l.trim().trim_start_matches("pub ").trim();
+            let t = l.trim().trim_start_matches("mut ").trim();
             let colon = t.find(':')?;
             let name = t[..colon].trim();
             if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -4318,27 +4724,64 @@ fn struct_fields(src: &str, name: &str) -> Vec<String> {
         .collect()
 }
 
-/// Fields on `PrDiffContext` that carry text authored on the change.
+/// The declared signature of `evaluate_pre_merge_gates`, from `pub fn` to the
+/// `)` that closes its parameter list.
+fn evaluator_signature(src: &str) -> Option<String> {
+    let start = src.find("pub fn evaluate_pre_merge_gates(")?;
+    let tail = &src[start..];
+    let end = tail.find(") -> ")?;
+    Some(tail[..end].to_string())
+}
+
+/// The parameters of `evaluate_pre_merge_gates` whose names say body.
 ///
-/// `PrDiffContext` (src/git_manager/diff_context.rs) IS the change-under-review
-/// struct: repo, pr_number, base_sha, head_sha, diff_content, changed_files.
-/// The evaluator already receives it. Adding `pub pr_body: String` to it,
-/// populating it where the context is built, and judging `&diff_ctx.pr_body` is
-/// a correct, complete and arguably cleaner wiring than a sixty-ninth
-/// parameter — and the previous revision of the two guards below failed it,
-/// with a message accusing it of the precise defect it does not have. That is
-/// this file's own standard ("a wiring guard that misreads the wiring and then
-/// reports a correct implementation as broken is worse than no guard")
-/// violated by the guard that states it.
+/// # Why the body must arrive as a PARAMETER, and not on `PrDiffContext`
 ///
-/// The fact these guards pin is that the body reaches the gate. Which of the
-/// two routes carries it is the implementer's to choose, so both are read.
-fn diff_context_body_fields() -> Vec<String> {
-    let src = without_line_comments(&source("src/git_manager/diff_context.rs"));
-    struct_fields(&src, "PrDiffContext")
-        .into_iter()
-        .filter(|f| f.contains("body"))
-        .collect()
+/// Two revisions of these guards accepted a second route: put `pub pr_body:
+/// String` on `PrDiffContext` — the change-under-review struct the evaluator
+/// already receives — populate it where the context is built, and judge
+/// `&diff_ctx.pr_body`. That really is a correct and arguably cleaner wiring
+/// than a sixty-ninth positional argument, and the guards were widened to admit
+/// it so this file would not decide the implementer's surface for them.
+///
+/// It cannot be closed from source alone, and review found the hole. Nothing
+/// here can assert that `GitManager::prepare_pr_diff` STORES the parameter it
+/// was handed onto the field it declares. Add the field, add a `pr_body: &str`
+/// parameter, construct the context with `pr_body: String::new()` — or populate
+/// it at one of the several construction sites and miss the one
+/// `prepare_pr_diff` uses — and every wiring assertion passes: the pipeline
+/// statement mentions the body, the evaluator's signature takes a
+/// `PrDiffContext` and reads `.pr_body`, and `judge(&diff_ctx.pr_body)` is an
+/// untruncated plain path with nothing chained onto it. `judge` itself stays
+/// perfectly correct, so every behavioural test in this file stays green, and
+/// the gate reads `""` for every pull request and reports BOTH artifacts
+/// missing on 100% of changes. That is the fabricated accusation at full
+/// incidence, which this file names as equal in severity to a false green.
+///
+/// The behavioural close the reviewer asked for — construct a `PrDiffContext`
+/// from a known non-empty body and assert the field carries that exact string —
+/// cannot be written against `prepare_pr_diff`, which clones a repository and
+/// shells out to `git fetch` before it constructs anything. A test that reaches
+/// the network is neither hermetic nor deterministic, and a source scan of the
+/// constructor is the same grep one layer down.
+///
+/// So route two is closed and route one is required. A parameter is not a grep:
+/// it can hold only what the caller passed, so `body` -> parameter ->
+/// `judge(pr_body)` is a value chain with no unasserted link in it. The cost is
+/// one more argument on a function that already takes sixty-eight, in a file
+/// whose house idiom is exactly that. This is listed in open_questions as a
+/// decision a human can veto; vetoing it means reopening route two AND writing
+/// the constructor seam that lets its last link be asserted behaviourally.
+fn evaluator_body_parameters() -> Vec<String> {
+    let src = without_line_comments(&source("src/pre_merge_guard/evaluator.rs"));
+    evaluator_signature(&src)
+        .map(|sig| {
+            signature_parameters(&sig)
+                .into_iter()
+                .filter(|p| p.contains("body"))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The `let` statement that binds `name` in `src`, from the `let` to the `;`
@@ -4378,8 +4821,8 @@ fn binding_statement(src: &str, name: &str) -> Option<String> {
 /// therefore invisible to it, and `let_binding_before` strips `mut ` on
 /// purpose, so `let mut product_bar_status = …` is an accepted binding:
 ///
-///     let mut product_bar_status = product_bar::judge(&diff_ctx.pr_body);
-///     if diff_ctx.pr_body.trim().is_empty() {
+///     let mut product_bar_status = product_bar::judge(&pr_body);
+///     if pr_body.trim().is_empty() {
 ///         product_bar_status = GateStatus::NotMeasured { .. };
 ///     }
 ///
@@ -4579,14 +5022,14 @@ const WHOLE_VALUE_ADAPTERS: &[&str] = &[
 ///
 /// ```text
 /// let product_bar_status =
-///     product_bar::judge(&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())]);
+///     product_bar::judge(&pr_body[..2000.min(pr_body.len())]);
 /// ```
 ///
 /// The argument still contains "body". The residue is `let product_bar_status =
 /// ;` and holds no alternative. Nothing is reassigned. `judge` itself stays
 /// perfectly correct, so every behavioural assertion in this file is green —
 /// and every author who writes a long, careful pull request is told they wrote
-/// no acceptance bar. `judge(&diff_ctx.pr_body.lines().take(40).collect::<String>())`
+/// no acceptance bar. `judge(&pr_body.lines().take(40).collect::<String>())`
 /// is the same defect in the other unit.
 fn truncated_argument(arg: &str) -> Option<String> {
     for token in TRUNCATING_TOKENS {
@@ -4625,13 +5068,13 @@ fn truncated_argument(arg: &str) -> Option<String> {
 
     Some(format!(
         "{expr:?} is not a plain path to the change's body. The argument must be the \
-         identifier or field access itself — `pr_body`, `&diff_ctx.pr_body` — possibly \
+         identifier or field access itself — `pr_body`, `&self.pr_body` — possibly \
          through one of {WHOLE_VALUE_ADAPTERS:?}, none of which can drop any of the text"
     ))
 }
 
 /// Whether `expr` is a bare identifier or a field access: `pr_body`,
-/// `diff_ctx.pr_body`, `self.pr_body`.
+/// `self.pr_body`.
 fn is_plain_path(expr: &str) -> bool {
     !expr.is_empty()
         && !expr.starts_with('.')
@@ -4650,7 +5093,7 @@ fn is_plain_path(expr: &str) -> bool {
 /// everything the residue could have caught about what is done TO the result:
 ///
 /// ```text
-/// let product_bar_status = product_bar::judge(&diff_ctx.pr_body).softened();
+/// let product_bar_status = product_bar::judge(&pr_body).softened();
 /// ```
 ///
 /// where `softened()` maps `Failed(m)` onto `Warning(m)` — the "soft launch so
@@ -4674,103 +5117,49 @@ fn post_processing_after(tail: &str) -> Option<char> {
     }
 }
 
-/// Whether the `let` that binds `ident` in `src` BUILDS the change-under-review
-/// struct and was handed the change's body.
-///
-/// The previous revision asked only whether *any* argument in the call had a
-/// `let` statement containing the substring "body", and two arguments at the
-/// real call site have always qualified: `&doc_report`, bound by a statement
-/// ending `…, title, body).await?`, and `&review_resp.verdict`, bound by
-/// `state.reviewer.review_pr(&diff_ctx, title, body)`. Neither has anything to
-/// do with handing the body to the gate. The moment a body field appeared on
-/// `PrDiffContext` — which route two requires anyway — both wiring guards went
-/// green with no change to the pipeline at all, `prepare_pr_diff` still never
-/// received the body, `pr_body` stayed `String::new()` forever and the gate
-/// read `""` for every pull request. A guard satisfied by bindings that predate
-/// the change it guards is not a guard.
-///
-/// So the question is asked of the statement that produces the struct, and of
-/// nothing else. Two spellings carry the fact, because both really do hand the
-/// body over: passing it to the constructor, and assigning it onto the struct
-/// afterwards.
-fn diff_context_carries_the_body(src: &str, ident: &str, body_fields: &[String]) -> bool {
-    let Some(statement) = binding_statement(src, ident) else {
-        return false;
-    };
-    if !(statement.contains("prepare_pr_diff") || statement.contains("PrDiffContext {")) {
-        return false;
-    }
-    if statement.contains("body") {
-        return true;
-    }
-
-    body_fields.iter().any(|field| {
-        let target = format!("{ident}.{field}");
-        src.lines().any(|line| {
-            let Some((lhs, rhs)) = line.split_once('=') else {
-                return false;
-            };
-            lhs.trim() == target && rhs.contains("body")
-        })
-    })
-}
-
-/// Whether one of `args` is a change-under-review struct that was built from
-/// the change's body.
-fn an_argument_carries_the_change_body(src: &str, args: &[String], body_fields: &[String]) -> bool {
-    !body_fields.is_empty()
-        && args.iter().any(|a| {
-            let ident = leading_ident(a.trim_start_matches('&').trim_start_matches("mut ").trim());
-            diff_context_carries_the_body(src, &ident, body_fields)
-        })
-}
-
 #[test]
 fn the_evaluator_receives_the_change_under_review() {
+    assert_the_wiring_parsers_read_a_real_wiring();
+
     let src = without_line_comments(&source("src/pre_merge_guard/evaluator.rs"));
-    let start = src
-        .find("pub fn evaluate_pre_merge_gates(")
-        .expect("the evaluator declares evaluate_pre_merge_gates");
-    let tail = &src[start..];
-    let end = tail
-        .find(") -> ")
-        .expect("evaluate_pre_merge_gates has a return type");
-    let signature = &tail[..end];
+    let signature =
+        evaluator_signature(&src).expect("the evaluator declares evaluate_pre_merge_gates");
+
+    // This parser reads one parameter per line. If the signature is ever
+    // collapsed, it must say so rather than quietly find no parameters and
+    // report the wiring absent — a wiring guard that cannot read the wiring is
+    // worse than none.
+    let parameters = signature_parameters(&signature);
+    assert!(
+        parameters.len() > 4,
+        "this test reads one parameter per line and found only {parameters:?} on \
+         evaluate_pre_merge_gates. Fix the test to parse the new shape rather than \
+         let it mis-parse. Signature: {signature:?}"
+    );
 
     // The fact, not the spelling: the evaluator has to be handed the text the
-    // Product artifact is written in. A gate cannot measure text the evaluator
-    // is never given, and a gate that measures nothing gates nothing.
+    // Product artifact is written in, AS A PARAMETER. A gate cannot measure
+    // text the evaluator is never given, and a gate that measures nothing gates
+    // nothing.
     //
-    // Two routes carry that fact and this test accepts either. A parameter
-    // whose name says body is one. The other is a field whose name says body on
-    // `PrDiffContext` — the change-under-review struct the evaluator already
-    // receives — which is a correct, complete and arguably cleaner wiring than
-    // a sixty-ninth positional argument. The previous revision of this test
-    // promised that second route in a comment and then asserted the first, so
-    // it would have failed the cleaner implementation while accusing it of the
-    // one defect it does not have.
-    //
-    // Route two is that the field EXISTS AND IS READ, not merely that it
-    // exists. Declaring `pub pr_body: String` on `PrDiffContext` satisfied the
-    // previous revision on its own, and a declared-but-unread field is exactly
-    // the "named thing, no measurement" pattern this seat exists to catch. Read
-    // together with `the_review_pipeline_hands_the_evaluator_the_change_body`
-    // and the judge-call check below, the chain is unbroken: body -> diff
-    // context -> evaluator -> judge.
-    let named_parameter = signature.contains("body");
-    let body_fields = diff_context_body_fields();
-    let reads_the_body_field = body_fields.iter().any(|f| src.contains(&format!(".{f}")));
-    let on_the_change_under_review = signature.contains("PrDiffContext") && reads_the_body_field;
-
+    // See `evaluator_body_parameters` for why the route through a `pr_body`
+    // field on `PrDiffContext` is closed rather than accepted: nothing readable
+    // from source establishes that the constructor stores the body it was
+    // handed, so that route leaves a link where `pr_body` can be `String::new()`
+    // for every pull request while every assertion in these three tests passes
+    // and `judge` stays perfectly correct. A parameter is not a grep — it can
+    // hold only what the caller passed — so `body` -> parameter -> `judge` is a
+    // value chain with no unasserted link. Listed in open_questions.
+    let body_parameters = evaluator_body_parameters();
     assert!(
-        named_parameter || on_the_change_under_review,
+        !body_parameters.is_empty(),
         "evaluate_pre_merge_gates never receives the change's body, which is where \
          the written problem and the done-when bar are authored. Hand it a parameter \
-         whose name says body, or put the body on PrDiffContext — the \
-         change-under-review struct this signature already takes — AND READ IT \
-         HERE; a field the evaluator never touches gates as much as no field at \
-         all. PrDiffContext body fields: {body_fields:?} (read by this file: \
-         {reads_the_body_field}). Signature: {signature:?}"
+         whose name says body. Putting the body on PrDiffContext instead is not \
+         enough: nothing this file can read establishes that the constructor stores \
+         the body it was handed, so an unpopulated field reads as the empty string \
+         for every pull request and the gate reports both artifacts missing on every \
+         change while judging correctly. Parameters: {parameters:?}"
     );
 }
 
@@ -4779,6 +5168,7 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
     assert_the_wiring_parsers_read_a_real_wiring();
 
     let src = without_line_comments(&source("src/pre_merge_guard/evaluator.rs"));
+    let body_parameters = evaluator_body_parameters();
 
     let calls = product_bar_judge_calls(&src);
     assert!(
@@ -4791,16 +5181,29 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
 
     for call in &calls {
         let args = &call.args;
+
+        // ROOTED AT THE PARAMETER THE EVALUATOR WAS HANDED, not merely holding
+        // the substring "body". `judge(&diff_ctx.pr_body)` contains it too, and
+        // a `pr_body` field the constructor never populates is the empty string
+        // for every pull request — the gate then reports both artifacts missing
+        // on 100% of changes while `judge` stays perfectly correct and every
+        // behavioural test in this file stays green. See
+        // `evaluator_body_parameters`.
+        let root = root_ident(args);
         assert!(
-            args.contains("body"),
-            "the Product gate must be judged over the change's own body, which is \
-             where the written problem and the done-when bar are authored; got \
-             judge({args})"
+            body_parameters.contains(&root),
+            "the Product gate is judged over judge({args}), which is rooted at \
+             {root:?} — not at any parameter of evaluate_pre_merge_gates whose name \
+             says body ({body_parameters:?}). The gate must read the text the \
+             evaluator was HANDED. A field on a struct the evaluator merely receives \
+             is not that: nothing here can establish that the struct's constructor \
+             stored the body, so an unpopulated field reads as \"\" for every pull \
+             request and the seat accuses every author of writing neither artifact"
         );
 
         // AND THE WHOLE OF IT. The residue check below cuts the judge call out
         // before it looks, so it is blind to what was done to the call's INPUT.
-        // `judge(&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())])` still
+        // `judge(&pr_body[..2000.min(pr_body.len())])` still
         // names the body, still leaves an empty residue, still binds the field
         // to a judge call — and reinstates the truncation that
         // `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact` exists to
@@ -4817,7 +5220,7 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
         }
 
         // AND THE VERDICT IS USED AS IT COMES. Cutting the call out also cuts
-        // out what is done to its RESULT: `judge(&diff_ctx.pr_body).softened()`,
+        // out what is done to its RESULT: `judge(&pr_body).softened()`,
         // mapping Failed onto Warning, leaves a residue holding none of
         // UNMEASURED_ALTERNATIVES and certifies every change, because Warning is
         // `is_acceptable()`.
@@ -4905,8 +5308,8 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
         // every later value. So the same fail-open, written as a reassignment
         // one line down, walks straight past it:
         //
-        //     let mut product_bar_status = product_bar::judge(&diff_ctx.pr_body);
-        //     if diff_ctx.pr_body.trim().is_empty() {
+        //     let mut product_bar_status = product_bar::judge(&pr_body);
+        //     if pr_body.trim().is_empty() {
         //         product_bar_status = GateStatus::NotMeasured { .. };
         //     }
         //
@@ -4979,39 +5382,29 @@ fn the_review_pipeline_hands_the_evaluator_the_change_body() {
         .map(|l| l.trim().trim_end_matches(',').to_string())
         .collect();
 
-    // Same two routes as the test above, for the same reason. Either the
-    // pipeline hands the evaluator an argument that names the body, or the body
-    // rides on the change-under-review struct — in which case the pipeline's
-    // obligation is that the statement building THAT STRUCT was handed the
-    // body, since a `PrDiffContext` with an empty `pr_body` gates exactly as
-    // much as no body at all.
+    // ONE ROUTE, deliberately: an argument rooted at an identifier whose name
+    // says body. See `evaluator_body_parameters` for why the route through a
+    // `pr_body` field on `PrDiffContext` is closed rather than accepted.
     //
-    // "That struct", not "some argument". The previous revision asked whether
-    // any argument in the sixty-eight had a `let` statement mentioning "body",
-    // and two of them have always qualified: `&doc_report`, bound by a call
-    // ending `…, title, body).await?`, and `&review_resp.verdict`, bound by
-    // `state.reviewer.review_pr(&diff_ctx, title, body)`. Neither hands the
-    // body to the gate. The only thing keeping that check red was the absent
-    // body field — so the instant an implementer declared one, both wiring
-    // guards went green with zero change to the pipeline, `prepare_pr_diff`
-    // still never received the body, and the gate read `""` for every pull
-    // request. `assert_the_wiring_parsers_read_a_real_wiring` now runs that
-    // exact arrangement through this route and requires the answer "no".
-    let handed_directly = args.iter().any(|a| a.contains("body"));
-
-    let body_fields = diff_context_body_fields();
-    let built_from_the_body = an_argument_carries_the_change_body(&src, &args, &body_fields);
+    // Rooted at, not merely containing. `&doc_report` and `&review_resp.verdict`
+    // are both bound by statements that mention the body — `…, title, body)` —
+    // and neither hands the body to the gate; the previous revision's check was
+    // satisfied by those two bindings, which predate the change they were meant
+    // to guard.
+    let handed_over: Vec<&String> = args
+        .iter()
+        .filter(|a| root_ident(a).contains("body"))
+        .collect();
 
     assert!(
-        handed_directly || built_from_the_body,
+        !handed_over.is_empty(),
         "the review pipeline never hands the evaluator the pull request body, which \
-         is where the written problem and the done-when bar are authored. Pass it as \
-         an argument that names the body, or hand the body to the statement that \
-         builds the PrDiffContext (or assign it onto that struct) and pass that \
-         struct. Declaring a body field is not enough on its own: an unpopulated \
-         field reads as the empty string for every pull request, and a gate that \
-         reads nothing gates nothing. Arguments: {args:?}. PrDiffContext body \
-         fields: {body_fields:?}"
+         is where the written problem and the done-when bar are authored. `body` is \
+         already in scope at this call site — it goes to `review_pr` and to \
+         `ensure_documentation_parity` a few lines above — so pass it, as an \
+         argument rooted at the body itself. A gate handed nothing gates nothing, and \
+         a gate handed the empty string accuses every author of writing neither \
+         artifact. Arguments: {args:?}"
     );
 }
 
@@ -5132,44 +5525,71 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         "the call finder misread the qualified call: {found:?}"
     );
 
-    // The struct-field reader, which is what lets the body reach the gate
-    // through `PrDiffContext` instead of through a parameter of its own. It has
-    // to see a field that is there and not invent one that is not, or the
-    // widened guards above become either a no-op or a false accusation.
-    let decl = "#[derive(Debug, Clone)]\n\
-                pub struct PrDiffContext {\n\
-                \x20   pub repo: String,\n\
-                \x20   pub pr_number: u64,\n\
-                \x20   pub pr_body: String,\n\
-                \x20   pub diff_content: String,\n\
-                }\n";
+    // THE SIGNATURE READER, which is the whole of route one: the guards ask
+    // whether the evaluator declares a parameter whose name says body, and then
+    // whether the judge call is rooted at that parameter. A reader that finds
+    // nothing turns both into an accusation with no evidence behind it, and one
+    // that finds a name where there is none turns them into a no-op.
+    let sig = "    pub fn evaluate_pre_merge_gates(\n\
+               \x20       &self,\n\
+               \x20       diff_ctx: &PrDiffContext,\n\
+               \x20       pr_title: &str,\n\
+               \x20       pr_body: &str,\n\
+               \x20       doc_report: &DocGuardReport,\n";
     assert_eq!(
-        struct_fields(decl, "PrDiffContext"),
-        vec!["repo", "pr_number", "pr_body", "diff_content"],
-        "struct_fields misread the change-under-review struct"
+        signature_parameters(sig),
+        vec!["diff_ctx", "pr_title", "pr_body", "doc_report"],
+        "signature_parameters misread the evaluator's parameter list; `&self` carries \
+         no colon and the `fn` line is not a parameter"
     );
     assert!(
-        struct_fields(decl, "SomeOtherStruct").is_empty(),
-        "struct_fields must find nothing for a struct that is not declared here"
+        signature_parameters("    pub fn f(&self) -> Result<()> {\n").is_empty(),
+        "signature_parameters must find nothing in a signature that declares no \
+         parameters, rather than invent one"
     );
 
-    // And it must be pointed at the real struct, not at a file that no longer
-    // declares it. `diff_context_body_fields()` returning nothing is how the
-    // guards above conclude "the body does not ride on the change-under-review
-    // struct", so a moved file or a renamed struct would quietly turn that
-    // branch into a permanent no — an answer the guard would give with no
-    // evidence behind it.
-    let real = struct_fields(
-        &without_line_comments(&source("src/git_manager/diff_context.rs")),
-        "PrDiffContext",
-    );
-    for field in ["repo", "pr_number", "diff_content", "changed_files"] {
+    // And it must be pointed at the real function, not at a file that no longer
+    // declares it. `evaluator_body_parameters()` coming back empty is how the
+    // guards conclude "the evaluator was never handed the body", so a renamed
+    // or moved evaluator would make that a permanent yes-it-is-broken answer
+    // given without looking.
+    let real_signature = evaluator_signature(&without_line_comments(&source(
+        "src/pre_merge_guard/evaluator.rs",
+    )))
+    .expect("src/pre_merge_guard/evaluator.rs declares evaluate_pre_merge_gates");
+    let real_parameters = signature_parameters(&real_signature);
+    for parameter in ["diff_ctx", "doc_report", "coverage_report"] {
         assert!(
-            real.iter().any(|f| f == field),
-            "src/git_manager/diff_context.rs no longer declares PrDiffContext with a \
-             {field:?} field, so this file is not reading the change-under-review \
-             struct any more and the wiring guards' second route answers 'no' without \
-             looking. Found: {real:?}"
+            real_parameters.iter().any(|p| p == parameter),
+            "src/pre_merge_guard/evaluator.rs no longer declares \
+             evaluate_pre_merge_gates with a {parameter:?} parameter, one per line, so \
+             this file is not reading the real signature any more and the wiring \
+             guards answer without looking. Found: {real_parameters:?}"
+        );
+    }
+
+    // THE ROOT READER. `&pr_body` and `pr_body.as_str()` are the body;
+    // `&diff_ctx.pr_body` is a field on a struct, which is the route this file
+    // closes, and `&doc_report` is a neighbour's report. All four contain the
+    // substring the previous revision keyed on.
+    for (expr, want) in [
+        ("pr_body", "pr_body"),
+        ("&pr_body", "pr_body"),
+        ("&mut pr_body", "pr_body"),
+        ("& pr_body", "pr_body"),
+        ("pr_body.as_str()", "pr_body"),
+        ("pr_body.trim()", "pr_body"),
+        ("&diff_ctx.pr_body", "diff_ctx"),
+        ("&review_resp.verdict", "review_resp"),
+        ("\"\"", ""),
+    ] {
+        assert_eq!(
+            root_ident(expr),
+            want,
+            "root_ident({expr:?}) misread what the expression is rooted at. Reading \
+             `&diff_ctx.pr_body` as `pr_body` reopens the route where a field the \
+             constructor never populates certifies the wiring while the gate reads \
+             the empty string for every pull request"
         );
     }
 
@@ -5197,72 +5617,6 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         "binding_statement must find nothing for an identifier no let binds"
     );
 
-    // ROUTE TWO, EXERCISED ON THE ARRANGEMENT THAT DEFEATED THE PREVIOUS
-    // REVISION. This synthetic pipeline is the real one in miniature: a
-    // body-carrying `let review_resp = …review_pr(&diff_ctx, title, body)`, a
-    // body-carrying `let doc_report = …, title, body)`, and a `let diff_ctx =
-    // …prepare_pr_diff(…)` that never sees the body. The old check answered
-    // "yes" here on the strength of the two unrelated bindings; the answer has
-    // to be "no", because nothing in this pipeline hands the change's body to
-    // the struct the evaluator reads.
-    let body_field = vec!["pr_body".to_string()];
-    let unwired = "    let diff_ctx = state\n\
-                    \x20       .git_mgr\n\
-                    \x20       .prepare_pr_diff(repo, pr_number, base_sha, head_sha)\n\
-                    \x20       .await?;\n\
-                    \x20   let review_resp = state.reviewer.review_pr(&diff_ctx, title, body).await?;\n\
-                    \x20   let doc_report = state.doc_guard.parity(repo, &diff_ctx, title, body).await?;\n";
-    let unwired_args = [
-        "&diff_ctx".to_string(),
-        "&doc_report".to_string(),
-        "&review_resp.verdict".to_string(),
-    ];
-    assert!(
-        !an_argument_carries_the_change_body(unwired, &unwired_args, &body_field),
-        "route two answered yes for a pipeline whose diff context never received the \
-         body. `&doc_report` and `&review_resp.verdict` are bound by statements that \
-         mention the body and have nothing to do with the gate; a guard they satisfy \
-         is a guard that predates the change it guards, and it would let a \
-         permanently empty pr_body certify every pull request"
-    );
-    assert!(
-        !an_argument_carries_the_change_body(unwired, &unwired_args, &[]),
-        "with no body field on PrDiffContext at all, route two cannot be open"
-    );
-
-    // And the two spellings that really do carry the body, so the fix is not so
-    // narrow that it forces the parameter route and decides the implementer's
-    // surface for them — which is the mistake the previous round removed.
-    let wired_through_the_constructor = unwired.replace(
-        "prepare_pr_diff(repo, pr_number, base_sha, head_sha)",
-        "prepare_pr_diff(repo, pr_number, base_sha, head_sha, body)",
-    );
-    assert!(
-        an_argument_carries_the_change_body(
-            &wired_through_the_constructor,
-            &unwired_args,
-            &body_field
-        ),
-        "a diff context built by a call that was handed the body satisfies route two"
-    );
-
-    let wired_by_assignment = format!("{unwired}    diff_ctx.pr_body = body.to_string();\n");
-    assert!(
-        an_argument_carries_the_change_body(&wired_by_assignment, &unwired_args, &body_field),
-        "assigning the body onto the diff context after building it carries the body \
-         just as far, and must satisfy route two too"
-    );
-    assert!(
-        !an_argument_carries_the_change_body(
-            &format!("{unwired}    diff_ctx.pr_body = String::new();\n"),
-            &unwired_args,
-            &body_field
-        ),
-        "an assignment that puts something OTHER than the body on the field must not \
-         satisfy route two; that is the permanently-empty field this route exists to \
-         forbid"
-    );
-
     // The unconditional-initialiser reader. A conditional that keeps a literal
     // status in reserve is the shape an engineer writes, and it is invisible to
     // every other check in these guards.
@@ -5276,7 +5630,7 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         "a plain judge call must leave nothing behind when the call is cut out of it"
     );
 
-    let annotated = "let product_bar_status: GateStatus = product_bar::judge(&diff_ctx.pr_body);\n";
+    let annotated = "let product_bar_status: GateStatus = product_bar::judge(&pr_body);\n";
     assert_eq!(
         unmeasured_alternatives_in(
             annotated,
@@ -5308,8 +5662,8 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
     // test three blocks up requires that), and `let_binding_before` strips
     // `mut ` on purpose, so this shape binds the right name, calls judge over
     // the body, leaves an empty residue and hands the struct the shorthand.
-    let reassigned = "    let mut product_bar_status = product_bar::judge(&diff_ctx.pr_body);\n\
-                      \x20   if diff_ctx.pr_body.trim().is_empty() {\n\
+    let reassigned = "    let mut product_bar_status = product_bar::judge(pr_body);\n\
+                      \x20   if pr_body.trim().is_empty() {\n\
                       \x20       product_bar_status = GateStatus::NotMeasured { gate_id: \"product_bar_status\".to_string(), reason: \"the pull request has no body\".to_string() };\n\
                       \x20   }\n";
     assert_eq!(
@@ -5365,10 +5719,10 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         "let mut product_bar_status = product_bar::judge(pr_body);\n",
         "if product_bar_status == GateStatus::Passed {\n",
         "    product_bar_status != GateStatus::Passed\n",
-        "let product_bar_status: GateStatus = product_bar::judge(&diff_ctx.pr_body);\n",
+        "let product_bar_status: GateStatus = product_bar::judge(pr_body);\n",
         "            product_bar_status,\n",
         "            product_bar_status: product_bar::judge(pr_body),\n",
-        "            product_bar_status: product_bar::judge(&diff_ctx.pr_body),\n",
+        "            product_bar_status: product_bar::judge(&pr_body),\n",
         "if report.product_bar_status == GateStatus::Passed {\n",
         "    report.product_bar_status != GateStatus::Passed\n",
         "    let carried = report.product_bar_status.clone();\n",
@@ -5387,26 +5741,22 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
     // see what was done to the call's INPUT — and truncating the input is how
     // `a_bar_at_the_far_end_of_a_long_body_is_still_the_artifact` gets
     // reinstated one layer up, with `judge` left perfectly correct. Both sides,
-    // because a rule that rejected `&diff_ctx.pr_body` would fail the very
-    // wiring this file spent two rounds making legal.
+    // because a rule that rejected `&pr_body` or `pr_body.as_str()` would fail
+    // the very wiring this file asks for. A field access stays on the clean
+    // side too: `truncated_argument` judges whether any TEXT was dropped, and
+    // which identifier the path is rooted at is `root_ident`'s question, asked
+    // separately by the judge-call test.
     for (arg, truncating) in [
         ("pr_body", false),
         ("&pr_body", false),
-        ("diff_ctx.pr_body", false),
-        ("&diff_ctx.pr_body", false),
         ("&self.pr_body", false),
+        ("self.pr_body", false),
         ("pr_body.as_str()", false),
-        ("&diff_ctx.pr_body.clone()", false),
+        ("&pr_body.clone()", false),
         ("pr_body.trim()", false),
         ("&pr_body[..450]", true),
-        (
-            "&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())]",
-            true,
-        ),
-        (
-            "&diff_ctx.pr_body.lines().take(40).collect::<String>()",
-            true,
-        ),
+        ("&pr_body[..2000.min(pr_body.len())]", true),
+        ("&pr_body.lines().take(40).collect::<String>()", true),
         ("pr_body.chars().take(2000).collect::<String>()", true),
         ("pr_body.get(..1500).unwrap_or(pr_body)", true),
         ("&mut truncate_body(pr_body)", true),
@@ -5453,24 +5803,24 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
             true,
         ),
         (
-            "let product_bar_status = product_bar::judge(&diff_ctx.pr_body);\n",
+            "let product_bar_status = product_bar::judge(&pr_body);\n",
             true,
         ),
         (
-            "let product_bar_status: GateStatus = product_bar::judge(&diff_ctx.pr_body);\n",
+            "let product_bar_status: GateStatus = product_bar::judge(pr_body);\n",
             true,
         ),
         (
-            "            product_bar_status: product_bar::judge(&diff_ctx.pr_body),\n",
+            "            product_bar_status: product_bar::judge(pr_body),\n",
             true,
         ),
         (
             "let product_bar_status =\n    \
-             product_bar::judge(&diff_ctx.pr_body[..2000.min(diff_ctx.pr_body.len())]);\n",
+             product_bar::judge(&pr_body[..2000.min(pr_body.len())]);\n",
             false,
         ),
         (
-            "let product_bar_status = product_bar::judge(&diff_ctx.pr_body).softened();\n",
+            "let product_bar_status = product_bar::judge(pr_body).softened();\n",
             false,
         ),
     ] {

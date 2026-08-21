@@ -5,7 +5,6 @@ use std::time::Duration;
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
-use super::executor_port::ConfiguredPromptExecutor;
 use super::provider::{ModelExecutionConfig, ModelProvider};
 use crate::self_governance::account_pool::AccountPoolManager;
 
@@ -631,20 +630,6 @@ impl SubscriptionExecutor {
         );
         self.run_claude_subscription(prompt, working_dir, config)
             .await
-    }
-}
-
-/// The live adapter behind the resolved-config port, used by the per-stage
-/// fallback chain, which has already chosen provider, model, effort and timeout.
-#[async_trait::async_trait]
-impl ConfiguredPromptExecutor for SubscriptionExecutor {
-    async fn execute_configured(
-        &self,
-        prompt: &str,
-        working_dir: &Path,
-        config: &ModelExecutionConfig,
-    ) -> Result<String> {
-        self.execute_prompt(prompt, working_dir, config).await
     }
 }
 

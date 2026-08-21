@@ -841,11 +841,15 @@ pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome)
 pub fn doc_parity_status(report: &DocGuardReport) -> GateStatus {
     if let Some(err) = &report.errored {
         GateStatus::Errored(err.clone())
+    } else if !report.is_sufficient {
+        // An adverse finding out-ranks work done. `AutoUpdated.is_acceptable()`
+        // is `true`, so consulting the file list first let a stub DocGuard wrote
+        // for an under-documented diff certify the very gap it is evidence of.
+        // Work done is not evidence about the diff.
+        GateStatus::Failed(report.summary.clone())
     } else if !report.files_created_or_updated.is_empty() {
         GateStatus::AutoUpdated
-    } else if report.is_sufficient {
-        GateStatus::Passed
     } else {
-        GateStatus::Failed(report.summary.clone())
+        GateStatus::Passed
     }
 }

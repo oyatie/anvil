@@ -11,6 +11,12 @@ pub struct UnboundedCapacityFinding {
 
 pub struct BufferLimitsChecker;
 
+impl Default for BufferLimitsChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BufferLimitsChecker {
     pub fn new() -> Self {
         Self

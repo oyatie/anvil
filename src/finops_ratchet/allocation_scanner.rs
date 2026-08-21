@@ -11,6 +11,12 @@ pub struct HeapAllocationFinding {
 
 pub struct AllocationScanner;
 
+impl Default for AllocationScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AllocationScanner {
     pub fn new() -> Self {
         Self

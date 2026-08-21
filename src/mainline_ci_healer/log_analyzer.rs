@@ -12,6 +12,12 @@ pub struct MainlineFailureFinding {
 
 pub struct MainlineLogAnalyzer;
 
+impl Default for MainlineLogAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MainlineLogAnalyzer {
     pub fn new() -> Self {
         Self

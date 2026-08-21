@@ -8,10 +8,6 @@ pub mod registry;
 pub mod upstream_sync;
 
 pub use engine::{RegulatoryEngine, StatutoryViolation};
-pub use registry::{
-    DynamicRegistrySnapshot, DynamicRegulatoryRule, GeographicScope, RegulatoryLevel,
-    TemporalValidity,
-};
 pub use upstream_sync::UpstreamRegulatorySync;
 
 use crate::git_manager::PrDiffContext;
@@ -29,6 +25,12 @@ pub struct ComplianceGuardReport {
 pub struct ComplianceGuard {
     engine: RegulatoryEngine,
     sync: UpstreamRegulatorySync,
+}
+
+impl Default for ComplianceGuard {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ComplianceGuard {

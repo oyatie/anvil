@@ -24,6 +24,12 @@ pub struct GhostMigrationReport {
 
 pub struct GhostMigrationHarness;
 
+impl Default for GhostMigrationHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GhostMigrationHarness {
     pub fn new() -> Self {
         Self
@@ -70,8 +76,8 @@ impl GhostMigrationHarness {
         let mut current_file = String::new();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 continue;
             }
 

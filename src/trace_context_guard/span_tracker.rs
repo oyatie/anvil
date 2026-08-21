@@ -11,6 +11,12 @@ pub struct DetachedSpanFinding {
 
 pub struct SpanTracker;
 
+impl Default for SpanTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpanTracker {
     pub fn new() -> Self {
         Self

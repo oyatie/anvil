@@ -17,6 +17,12 @@ pub struct CacheHitDecision {
 
 pub struct CacheHitRateRatchet;
 
+impl Default for CacheHitRateRatchet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CacheHitRateRatchet {
     pub const MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT: f64 = 85.0; // Target: >= 90-95%
 
@@ -36,7 +42,8 @@ impl CacheHitRateRatchet {
         } else {
             format!(
                 "⚠️ Cold compilation detected: cache hit rate ({:.1}%) fell below target ({:.1}%). Check for non-hermetic file touches or broken cache keys.",
-                metrics.hit_rate_pct, Self::MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT
+                metrics.hit_rate_pct,
+                Self::MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT
             )
         };
 

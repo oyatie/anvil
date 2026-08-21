@@ -192,23 +192,46 @@ mod tests {
         );
     }
 
+    fn assert_published_page_has_no_count_drift(rel: &str, page: &str) {
+        assert_eq!(
+            remaining_claim(page, crate::pre_merge_guard::report::TOTAL_GATES),
+            None,
+            "{rel} still publishes a gate count that is not TOTAL_GATES"
+        );
+    }
+
     #[test]
     fn published_readme_matches_live_corpus() {
-        let readme = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"));
-        assert_eq!(
-            remaining_claim(readme, crate::pre_merge_guard::report::TOTAL_GATES),
-            None,
-            "README still publishes a gate count that is not TOTAL_GATES"
+        assert_published_page_has_no_count_drift(
+            "README.md",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")),
         );
     }
 
     #[test]
     fn published_doctrine_matches_live_corpus() {
-        let doctrine = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/doctrine.md"));
-        assert_eq!(
-            remaining_claim(doctrine, crate::pre_merge_guard::report::TOTAL_GATES),
-            None,
-            "doctrine still publishes a gate count that is not TOTAL_GATES"
+        assert_published_page_has_no_count_drift(
+            "docs/doctrine.md",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/doctrine.md")),
+        );
+    }
+
+    #[test]
+    fn published_openapi_matches_live_corpus() {
+        assert_published_page_has_no_count_drift(
+            "openapi/openapi.yaml",
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/openapi/openapi.yaml")),
+        );
+    }
+
+    #[test]
+    fn published_adr_0001_matches_live_corpus() {
+        assert_published_page_has_no_count_drift(
+            "docs/adr/0001-sixty-gate-hyperscale-matrix.md",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/docs/adr/0001-sixty-gate-hyperscale-matrix.md"
+            )),
         );
     }
 }

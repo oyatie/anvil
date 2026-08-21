@@ -6,7 +6,7 @@ Accepted
 ## Schema
 Achieves: Autonomous, deterministic, zero-human-bottleneck pre-merge quality certification, automated merge queue gating, and trunk healing.
 Origin: Hyperscale engineering practices synthesized from Google Borg/Piper, AWS Zelkova/Cellular, Meta Sapling/Buck2, and Netflix Spinnaker/Kayenta.
-Rule: Every pull request must satisfy every gate on `PreMergeCertificationReport` before entering the merge train. The count is `TOTAL_GATES` (`all_statuses().len()`), asserted by test. The founding name was "60-Gate". That number is historical. The filename of this ADR still says sixty-gate; that is the founding name, not the live count.
+Rule: Every pull request must satisfy every gate on `PreMergeCertificationReport` before entering the merge train. The count is `TOTAL_GATES` (`all_statuses().len()`), asserted by test. The founding name said sixty gates. That number is historical. The filename of this ADR still uses the founding slug. That slug is historical, not the live count.
 Ensure: Automated gate evaluation completes in sub-minute wallclock using DAG-aware predictive test selection and Sccache remote compilation caching.
 Overturn-When: A verified formal mathematical proof demonstrates that a strict subset of gates provides identical invariant safety guarantees.
 

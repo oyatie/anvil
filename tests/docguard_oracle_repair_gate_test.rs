@@ -215,19 +215,28 @@ const OWNED_PAGES: &[&str] = &[
 
 /// Pages in Anvil's own checkout that the corpus deliberately does **not** own.
 /// See the constant of the same name in `tests/docguard_oracle_repair_test.rs`
-/// for the two wrong implementations these exist to kill, and for why each path
-/// is the one it is.
+/// for the wrong implementations these exist to kill, and for why each path is
+/// the one it is.
 ///
 /// In short: a sync that WALKS the checkout instead of enumerating the corpus
 /// reaches every owned page, passes every one-directional assertion in all four
 /// binaries, and rewrites Anvil's CHANGELOG and `docs/` notes on every one of
 /// its own pull requests — that is what `CHANGELOG.md` and
 /// `docs/notes/roadmap.md` kill. A sync that SHALLOW-GLOBS the directories the
-/// corpus already lives in (`*.md` directly under `docs/`, plus the two ADR
-/// directories) survives both of those, because neither is enumerated by it —
-/// and `docs/runbook.md`, a sibling of `docs/doctrine.md` at the same depth in
-/// the same directory, is what kills that one.
-const NOT_OWNED_PAGES: &[&str] = &["CHANGELOG.md", "docs/notes/roadmap.md", "docs/runbook.md"];
+/// corpus already lives in survives both of those, because neither is
+/// enumerated by it — and the corpus lives in TWO directories, so that shape
+/// needs fencing in both: `docs/runbook.md` is a sibling of `docs/doctrine.md`
+/// at the same depth in the same directory, and `openapi/components.yaml` is a
+/// sibling of `openapi/openapi.yaml` at the same depth in the same directory.
+/// `openapi/` holds exactly one owned page today, which is precisely what makes
+/// `openapi/*.yaml` indistinguishable from the fixed list until somebody adds a
+/// second document to it.
+const NOT_OWNED_PAGES: &[&str] = &[
+    "CHANGELOG.md",
+    "docs/notes/roadmap.md",
+    "docs/runbook.md",
+    "openapi/components.yaml",
+];
 
 /// The reason a probe gives for judging a diff under-documented. Held as a
 /// constant so the assertions that it reaches `DocGuardReport::summary` pin
@@ -1795,113 +1804,214 @@ fn an_under_documented_diff_that_named_no_files_still_fails_the_gate() {
 }
 
 /// Declining to explain does not turn an adverse judgement into a pass either,
-/// and the gate may not block with an empty reason.
+/// and the gate may not block with an empty reason — in any of the three shapes
+/// "no reason" arrives in.
 fn an_under_documented_diff_that_stated_no_reason_still_fails_the_gate() {
     // The complement of the case above:
     // `is_sufficient: eval.missing_doc_summary.is_none()` survives that one
     // identically and dies here.
-    let dir = tempdir().unwrap();
-    let report = run_gate(
-        insufficient(None, &["docs/reference/newly-public.md"]),
+    //
+    // Driven over all THREE shapes, because `DocParityEvaluation`'s
+    // `missing_doc_summary` is an `Option<String>` deserialised straight out of
+    // model JSON and `None` is only one of them. A probe emitting
+    // `"missing_doc_summary": ""` — the commonest shape after `null`, and what a
+    // model produces when it has been handed a field and has nothing to put in
+    // it — yields `Some("")`; `"   "` yields `Some("   ")`. Driving `None` alone
+    // left two live members of the family this case claims to kill, because the
+    // obvious repair,
+    // `eval.missing_doc_summary.as_deref().unwrap_or("<the gate's own words>")`,
+    // handles the shape that was driven and interpolates the blank string for
+    // the two that were not.
+    let blank_reasons: [Option<&str>; 3] = [None, Some(""), Some("   ")];
+
+    // The passing summary this report must be distinguishable from. Built once,
+    // outside the loop, because nothing about it varies with the probe's reason.
+    let pass_dir = tempdir().unwrap();
+    let passed = run_gate(sufficient(), ANVIL, pass_dir.path(), &["src/lib.rs"]);
+
+    // The same probe verdict WITH a reason, on the same file list, so the
+    // relation at the bottom can be stated without this suite inventing a single
+    // word of the gate's wording.
+    let reasoned_dir = tempdir().unwrap();
+    let reasoned = run_gate(
+        insufficient(Some(MISSING_REASON), &["docs/reference/newly-public.md"]),
         ANVIL,
-        dir.path(),
+        reasoned_dir.path(),
         &["src/lib.rs"],
     );
 
-    assert!(
-        !report.is_sufficient,
-        "the probe judged the diff under-documented; declining to explain why \
-         does not turn that judgement into a pass: {}",
-        report.summary
-    );
-    assert!(
-        report.errored.is_none(),
-        "a judgement was obtained, so this is an adverse finding: {:?}",
-        report.errored
-    );
+    let mut summaries: Vec<(Option<&str>, String)> = Vec::new();
 
-    // A blocked PR whose scorecard row says nothing is the same false and
-    // unactionable assurance this branch exists to remove.
-    // `let summary = eval.missing_doc_summary.clone().unwrap_or_default();`
-    // satisfies every other #29 case here and blocks this contributor's PR with
-    // `is_sufficient: false, errored: None, summary: ""`.
-    assert!(
-        !report.summary.trim().is_empty(),
-        "a gate that fails a pull request must say something a contributor can \
-         act on; the probe declining to explain itself is not a licence for the \
-         gate to publish an empty reason: {report:?}"
-    );
+    for reason in blank_reasons {
+        let dir = tempdir().unwrap();
+        let report = run_gate(
+            insufficient(reason, &["docs/reference/newly-public.md"]),
+            ANVIL,
+            dir.path(),
+            &["src/lib.rs"],
+        );
 
-    // Non-emptiness alone is not enough, and the hole it leaves is the exact
-    // defect class its sibling
-    // `an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply`
-    // spends fifty lines forbidding, one file away. It permits a summary that
-    // PROMISES a reason and then gives none:
-    //
-    //     let summary = format!(
-    //         "Documentation is insufficient: {}",
-    //         eval.missing_doc_summary.clone().unwrap_or_default()
-    //     );
-    //
-    // With `missing_doc_summary: None` that yields
-    // `"Documentation is insufficient: "`. It is non-empty after `trim`, it is
-    // byte-different from the passing summary compared against below, and
-    // `an_under_documented_diff_does_not_pass_through_the_public_gate` never
-    // sees it because the reason IS present there — so the whole suite stays
-    // green while every contributor whose probe declines to explain itself gets
-    // a blocked scorecard row reading `Documentation is insufficient:` with
-    // nothing after the colon. A gate telling a pull request that something
-    // follows and then saying nothing is the same false and unactionable
-    // assurance as issue #27's silent pass, published on the failing side.
-    //
-    // So the two assertions the applied-sync summary already carries are applied
-    // to this report as well. They invent no wording — they say only that the
-    // sentence the implementation chose is FINISHED — and together they kill the
-    // whole `unwrap_or_default()` family on this path, exactly as they do on the
-    // other.
-    assert_eq!(
-        report.summary,
-        report.summary.trim_end(),
-        "the probe gave no reason, so the summary is complete as it stands and \
-         must not trail off into whitespace where an interpolated reason would \
-         have gone: {:?}",
-        report.summary
-    );
-    for dangling in [':', '-', '\u{2013}', '\u{2014}', '(', ',', ';'] {
         assert!(
-            !report.summary.trim_end().ends_with(dangling),
-            "the probe declined to explain itself, so the summary must be a \
-             finished statement. Ending on {dangling:?} means the gate told this \
-             pull request that something followed — the reason the diff is \
-             under-documented — and then said nothing: {:?}",
+            !report.is_sufficient,
+            "reason {reason:?}: the probe judged the diff under-documented; \
+             declining to explain why does not turn that judgement into a pass: {}",
             report.summary
+        );
+        assert!(
+            report.errored.is_none(),
+            "reason {reason:?}: a judgement was obtained, so this is an adverse \
+             finding: {:?}",
+            report.errored
+        );
+
+        // A blocked PR whose scorecard row says nothing is the same false and
+        // unactionable assurance this branch exists to remove.
+        // `let summary = eval.missing_doc_summary.clone().unwrap_or_default();`
+        // satisfies every other #29 case here and blocks this contributor's PR
+        // with `is_sufficient: false, errored: None, summary: ""`.
+        assert!(
+            !report.summary.trim().is_empty(),
+            "reason {reason:?}: a gate that fails a pull request must say \
+             something a contributor can act on; the probe declining to explain \
+             itself is not a licence for the gate to publish an empty reason: \
+             {report:?}"
+        );
+
+        // Non-emptiness alone is not enough, and the hole it leaves is the exact
+        // defect class its sibling
+        // `an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply`
+        // spends fifty lines forbidding, one file away. It permits a summary
+        // that PROMISES a reason and then gives none:
+        //
+        //     let summary = format!(
+        //         "Documentation is insufficient: {}",
+        //         eval.missing_doc_summary.clone().unwrap_or_default()
+        //     );
+        //
+        // With a blank reason that yields `"Documentation is insufficient: "`.
+        // It is non-empty after `trim`, it is byte-different from the passing
+        // summary compared against below, and
+        // `an_under_documented_diff_does_not_pass_through_the_public_gate` never
+        // sees it because the reason IS present there — so the whole suite stays
+        // green while every contributor whose probe declines to explain itself
+        // gets a blocked scorecard row reading `Documentation is insufficient:`
+        // with nothing after the colon. A gate telling a pull request that
+        // something follows and then saying nothing is the same false and
+        // unactionable assurance as issue #27's silent pass, published on the
+        // failing side.
+        //
+        // So the two assertions the applied-sync summary already carries are
+        // applied to this report as well. They invent no wording — they say only
+        // that the sentence the implementation chose is FINISHED.
+        assert_eq!(
+            report.summary,
+            report.summary.trim_end(),
+            "reason {reason:?}: the probe gave no reason, so the summary is \
+             complete as it stands and must not trail off into whitespace where \
+             an interpolated reason would have gone: {:?}",
+            report.summary
+        );
+        for dangling in [':', '-', '\u{2013}', '\u{2014}', '(', ',', ';'] {
+            assert!(
+                !report.summary.trim_end().ends_with(dangling),
+                "reason {reason:?}: the probe declined to explain itself, so the \
+                 summary must be a finished statement. Ending on {dangling:?} \
+                 means the gate told this pull request that something followed — \
+                 the reason the diff is under-documented — and then said nothing: \
+                 {:?}",
+                report.summary
+            );
+        }
+
+        // And it must at least be DISTINGUISHABLE from the pass it is not.
+        // Pinned as a relation rather than as wording, so this suite does not
+        // invent the words: the same probe verdict inverted produces the gate's
+        // passing summary, and a blocked pull request may not be described
+        // byte-for-byte the same way as a passing one.
+        //
+        // STATED LIMIT, so the assertion is not read as delivering more than it
+        // does: byte-inequality is all this pins. Today's
+        // `format!("Auto-generated documentation updates for: {files}")`
+        // satisfies it while still reading like the AutoUpdated pass state. A
+        // wording-free assertion that the summary reads as ADVERSE would need a
+        // passing run that also generates files to compare against, and no such
+        // run exists — the passing path never has a probe finding to report. The
+        // requirement that the summary be actionable is carried by the non-empty
+        // assertion above and by
+        // `an_under_documented_diff_does_not_pass_through_the_public_gate`,
+        // which requires the probe's reason itself to reach the summary.
+        assert_ne!(
+            report.summary.trim(),
+            passed.summary.trim(),
+            "reason {reason:?}: the summary of a diff the probe judged \
+             under-documented must be distinguishable from the summary of one it \
+             judged documented, whether or not the probe said why"
+        );
+
+        summaries.push((reason, report.summary));
+    }
+
+    // The three reports describe the same thing — a probe that judged the diff
+    // under-documented and said nothing about why — so they must be
+    // byte-identical to one another. The gate normalises blank-to-absent at ONE
+    // place, rather than treating `Some("")` and `Some("   ")` as reasons and
+    // interpolating them.
+    //
+    // This is what kills `unwrap_or_default()` and its whole family rather than
+    // just its `None` member: `Some("   ")` interpolates three spaces where
+    // `None` interpolates none, so any implementation that pipes the probe's
+    // blank string into its own sentence publishes three different rows for
+    // three descriptions of the same silence.
+    let (first_reason, first) = &summaries[0];
+    for (reason, summary) in &summaries[1..] {
+        assert_eq!(
+            summary, first,
+            "the probe said nothing about why in all three of these runs — \
+             {first_reason:?}, and {reason:?} — so the gate has exactly one thing \
+             to say and must say it once. A summary that differs between them is \
+             one that piped the probe's blank string into its own sentence \
+             instead of recognising it as the absence of a reason"
         );
     }
 
-    // And it must at least be DISTINGUISHABLE from the pass it is not. Pinned as
-    // a relation rather than as wording, so this suite does not invent the
-    // words: the same probe verdict inverted produces the gate's passing
-    // summary, and a blocked pull request may not be described byte-for-byte the
-    // same way as a passing one.
+    // And the blank summary is not the reasoned summary with the reason cut out
+    // of it. This is the remaining member of the family and the only one
+    // byte-identity does not reach: an implementation that normalises all three
+    // blanks to the empty STRING — `as_deref().unwrap_or("").trim()` — makes the
+    // three rows identical and still publishes
+    // `Documentation is insufficient: . Files: docs/reference/newly-public.md`,
+    // which is non-empty, does not trail off, does not end on a dangling
+    // terminator, and leaves the blocked contributor exactly as much to act on
+    // as `Documentation is insufficient: ` does.
     //
-    // STATED LIMIT, so the assertion is not read as delivering more than it
-    // does: byte-inequality is all this pins. Today's
-    // `format!("Auto-generated documentation updates for: {files}")` satisfies
-    // it while still reading like the AutoUpdated pass state. A wording-free
-    // assertion that the summary reads as ADVERSE would need a passing run that
-    // also generates files to compare against, and no such run exists — the
-    // passing path never has a probe finding to report. The requirement that the
-    // summary be actionable is carried by the non-empty assertion above and by
-    // `an_under_documented_diff_does_not_pass_through_the_public_gate`, which
-    // requires the probe's reason itself to reach the summary.
-    let pass_dir = tempdir().unwrap();
-    let passed = run_gate(sufficient(), ANVIL, pass_dir.path(), &["src/lib.rs"]);
+    // Stated as a relation against the gate's OWN reasoned output, so no wording
+    // is invented here: whatever sentence the implementation writes when the
+    // probe explains itself, the sentence it writes when the probe does not may
+    // not be that same sentence with the explanation deleted. The gate has to
+    // contribute the missing words itself, or drop the clause that promised
+    // them.
+    //
+    // STATED COST, because this is a real narrowing and the owner may veto it:
+    // it forbids an implementation whose blank-reason summary happens to equal
+    // its reasoned summary minus the reason, even if that string were somehow
+    // acceptable. It is the one assertion in this case that reads two reports
+    // against each other rather than one report against the specification; drop
+    // this single block and the three-way identity above still stands.
+    assert!(
+        reasoned.summary.contains(MISSING_REASON),
+        "this relation is only meaningful if the reasoned run really does carry \
+         the probe's reason; that it must is pinned by \
+         `an_under_documented_diff_does_not_pass_through_the_public_gate`: {:?}",
+        reasoned.summary
+    );
     assert_ne!(
-        report.summary.trim(),
-        passed.summary.trim(),
-        "the summary of a diff the probe judged under-documented must be \
-         distinguishable from the summary of one it judged documented, whether or \
-         not the probe said why"
+        first.as_str(),
+        reasoned.summary.replace(MISSING_REASON, "").as_str(),
+        "the probe declined to explain itself, so the gate must contribute the \
+         missing words or drop the clause that promised them — not publish the \
+         sentence it writes for an explained diff with the explanation deleted \
+         out of the middle of it. That row blocks a pull request and tells its \
+         author nothing: {first:?}"
     );
 }
 

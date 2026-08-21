@@ -4,7 +4,6 @@ pub mod provider;
 pub mod router;
 pub mod stage_router;
 pub mod task_classifier;
-pub mod telemetry_ledger;
 
 pub use cross_model_validator::{CrossModelConsensusReport, CrossModelDualValidator};
 pub use executor_port::{ConfiguredPromptExecutor, PromptExecutor};
@@ -14,4 +13,3 @@ pub use stage_router::{AgenticStage, StageFallbackChain, StageModelRouter};
 pub use task_classifier::{
     GranularTaskClassifier, GranularTaskContext, ProgrammingLanguage, TaskCategory, TaskComplexity,
 };
-pub use telemetry_ledger::{AdaptiveRoutingBandit, ModelPerformanceStats, TaskExecutionTelemetry};

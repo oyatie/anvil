@@ -88,8 +88,6 @@ impl PreMergeGuard {
     pub fn evaluate_pre_merge_gates(
         &self,
         diff_ctx: &PrDiffContext,
-        pr_title: &str,
-        pr_body: &str,
         doc_report: &DocGuardReport,
         cedar_report: &CedarGuardReport,
         compliance_report: &ComplianceGuardReport,
@@ -691,10 +689,6 @@ impl PreMergeGuard {
 
         let shape_status = shape_gate_status(shape_outcome);
 
-        // The Product seat's artifact rides on the change under review, so this
-        // reads the same title and body the reviewer and DocGuard already get.
-        let product_bar_status = super::product_bar::judge(pr_title, pr_body);
-
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
             is_certified_ready: false,
@@ -770,7 +764,16 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
-            product_bar_status,
+            // SCAFFOLDING, NOT AN IMPLEMENTATION. The Product seat's gate is
+            // unwritten, so the report carries a placeholder that measures
+            // nothing. `tests/product_seat_done_when_test.rs` specifies what has
+            // to replace it: a `product_bar::judge` call over the change under
+            // review. Those wiring tests are red against this line on purpose —
+            // a gate computed from nothing gates nothing.
+            product_bar_status: GateStatus::NotMeasured {
+                gate_id: "product_bar_status".to_string(),
+                reason: "the Product seat gate is not implemented yet".to_string(),
+            },
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
         };

@@ -15,6 +15,13 @@
 //! NOT IMPLEMENTED YET. The body below is `todo!()` on purpose: the suite in
 //! `tests/product_seat_done_when_test.rs` is the specification and was written
 //! first.
+//!
+//! Nor is it wired. `evaluate_pre_merge_gates` neither receives the change's
+//! title and body nor calls this function; the report carries a placeholder
+//! instead. That is deliberate. The wiring is part of the specification — a
+//! flawless `judge` reached from nothing gates nothing — so it is pinned by
+//! three tests at the bottom of that suite, and those tests have to be red
+//! before the wiring exists, like every other test here.
 
 use super::GateStatus;
 

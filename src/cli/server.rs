@@ -58,12 +58,40 @@ pub async fn run_server(state: AppState) -> Result<()> {
                             repo,
                             pr.number
                         );
+                        // The change's own body, not the empty string. The
+                        // Product seat reads the written problem and the
+                        // done-when bar off this argument, so a sweep that
+                        // dispatched a certification with a literal here would
+                        // tell every author on this path that they wrote
+                        // neither artifact, whatever they actually wrote. The
+                        // sweep's PR summary carries no body, so fetch the
+                        // metadata the sibling call sites already fetch. If it
+                        // cannot be read, dispatch nothing: a review built on a
+                        // body we did not read is a fabricated accusation, and
+                        // the next sweep will pick this PR up again.
+                        let meta = match task_state
+                            .github_client
+                            .fetch_pr_metadata(&repo, pr.number)
+                            .await
+                        {
+                            Ok(meta) => meta,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "[Outage Recovery] Could not read {}#{} metadata; \
+                                     not dispatching its review: {}",
+                                    repo,
+                                    pr.number,
+                                    e
+                                );
+                                return;
+                            }
+                        };
                         let _ = crate::webhook::pipelines::review::execute_pr_review(
                             &task_state,
                             &repo,
                             pr.number,
                             &pr.title,
-                            "",
+                            &meta.body.unwrap_or_default(),
                             "main",
                             "HEAD",
                             &pr.head_sha,

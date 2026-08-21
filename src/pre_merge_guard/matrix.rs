@@ -378,6 +378,11 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
         "🧪 Automated Test Suite",
         "Local verification gate passed",
     ),
+    (
+        "product_bar_status",
+        "🎯 Product Bet & Acceptance Bar",
+        "The change states its problem and its done-when",
+    ),
 ];
 
 pub fn label_for(name: &str) -> Option<(&'static str, &'static str)> {

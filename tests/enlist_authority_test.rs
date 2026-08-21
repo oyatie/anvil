@@ -36,10 +36,15 @@
 //! `Option<&PreMergeCertificationReport>`, and
 //! `the_merge_queue_entry_point_refuses_the_evidence_it_was_handed` calls it
 //! with `None` and with two reports that must not merge, and requires each to
-//! come back refused. That is behaviour, not a scan, and it holds whatever
-//! shape the guard is written in. What remains for source scans is the part no
-//! in-process call can reach: which callers exist, what they hand over, and
-//! what the two publishing functions weld into the text they sign.
+//! come back refused. Its fourth case is the symmetric one: a certified, fully
+//! measured report must get *past* the guard, measured against the failure the
+//! machine gives for asking GitHub about the pull request at all — so no
+//! wording is pinned and a second precondition bolted on beside the seam
+//! cannot silently withhold the whole fleet. That is behaviour, not a scan, and
+//! it holds whatever shape the guard is written in. What remains for source
+//! scans is the part no in-process call can reach: which callers exist, where
+//! what they hand over came from, and what the two publishing functions weld
+//! into the text they sign.
 //!
 //! # Premortem
 //!
@@ -66,15 +71,22 @@
 //! P4. Over-correction: the precondition refuses everything, including a
 //!     genuinely certified, fully measured pull request. I1 cuts both ways —
 //!     absent evidence is not a pass and present evidence is not an accusation.
-//!     -> `a_fully_measured_and_certified_report_admits_the_pull_request`.
+//!     -> `a_fully_measured_and_certified_report_admits_the_pull_request` on the
+//!        seam, and the admitting case of the entry-point test on the call.
 //! P5. The entry point is fixed and the callers keep passing `None`, so nothing
 //!     ever merges again; or a caller manufactures the report it hands over,
-//!     which is the same defect wearing a report's clothes.
-//!     -> `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`.
+//!     which is the same defect wearing a report's clothes — and the cheapest
+//!     place to manufacture one is beside the type, where `report.rs` says in a
+//!     comment that no "all passed" constructor exists and nothing checks.
+//!     -> `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`,
+//!        which asks the question of provenance rather than of vocabulary: what
+//!        produced the value, not what the call site is spelled like.
 //! P6. The blanket claim is deleted from `ensure_approving_review` and reappears
 //!     a few lines down in the enlistment note, or moves into a `const`, a
-//!     helper, or a sibling file. The struct is honest, the published comment
-//!     is not — and the comment is what a human reads.
+//!     helper, or a sibling file — or stays exactly where it was and gets
+//!     `format!`ed onto the derived text, which every check on where the
+//!     derived value *goes* answers perfectly. The struct is honest, the
+//!     published comment is not — and the comment is what a human reads.
 //!     -> the note is held to the same derivation rule as the review: both
 //!        seams are exercised by `the_endorsement_differs_when_the_evidence_differs`
 //!        and both publishers by
@@ -118,12 +130,31 @@
 //! corpus.
 //!
 //! A `Result` counts as discarded when *its own* value is thrown away: the call
-//! is bound to `_`, wrapped in `drop(`, or its result — everything after the
-//! call's closing parenthesis — is `.ok()`d or `unwrap_or`'d. A `.ok()` inside
-//! the argument list belongs to an argument, not to the call, and
+//! is bound to `_` (or to `_anything`), wrapped in `drop(`, or its result —
+//! everything after the call's closing parenthesis — is `.ok()`d or
+//! `unwrap_or`'d. A `.ok()` inside the argument list belongs to an argument, not
+//! to the call, and
 //! `Self::admission_refusal(self.report(..).await.ok().as_ref())?` is a guarded
 //! door: converting a fetch failure into `None` and refusing on it is exactly
 //! what the spec asks for.
+//!
+//! Values are followed both ways. Forwards, from the seam to the call that
+//! publishes, through rebindings and the struct the text gets carried in.
+//! Backwards, from what a call is handed to the bindings that produced it —
+//! which is how "the seam's value reaches the pull request" becomes "the seam's
+//! value is all that reaches it", and how a door's report is asked where it
+//! came from rather than what it is called. A call whose callee is written in
+//! another file is followed there: extracting a spawned closure into a helper,
+//! or obtaining the certification report by calling the pipeline that runs it,
+//! are both ordinary and neither may blind a scan.
+//!
+//! Two exemptions, both deliberate. A struct literal is read field by field, so
+//! `ReviewResponse { summary, verdict: "APPROVE".to_string(), .. }` offers the
+//! derived text and the verdict separately — the verdict is not a claim about
+//! the report. And the arguments of `warn!`, `bail!`, `.context(` and their
+//! kin are blanked: an operator-facing message is not signed onto the pull
+//! request, and a scan that cannot tell it from a published claim has to accept
+//! either both or neither.
 //!
 //! # Scaffolding this suite depends on
 //!
@@ -711,7 +742,300 @@ fn discards_call_result(text: &str, call: &Call) -> bool {
         return true;
     }
     let prefix = text[statement_start(text, call.idx)..call.idx].trim_end();
-    prefix.ends_with("drop(") || prefix.contains("_ =")
+    if prefix.ends_with("drop(") || prefix.contains("_ =") {
+        return true;
+    }
+    // `let _ignored = ..` is `let _ = ..` with a comment attached to it.
+    binder(&statement(text, call.idx)).is_some_and(|b| b.starts_with('_'))
+}
+
+/// The end of the statement starting at `start`, following `else` chains.
+///
+/// `statement_end` stops at the `}` that closes the first block, which is right
+/// for `let Some(x) = seam() else { .. }` and wrong for
+/// `let x = if let Some(s) = seam() { s } else { <a sentence of its own> };` —
+/// where the text standing in for an absent derivation is in the branch it
+/// stops before.
+fn statement_end_through_else(text: &str, start: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = start;
+    let mut depth = 0i32;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' => depth -= 1,
+            b'}' => {
+                depth -= 1;
+                if depth <= 0 {
+                    if text[i + 1..].trim_start().starts_with("else") {
+                        depth = 0;
+                        i += 1;
+                        continue;
+                    }
+                    return char_boundary_at_or_after(text, i + 1);
+                }
+            }
+            b';' if depth <= 0 => return char_boundary_at_or_after(text, i + 1),
+            _ => {}
+        }
+        i += 1;
+    }
+    char_boundary_at_or_after(text, i)
+}
+
+/// The statements from the one holding `from` up to `to`, in source order.
+fn statements_in(text: &str, from: usize, to: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = statement_start(text, from);
+    while i < to.min(text.len()) {
+        let end = char_boundary_at_or_after(text, statement_end_through_else(text, i).max(i + 1))
+            .min(text.len());
+        out.push(text[i..end].to_string());
+        let mut j = end;
+        while j < text.len() && text.as_bytes()[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j <= i {
+            break;
+        }
+        i = j;
+    }
+    out
+}
+
+/// Every word-shaped token in `text`, deduplicated.
+fn identifiers(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for c in text.chars().chain(std::iter::once(' ')) {
+        if c.is_alphanumeric() || c == '_' {
+            current.push(c);
+        } else if !current.is_empty() {
+            let word = std::mem::take(&mut current);
+            if !out.contains(&word) {
+                out.push(word);
+            }
+        }
+    }
+    out
+}
+
+/// The last statement before `upto` that binds `name`.
+fn binding_statement(text: &str, name: &str, upto: usize) -> Option<String> {
+    let mut found = None;
+    let mut from = 0usize;
+    while let Some(off) = text[from..].find("let ") {
+        let at = from + off;
+        from = at + 4;
+        if at >= upto {
+            break;
+        }
+        let end = statement_end_through_else(text, at).min(text.len());
+        if end <= at {
+            continue;
+        }
+        let stmt = text[at..end].to_string();
+        if binder(&stmt).as_deref() == Some(name) {
+            found = Some(stmt);
+        }
+    }
+    found
+}
+
+/// The values that reach `handed`, followed backwards through the bindings that
+/// produced them.
+///
+/// The forward half of the publication scan asks whether the seam's value
+/// reaches the call that publishes. This asks the other half — what *else*
+/// reaches it. A publisher that binds the derived text into a sentence of its
+/// own answers the forward question perfectly and signs an unmeasured claim
+/// anyway, so every value on the way to the pull request has to be accounted
+/// for, not only the one that came from the seam.
+///
+/// Only names this function actually binds are followed: `verdict` and
+/// `comments` are field names, not values it computed.
+fn traced_values(body: &str, handed: &str, upto: usize) -> Vec<String> {
+    let mut traced: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = identifiers(handed);
+    let mut seen: Vec<String> = Vec::new();
+    while let Some(name) = queue.pop() {
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name.clone());
+        let Some(stmt) = binding_statement(body, &name, upto) else {
+            continue;
+        };
+        traced.push(name);
+        let rhs = stmt
+            .split_once('=')
+            .map(|(_, r)| r.to_string())
+            .unwrap_or(stmt);
+        queue.extend(identifiers(&rhs));
+    }
+    traced
+}
+
+/// A statement cut into the pieces in which a value and a fixed text can be
+/// welded together: a `;` ends one, a `{` ends one, and so does a comma
+/// directly inside a brace group.
+///
+/// So `ReviewResponse { summary, verdict: "APPROVE".to_string(), .. }` offers
+/// the derived text and the verdict as separate pieces — the verdict is not a
+/// claim about the report, and a scan that cannot separate the two has to
+/// accept either both or neither. A `warn!(..)` beside a `return` is likewise
+/// not read as part of the binding it shares a statement with.
+fn weld_fragments(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut stack: Vec<char> = Vec::new();
+    for c in text.chars() {
+        match c {
+            '(' | '[' => stack.push(c),
+            '{' => {
+                stack.push(c);
+                out.push(std::mem::take(&mut current));
+                continue;
+            }
+            ')' | ']' | '}' => {
+                stack.pop();
+            }
+            ';' => {
+                out.push(std::mem::take(&mut current));
+                continue;
+            }
+            ',' if stack.last() == Some(&'{') => {
+                out.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    out.push(current);
+    out
+}
+
+/// Whether `fragment` welds a fixed text onto a value.
+///
+/// String contents are blanked before any scan, so a surviving `"` is a literal
+/// sentence. An ALL-CAPS name is the same sentence moved into a `const`, which
+/// is P6's second spelling and trips no ban on vocabulary.
+fn welded_text(fragment: &str) -> Option<String> {
+    if fragment.contains('"') {
+        return Some("a string literal".to_string());
+    }
+    identifiers(fragment)
+        .into_iter()
+        .find(|w| {
+            w.len() > 1
+                && w.chars().any(|c| c.is_ascii_uppercase())
+                && w.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        })
+        .map(|w| format!("the constant `{w}`"))
+}
+
+/// `text` with the arguments of the calls that never reach a pull request
+/// blanked.
+///
+/// A log line, an error message and a panic are read by operators; they are not
+/// signed onto the pull request, and a scan that cannot tell them from a
+/// published claim has to accept either both or neither. Blanking them is what
+/// lets the rest of a statement be held to "no fixed text at all".
+fn blank_unpublished_arguments(text: &str) -> String {
+    let mut out = text.to_string();
+    for needle in [
+        "warn!(",
+        "info!(",
+        "error!(",
+        "debug!(",
+        "trace!(",
+        "bail!(",
+        "anyhow!(",
+        "panic!(",
+        ".context(",
+        ".with_context(",
+    ] {
+        let mut from = 0usize;
+        while let Some(call) = find_call(&out, needle, from) {
+            from = call.close;
+            let blanked: String = out[call.open + 1..call.close]
+                .chars()
+                .map(|c| if c == '\n' { '\n' } else { ' ' })
+                .collect();
+            out.replace_range(call.open + 1..call.close, &blanked);
+        }
+    }
+    out
+}
+
+/// The names `text` calls: an identifier immediately followed by `(`.
+fn called_identifiers(text: &str) -> Vec<String> {
+    identifiers(text)
+        .into_iter()
+        .filter(|name| {
+            let mut from = 0usize;
+            while let Some(off) = text[from..].find(name.as_str()) {
+                let at = from + off;
+                from = at + name.len();
+                let before_ok = text[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+                if before_ok && text[from..].starts_with('(') {
+                    return true;
+                }
+            }
+            false
+        })
+        .collect()
+}
+
+/// `text` with the body of every function it calls in `source` spliced in.
+///
+/// Extracting a spawned closure into a helper is ordinary tidying, and a scan
+/// that reads only the closure's own text concludes the detached task no longer
+/// enlists anything. It does; the call moved one identifier away. The same is
+/// true of the report a door hands over: it is obtained by calling something.
+fn with_called_bodies(source: &str, text: &str, depth: usize) -> String {
+    const CAP: usize = 400_000;
+    let mut out = text.to_string();
+    let mut seen: Vec<String> = Vec::new();
+    for _ in 0..depth {
+        let mut grown = out.clone();
+        for name in called_identifiers(&out) {
+            if seen.contains(&name) || grown.len() > CAP {
+                continue;
+            }
+            seen.push(name.clone());
+            let Some(body) = find_fn(source, &format!("fn {name}(")) else {
+                continue;
+            };
+            grown.push('\n');
+            grown.push_str(&body);
+        }
+        if grown.len() == out.len() {
+            break;
+        }
+        out = grown;
+    }
+    out
+}
+
+/// Every production source under `src/`, as one text.
+///
+/// A door obtains its evidence by calling something, and what it calls is
+/// almost never in its own file — the certification run lives in the review
+/// pipeline. Following the call across the file boundary is what separates
+/// "obtained from the certification run, wherever that is written" from
+/// "manufactured at the door", which is the whole of P5.
+fn all_production_source() -> String {
+    rust_sources_under("src")
+        .iter()
+        .map(|rel| production_source(rel))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The whole of one function, signature and braces included, found by a
@@ -1064,7 +1388,9 @@ async fn the_merge_queue_entry_point_refuses_the_evidence_it_was_handed() {
         ),
     ];
 
-    let enlister = MergeEnlister::new(Arc::new(GitHubClient::new()));
+    let github = Arc::new(GitHubClient::new());
+    let enlister = MergeEnlister::new(github.clone());
+    let mut refusals: Vec<String> = Vec::new();
     for (what, report) in cases {
         // Taken first: while the seam is unimplemented this panics here, at the
         // seam, rather than shelling out.
@@ -1089,7 +1415,63 @@ async fn the_merge_queue_entry_point_refuses_the_evidence_it_was_handed() {
              Invariant I1 — absent evidence must never merge — has to hold for the \
              call, not for a helper that may or may not have been reached."
         );
+        refusals.push(refusal);
     }
+
+    // P4, at the entry point. The reasoning that moved the refusal to the call
+    // rather than the helper applies unchanged to the admitting case: a second
+    // precondition bolted on beside the seam — a freshness check, a head-SHA
+    // check — refuses every certified pull request in the fleet while every
+    // test above stays green. So the fourth case is a report that must get
+    // *past* the guard.
+    //
+    // No wording is pinned: what is asserted is that the failure this call
+    // comes back with is not one of the three refusals collected above.
+    // `NO_SUCH_REPO` is rejected by `gh` on argument parsing, so the call fails
+    // locally either way, and if `gh` is absent the spawn error is not a
+    // refusal either.
+    let clean = every_gate_passing();
+    assert!(
+        MergeEnlister::admission_refusal(Some(&clean)).is_ok(),
+        "fixture sanity: a certified, fully measured report is admitted by the seam"
+    );
+
+    // How far past the guard is "past the guard": an admitted pull request must
+    // get as far as asking GitHub about itself. Whatever this machine answers
+    // for that question — `gh` rejecting the repo spec, or no `gh` at all — is
+    // the reference, so no wording is pinned and the two calls fail identically
+    // for the same reason.
+    let reference = github
+        .fetch_pr_metadata(NO_SUCH_REPO, 1)
+        .await
+        .expect_err("fixture sanity: `gh` cannot answer for this repo spec")
+        .to_string();
+    let err = enlister
+        .enlist_into_merge_queue(NO_SUCH_REPO, 1, Some(&clean))
+        .await
+        .expect_err(
+            "fixture sanity: `gh` cannot answer for this repo spec, so no call to it succeeds",
+        );
+    let chain = format!("{err:?}");
+    for refusal in &refusals {
+        assert!(
+            !chain.contains(refusal.as_str()),
+            "`enlist_into_merge_queue` was handed a certified, fully measured \
+             report and answered it with a refusal meant for absent \
+             evidence:\n  refusal: {refusal}\n  got: {chain}"
+        );
+    }
+    assert!(
+        chain.contains(&reference),
+        "`enlist_into_merge_queue` was handed a certified, fully measured report \
+         and never got as far as the pull request:\n  expected to reach: \
+         {reference}\n  got: {chain}\n\
+         I1 cuts both ways. Absent evidence is not a pass and present evidence is \
+         not an accusation: a second precondition bolted on beside the admission \
+         decision — a freshness check, a head-SHA check — satisfies every refusal \
+         case above, withholds every genuinely certified pull request in the \
+         fleet, and does it silently."
+    );
 }
 
 /// P5. The entry point can only refuse on what it is given. A door that hands
@@ -1097,13 +1479,17 @@ async fn the_merge_queue_entry_point_refuses_the_evidence_it_was_handed() {
 /// hands it a report the door itself wrote has reopened issue #17 behind a
 /// well-typed argument.
 ///
-/// The second half is the one with no live offender today, and it is here
-/// because the wrong implementation is four lines: run `cargo check` in the
-/// healer, round-trip `PreMergeCertificationReport::unmeasured` through serde
-/// setting every `*_status` to `Passed`, `seal()`, hand that over. Every
-/// admission test in this file passes on it, because the report is a forgery
-/// and the predicate is asked politely. Gate statuses are assigned by the
-/// certification run and by nothing else.
+/// Three questions, asked of provenance rather than of vocabulary, because a
+/// fixed list of banned spellings is a list a hurried engineer walks around
+/// without meaning to. A free `optimistic(reason)` next to the type in
+/// `report.rs`, round-tripping `unmeasured` through serde with every status set
+/// to `Passed`, names no banned construct at the door and sits in the one
+/// directory the forgery scan used to exempt wholesale — and every door calling
+/// it admits every pull request on a report that zero gates produced.
+///
+/// So: no function that produces a report may certify without consuming what a
+/// gate measured; no file outside the guard may write gate statuses at all; and
+/// the value each door hands over must trace back to the certification run.
 #[test]
 fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
     let doors = merge_queue_doors();
@@ -1115,23 +1501,44 @@ fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
          wrong with anything"
     );
 
-    let empty_handed: Vec<String> = doors
+    // I2, where the report itself is defined. `report.rs` says in a comment that
+    // "there is deliberately no 'all passed' constructor" and nothing enforced
+    // it, so the cheapest place to fabricate evidence was beside the type it
+    // fabricates.
+    let producers = report_producing_fns("src/pre_merge_guard/report.rs");
+    assert!(
+        !producers.is_empty(),
+        "this scan found no function in src/pre_merge_guard/report.rs that \
+         produces a `PreMergeCertificationReport`; it is broken and would report \
+         nothing wrong with anything"
+    );
+    let fabricators: Vec<String> = producers
         .iter()
-        .filter(|d| {
-            let args = d.arguments();
-            args.len() < 3 || args.iter().any(|a| a == "None")
+        .filter(|(name, params)| name != "unmeasured" && !params.contains("GateStatus"))
+        .map(|(name, params)| {
+            format!(
+                "src/pre_merge_guard/report.rs: {name}({})",
+                params.split_whitespace().collect::<Vec<_>>().join(" ")
+            )
         })
-        .map(|d| format!("{} — {}", d.at(), d.statement()))
         .collect();
     assert!(
-        empty_handed.is_empty(),
-        "these paths hand a pull request to the merge queue with no evidence for \
-         it:\n{}\n\
-         The entry point refuses what it is handed nothing for, so this is \
-         fail-closed and safe — and it is also a door that can never admit \
-         anything again. Obtain the certification report on this path and hand it \
-         over, or delete the door.",
-        empty_handed.join("\n")
+        fabricators.is_empty(),
+        "these functions hand out a certification report without being told what \
+         any gate measured:\n{}\n\
+         A report is what a certification run produced; a constructor that fills \
+         the corpus in from a reason string produces the caller's opinion in the \
+         shape of evidence, and `admission_refusal` cannot tell the difference. \
+         `unmeasured` is the one exception, and only because it can admit \
+         nothing.",
+        fabricators.join("\n")
+    );
+    assert!(
+        !PreMergeCertificationReport::unmeasured("nothing ran").is_admissible(),
+        "`unmeasured` is exempt from the rule above only because it is \
+         inadmissible by construction. It is not any more, so the exemption is \
+         now a hole: either restore it or take a gate outcome like every other \
+         constructor."
     );
 
     let forged: Vec<String> = rust_sources_under("src")
@@ -1174,6 +1581,110 @@ fn every_door_hands_the_merge_queue_evidence_a_certification_run_produced() {
          difference. Gate statuses come from the certification run.",
         forged.join("\n")
     );
+
+    let everywhere = all_production_source();
+    let empty_handed: Vec<String> = doors
+        .iter()
+        .filter_map(|d| {
+            let args = d.arguments();
+            let why = match args.get(2) {
+                None => "hands over no evidence at all".to_string(),
+                Some(a) if a == "None" => "hands over `None`".to_string(),
+                Some(a) if !evidence_is_certified(d, a, &everywhere) => {
+                    format!("hands over `{a}`, which does not come from `{CERTIFICATION_RUN}`")
+                }
+                Some(_) => return None,
+            };
+            Some(format!("{} — {why}\n    {}", d.at(), d.statement()))
+        })
+        .collect();
+    assert!(
+        empty_handed.is_empty(),
+        "these paths hand a pull request to the merge queue without evidence a \
+         certification run produced:\n{}\n\
+         The entry point refuses what it is handed nothing for, so a `None` here \
+         is fail-closed and safe — and it is also a door that can never admit \
+         anything again. A report that came from anywhere else is worse: it is \
+         well-typed, it is not a measurement, and the predicate cannot tell. Run \
+         the certification on this path and hand over what it produced, or \
+         delete the door.",
+        empty_handed.join("\n")
+    );
+}
+
+/// The one function that turns gate outcomes into a certification report. What
+/// a door hands over is evidence when it came from here and an opinion
+/// otherwise.
+const CERTIFICATION_RUN: &str = "evaluate_pre_merge_gates";
+
+/// Whether the value a door hands over as evidence traces back to the
+/// certification run, through the bindings — and the helpers — of its own file.
+///
+/// The argument at the call is only the last step:
+/// `let evidence = optimistic("cargo check was clean");` one line above satisfies
+/// any check made on the spelling at the door.
+fn evidence_is_certified(door: &MergeQueueDoor, argument: &str, everywhere: &str) -> bool {
+    let mut queue = identifiers(argument);
+    let mut seen: Vec<String> = Vec::new();
+    while let Some(name) = queue.pop() {
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name.clone());
+        if name == CERTIFICATION_RUN {
+            return true;
+        }
+        let Some(stmt) = binding_statement(&door.code, &name, door.call.idx) else {
+            continue;
+        };
+        let rhs = stmt
+            .split_once('=')
+            .map(|(_, r)| r.to_string())
+            .unwrap_or(stmt);
+        if with_called_bodies(everywhere, &rhs, 3).contains(CERTIFICATION_RUN) {
+            return true;
+        }
+        queue.extend(identifiers(&rhs));
+    }
+    false
+}
+
+/// Every function in `rel` that produces a `PreMergeCertificationReport`, as
+/// (name, parameter list).
+fn report_producing_fns(rel: &str) -> Vec<(String, String)> {
+    let source = production_source(rel);
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(off) = source[from..].find("fn ") {
+        let at = from + off;
+        from = at + 3;
+        if source[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        let name: String = source[at + 3..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        let Some(call) = find_call(&source, &format!("{name}("), at) else {
+            continue;
+        };
+        let Some(brace) = source[call.close..].find('{') else {
+            continue;
+        };
+        let returns = &source[call.close + 1..call.close + brace];
+        if !returns.contains("Self") && !returns.contains("PreMergeCertificationReport") {
+            continue;
+        }
+        out.push((name, source[call.open + 1..call.close].to_string()));
+    }
+    out
 }
 
 /// Whether `code` assigns to a `*_status` field reached through a `.`, which is
@@ -1242,35 +1753,79 @@ fn no_path_drops_a_merge_queue_refusal_on_the_floor() {
 /// API — that an enlistment happened when it was refused.
 ///
 /// Either the handler waits for the outcome and answers with it, or it stops
-/// asserting an outcome it does not have. Vacuously satisfied if the handler is
-/// deleted or if it no longer detaches the work.
+/// asserting an outcome it does not have.
+///
+/// Nothing here is measured by position, and nothing is waved through for want
+/// of a match. Building the answer *above* the spawn moves the claim without
+/// changing it; extracting the spawned closure into a helper — ordinary tidying,
+/// not evasion — moves the enlistment one identifier away. Both used to pass,
+/// the second one vacuously.
 #[test]
 fn the_enlist_api_does_not_answer_success_for_an_enlistment_it_has_not_performed() {
     const HANDLER: &str = "fn manual_enlist_handler(";
+    const ENLIST: &str = "enlist_into_merge_queue(";
     let source = production_source("src/webhook/manual_handlers.rs");
+
     let Some(body) = find_fn(&source, HANDLER) else {
+        // Dropping the endpoint is an honest way to close this half of #17 —
+        // but gone is not the same as moved, and a handler that merely changed
+        // file still answers the request.
+        let still_named: Vec<String> = rust_sources_under("src")
+            .into_iter()
+            .filter(|rel| production_source(rel).contains("manual_enlist_handler"))
+            .collect();
+        assert!(
+            still_named.is_empty(),
+            "`manual_enlist_handler` is no longer in src/webhook/manual_handlers.rs \
+             but production code still names it, in {still_named:?}. This test must \
+             follow the endpoint to wherever it now lives; a scan that stops \
+             finding its subject is not a fix."
+        );
         return;
     };
-    let Some(spawn) = body.find("tokio::spawn(") else {
-        return;
-    };
-    let spawned = &body[spawn..statement_end(&body, spawn)];
-    if !spawned.contains("enlist_into_merge_queue(") {
+
+    // What the detached tasks do, with the bodies of the helpers they call
+    // spliced in, and what the handler does on the request's own thread.
+    let mut detached = String::new();
+    let mut from = 0usize;
+    while let Some(spawn) = find_call(&body, "tokio::spawn(", from) {
+        from = spawn.close;
+        detached.push('\n');
+        detached.push_str(&with_called_bodies(
+            &source,
+            &body[spawn.open..=spawn.close],
+            2,
+        ));
+    }
+    let enlists_detached = detached.contains(ENLIST);
+    let enlists_inline =
+        with_called_bodies(&source, &body, 2).contains(ENLIST) && !enlists_detached;
+
+    assert!(
+        enlists_detached || enlists_inline,
+        "`manual_enlist_handler` no longer reaches the merge queue at all. If the \
+         endpoint was retired, delete the handler and say so; a handler that \
+         answers a request it no longer acts on is the same lie with the work \
+         removed."
+    );
+
+    if enlists_inline {
+        // The outcome is in hand by the time the answer is written, so there is
+        // nothing left for this test to hold: whatever it answers, it answers
+        // about something that has happened.
         return;
     }
 
-    let after = &body[statement_end(&body, spawn)..];
     assert!(
-        !after.contains("success: true"),
-        "`manual_enlist_handler` detaches the enlistment and then answers \
+        !body.contains("success: true"),
+        "`manual_enlist_handler` detaches the enlistment and answers \
          `success: true` regardless of what it does:\n{}\n\
          The requester is told the pull request was enlisted when it may have \
          been refused, and a refusal that reaches only a log line inside a \
          detached task has not been surfaced to anybody who asked. Wait for the \
          outcome and answer with it, or answer something that is true of a job \
          that has not run yet.",
-        after
-            .trim()
+        body.trim()
             .lines()
             .map(str::trim)
             .collect::<Vec<_>>()
@@ -1602,10 +2157,16 @@ fn assert_publication_is_derived(source: &str, publisher: &Publisher) {
 
     // Nothing is published this way any more: an honest way to close issue #18.
     if !source.contains(handover) {
+        // The client that *defines* the call reaches it internally, and that is
+        // plumbing rather than a decision to publish. Anywhere else on this
+        // path, the publication was relocated, not dropped.
+        let defines = format!("fn {}", handover.trim_start_matches('.'));
         assert!(
-            published_text_files()
-                .iter()
-                .all(|f| f == "src/merge_enlister.rs" || !production_source(f).contains(handover)),
+            published_text_files().iter().all(|f| {
+                f == "src/merge_enlister.rs"
+                    || production_source(f).contains(&defines)
+                    || !production_source(f).contains(handover)
+            }),
             "`{handover}` moved out of src/merge_enlister.rs. Relocating a \
              publication does not make it honest and this test must follow it"
         );
@@ -1648,14 +2209,59 @@ fn assert_publication_is_derived(source: &str, publisher: &Publisher) {
         !discards_call_result(&body, &call),
         "`{function}` throws away what `{seam}` returned and publishes anyway."
     );
-    let call_statement = statement(&body, call.idx);
+    // The seam call's own statement, followed through any `else` branch.
+    // `match seam() { Some(s) => s, None => <a sentence> }` and the `if let`
+    // spelling of it are `.unwrap_or(<a sentence>)` written the way an engineer
+    // is more likely to reach for, and `statement` stops at the `}` before the
+    // branch that holds the sentence.
+    let seam_start = statement_start(&body, call.idx);
+    let seam_end = statement_end_through_else(&body, seam_start);
+    let seam_statement = body[seam_start..seam_end].to_string();
     for fallback in [".unwrap_or", ".map_or", ".unwrap()", ".expect("] {
         assert!(
-            !call_statement.contains(fallback),
+            !seam_statement.contains(fallback),
             "`{function}` falls back to a text of its own with `{fallback}` when \
              `{seam}` has nothing to say. An absent text is Anvil reporting that it \
              measured nothing worth publishing; publish nothing instead. Got: \
-             {call_statement}"
+             {seam_statement}"
+        );
+    }
+    if seam_statement.contains("match ") || seam_statement.contains("if let ") {
+        assert!(
+            ["return", "bail!", "?", "continue"]
+                .iter()
+                .any(|exit| seam_statement.contains(exit)),
+            "`{function}` scrutinises `{seam}` and the arm that binds no text does \
+             not leave the function, so something is published even when `{seam}` \
+             produced nothing:\n  {}",
+            seam_statement
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
+    // What is left of that statement once the question put to the report and the
+    // messages meant for an operator are blanked. Anything still fixed in it is
+    // a sentence standing in for a derivation that was not performed.
+    let mut scrubbed = blank_unpublished_arguments(&seam_statement);
+    if let Some(inner) = find_call(&scrubbed, seam, 0) {
+        let blanked: String = scrubbed[inner.open + 1..inner.close]
+            .chars()
+            .map(|c| if c == '\n' { '\n' } else { ' ' })
+            .collect();
+        scrubbed.replace_range(inner.open + 1..inner.close, &blanked);
+    }
+    if let Some(what) = welded_text(&scrubbed) {
+        panic!(
+            "`{function}` keeps {what} in the statement that asks `{seam}` for the \
+             text:\n  {}\n\
+             That is the absent case answered with a fixed sentence, which is \
+             issue #18 one arm down. Bind what `{seam}` returned and publish that, \
+             or publish nothing.",
+            seam_statement
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
         );
     }
 
@@ -1692,13 +2298,42 @@ fn assert_publication_is_derived(source: &str, publisher: &Publisher) {
              it.",
             handed.split_whitespace().collect::<Vec<_>>().join(" ")
         );
-        assert!(
-            !handed.contains('"'),
-            "`{function}` hands a string literal straight to `{handover}`:\n  {}\n\
-             String contents are blanked before this scan, so a surviving quote is \
-             a fixed sentence reaching the pull request whatever `{seam}` returned.",
-            handed.split_whitespace().collect::<Vec<_>>().join(" ")
+
+        if hand.idx < call.idx {
+            continue;
+        }
+
+        // `carries` says the seam's value reaches this call. This says it is
+        // all that reaches it: a publisher that binds the derived text into a
+        // sentence of its own, one `format!` above the handover, answers
+        // `carries` perfectly and signs an unmeasured claim onto the pull
+        // request anyway.
+        let traced = traced_values(&body, handed, hand.idx);
+        let mut spans = vec![handed.to_string()];
+        spans.extend(
+            statements_in(&body, seam_end, hand.idx)
+                .into_iter()
+                .filter(|stmt| binder(stmt).is_some_and(|b| traced.contains(&b))),
         );
+        for span in spans {
+            for fragment in weld_fragments(&blank_unpublished_arguments(&span)) {
+                if !traced.iter().any(|t| mentions_ident(&fragment, t)) {
+                    continue;
+                }
+                let Some(what) = welded_text(&fragment) else {
+                    continue;
+                };
+                panic!(
+                    "`{function}` welds {what} onto the text `{seam}` derived, on \
+                     its way to `{handover}`:\n  {}\n\
+                     Every word Anvil signs onto a pull request has to come from \
+                     the report. A sentence of the publisher's own beside the \
+                     derived detail is asserted on behalf of nobody's \
+                     measurement, and it reads exactly like the rest.",
+                    fragment.split_whitespace().collect::<Vec<_>>().join(" ")
+                );
+            }
+        }
     }
 }
 

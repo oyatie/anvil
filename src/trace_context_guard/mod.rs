@@ -45,6 +45,7 @@ impl TraceContextGuard {
 
         let mut detached_findings = Vec::new();
         let mut tasks_scanned = 0;
+        let mut unresolved = 0;
 
         for file_diff in diff_ctx.diff_content.split("diff --git") {
             let lines: Vec<&str> = file_diff.lines().collect();
@@ -52,14 +53,36 @@ impl TraceContextGuard {
                 continue;
             };
 
-            let (scanned, findings) = self.tracker.scan(path, &shipped_lines(&lines));
-            tasks_scanned += scanned;
-            detached_findings.extend(findings);
+            let outcome = self.tracker.scan(path, &shipped_lines(&lines));
+            tasks_scanned += outcome.classified;
+            unresolved += outcome.unresolved;
+            detached_findings.extend(outcome.detached);
         }
 
         let is_propagated = detached_findings.is_empty();
-        let summary = if tasks_scanned == 0 {
-            // Nothing crossed an async boundary, so there is nothing to have a
+        // Every sentence below is scoped to the evidence that was actually read.
+        // The gate is handed diff hunks, never files, so a boundary this pull
+        // request keeps outside a hunk is invisible to it -- and "the lines this
+        // pull request adds or keeps", which the sentence used to say, is a
+        // claim about the whole source. That is the same shape as the defect
+        // this gate exists to close, stated more quietly.
+        const SCOPE: &str = "the Rust diff hunks read";
+        // A boundary whose parenthesis closes outside those hunks was never
+        // measured; it is disclosed rather than folded into either verdict.
+        let one = unresolved == 1;
+        let outside = if unresolved == 0 {
+            String::new()
+        } else {
+            format!(
+                "; {unresolved} further boundar{} open{s} in them and close{s} outside them, so {} not classified",
+                if one { "y" } else { "ies" },
+                if one { "it was" } else { "they were" },
+                s = if one { "s" } else { "" }
+            )
+        };
+
+        let summary = if tasks_scanned == 0 && unresolved == 0 {
+            // Nothing crossed a task boundary, so there is nothing to have a
             // view about, and the gate says exactly that rather than publishing
             // the word "verified" over a measurement it never took. The status
             // stays `Passed` -- see `src/coverage_guard.rs`, where a diff adding
@@ -67,20 +90,31 @@ impl TraceContextGuard {
             // `src/slo_canary_guard/mod.rs`, where a telemetry source that
             // should have been there was absent. This is the first kind: the
             // measurement is complete and it is empty.
-            "➖ NOTHING TO MEASURE (no async task boundary in the Rust lines this pull request adds \
-             or keeps; nothing was inspected)"
-                .to_string()
+            format!(
+                "➖ NOTHING TO MEASURE (no task boundary in {SCOPE}; lines outside those hunks \
+                 were not read)"
+            )
+        } else if tasks_scanned == 0 {
+            format!(
+                "➖ NOTHING TO MEASURE ({unresolved} task boundar{} in {SCOPE} open{s} in them and \
+                 close{s} outside them, so none was classified)",
+                if one { "y" } else { "ies" },
+                s = if one { "s" } else { "" }
+            )
         } else if is_propagated {
             format!(
-                "✅ PASSED ({} async task boundar{} inspected; each attaches a tracing span via `.instrument(...)`)",
-                tasks_scanned,
+                "✅ PASSED ({tasks_scanned} task boundar{} inspected in {SCOPE}; an \
+                 `.instrument(...)` or `.in_current_span()` call appears inside the region each \
+                 one opens{outside})",
                 if tasks_scanned == 1 { "y" } else { "ies" }
             )
         } else {
             format!(
-                "❌ FAILED ({} of {} async task boundaries inspected drop distributed tracing context: no `.instrument(...)` span is attached)",
+                "❌ FAILED ({} of {tasks_scanned} task boundaries inspected in {SCOPE} drop \
+                 distributed tracing context: no `.instrument(...)` or `.in_current_span()` call \
+                 appears inside the region they open{outside}) at {}",
                 detached_findings.len(),
-                tasks_scanned
+                located(&detached_findings)
             )
         };
 
@@ -91,6 +125,31 @@ impl TraceContextGuard {
             summary,
         })
     }
+}
+
+/// How many detached boundaries the summary names before it stops counting.
+const LOCATIONS_IN_SUMMARY: usize = 3;
+
+/// `file:line` for the first few findings.
+///
+/// `summary` is the only field of this report that reaches a published surface:
+/// `src/pre_merge_guard/evaluator.rs` clones it into `GateStatus::Failed` and
+/// drops `detached_findings` on the floor. Without the locations folded in, an
+/// author is told a count and nothing else -- not which file, not which line,
+/// and not that the spawn may be a context line their change only retained.
+fn located(findings: &[DetachedSpanFinding]) -> String {
+    let mut parts: Vec<String> = findings
+        .iter()
+        .take(LOCATIONS_IN_SUMMARY)
+        .map(|f| format!("{}:{}", f.file_path, f.line_number))
+        .collect();
+    if findings.len() > LOCATIONS_IN_SUMMARY {
+        parts.push(format!(
+            "and {} more",
+            findings.len() - LOCATIONS_IN_SUMMARY
+        ));
+    }
+    parts.join(", ")
 }
 
 /// The post-image path of a diff chunk, when it is a Rust file.

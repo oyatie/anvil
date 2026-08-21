@@ -44,8 +44,38 @@ impl MergeEnlister {
         todo!("spec: Anvil endorses nothing it did not measure")
     }
 
+    /// The note Anvil posts onto a pull request it has just handed to the merge
+    /// queue, derived from what it actually measured.
+    ///
+    /// `None` means Anvil posts no note -- the honest answer when there is
+    /// nothing to derive a claim from. `strategy` is the merge strategy the
+    /// queue accepted ("Squash & Merge", "Merge Commit").
+    ///
+    /// SCAFFOLDING: signature only. The note lands on the same pull request as
+    /// the approving review and is read by the same people, so it is bound by
+    /// the same rule -- see `post_enlistment_note`, which today welds
+    /// "Pre-Merge Certification 100% Green" into every note it posts.
+    pub fn enlistment_note(
+        _report: Option<&PreMergeCertificationReport>,
+        _strategy: &str,
+    ) -> Option<String> {
+        todo!("spec: Anvil publishes no certification claim it did not measure")
+    }
+
     /// Enlists a certified Pull Request into the repository's Merge Queue, ensuring an Approving Review is present
-    pub async fn enlist_into_merge_queue(&self, repo: &str, pr_number: u64) -> Result<()> {
+    ///
+    /// `report` is the certification report the caller obtained for this pull
+    /// request, and `None` when it could not obtain one at all.
+    ///
+    /// SCAFFOLDING: the parameter exists so that "no evidence" is a value this
+    /// entry point must answer for rather than a state it cannot observe.
+    /// Nothing reads it yet, and every caller passes `None`.
+    pub async fn enlist_into_merge_queue(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        _report: Option<&PreMergeCertificationReport>,
+    ) -> Result<()> {
         info!(
             "Enlisting certified PR {}#{} into GitHub Merge Queue...",
             repo, pr_number

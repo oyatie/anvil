@@ -268,7 +268,7 @@ pub async fn manual_enlist_handler(
     tokio::spawn(async move {
         let _ = state_clone
             .merge_enlister
-            .enlist_into_merge_queue(&repo, pr_number)
+            .enlist_into_merge_queue(&repo, pr_number, None)
             .await;
     });
 

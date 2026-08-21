@@ -13,6 +13,10 @@ use std::path::Path;
 pub struct CorpusSync {
     pub rewritten: Vec<String>,
     pub remaining_drift: Vec<String>,
+    /// `None` when the sync applied to the repository under review.
+    /// `Some(reason)` when it did not, so the gate summary can say the sync
+    /// did not apply rather than read as a silent pass.
+    pub not_applicable: Option<String>,
 }
 
 const OWNED: &[&str] = &["README.md", "docs/doctrine.md", "openapi/openapi.yaml"];
@@ -28,7 +32,16 @@ const EXEMPTION_MARKERS: &[&str] = &[
 /// On I/O failure, returns `Err`. That is Errored, not Passed.
 /// Remaining drift after a successful write is returned in
 /// `remaining_drift` and must fail the gate (never AutoUpdated).
-pub fn sync_published_counts(repo_dir: &Path, total_gates: usize) -> Result<CorpusSync> {
+///
+/// `repo` is the `owner/name` slug of the repository under review. The owned
+/// page set and `total_gates` are Anvil's own; they say nothing about any other
+/// repository, so the sync must not apply to one.
+pub fn sync_published_counts(
+    repo: &str,
+    repo_dir: &Path,
+    total_gates: usize,
+) -> Result<CorpusSync> {
+    let _ = repo;
     let mut rewritten = Vec::new();
     let mut remaining_drift = Vec::new();
     let pages = collect_owned_pages(repo_dir)?;
@@ -53,6 +66,7 @@ pub fn sync_published_counts(repo_dir: &Path, total_gates: usize) -> Result<Corp
     Ok(CorpusSync {
         rewritten,
         remaining_drift,
+        not_applicable: None,
     })
 }
 
@@ -147,7 +161,7 @@ mod tests {
         )
         .unwrap();
 
-        let sync = sync_published_counts(dir.path(), 68).unwrap();
+        let sync = sync_published_counts("oyatie/anvil", dir.path(), 68).unwrap();
         assert_eq!(sync.rewritten, vec!["README.md".to_string()]);
         assert!(
             sync.remaining_drift.is_empty(),
@@ -172,7 +186,7 @@ mod tests {
         )
         .unwrap();
 
-        let sync = sync_published_counts(dir.path(), 68).unwrap();
+        let sync = sync_published_counts("oyatie/anvil", dir.path(), 68).unwrap();
         assert!(sync.rewritten.is_empty());
         assert!(sync.remaining_drift.is_empty());
         let got = std::fs::read_to_string(dir.path().join("README.md")).unwrap();

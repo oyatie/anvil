@@ -38,8 +38,8 @@
 //!   1. **Length is not monotone with the verdict, in either direction.** The
 //!      failing set brackets the passing set at both ends: the shortest failing
 //!      body is empty and the longest (`long_prose()` under a placeholder) is
-//!      about 1.1 KB, while every passing body sits between roughly 90 bytes
-//!      and 500. No threshold on total length can separate them.
+//!      over a kilobyte, while every passing body sits between roughly ninety
+//!      bytes and seven hundred. No threshold on total length can separate them.
 //!   2. **Length is not monotone per section either.** `SHORT_BAR` is an
 //!      eleven-byte bar that must pass; `"TODO: write the acceptance criteria
 //!      here"` is a thirty-nine-byte placeholder that must fail. A minimum
@@ -60,6 +60,20 @@
 //!   5. **No body may fail open.** Every fixture that carries neither artifact
 //!      reaches `expect_failed`, never `assert_ne!(.., "Passed")`, so
 //!      `NotMeasured`, `Warning` and `Errored` are rejected everywhere.
+//!   6. **Section boundaries are falsified in both directions.** A previous
+//!      revision contained no body with a third section anywhere, so an
+//!      extractor that ran the done-when to the next `"\n## "` was never
+//!      falsified: an empty `## Done when` followed by `### Testing` came back
+//!      `Passed`, which is the pasted-template defect in the shape real
+//!      templates produce. `a_third_section_does_not_hide_an_empty_one` places
+//!      a real third section after an empty and after a deferred section at
+//!      every heading depth an author writes, and its passing counterpart
+//!      places one after a genuine bar, so the fix cannot degenerate into
+//!      "ignore everything after the marker".
+//!   7. **The passing side is wide enough not to block everyone.** See the next
+//!      section: a suite whose only passing bodies spelled the marker one exact
+//!      way admitted a gate that fails closed on nearly every real change,
+//!      which is the fabricated accusation at 100% incidence.
 //!
 //! Character count and byte count are also deliberately decoupled: the Korean
 //! fixtures are short in characters and long in bytes, so a heuristic in either
@@ -70,20 +84,46 @@
 //! `product_bar::missing_artifacts` returns which halves of the artifact are
 //! absent; `judge` renders the verdict and the message from it. The tests
 //! assert the set, and assert only *positively* on the message (it must name
-//! each missing artifact). An earlier revision asserted the negative as a raw
+//! each missing artifact) plus that the three shapes of absence render three
+//! distinct messages. An earlier revision asserted the negative as a raw
 //! substring ban — "a missing-bar message must not contain the word problem" —
 //! which turned a correct, helpful implementation red for quoting the offending
-//! section back at the author. Do-not-falsely-accuse is a property of the
-//! measurement, not of the vocabulary of the prose.
+//! section back at the author. Do-not-falsely-accuse is enforced where it is
+//! mechanically checkable: on the measurement, by `expect_missing` pinning the
+//! set exactly. See `three_shapes_of_absence_produce_three_distinct_messages`
+//! for what that test does and does not claim.
+//!
+//! # The marker vocabulary is open; the marker *formatting* is not
+//!
+//! Which words announce the two sections is left to the implementer: an
+//! implementation that also recognises `## Acceptance criteria`, `## Why`, a
+//! YAML block or unheaded prose passes unchanged, because no test here requires
+//! a body that genuinely states both artifacts to fail.
+//!
+//! What is no longer left open is the markdown *around* the same two words.
+//! A previous revision built every one of its passing bodies from the
+//! byte-identical strings `## Problem` and `## Done when`. Paired with the
+//! (correct) requirement that a body carrying no bar fails closed, that admits
+//! a gate matching exactly two byte strings — one that rejects `## Done When`,
+//! `### Done when`, `## Done when:` and `**Done when**`, and therefore withholds
+//! certification from essentially every real pull request once wired into
+//! `seal()`. This repository has no PULL_REQUEST_TEMPLATE forcing one spelling,
+//! so nothing else would have caught it. A false accusation is the same defect
+//! as a false green pointed the other way, so
+//! `the_same_two_words_are_the_marker_however_the_author_formats_them` pins case,
+//! depth, a trailing colon and a bold label as passing — and pins the mirror,
+//! that an empty section under each of those spellings still fails, so the
+//! widened recognition cannot itself become a fail-open.
 //!
 //! # What these tests deliberately do NOT pin
 //!
-//! The marker spelling. The fixtures below commit to one pair — `## Problem`
-//! and `## Done when` — because a test has to write *something*, but every case
-//! is distinguished by what sits **under** those headings, never by the heading
-//! text. An implementation that recognises more spellings, or recognises the
-//! artifacts in unheaded prose, passes unchanged: no test here requires a
-//! marker-less body that genuinely states both artifacts to fail.
+//! Synonyms for the two headings, per above. The render order of
+//! `missing_artifacts` (the helper sorts before comparing). The prose of the
+//! failure messages beyond naming each missing artifact and differing from one
+//! another. And the change's *title*: `judge` takes the body alone, because no
+//! behavioural test in this suite could distinguish a gate that read the title
+//! from one that ignored it, and this suite is not going to require plumbing an
+//! input it cannot measure.
 //!
 //! Stage discipline: these are red tests, written before the gate exists.
 //! `pre_merge_guard::product_bar::{judge, missing_artifacts}` are `todo!()`,
@@ -101,6 +141,12 @@ use std::collections::BTreeSet;
 // Fixtures
 // ---------------------------------------------------------------------------
 
+/// A well-written conventional-commit subject for the change these fixtures
+/// describe. It is not an input to `judge` — see the module docs — but it is
+/// the companion title for the bodies below, and
+/// `the_bet_and_the_bar_are_written_on_the_change_not_left_to_its_title` is
+/// what pins that a change whose bet lives only here has not produced the
+/// artifact.
 const TITLE: &str = "fix(certify): stop reporting an unread canary as passed";
 
 /// A real problem statement: what is wrong, and why it matters.
@@ -212,7 +258,47 @@ const KO_PROBLEM: &str =
 const KO_BAR: &str = "- 조회되지 않은 카나리는 NotMeasured 로 보고하고 머지 큐 진입을 막는다\n\
      - 스코어카드가 둘 중 무엇이었는지 이름을 밝힌다";
 
-const KO_TITLE: &str = "fix(certify): 조회되지 않은 카나리를 통과로 보고하지 않는다";
+/// The two words of each heading, in the markdown an author actually wraps them
+/// in. Every entry is the *same words* — case, depth, a trailing colon and a
+/// bold label are formatting, not vocabulary, and a gate that recognises only
+/// one of them rejects nearly every real pull request. Synonyms are deliberately
+/// absent: which words announce a section is left open, per the module docs.
+const DONE_WHEN_MARKERS: &[&str] = &[
+    "## Done when",
+    "## Done When",
+    "## done when",
+    "### Done when",
+    "# Done when",
+    "## Done when:",
+    "**Done when**",
+];
+
+const PROBLEM_MARKERS: &[&str] = &[
+    "## Problem",
+    "## problem",
+    "### Problem",
+    "# Problem",
+    "## Problem:",
+    "**Problem**",
+];
+
+/// Headings an author writes for a third section, at every depth and weight
+/// markdown allows. A body with three sections is the commonest filled-in
+/// template there is, and until this suite carried one no fixture falsified the
+/// gate's section-boundary logic in either direction.
+const THIRD_SECTION_HEADERS: &[&str] = &[
+    "# Testing",
+    "## Testing",
+    "### Testing",
+    "**Testing**",
+    "Testing:",
+];
+
+/// What a third section says. It reports what the author did; it states neither
+/// what is wrong nor how anyone checks the change is done, so counting it as
+/// either artifact is the boundary defect and nothing else.
+const THIRD_SECTION_BODY: &str = "Ran `cargo test --all` locally on macOS and again on the CI \
+     runner, and re-ran the canary integration suite twice.";
 
 /// PR bodies authored in the GitHub web UI arrive over the webhook with CRLF,
 /// because that is what an HTML textarea submits. Nothing in this repository
@@ -255,6 +341,11 @@ fn problem_only(problem: &str) -> String {
 
 fn bar_only(done_when: &str) -> String {
     format!("## Done when\n\n{done_when}\n")
+}
+
+/// A third section, headed the way `header` heads it.
+fn third_section(header: &str) -> String {
+    format!("{header}\n\n{THIRD_SECTION_BODY}\n")
 }
 
 /// Four paragraphs of genuine problem analysis and not one word about what done
@@ -359,10 +450,24 @@ fn names(artifact: Artifact, msg: &str) -> bool {
     }
 }
 
-fn missing(title: &str, body: &str) -> Vec<Artifact> {
-    let mut got = product_bar::missing_artifacts(title, body);
+/// The measurement, normalised for comparison.
+///
+/// Render order is presentation, so this sorts before comparing. Duplication is
+/// not presentation: an artifact reported twice renders as "a written problem
+/// statement and a written problem statement" in the author-facing message, so
+/// the raw vector is checked for it rather than quietly deduplicated.
+#[track_caller]
+fn missing(body: &str) -> Vec<Artifact> {
+    let raw = product_bar::missing_artifacts(body);
+    let mut got = raw.clone();
     got.sort();
     got.dedup();
+    assert_eq!(
+        got.len(),
+        raw.len(),
+        "the measurement named the same missing artifact more than once ({raw:?}); the \
+         message rendered from it then repeats itself back at the author. body={body:?}"
+    );
     got
 }
 
@@ -370,8 +475,8 @@ fn missing(title: &str, body: &str) -> Vec<Artifact> {
 /// nothing missing. Asserting both keeps the verdict and the message rendered
 /// from one measurement rather than two disagreeing ones.
 #[track_caller]
-fn expect_passed(title: &str, body: &str, context: &str) {
-    let status = product_bar::judge(title, body);
+fn expect_passed(body: &str, context: &str) {
+    let status = product_bar::judge(body);
     assert_eq!(
         status,
         GateStatus::Passed,
@@ -380,11 +485,11 @@ fn expect_passed(title: &str, body: &str, context: &str) {
          the other way. body={body:?}"
     );
     assert!(
-        missing(title, body).is_empty(),
+        missing(body).is_empty(),
         "{context}: judge() passed the change while missing_artifacts() still reports \
          {:?} absent. The verdict and the message must be rendered from one \
          measurement, or the scorecard and the comment contradict each other",
-        missing(title, body)
+        missing(body)
     );
 }
 
@@ -396,17 +501,17 @@ fn expect_passed(title: &str, body: &str, context: &str) {
 /// `Errored`), and asserts the message names each missing artifact so the author
 /// can act on it without reading the gate's source. Returns the message.
 #[track_caller]
-fn expect_missing(title: &str, body: &str, expected: &[Artifact], context: &str) -> String {
+fn expect_missing(body: &str, expected: &[Artifact], context: &str) -> String {
     let mut want = expected.to_vec();
     want.sort();
     assert_eq!(
-        missing(title, body),
+        missing(body),
         want,
         "{context}: the gate measured the wrong set of missing artifacts. Naming an \
          artifact the author did write tells them to write the thing they already \
          wrote; failing to name one they did not write hides the work. body={body:?}"
     );
-    assert_failed_naming(title, body, &want, context)
+    assert_failed_naming(body, &want, context)
 }
 
 /// The change is missing *at least* these artifacts.
@@ -417,13 +522,8 @@ fn expect_missing(title: &str, body: &str, expected: &[Artifact], context: &str)
 /// problem is a marker-recognition choice this suite deliberately leaves to the
 /// implementer, and pinning it either way would be pinning the marker format.
 #[track_caller]
-fn expect_at_least_missing(
-    title: &str,
-    body: &str,
-    expected: &[Artifact],
-    context: &str,
-) -> String {
-    let got = missing(title, body);
+fn expect_at_least_missing(body: &str, expected: &[Artifact], context: &str) -> String {
+    let got = missing(body);
     for artifact in expected {
         assert!(
             got.contains(artifact),
@@ -431,20 +531,20 @@ fn expect_at_least_missing(
              {got:?}. body={body:?}"
         );
     }
-    assert_failed_naming(title, body, &got, context)
+    assert_failed_naming(body, &got, context)
 }
 
 /// The shared tail of both: `Failed`, measured, unacceptable, and a message that
 /// names every artifact the measurement found missing.
 #[track_caller]
-fn assert_failed_naming(title: &str, body: &str, want: &[Artifact], context: &str) -> String {
+fn assert_failed_naming(body: &str, want: &[Artifact], context: &str) -> String {
     assert!(
         !want.is_empty(),
         "{context}: this is the failing side, so the measurement must report at least \
          one missing artifact; use expect_passed otherwise. body={body:?}"
     );
 
-    let status = product_bar::judge(title, body);
+    let status = product_bar::judge(body);
     assert!(
         status.is_measured(),
         "{context}: the gate read the change and found {want:?} missing; that is a \
@@ -474,7 +574,6 @@ fn assert_failed_naming(title: &str, body: &str, want: &[Artifact], context: &st
 #[test]
 fn a_change_carrying_a_written_problem_and_a_done_when_bar_passes() {
     expect_passed(
-        TITLE,
         &body_with(PROBLEM, BAR),
         "a written problem and a done-when bar",
     );
@@ -488,7 +587,6 @@ fn a_bar_written_as_measurable_criteria_passes() {
                     - `is_admissible()` is false while any gate is NotMeasured\n\
                     - the posted scorecard names every unmeasured gate by id";
     expect_passed(
-        TITLE,
         &body_with(PROBLEM, criteria),
         "an acceptance bar expressed as checkable criteria is the artifact, not a \
          lesser form of it",
@@ -508,7 +606,6 @@ fn a_one_line_problem_and_a_one_line_bar_pass() {
     );
 
     expect_passed(
-        TITLE,
         &body_with(SHORT_PROBLEM, SHORT_BAR),
         "a one-line bet and a one-line, checkable bar are the artifact; rejecting \
          them because they are short measures effort and accuses an author who did \
@@ -532,7 +629,6 @@ fn a_korean_problem_and_bar_pass() {
     );
 
     expect_passed(
-        KO_TITLE,
         &body,
         "a written problem and a done-when bar are the artifact in any language; \
          failing this accuses every author who does not write in English",
@@ -545,12 +641,92 @@ fn the_two_sections_may_be_written_in_either_order() {
     // both artifacts, and a section extractor that assumes the problem comes
     // first either mis-slices this body or panics on it — see
     // `judge_returns_a_verdict_for_any_body_and_never_panics`.
-    expect_passed(TITLE, &body_with(PROBLEM, BAR), "the problem stated first");
+    expect_passed(&body_with(PROBLEM, BAR), "the problem stated first");
     expect_passed(
-        TITLE,
         &format!("## Done when\n\n{BAR}\n\n## Problem\n\n{PROBLEM}\n"),
         "the done-when stated first",
     );
+}
+
+#[test]
+fn the_same_two_words_are_the_marker_however_the_author_formats_them() {
+    // The defect this closes, reproduced twice by review against a real
+    // implementation: a suite whose every passing body used the byte strings
+    // "## Problem" and "## Done when" admitted a gate that matched exactly
+    // those two byte strings. Combined with the (correct) rule that a body
+    // carrying no bar fails closed, that gate rejects "## Done When", "###
+    // Done when", "## Done when:" and "**Done when**" — and this repository
+    // ships no PULL_REQUEST_TEMPLATE forcing one spelling, so once wired into
+    // seal() it withholds certification from essentially every real change.
+    // Blocking everyone is not a safe direction to be wrong in; it is the
+    // fabricated accusation at full incidence.
+    //
+    // Every marker below is the SAME TWO WORDS. Case, heading depth, a trailing
+    // colon and a bold label are how markdown is written, not what it says.
+    // Synonyms are not pinned here — which words announce a section stays open.
+    for problem_marker in PROBLEM_MARKERS {
+        for done_when_marker in DONE_WHEN_MARKERS {
+            expect_passed(
+                &format!("{problem_marker}\n\n{PROBLEM}\n\n{done_when_marker}\n\n{BAR}\n"),
+                &format!(
+                    "a complete Product artifact under {problem_marker:?} and \
+                     {done_when_marker:?}"
+                ),
+            );
+        }
+    }
+
+    // The mirror, so widening recognition cannot itself become a fail-open: an
+    // empty section under any of those spellings is still an empty section.
+    for done_when_marker in DONE_WHEN_MARKERS {
+        expect_missing(
+            &format!("## Problem\n\n{PROBLEM}\n\n{done_when_marker}\n\n"),
+            &[Artifact::DoneWhenBar],
+            &format!("{done_when_marker:?} with nothing under it"),
+        );
+    }
+    for problem_marker in PROBLEM_MARKERS {
+        expect_missing(
+            &format!("{problem_marker}\n\n\n## Done when\n\n{BAR}\n"),
+            &[Artifact::WrittenProblem],
+            &format!("{problem_marker:?} with nothing under it"),
+        );
+    }
+}
+
+#[test]
+fn a_third_section_after_the_artifacts_does_not_hide_them() {
+    // The counterpart to `a_third_section_does_not_hide_an_empty_one`. Without
+    // this half, the fix for that one degenerates into "ignore everything after
+    // the marker" — which reads a bar of zero length and fails every filled-in
+    // template instead. The boundary has to be pinned in both directions or the
+    // slicing behaviour stays unspecified in both.
+    let multiline_bar = "- `slo_status` is NotMeasured when no telemetry endpoint is configured\n\
+                         - `is_admissible()` is false while any gate is NotMeasured\n\
+                         - the posted scorecard names every unmeasured gate by id";
+
+    for header in THIRD_SECTION_HEADERS {
+        let third = third_section(header);
+
+        expect_passed(
+            &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n\n{third}"),
+            &format!("a complete artifact followed by a section headed {header:?}"),
+        );
+
+        // A multi-line bar followed by a third section: an extractor that takes
+        // only the first line after the marker still sees a bar here, but one
+        // that takes nothing does not.
+        expect_passed(
+            &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{multiline_bar}\n\n{third}"),
+            &format!("a three-line bar followed by a section headed {header:?}"),
+        );
+
+        // A third section wedged BETWEEN the two artifacts.
+        expect_passed(
+            &format!("## Problem\n\n{PROBLEM}\n\n{third}\n## Done when\n\n{BAR}\n"),
+            &format!("a section headed {header:?} between the problem and the bar"),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -558,9 +734,59 @@ fn the_two_sections_may_be_written_in_either_order() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn a_third_section_does_not_hide_an_empty_one() {
+    // The headline gap in the previous revision, reproduced independently by
+    // both reviewers: no fixture in the file had a third section, so an
+    // extractor that ran the done-when to the next occurrence of "\n## " was
+    // never falsified. It returned Passed for a body whose done-when heading is
+    // empty and whose next section is `### Testing`, `**Testing**` or
+    // `# Testing`, because none of those is "\n## " — swallowing the testing
+    // notes as the acceptance bar.
+    //
+    // That is the pasted-template defect in the exact shape real templates
+    // produce: Problem / Done when / Testing, with the middle one skipped. The
+    // author wrote nothing under the heading; what a later section happens to
+    // say is not their acceptance bar, however many words it is.
+    for header in THIRD_SECTION_HEADERS {
+        let third = third_section(header);
+
+        for filler in ["", "   ", "TBD", "- [ ]"] {
+            expect_missing(
+                &format!("## Problem\n\n{PROBLEM}\n\n## Done when\n\n{filler}\n\n{third}"),
+                &[Artifact::DoneWhenBar],
+                &format!(
+                    "a done-when section holding only {filler:?}, followed by a section \
+                     headed {header:?}"
+                ),
+            );
+
+            // The mirror, so the problem-side extractor is pinned the same way.
+            expect_missing(
+                &format!("## Problem\n\n{filler}\n\n{third}\n## Done when\n\n{BAR}\n"),
+                &[Artifact::WrittenProblem],
+                &format!(
+                    "a problem section holding only {filler:?}, followed by a section \
+                     headed {header:?}"
+                ),
+            );
+
+            // Both empty, with the third section carrying all the prose in the
+            // body. Neither artifact exists; the body is not short.
+            expect_missing(
+                &format!("## Problem\n\n{filler}\n\n## Done when\n\n{filler}\n\n{third}"),
+                &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
+                &format!(
+                    "both sections holding only {filler:?}, with a section headed \
+                     {header:?} carrying the only prose in the body"
+                ),
+            );
+        }
+    }
+}
+
+#[test]
 fn a_change_with_no_bar_at_all_is_failed_not_merely_unmeasured() {
     expect_missing(
-        "",
         "",
         &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
         "a change with no problem statement and no bar",
@@ -624,11 +850,10 @@ fn a_real_pull_request_body_with_no_bar_fails_closed() {
     }
 
     for (context, body) in &at_least {
-        expect_at_least_missing(TITLE, body, &[Artifact::DoneWhenBar], context);
+        expect_at_least_missing(body, &[Artifact::DoneWhenBar], context);
     }
     for (context, body) in &exactly_both {
         expect_missing(
-            TITLE,
             body,
             &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
             context,
@@ -642,7 +867,6 @@ fn a_problem_statement_with_no_acceptance_bar_fails_however_long_the_prose() {
     // This body is four paragraphs of genuine problem analysis and contains no
     // statement of what done looks like.
     expect_missing(
-        TITLE,
         &problem_only(&long_prose()),
         &[Artifact::DoneWhenBar],
         "a long problem statement with no bar",
@@ -657,7 +881,6 @@ fn an_acceptance_bar_with_no_written_problem_fails_however_long_the_bar() {
     // done-when cannot carry an absent problem statement.
     for bar in [BAR.to_string(), long_bar()] {
         expect_missing(
-            TITLE,
             &bar_only(&bar),
             &[Artifact::WrittenProblem],
             "a bar with no written problem",
@@ -708,7 +931,7 @@ fn a_heading_with_nothing_under_it_fails_however_much_the_other_section_says() {
     );
 
     for (body, expected, context) in &cases {
-        expect_missing(TITLE, body, expected, context);
+        expect_missing(body, expected, context);
     }
 }
 
@@ -720,7 +943,6 @@ fn a_heading_with_nothing_under_it_fails_however_much_the_other_section_says() {
 fn assert_placeholder_fails_in_both_sections(placeholder: &str, family: &str) {
     for problem in [PROBLEM, SHORT_PROBLEM] {
         expect_missing(
-            TITLE,
             &body_with(problem, placeholder),
             &[Artifact::DoneWhenBar],
             &format!("{family}: the done-when section contains only {placeholder:?}"),
@@ -729,7 +951,6 @@ fn assert_placeholder_fails_in_both_sections(placeholder: &str, family: &str) {
 
     for bar in [BAR, SHORT_BAR] {
         expect_missing(
-            TITLE,
             &body_with(placeholder, bar),
             &[Artifact::WrittenProblem],
             &format!("{family}: the problem section contains only {placeholder:?}"),
@@ -737,7 +958,6 @@ fn assert_placeholder_fails_in_both_sections(placeholder: &str, family: &str) {
     }
 
     expect_missing(
-        TITLE,
         &body_with(placeholder, placeholder),
         &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
         &format!("{family}: both sections contain only {placeholder:?}"),
@@ -756,13 +976,11 @@ fn a_placeholder_fails_in_either_section_however_much_the_other_one_says() {
     // The long counterparts, so a length threshold cannot separate the sets.
     for placeholder in PLACEHOLDERS {
         expect_missing(
-            TITLE,
             &body_with(&long_prose(), placeholder),
             &[Artifact::DoneWhenBar],
             &format!("four paragraphs of problem above the placeholder {placeholder:?}"),
         );
         expect_missing(
-            TITLE,
             &body_with(placeholder, &long_bar()),
             &[Artifact::WrittenProblem],
             &format!("the placeholder {placeholder:?} above four paragraphs of bar"),
@@ -832,57 +1050,63 @@ fn a_section_that_is_blank_only_to_a_reader_fails() {
 }
 
 #[test]
-fn a_descriptive_title_is_not_a_substitute_for_the_bar() {
-    // A well-written title says what changed. It never says what done looks
-    // like, and accepting it would let every conventional-commit title certify
-    // the Product seat.
+fn the_bet_and_the_bar_are_written_on_the_change_not_left_to_its_title() {
+    // A well-written conventional-commit subject says what changed. It never
+    // says what done looks like, and it is not a written problem statement
+    // either — it is a label for one. Accepting it would let every well-titled
+    // change certify the Product seat.
+    //
+    // This is the decision that removed the title from the signature. `judge`
+    // takes the body alone, so the strongest form of this pin is the one the
+    // compiler enforces: there is no parameter through which TITLE could reach
+    // the gate. What is left to assert behaviourally is the product half — that
+    // a change whose bet exists only in its title, and whose body carries a
+    // real bar and nothing else, is still missing the written problem.
+    //
+    // Both bodies below have TITLE as their companion subject line: it names
+    // the defect ("reporting an unread canary as passed") about as well as a
+    // subject line can, and it is still not the artifact.
     expect_missing(
-        "fix(certify): stop reporting an unqueried canary as passed so the scorecard \
-         reflects what was actually measured",
         "",
         &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
-        "a descriptive title with an empty body",
+        &format!("an empty body under the descriptive title {TITLE:?}"),
+    );
+    expect_missing(
+        &bar_only(BAR),
+        &[Artifact::WrittenProblem],
+        &format!("a real bar, no written problem, under the title {TITLE:?}"),
     );
 }
 
 #[test]
-fn the_title_and_the_body_are_not_interchangeable() {
-    // Both parameters are `&str`, so swapping them at a call site compiles in
-    // silence. This pins the swap behaviourally rather than by reading the
-    // gate's source: fed backwards, a well-formed change must not certify,
-    // because a conventional-commit subject line is not an acceptance bar.
-    let body = body_with(PROBLEM, BAR);
-    expect_passed(TITLE, &body, "sanity: the right way round");
-
-    let swapped = product_bar::judge(&body, TITLE);
-    expect_failed(
-        &swapped,
-        "the title and the body handed to judge() the wrong way round",
-    );
-}
-
-#[test]
-fn each_failure_message_names_only_the_artifact_that_was_missing() {
-    // One message per shape of absence. The exact missing-set assertions inside
-    // `expect_missing` are what forbid a false accusation; the three
-    // `assert_ne!`s below are what forbid one generic string standing in for
-    // three measurements, which would satisfy every positive containment check
-    // while telling an author who wrote a good problem statement to go and
-    // write a problem statement.
+fn three_shapes_of_absence_produce_three_distinct_messages() {
+    // What this test checks, exactly: that the three shapes of absence do not
+    // share one message. One constant string — "the written problem and the
+    // done-when acceptance bar are missing" — satisfies every positive
+    // containment assertion in this file, and would tell an author that a gate
+    // failed and nothing else.
+    //
+    // What it deliberately does NOT check, despite an earlier name that claimed
+    // it: that each message names *only* the artifact that was missing. There
+    // is no non-brittle way to assert that at the level of prose. A correct and
+    // helpful implementation may legitimately write "your problem statement is
+    // here, your done-when bar is not", or quote the offending section back at
+    // the author — and a raw vocabulary ban turns both of those red. The
+    // do-not-falsely-accuse property is therefore enforced one level down,
+    // where it *is* mechanically checkable: `expect_missing` pins the
+    // measurement set exactly, so a gate cannot report an artifact the author
+    // wrote. See open_questions.
     let both = expect_missing(
-        TITLE,
         "",
         &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
         "nothing written at all",
     );
     let no_bar = expect_missing(
-        TITLE,
         &problem_only(PROBLEM),
         &[Artifact::DoneWhenBar],
         "problem written, bar missing",
     );
     let no_problem = expect_missing(
-        TITLE,
         &bar_only(BAR),
         &[Artifact::WrittenProblem],
         "bar written, problem missing",
@@ -904,7 +1128,6 @@ fn each_failure_message_names_only_the_artifact_that_was_missing() {
 #[test]
 fn a_korean_problem_with_no_bar_fails_naming_the_missing_bar() {
     expect_missing(
-        KO_TITLE,
         &problem_only(KO_PROBLEM),
         &[Artifact::DoneWhenBar],
         "a Korean problem statement with no bar",
@@ -1010,11 +1233,11 @@ fn judge_returns_a_verdict_for_any_body_and_never_panics() {
     // certifies a change that produced no acceptance bar.
     for (context, body) in awkward_bodies() {
         assert!(
-            !missing(KO_TITLE, &body).is_empty(),
+            !missing(&body).is_empty(),
             "{context}: this fixture is on the failing side, so the measurement must \
              report at least one missing artifact; body={body:?}"
         );
-        expect_failed(&product_bar::judge(KO_TITLE, &body), context);
+        expect_failed(&product_bar::judge(&body), context);
     }
 }
 
@@ -1043,8 +1266,8 @@ fn the_verdict_is_the_same_whether_the_body_uses_lf_or_crlf() {
     ];
 
     for (name, build) in &cases {
-        let lf = product_bar::judge(TITLE, &build(Eol::Lf));
-        let crlf = product_bar::judge(TITLE, &build(Eol::Crlf));
+        let lf = product_bar::judge(&build(Eol::Lf));
+        let crlf = product_bar::judge(&build(Eol::Crlf));
         assert_eq!(
             variant(&lf),
             variant(&crlf),
@@ -1052,8 +1275,8 @@ fn the_verdict_is_the_same_whether_the_body_uses_lf_or_crlf() {
              endings came from a browser rather than an editor. lf={lf:?} crlf={crlf:?}"
         );
         assert_eq!(
-            missing(TITLE, &build(Eol::Lf)),
-            missing(TITLE, &build(Eol::Crlf)),
+            missing(&build(Eol::Lf)),
+            missing(&build(Eol::Crlf)),
             "{name}: the gate found different artifacts missing under CRLF than under LF"
         );
     }
@@ -1061,7 +1284,6 @@ fn the_verdict_is_the_same_whether_the_body_uses_lf_or_crlf() {
     // Without this, "Failed under both line endings" would satisfy the loop
     // above and the gate could still reject every web-authored change.
     expect_passed(
-        TITLE,
         &body_with_eol(PROBLEM, BAR, Eol::Crlf),
         "a complete Product artifact typed into the GitHub web UI; rejecting it \
          blocks the majority of real pull requests",
@@ -1088,16 +1310,16 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         String::new(),
     ];
     for body in &bodies {
-        let first = product_bar::judge(TITLE, body);
-        let second = product_bar::judge(TITLE, body);
+        let first = product_bar::judge(body);
+        let second = product_bar::judge(body);
         assert_eq!(
             first, second,
             "two calls on the same change disagreed: {first:?} then {second:?}. \
              body={body:?}"
         );
         assert_eq!(
-            missing(TITLE, body),
-            missing(TITLE, body),
+            missing(body),
+            missing(body),
             "the measurement is not stable across calls; body={body:?}"
         );
     }
@@ -1107,23 +1329,73 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     // its own — against a module that is still `todo!()` — it would be a test
     // born green, and a test that has never been observed failing publishes
     // assurance it has not earned.
+    // The previous revision of this half scanned for eight literal prefixes,
+    // and the idiomatic spellings of the very I/O it forbade walked straight
+    // past it: `use std::{env, fs};` contains neither "std::env" nor "std::fs",
+    // and a grouped import is how anyone actually brings in two std modules.
+    // `env!`, `option_env!` and `File::open` were not covered at all. A guard
+    // that misreads what it guards is worse than none.
+    //
+    // So this asserts the positive shape instead. The import list of a module
+    // this small is knowable, and an allowlist cannot be evaded by respelling —
+    // there is no way to reach the filesystem without naming something outside
+    // it. Widening the list is a deliberate act with a diff to argue about,
+    // which is the point.
     let src = without_line_comments(&source("src/pre_merge_guard/product_bar.rs"));
+
+    const ALLOWED_IMPORTS: &[&str] = &[
+        "super::",
+        "crate::",
+        "std::borrow",
+        "std::cmp",
+        "std::collections",
+        "std::fmt",
+        "std::iter",
+        "std::str",
+        "std::sync::LazyLock",
+        "std::sync::OnceLock",
+    ];
+    for line in src.lines() {
+        let trimmed = line.trim();
+        let Some(path) = trimmed.strip_prefix("use ") else {
+            continue;
+        };
+        let path = path.trim().trim_start_matches("::");
+        assert!(
+            ALLOWED_IMPORTS.iter().any(|a| path.starts_with(a)),
+            "src/pre_merge_guard/product_bar.rs imports {trimmed:?}, which is outside \
+             the allowlist {ALLOWED_IMPORTS:?}. The Product artifact is authored on the \
+             change under review and nowhere else: a gate that reads a file, an \
+             environment variable, a clock or the network is both a flake this suite \
+             could not attribute and a second source of truth for what the author \
+             wrote. If this module genuinely needs something else, widen the list here \
+             and say why"
+        );
+    }
+
+    // The things reachable without a `use` line at all.
     for forbidden in [
-        "std::fs",
-        "std::net",
-        "std::env",
-        "std::process",
-        "Command::new",
+        "std::{",
+        "env!",
+        "option_env!",
         "include_str!",
+        "include_bytes!",
+        "File::open",
+        "fs::",
+        "env::",
+        "process::",
+        "Command",
+        "::var(",
+        "SystemTime",
+        "Instant",
         "reqwest",
         "tokio",
     ] {
         assert!(
             !src.contains(forbidden),
-            "src/pre_merge_guard/product_bar.rs reaches for {forbidden}. The Product \
-             artifact is authored on the change under review and nowhere else; a gate \
-             that reads anything but its two arguments is both a flake and a second \
-             source of truth"
+            "src/pre_merge_guard/product_bar.rs reaches for {forbidden}. The gate's \
+             verdict must be a function of the one string it was handed and nothing \
+             else"
         );
     }
 }
@@ -1246,10 +1518,25 @@ fn a_missing_product_bar_withholds_certification() {
 // class (`tests/evaluator_gate_ordering_test.rs` asserts on the evaluator's text,
 // and `every_computed_gate_reaches_the_report_test.rs` parses the report literal),
 // so these follow that idiom. Every scan runs over comment-stripped source, so a
-// commented-out example cannot satisfy one, and every scan is anchored on
-// `product_bar::judge(` rather than a bare `judge(`, so an unrelated gate's
-// `judge` appearing in the evaluator later cannot turn these red for a reason
-// that has nothing to do with the Product seat.
+// commented-out example cannot satisfy one.
+//
+// These are guards over *facts*, not over formatting. A wiring guard that
+// misreads the wiring and then reports a correct implementation as broken is
+// worse than no guard, so each assertion below is anchored on the loosest
+// spelling that still carries the fact:
+//
+//   * the evaluator receives the change's **body** — the parameter may be named
+//     `pr_body`, `body`, or reached through a struct field, as long as the name
+//     says body;
+//   * `product_bar_status` is derived from a call to product_bar's `judge` —
+//     qualified (`product_bar::judge(...)`) or imported (`use
+//     super::product_bar::judge;` then `judge(...)`), directly or through a
+//     `let` binding, with or without a type annotation;
+//   * the pipeline hands that call site the change's body.
+//
+// `the_wiring_parsers_read_the_shapes_a_wiring_is_actually_written_in` exercises
+// those parsers against the realistic spellings, so the guard is tested rather
+// than assumed.
 
 fn source(rel: &str) -> String {
     let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
@@ -1260,16 +1547,46 @@ fn source(rel: &str) -> String {
 /// comment quoting one cannot satisfy any scan below.
 fn without_line_comments(src: &str) -> String {
     src.lines()
-        .map(|l| match l.find("//") {
-            Some(i) => &l[..i],
-            None => l,
-        })
+        .map(strip_line_comment)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
+/// One line, with any `//` comment on it dropped.
+///
+/// `//` inside a string literal is not a comment. The naive version of this
+/// truncated at the first `//` anywhere on the line, so a single URL in a
+/// message string — `"see https://…"` — would silently blind every scan below
+/// by cutting the line before the code on it. Nothing in the evaluator or the
+/// review pipeline carries one today; the point is that adding one must not
+/// quietly turn a wiring guard into a no-op.
+fn strip_line_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_string = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => {
+                i += 2;
+                continue;
+            }
+            b'"' => in_string = !in_string,
+            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    line
+}
+
 /// The identifier a `let` introduces immediately before `head` ends, if the
 /// text between the `=` and the end of `head` is still the same statement.
+///
+/// A type annotation is stripped before the identifier is validated. Without
+/// that, `let product_bar_status: GateStatus = product_bar::judge(pr_body);` —
+/// a perfectly correct wiring — yielded no binding at all, and the wiring test
+/// then failed a correct implementation with a message accusing it of the exact
+/// defect it did not have.
 fn let_binding_before(head: &str) -> Option<String> {
     let pos = head.rfind("let ")?;
     let tail = &head[pos + "let ".len()..];
@@ -1277,23 +1594,75 @@ fn let_binding_before(head: &str) -> Option<String> {
     if tail[eq + 1..].contains(';') {
         return None;
     }
-    let name = tail[..eq].trim().trim_start_matches("mut ").trim();
+
+    let mut name = tail[..eq].trim();
+    name = name.strip_prefix("mut ").unwrap_or(name).trim();
+    // `x: GateStatus` -> `x`. A binding name cannot contain `:`, so the first
+    // one on the left of the `=` opens the annotation.
+    if let Some(colon) = name.find(':') {
+        name = name[..colon].trim();
+    }
+
     if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return None;
     }
     Some(name.to_string())
 }
 
-/// Every `product_bar::judge(...)` call in `src`, as (binding, arguments).
+/// Whether `src` brings product_bar's `judge` into scope unqualified.
+fn imports_product_bar_judge(src: &str) -> bool {
+    src.lines().any(|l| {
+        let t = l.trim();
+        t.starts_with("use ")
+            && t.contains("product_bar")
+            && (t.contains("judge") || t.contains("::*"))
+    })
+}
+
+/// Whether `expr` is, or contains, a call to product_bar's `judge`.
+fn is_a_product_bar_judge_call(src: &str, expr: &str) -> bool {
+    expr.contains("product_bar::judge(")
+        || (imports_product_bar_judge(src) && expr.contains("judge("))
+}
+
+/// Every call to product_bar's `judge` in `src`, as (binding, arguments).
 ///
 /// `binding` is `Some(name)` when the call is the initialiser of `let name = `.
+///
+/// Reaching `judge` through an import is as correct as qualifying it, so a bare
+/// `judge(` counts too — but only when `src` actually imports it, so an
+/// unrelated gate's `judge` appearing in the evaluator later cannot turn these
+/// tests red for a reason that has nothing to do with the Product seat.
 fn product_bar_judge_calls(src: &str) -> Vec<(Option<String>, String)> {
-    const ANCHOR: &str = "product_bar::judge(";
+    let mut anchors: Vec<&str> = vec!["product_bar::judge("];
+    if imports_product_bar_judge(src) {
+        anchors.push("judge(");
+    }
+
+    let mut out = Vec::new();
+    let mut seen: BTreeSet<usize> = BTreeSet::new();
+    for anchor in anchors {
+        out.extend(calls_at_anchor(src, anchor, &mut seen));
+    }
+    out
+}
+
+/// The calls whose `(` follows `anchor`, skipping opening parens already
+/// claimed by an earlier (more specific) anchor.
+fn calls_at_anchor(
+    src: &str,
+    anchor: &str,
+    seen: &mut BTreeSet<usize>,
+) -> Vec<(Option<String>, String)> {
     let mut out = Vec::new();
     let mut from = 0usize;
-    while let Some(i) = src[from..].find(ANCHOR) {
+    while let Some(i) = src[from..].find(anchor) {
         let start = from + i;
-        let open = start + ANCHOR.len() - 1;
+        let open = start + anchor.len() - 1;
+        if !seen.insert(open) {
+            from = open + 1;
+            continue;
+        }
         let mut depth = 0i32;
         let mut end = None;
         for (k, c) in src[open..].char_indices() {
@@ -1357,29 +1726,23 @@ fn the_evaluator_receives_the_change_under_review() {
         .expect("evaluate_pre_merge_gates has a return type");
     let signature = &tail[..end];
 
+    // The fact, not the spelling: the evaluator has to be handed the text the
+    // Product artifact is written in. `pr_body`, `body`, or a field of a
+    // `ChangeUnderReview` struct all satisfy this; a gate cannot measure text
+    // the evaluator is never given, and a gate that measures nothing gates
+    // nothing.
     assert!(
-        signature.contains("pr_title"),
-        "evaluate_pre_merge_gates never receives the change's title. The Product \
-         seat's artifact is authored on the change under review; a gate cannot \
-         measure text the evaluator is never given, and a gate that measures \
-         nothing gates nothing"
-    );
-    assert!(
-        signature.contains("pr_body"),
+        signature.contains("body"),
         "evaluate_pre_merge_gates never receives the change's body, which is where \
-         the written problem and the done-when bar live"
-    );
-    assert!(
-        signature.find("pr_title") < signature.find("pr_body"),
-        "the title parameter must come before the body parameter. Both are &str, \
-         so swapping them at any call site compiles in silence and the gate then \
-         judges every pull request on its title alone — which \
-         the_title_and_the_body_are_not_interchangeable shows is a fail-open"
+         the written problem and the done-when bar are authored. Signature: \
+         {signature:?}"
     );
 }
 
 #[test]
 fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
+    assert_the_wiring_parsers_read_a_real_wiring();
+
     let src = without_line_comments(&source("src/pre_merge_guard/evaluator.rs"));
 
     let calls = product_bar_judge_calls(&src);
@@ -1393,15 +1756,10 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
 
     for (_, args) in &calls {
         assert!(
-            args.contains("pr_title") && args.contains("pr_body"),
-            "the Product gate must be judged over the change's own title and body; \
-             got product_bar::judge({args})"
-        );
-        assert!(
-            args.find("pr_title") < args.find("pr_body"),
-            "the arguments are swapped. Both are &str so this compiles silently, and \
-             the gate then looks for the acceptance bar in the title — got \
-             product_bar::judge({args})"
+            args.contains("body"),
+            "the Product gate must be judged over the change's own body, which is \
+             where the written problem and the done-when bar are authored; got \
+             judge({args})"
         );
     }
 
@@ -1421,7 +1779,7 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
     );
     for init in &initialisers {
         let derived_from_the_call =
-            init.contains("product_bar::judge(") || bindings.contains(&leading_ident(init));
+            is_a_product_bar_judge_call(&src, init) || bindings.contains(&leading_ident(init));
         assert!(
             derived_from_the_call,
             "product_bar_status is initialised from {init:?}, which is neither a \
@@ -1435,10 +1793,12 @@ fn the_evaluator_computes_product_bar_status_by_judging_that_change() {
 }
 
 #[test]
-fn the_review_pipeline_hands_the_evaluator_the_title_then_the_body() {
-    // The same silent swap is available one level up: the pipeline already
-    // passes `title, body` in that order to `ensure_documentation_parity`, and
-    // the evaluator must be fed the same way.
+fn the_review_pipeline_hands_the_evaluator_the_change_body() {
+    // The evaluator can only judge what the pipeline gives it. `body` is
+    // already in scope at this call site — it is handed to `review_pr` and to
+    // `ensure_documentation_parity` a few lines above — so the only thing that
+    // can go wrong is forgetting to pass it, and then the Product gate is a
+    // name on the scorecard with nothing behind it.
     const CALL: &str = "evaluate_pre_merge_gates(";
     let src = without_line_comments(&source("src/webhook/pipelines/review.rs"));
     let start = src
@@ -1470,23 +1830,122 @@ fn the_review_pipeline_hands_the_evaluator_the_title_then_the_body() {
         .map(|l| l.trim().trim_end_matches(',').to_string())
         .collect();
 
-    let title_at = args.iter().position(|a| a.contains("title"));
-    let body_at = args.iter().position(|a| a.contains("body"));
-
     assert!(
-        title_at.is_some(),
-        "the review pipeline never hands the evaluator the pull request title, so \
-         the Product gate has nothing to read: {args:?}"
-    );
-    assert!(
-        body_at.is_some(),
+        args.iter().any(|a| a.contains("body")),
         "the review pipeline never hands the evaluator the pull request body, which \
-         is where the written problem and the done-when bar are authored: {args:?}"
+         is where the written problem and the done-when bar are authored. The gate \
+         then has nothing to read, and a gate that reads nothing gates nothing: \
+         {args:?}"
     );
+}
+
+/// Exercises the hand-rolled parsers the wiring guards depend on.
+///
+/// Not a `#[test]` of its own, deliberately. Nothing here touches the gate, so
+/// standing alone it would be green from the moment it was written, and a test
+/// that has never been observed failing publishes assurance it has not earned —
+/// the same reason the static half of
+/// `the_verdict_depends_on_nothing_but_the_change_it_was_handed` lives inside
+/// that test. It runs first inside the wiring tests instead, which are red on
+/// the absent wiring.
+#[track_caller]
+fn assert_the_wiring_parsers_read_a_real_wiring() {
+    // The wiring guards are the only thing standing between a named Product
+    // gate and one that blocks nothing, and they are hand-rolled parsers. A
+    // parser that misreads a correct implementation and then reports it as the
+    // exact defect it does not have is worse than no guard at all — that is
+    // this file's own standard, applied to this file.
+    //
+    // `let x: GateStatus = judge(..)` is the case that motivated this: the
+    // previous revision's identifier check rejected any name containing a
+    // character outside [alnum_], which the type annotation supplies, so a
+    // correct annotated wiring produced no binding and failed the test.
+    for (head, want) in [
+        (
+            "        let product_bar_status = ",
+            Some("product_bar_status"),
+        ),
+        (
+            "        let product_bar_status: GateStatus = ",
+            Some("product_bar_status"),
+        ),
+        (
+            "        let mut product_bar_status = ",
+            Some("product_bar_status"),
+        ),
+        (
+            "        let mut product_bar_status: GateStatus = ",
+            Some("product_bar_status"),
+        ),
+        (
+            "        let product_bar_status = super::",
+            Some("product_bar_status"),
+        ),
+        // Not an initialiser: the statement the `let` opened has already ended.
+        (
+            "        let earlier = compute();\n        report.field = ",
+            None,
+        ),
+        // No `let` at all: a bare call in expression position.
+        ("        gates.push(", None),
+    ] {
+        assert_eq!(
+            let_binding_before(head).as_deref(),
+            want,
+            "let_binding_before({head:?}) misread the binding"
+        );
+    }
+
+    // The comment stripper must not treat a URL inside a string literal as the
+    // start of a comment; truncating there would blind every scan above.
+    for (line, want) in [
+        (
+            "let x = judge(pr_body); // wire it up",
+            "let x = judge(pr_body); ",
+        ),
+        ("// let x = judge(pr_body);", ""),
+        (
+            r#"let m = "see https://example.invalid/x"; let x = judge(pr_body);"#,
+            r#"let m = "see https://example.invalid/x"; let x = judge(pr_body);"#,
+        ),
+        (
+            r#"let m = "a \" // b"; judge(pr_body)"#,
+            r#"let m = "a \" // b"; judge(pr_body)"#,
+        ),
+    ] {
+        assert_eq!(
+            strip_line_comment(line),
+            want,
+            "strip_line_comment({line:?}) cut the line in the wrong place"
+        );
+    }
+
+    // The call finder must see a `judge` reached through an import, and must
+    // not see a `judge` belonging to some other module.
+    let imported = "use super::product_bar::judge;\n\
+                    let product_bar_status = judge(pr_body);\n";
+    assert_eq!(
+        product_bar_judge_calls(imported),
+        vec![(
+            Some("product_bar_status".to_string()),
+            "pr_body".to_string()
+        )],
+        "an imported judge call is as correct as a qualified one and must be found"
+    );
+
+    let foreign = "let shape_status = shape::judge(outcome);\n";
     assert!(
-        title_at < body_at,
-        "the pipeline passes the body where the evaluator expects the title. Both \
-         are &str, so this compiles and every pull request is then judged on the \
-         wrong text: {args:?}"
+        product_bar_judge_calls(foreign).is_empty(),
+        "another module's judge must not be mistaken for the Product seat's"
+    );
+
+    let qualified = "let product_bar_status = super::product_bar::judge(pr_body);\n";
+    assert_eq!(
+        product_bar_judge_calls(qualified),
+        vec![(
+            Some("product_bar_status".to_string()),
+            "pr_body".to_string()
+        )],
+        "a qualified call must be found exactly once, not twice"
     );
 }

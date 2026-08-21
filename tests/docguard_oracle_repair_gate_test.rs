@@ -1,0 +1,1304 @@
+//! Every case that drives `DocGuard::ensure_documentation_parity`, in a binary
+//! where `agy` cannot be spawned.
+//!
+//! These cases used to live in `tests/docguard_oracle_repair_test.rs`, whose
+//! header claimed that routing them through `DocGuard::with_probe_override` made
+//! an `agy` spawn "structurally unreachable rather than merely unlikely". That
+//! claim was false. `Probe` constrains where the probe's outcome is *stored*; it
+//! does not oblige `evaluate_doc_parity` to read it. An implementer who wires the
+//! override anywhere other than the `Overridden` arm's return — including the
+//! entirely plausible `Probe::Overridden(_) => "low".to_string()`, meaning to
+//! handle the override elsewhere and forgetting one path — turns those cases into
+//! parallel invocations of
+//! `agy --print <prompt> --effort low --dangerously-skip-permissions`, each under
+//! a 120-second `run_bounded_for` budget, from inside `cargo test`. `agy` is
+//! resolved through the inherited `PATH` and it is installed on developer
+//! machines, so nothing about that was hypothetical.
+//!
+//! So the spawn is made unreachable instead of asserted to be: this binary
+//! empties `PATH` before any gate call. A fall-through spawn then fails in
+//! microseconds with "No such file or directory" rather than invoking a model,
+//! the network, or `--dangerously-skip-permissions`, and the assertions below
+//! still see exactly what they were written to see. That is the same pattern
+//! `tests/docguard_oracle_repair_probe_seam_test.rs` and
+//! `tests/docguard_oracle_repair_self_repo_test.rs` already use, and the reason
+//! all three are separate binaries: mutating the process environment is a data
+//! race against any other thread reading it, and a `cargo test` binary runs its
+//! cases in parallel threads.
+//!
+//! ## Why one `#[test]` and fourteen case functions
+//!
+//! The environment mutation is only sound if nothing else in this process is
+//! running while it happens. Fourteen `#[test]` functions each neutralising
+//! `PATH` under a `Once` would still race the first mutation against every other
+//! case's `tempdir()` (which reads `TMPDIR`), which is precisely the race the
+//! three-binary split exists to avoid. One `#[test]` gives a single-threaded
+//! binary and makes the mutation sound by construction.
+//!
+//! The cost is that the fourteen behaviours share one test name, and it is paid
+//! down rather than hidden: each case is a named function with its own doc
+//! comment, they are run through `catch_unwind` so **one failure does not mask
+//! the others**, every case is reported individually as `ok` or `FAILED`, and the
+//! aggregate assertion prints every failure with the case name that produced it.
+//! A run of this binary therefore tells you exactly which behaviours are red,
+//! which is the property that matters for red evidence.
+//!
+//! ## What is pinned here
+//!
+//! Issue #27's gate-level requirements (the skipped sync is stated in the gate's
+//! summary; Anvil's own sync still runs; a corpus that is not Anvil's is never
+//! opened, so it can never *fail* the gate either) and the whole of issue #29
+//! (absent or failed evidence is never a pass). The pure-function cases — the
+//! corpus sync called directly, the exemption rewriter, and the
+//! `DocGuardReport -> GateStatus` mapping — stay in
+//! `tests/docguard_oracle_repair_test.rs`, because none of them can reach the
+//! probe at all.
+
+use anvil::doc_guard::corpus_sync::sync_published_counts;
+use anvil::doc_guard::{DocGuard, DocGuardReport, DocParityEvaluation, FrontmatterValidator};
+use anvil::git_manager::PrDiffContext;
+use anvil::pre_merge_guard::report::TOTAL_GATES;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::Path;
+use tempfile::tempdir;
+
+/// Anvil's own repository: the only one whose published gate counts are
+/// `TOTAL_GATES`. See the constant of the same name in
+/// `tests/docguard_oracle_repair_test.rs` for why ownership is a compile-time
+/// constant rather than an environment lookup.
+const ANVIL: &str = "oyatie/anvil";
+
+/// Every page `collect_owned_pages` claims, so a partial skip is caught too.
+const OWNED_PAGES: &[&str] = &[
+    "README.md",
+    "docs/doctrine.md",
+    "openapi/openapi.yaml",
+    "docs/adr/0001-console.md",
+    "docs/decisions/0001-console.md",
+];
+
+/// The reason a probe gives for judging a diff under-documented. Held as a
+/// constant so the assertions that it reaches `DocGuardReport::summary` pin
+/// pass-through rather than wording.
+const MISSING_REASON: &str = "newly_public is a new public API with no reference page";
+
+/// The five ways `evaluate_doc_parity` can come back with no judgement at all.
+/// The strings are the shapes the real call site produces (spawn failure,
+/// non-zero exit, timeout, unparseable output, watchdog supervision failure);
+/// their wording is the test's, and it is only ever asserted as pass-through.
+const PROBE_FAILURES: &[&str] = &[
+    "failed to run doc parity probe: No such file or directory (os error 2)",
+    "doc parity probe exited with status exit status: 1: permission check failed for command",
+    "doc parity probe timed out after 120s",
+    "doc parity probe returned no parseable evaluation (stdout 4096 bytes)",
+    "doc parity probe supervision failed: watchdog channel closed",
+];
+
+/// Mirrors `drifting_page()` in the main suite: an Anvil page publishing claims
+/// that are deliberately *not* `TOTAL_GATES`, in both the digit form and the
+/// spelled-out `sixty-gate` form.
+fn drifting_page() -> String {
+    format!(
+        "# Anvil\n\
+         \n\
+         The fabric ships behind a {}-gate release check.\n\
+         It replaced the sixty-gate pilot programme.\n",
+        TOTAL_GATES + 1
+    )
+}
+
+/// Mirrors `watched_repo_page()` in the main suite: a page belonging to a
+/// repository that is **not** Anvil's, carrying all three mutations
+/// `rewrite_page` performs, so `assert_eq!(got, page)` means *no owned page in
+/// that repository is modified*.
+fn watched_repo_page() -> String {
+    format!(
+        "# Console\n\
+         \n\
+         The console ships behind a {}-gate release check.\n\
+         It replaced the sixty-gate pilot programme.\n\
+         Roadmap. The console does **not** yet amend existing documents such as `README.md`. Support is planned.\n\
+         \n\
+         None of this is Anvil's corpus.\n",
+        TOTAL_GATES + 1
+    )
+}
+
+/// Mirrors `already_honest_page()` in the main suite: a page with nothing at all
+/// for the sync to do, so an applied sync and a skipped sync have exactly the
+/// same work to report on it — none.
+fn already_honest_page() -> String {
+    format!("# Page\n\nShips behind a {TOTAL_GATES}-gate release check.\n")
+}
+
+fn write(path: &Path, body: &str) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, body).unwrap();
+}
+
+/// Builds `docs/adr` with one ADR in it and then makes the directory itself
+/// unreadable, so the sync's **first** filesystem read fails: not the per-page
+/// `read_to_string` loop, but `collect_owned_pages`'s `read_dir`, which runs
+/// before it.
+///
+/// Returns the directory's original permissions so the caller can restore them
+/// (an unreadable directory defeats `TempDir`'s cleanup), or `None` when this
+/// process is privileged enough to read a `0o000` directory — under a root
+/// container the fixture cannot be built at all, and the caller says so rather
+/// than passing vacuously.
+///
+/// STATED COST: this fixture is unix-only, and under a root CI container it
+/// fails with a diagnostic instead of running. Both are recorded rather than
+/// worked around, because the alternative — skipping quietly — would leave the
+/// read path looking fenced when it was not tested at all.
+#[cfg(unix)]
+fn make_adr_dir_unreadable(repo_dir: &Path) -> Option<std::fs::Permissions> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let adr = repo_dir.join("docs/adr");
+    std::fs::create_dir_all(&adr).unwrap();
+    std::fs::write(adr.join("0001-x.md"), "# ADR\n").unwrap();
+
+    let original = std::fs::metadata(&adr).unwrap().permissions();
+    std::fs::set_permissions(&adr, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&adr).is_ok() {
+        std::fs::set_permissions(&adr, original).unwrap();
+        return None;
+    }
+    Some(original)
+}
+
+#[cfg(unix)]
+fn restore_adr_dir(repo_dir: &Path, original: std::fs::Permissions) {
+    std::fs::set_permissions(repo_dir.join("docs/adr"), original).unwrap();
+}
+
+/// The reason the sync gives for declining to apply to a repository that is not
+/// Anvil's, read back from the sync itself so every assertion about it pins
+/// pass-through rather than wording.
+///
+/// STATED REQUIREMENT: the reason is a property of *which repository is under
+/// review*, not of what happens to be on disk. It is derived here in a tempdir
+/// other than the one the gate under test runs in, so a reason that enumerated
+/// the pages it declined to touch, or that named their paths, would not satisfy
+/// this suite.
+fn skipped_sync_reason(repo: &str) -> String {
+    let dir = tempdir().unwrap();
+    write(&dir.path().join("README.md"), &watched_repo_page());
+    let reason = sync_published_counts(repo, dir.path(), TOTAL_GATES)
+        .unwrap()
+        .not_applicable
+        .unwrap_or_else(|| {
+            panic!(
+                "{repo:?} is not Anvil's repository, so the sync did not apply and \
+                 must say so before any caller can repeat it"
+            )
+        });
+    assert!(
+        !reason.trim().is_empty(),
+        "{repo:?}: the stated reason must actually say something"
+    );
+    reason
+}
+
+fn diff_ctx(repo: &str, repo_dir: &Path, changed: &[&str]) -> PrDiffContext {
+    PrDiffContext {
+        repo: repo.to_string(),
+        pr_number: 77,
+        base_branch: "main".to_string(),
+        base_sha: "base-sha".to_string(),
+        head_sha: "head-sha".to_string(),
+        is_incremental: false,
+        previous_head_sha: None,
+        diff_content: "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn newly_public() {}\n"
+            .to_string(),
+        changed_files: changed.iter().map(|f| (*f).to_string()).collect(),
+        // The checkout the diff came from is the checkout under review, which is
+        // this test's tempdir. Pointing it at `"."` would point it at the
+        // developer's own Anvil checkout: an implementation that decided to sync
+        // `diff_ctx.repo_working_dir` would then rewrite gate counts in, and
+        // delete exemption sentences from, the live README.md, docs/doctrine.md,
+        // openapi/openapi.yaml and docs/adr/*.md of the repository under test.
+        repo_working_dir: repo_dir.to_path_buf(),
+    }
+}
+
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(fut)
+}
+
+fn sufficient() -> Result<DocParityEvaluation, String> {
+    Ok(DocParityEvaluation {
+        is_doc_sufficient: true,
+        missing_doc_summary: None,
+        doc_files_to_update: Vec::new(),
+        suggested_adr_title: None,
+    })
+}
+
+fn insufficient(reason: Option<&str>, files: &[&str]) -> Result<DocParityEvaluation, String> {
+    Ok(DocParityEvaluation {
+        is_doc_sufficient: false,
+        missing_doc_summary: reason.map(|s| s.to_string()),
+        doc_files_to_update: files.iter().map(|f| (*f).to_string()).collect(),
+        suggested_adr_title: None,
+    })
+}
+
+/// The probe came back with no judgement at all.
+fn probe_failed(reason: &str) -> Result<DocParityEvaluation, String> {
+    Err(reason.to_string())
+}
+
+/// `true` when the outcome is a judgement of sufficiency. Only meaningful for
+/// the `Ok` arm; used to label the two-verdict loops.
+fn verdict_of(outcome: &Result<DocParityEvaluation, String>) -> bool {
+    outcome
+        .as_ref()
+        .map(|e| e.is_doc_sufficient)
+        .unwrap_or(false)
+}
+
+/// Drives the public gate with a known probe outcome and without a model.
+fn run_gate(
+    outcome: Result<DocParityEvaluation, String>,
+    repo: &str,
+    repo_dir: &Path,
+    changed: &[&str],
+) -> DocGuardReport {
+    let ctx = diff_ctx(repo, repo_dir, changed);
+    block_on(async {
+        DocGuard::with_probe_override("low".to_string(), outcome)
+            .ensure_documentation_parity(repo, repo_dir, &ctx, "feat: add a public API", "")
+            .await
+            .unwrap()
+    })
+}
+
+// =========================================================================
+// Issue #27 at the gate — the sync is scoped, and the skip is stated
+// =========================================================================
+
+/// Reviewing somebody else's repository must not edit a single page of it, and
+/// the edit is the harm because the pipeline commits and pushes it onto the
+/// contributor's branch.
+fn reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identical() {
+    // Driven through the probe seam, which replaces only the doc-parity probe:
+    // the corpus-sync call this case is actually about is still the real one.
+    let page = watched_repo_page();
+    let dir = tempdir().unwrap();
+    for owned in OWNED_PAGES {
+        write(&dir.path().join(owned), &page);
+    }
+    let policy = "---\nstatus: active\ncanonical_authority: true\n---\n\n# Tenancy\n";
+    write(&dir.path().join("tenancy/policy.md"), policy);
+
+    // The fence, asserted against the validator before the guard runs rather
+    // than read out of the guard's summary afterwards: this case is about the
+    // frontmatter early-return path, and if the fixture stops taking that path
+    // the failure must name the reason rather than the wording of an unrelated
+    // validator's message.
+    assert!(
+        FrontmatterValidator::validate_doc_frontmatter("tenancy/policy.md", policy, dir.path())
+            .is_err(),
+        "this case pins the report composed on the frontmatter early-return path; \
+         the fixture no longer takes it"
+    );
+
+    let report = run_gate(
+        sufficient(),
+        "oyatie/console",
+        dir.path(),
+        &["tenancy/policy.md"],
+    );
+
+    assert!(
+        !report.is_sufficient,
+        "the frontmatter violation is a real adverse finding: {}",
+        report.summary
+    );
+    assert!(
+        report.errored.is_none(),
+        "the frontmatter check produced a judgement, so nothing may be Errored: {:?}",
+        report.errored
+    );
+
+    for owned in OWNED_PAGES {
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(owned)).unwrap(),
+            page,
+            "reviewing oyatie/console must not edit that repository's {owned}; \
+             the edit would be committed and pushed onto the contributor's branch"
+        );
+        assert!(
+            !report.files_created_or_updated.contains(&owned.to_string()),
+            "no owned page of another repository may be reported as touched: {:?}",
+            report.files_created_or_updated
+        );
+    }
+
+    // Stated exclusion, so this is a decision rather than an omission: the
+    // frontmatter early return is NOT required to carry the skipped sync's
+    // reason. Issue #27's requirement is that a skipped sync must never read as
+    // a silent *pass*; this path is already a stated failure with its own
+    // reason, so there is nothing here for the skip to be mistaken for. The two
+    // paths that can read as a pass — the sufficient and insufficient probe
+    // verdicts — are pinned in
+    // `the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason`.
+}
+
+/// A skipped sync must be *stated* at the gate, on both probe verdicts, and it
+/// must never turn into absent evidence — including when the corpus it declined
+/// to open could not have been read anyway.
+fn the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason() {
+    // Both probe verdicts are exercised: an implementation that appends the
+    // reason only inside the `is_doc_sufficient` branch leaves a non-Anvil
+    // repository with an under-documented diff reading as though the sync had
+    // applied.
+    let page = watched_repo_page();
+    let reason = skipped_sync_reason("oyatie/console");
+
+    for outcome in [
+        sufficient(),
+        insufficient(Some(MISSING_REASON), &["docs/reference/newly-public.md"]),
+    ] {
+        let verdict = verdict_of(&outcome);
+        let dir = tempdir().unwrap();
+        for owned in OWNED_PAGES {
+            write(&dir.path().join(owned), &page);
+        }
+
+        let report = run_gate(outcome, "oyatie/console", dir.path(), &["src/lib.rs"]);
+
+        assert_eq!(
+            report.is_sufficient, verdict,
+            "is_doc_sufficient={verdict}: another repository's gate counts are not \
+             Anvil's business, so a skipped sync must neither fail nor rescue that \
+             repository's PR: {}",
+            report.summary
+        );
+        // A sync that does not apply is not a gate that could not judge. Every
+        // pull request on every watched repository takes this path, so an
+        // implementation that reports the skip as absent evidence blocks all of
+        // them at gate 1 forever — the fail-closed mirror image of #27.
+        assert!(
+            report.errored.is_none(),
+            "is_doc_sufficient={verdict}: the probe produced a judgement and the \
+             skipped sync is a stated fact, not missing evidence; nothing here may \
+             be Errored: {:?}",
+            report.errored
+        );
+        assert!(
+            report.summary.contains(&reason),
+            "is_doc_sufficient={verdict}: the gate summary must state that the \
+             corpus sync did not apply, not read as though it had. expected it to \
+             carry {reason:?}, got: {}",
+            report.summary
+        );
+        for owned in OWNED_PAGES {
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join(owned)).unwrap(),
+                page,
+                "is_doc_sufficient={verdict}: {owned} of another repository must be \
+                 byte-identical"
+            );
+            assert!(
+                !report.files_created_or_updated.contains(&owned.to_string()),
+                "is_doc_sufficient={verdict}: no owned page of another repository \
+                 may be reported as touched: {:?}",
+                report.files_created_or_updated
+            );
+        }
+    }
+
+    // The fail-closed mirror, pinned at the GATE rather than at the sync,
+    // because that is where the harm lands: `ensure_documentation_parity` maps
+    // an `Err` from the sync onto `errored`, gate 1 goes Errored, and
+    // `GateStatus::Errored` is not acceptable — so every pull request on this
+    // repository is blocked by a corpus that is not Anvil's, was never Anvil's
+    // business, and that Anvil had no reason to open.
+    //
+    // Two fixtures, because `sync_published_counts` performs TWO filesystem
+    // reads and the ownership decision has to precede BOTH:
+    //
+    //   1. `README.md` is a directory — the per-page `read_to_string` loop
+    //      fails.
+    //   2. `docs/adr` exists, is non-empty, and is unreadable —
+    //      `collect_owned_pages`'s `read_dir` fails, which happens BEFORE the
+    //      page loop.
+    //
+    // The second is the one that separates the right guard from the wrong one:
+    // the natural place to reach for the ownership check is one line too low,
+    // just after `let pages = collect_owned_pages(repo_dir)?;`, because that is
+    // where you already are. See the matching sync-level pair in
+    // `a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently`.
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("README.md")).unwrap();
+    assert!(
+        sync_published_counts(ANVIL, dir.path(), TOTAL_GATES).is_err(),
+        "fence: this fixture must remain unreadable for Anvil, or the case below is \
+         not about a corpus the sync could not read"
+    );
+
+    let report = run_gate(sufficient(), "oyatie/console", dir.path(), &["src/lib.rs"]);
+
+    assert!(
+        report.errored.is_none(),
+        "oyatie/console: the sync did not apply to this repository, so a page it \
+         never had cause to read is not absent evidence about this pull request. \
+         Erroring here blocks every PR on every watched repository at gate 1: {:?}",
+        report.errored
+    );
+    assert!(
+        report.is_sufficient,
+        "oyatie/console: the probe judged the diff documented and the skipped sync \
+         has no finding of its own to add: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains(&reason),
+        "oyatie/console: the skip must still be stated on this path — an unreadable \
+         page does not turn a skipped sync into an applied one: {}",
+        report.summary
+    );
+    assert!(
+        report.files_created_or_updated.is_empty(),
+        "oyatie/console: nothing was rewritten, so nothing may be reported as \
+         touched: {:?}",
+        report.files_created_or_updated
+    );
+
+    #[cfg(unix)]
+    {
+        let dir = tempdir().unwrap();
+        let Some(original) = make_adr_dir_unreadable(dir.path()) else {
+            panic!(
+                "fixture: this process can read a 0o000 directory, so the \
+                 unreadable-ADR fixture cannot be built. That is a root container, \
+                 not a passing implementation — run this suite as a non-root user. \
+                 (The `README.md`-is-a-directory fixture above still ran, but it \
+                 only fences the per-page read, not `collect_owned_pages`.)"
+            );
+        };
+        let anvil_result = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES);
+        let report = run_gate(sufficient(), "oyatie/console", dir.path(), &["src/lib.rs"]);
+        restore_adr_dir(dir.path(), original);
+
+        assert!(
+            anvil_result.is_err(),
+            "fence: an unreadable `docs/adr` must remain a real failure for Anvil's \
+             own corpus, or the assertions below are not about a corpus the sync \
+             could not read"
+        );
+        assert!(
+            report.errored.is_none(),
+            "oyatie/console: `docs/adr` in somebody else's checkout is not Anvil's \
+             corpus, and listing it is not something this gate had any reason to do. \
+             An ownership check placed after `collect_owned_pages` blocks every PR on \
+             this repository at gate 1 on a directory Anvil should never have \
+             opened: {:?}",
+            report.errored
+        );
+        assert!(
+            report.is_sufficient,
+            "oyatie/console: the probe judged the diff documented and the skipped \
+             sync has no finding of its own to add: {}",
+            report.summary
+        );
+        assert!(
+            report.summary.contains(&reason),
+            "oyatie/console: the skip must still be stated on this path too: {}",
+            report.summary
+        );
+        assert!(
+            report.files_created_or_updated.is_empty(),
+            "oyatie/console: nothing was rewritten, so nothing may be reported as \
+             touched: {:?}",
+            report.files_created_or_updated
+        );
+    }
+}
+
+/// The mirror of the scoping cases: Anvil's own repository still gets synced by
+/// the gate itself.
+fn the_gate_applies_the_corpus_sync_to_anvils_own_repository() {
+    // Every other #27 case calls `sync_published_counts` directly, so nothing
+    // would oblige `ensure_documentation_parity` to keep calling it at all.
+    // Deleting that call, or putting it behind a condition the gate never
+    // satisfies, is the cheapest way to make the scoping cases green — and it
+    // would silently remove Anvil's own published-count enforcement from gate 1.
+    let dir = tempdir().unwrap();
+    write(&dir.path().join("README.md"), &drifting_page());
+
+    let report = run_gate(sufficient(), ANVIL, dir.path(), &["src/lib.rs"]);
+
+    let readme = std::fs::read_to_string(dir.path().join("README.md")).unwrap();
+    assert!(
+        readme.contains(&format!("{TOTAL_GATES}-gate")),
+        "the gate itself must apply the sync to Anvil's own README: {readme}"
+    );
+    assert!(
+        !readme.contains(&format!("{}-gate", TOTAL_GATES + 1)),
+        "the drifting claim must be gone from Anvil's own README: {readme}"
+    );
+    assert!(
+        !readme.contains("sixty-gate"),
+        "the spelled-out claim must be gone too: {readme}"
+    );
+    assert!(
+        report
+            .files_created_or_updated
+            .contains(&"README.md".to_string()),
+        "the page the gate rewrote must be reported: {:?}",
+        report.files_created_or_updated
+    );
+    assert!(
+        report.is_sufficient,
+        "the drift was repaired and the probe judged the diff documented: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains("README.md"),
+        "the gate must state the rewrite it performed on Anvil's own page: {}",
+        report.summary
+    );
+    assert!(
+        !report
+            .summary
+            .contains(&skipped_sync_reason("oyatie/console")),
+        "the sync demonstrably applied here, so the summary must not carry a \
+         skipped sync's reason: {}",
+        report.summary
+    );
+}
+
+/// Work done before the probe and work done after it both reach the same report,
+/// on both verdicts.
+fn both_probe_verdicts_carry_anvils_corpus_sync_outcome_into_the_report() {
+    // The corpus sync runs before the probe; doc generation and summary
+    // composition run after it. Requiring both to appear in the same report, on
+    // both verdicts, is what stops the probe seam from short-circuiting report
+    // composition: an override that returns early skips the sync, and an
+    // override wired only into the sufficient branch skips the second case.
+    let skip_reason = skipped_sync_reason("oyatie/console");
+
+    for outcome in [
+        sufficient(),
+        insufficient(Some(MISSING_REASON), &["docs/reference/newly-public.md"]),
+    ] {
+        let verdict = verdict_of(&outcome);
+        let dir = tempdir().unwrap();
+        write(&dir.path().join("README.md"), &drifting_page());
+
+        let report = run_gate(outcome, ANVIL, dir.path(), &["src/lib.rs"]);
+
+        let readme = std::fs::read_to_string(dir.path().join("README.md")).unwrap();
+        assert!(
+            readme.contains(&format!("{TOTAL_GATES}-gate")),
+            "is_doc_sufficient={verdict}: Anvil's own sync must run whatever the \
+             probe went on to say: {readme}"
+        );
+        assert!(
+            report
+                .files_created_or_updated
+                .contains(&"README.md".to_string()),
+            "is_doc_sufficient={verdict}: the rewritten page must be reported on \
+             both verdicts: {:?}",
+            report.files_created_or_updated
+        );
+        assert_eq!(
+            report.is_sufficient, verdict,
+            "is_doc_sufficient={verdict}: the gate's verdict must follow the \
+             probe's: {}",
+            report.summary
+        );
+        assert!(
+            report.errored.is_none(),
+            "is_doc_sufficient={verdict}: a judgement was obtained and the \
+             directory is writable, so nothing is absent evidence: {:?}",
+            report.errored
+        );
+        assert!(
+            !report.summary.contains(&skip_reason),
+            "is_doc_sufficient={verdict}: the sync applied to Anvil's own page, so \
+             the summary must not carry a skipped sync's reason: {}",
+            report.summary
+        );
+    }
+}
+
+/// The skip statement must be observable, and an applied sync must not carry it.
+fn an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply() {
+    // `!summary.contains(&reason)` alone does not close this. An implementation
+    // that appends the skip statement unconditionally —
+    // `let skip = sync.not_applicable.unwrap_or_default();` followed by an
+    // unconditional `format!("{base} (corpus sync did not apply: {skip})")` —
+    // satisfies it, because the reason it interpolated for Anvil is the empty
+    // string. Every Anvil PR is then told the sync did not apply while it
+    // demonstrably did.
+    //
+    // STATED REQUIREMENT, so this is a decision and not an artefact: the summary
+    // of a *skipped* sync is the summary of an *applied* sync that had nothing
+    // to rewrite, plus a statement of the skip. Pinning that relation, rather
+    // than the wording of either, is what makes the skip statement's presence
+    // observable without this suite inventing the words it is made of.
+    let page = already_honest_page();
+    let reason = skipped_sync_reason("oyatie/console");
+
+    let anvil_dir = tempdir().unwrap();
+    write(&anvil_dir.path().join("README.md"), &page);
+    let anvil = run_gate(sufficient(), ANVIL, anvil_dir.path(), &["src/lib.rs"]);
+
+    let console_dir = tempdir().unwrap();
+    write(&console_dir.path().join("README.md"), &page);
+    let console = run_gate(
+        sufficient(),
+        "oyatie/console",
+        console_dir.path(),
+        &["src/lib.rs"],
+    );
+
+    // The fixture is honest already, so neither run has anything to rewrite and
+    // neither has anything adverse to report.
+    for (label, report) in [("oyatie/anvil", &anvil), ("oyatie/console", &console)] {
+        assert!(
+            report.is_sufficient,
+            "{label}: the page publishes TOTAL_GATES and the probe judged the diff \
+             documented: {}",
+            report.summary
+        );
+        assert!(
+            report.errored.is_none(),
+            "{label}: a judgement was obtained and nothing failed: {:?}",
+            report.errored
+        );
+        assert!(
+            report.files_created_or_updated.is_empty(),
+            "{label}: nothing needed rewriting, so nothing may be reported as \
+             touched: {:?}",
+            report.files_created_or_updated
+        );
+        assert!(
+            !report.summary.trim().is_empty(),
+            "{label}: a gate that says nothing cannot be read"
+        );
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(anvil_dir.path().join("README.md")).unwrap(),
+        page,
+        "the page already publishes TOTAL_GATES; an applied sync has nothing to do \
+         to it"
+    );
+    assert!(
+        console.summary.contains(&reason),
+        "oyatie/console: the skipped sync must be stated: {}",
+        console.summary
+    );
+    assert!(
+        !anvil.summary.contains(&reason),
+        "oyatie/anvil: the sync applied, so the summary must not carry a skipped \
+         sync's reason: {}",
+        anvil.summary
+    );
+    assert!(
+        console.summary.contains(&anvil.summary),
+        "the skipped summary must be the applied summary plus a statement of the \
+         skip — nothing about the skip may appear in the applied one.\n\
+         applied: {}\nskipped: {}",
+        anvil.summary,
+        console.summary
+    );
+}
+
+/// Anvil's OWN corpus, when it cannot be read, is absent evidence and must
+/// error — the counterweight to every "a skipped sync never errors" case above.
+fn a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate() {
+    // The sibling of the drift arm, and the one the gate can actually be driven
+    // into: the sync's adverse outcomes must survive the restructuring this
+    // branch performs on that match. A refactor to
+    // `let sync = sync_published_counts(..)?;` drops this arm, and Anvil's own
+    // gate 1 then reports a corpus it could not even read as sufficient.
+    //
+    // `README.md` is a directory, so reading it fails with something that is not
+    // NotFound and the sync returns `Err`.
+    let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("README.md")).unwrap();
+    let sync_error = match sync_published_counts(ANVIL, dir.path(), TOTAL_GATES) {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("fence: an owned page that cannot be read must fail the sync"),
+    };
+
+    let report = run_gate(sufficient(), ANVIL, dir.path(), &["src/lib.rs"]);
+
+    assert!(
+        report.errored.is_some(),
+        "a corpus the gate could not read is absent evidence: {}",
+        report.summary
+    );
+    assert!(
+        !report.is_sufficient,
+        "the probe said the diff was documented, but the published corpus was \
+         never checked; that is not a pass: {}",
+        report.summary
+    );
+    assert!(
+        report.files_created_or_updated.is_empty(),
+        "nothing was rewritten, so nothing may be reported as touched: {:?}",
+        report.files_created_or_updated
+    );
+    assert!(
+        report.summary.contains(&sync_error),
+        "the gate must state what it could not do; expected the summary to carry \
+         {sync_error:?}, got: {}",
+        report.summary
+    );
+}
+
+// =========================================================================
+// Issue #29 — absent or failed evidence is never a pass
+// =========================================================================
+//
+// STATED EXCLUSION: `doc_files_to_update` comes from a model, and
+// `generate_and_write_docs` joins those strings onto `repo_dir` and writes,
+// after which the pipeline commits and pushes. What happens for a path that does
+// not name a file inside the checkout — `../../evil.md`, an absolute path, or
+// the empty string, which joins to `repo_dir` itself — is NOT pinned here. It is
+// the same harm shape as #27, the oracle writing files that get pushed onto
+// somebody's branch, but it is a different defect from the three this branch
+// repairs, and pinning a containment rule here would specify behaviour no issue
+// has yet described. Left as a decision for a separate branch, and it should be
+// filed as its own issue rather than living only in this comment.
+
+/// The headline: a diff the probe judged under-documented does not come back
+/// sufficient, however much work the guard did about it.
+fn an_under_documented_diff_does_not_pass_through_the_public_gate() {
+    let dir = tempdir().unwrap();
+    let report = run_gate(
+        insufficient(Some(MISSING_REASON), &["docs/reference/newly-public.md"]),
+        ANVIL,
+        dir.path(),
+        &["src/lib.rs"],
+    );
+
+    assert!(
+        !report.is_sufficient,
+        "the probe judged this diff under-documented; the gate must not pass it: {}",
+        report.summary
+    );
+    assert!(
+        report.errored.is_none(),
+        "a judgement was obtained and the write was possible, so this is an \
+         adverse finding, not absent evidence: {:?}",
+        report.errored
+    );
+    assert!(
+        dir.path().join("docs/reference/newly-public.md").exists(),
+        "the file the probe named must actually be written"
+    );
+    assert!(
+        report
+            .files_created_or_updated
+            .contains(&"docs/reference/newly-public.md".to_string()),
+        "the file that was written must be reported: {:?}",
+        report.files_created_or_updated
+    );
+    assert!(
+        report.summary.contains(MISSING_REASON),
+        "a failing gate must state the reason it failed, not render as a list of \
+         files it generated: {}",
+        report.summary
+    );
+}
+
+/// Naming no file to fix does not turn an adverse judgement into a pass.
+fn an_under_documented_diff_that_named_no_files_still_fails_the_gate() {
+    // The probe returned a prose finding and no file list — a common LLM output
+    // shape. `is_sufficient: eval.doc_files_to_update.is_empty()` ("the gate
+    // passes once the guard has nothing left to do") satisfies every other #29
+    // case here and passes this diff.
+    let dir = tempdir().unwrap();
+    let report = run_gate(
+        insufficient(Some(MISSING_REASON), &[]),
+        ANVIL,
+        dir.path(),
+        &["src/lib.rs"],
+    );
+
+    assert!(
+        !report.is_sufficient,
+        "the probe judged the diff under-documented; naming no file to fix does \
+         not turn that judgement into a pass: {}",
+        report.summary
+    );
+    assert!(
+        report.errored.is_none(),
+        "a judgement was obtained, so this is an adverse finding and not absent \
+         evidence: {:?}",
+        report.errored
+    );
+    assert!(
+        report.summary.contains(MISSING_REASON),
+        "with no files to list, the summary has nothing to say unless it states \
+         the probe's finding: {}",
+        report.summary
+    );
+    assert!(
+        report.files_created_or_updated.is_empty(),
+        "no file was named and none was written, so none may be reported: {:?}",
+        report.files_created_or_updated
+    );
+}
+
+/// Declining to explain does not turn an adverse judgement into a pass either,
+/// and the gate may not block with an empty reason.
+fn an_under_documented_diff_that_stated_no_reason_still_fails_the_gate() {
+    // The complement of the case above:
+    // `is_sufficient: eval.missing_doc_summary.is_none()` survives that one
+    // identically and dies here.
+    let dir = tempdir().unwrap();
+    let report = run_gate(
+        insufficient(None, &["docs/reference/newly-public.md"]),
+        ANVIL,
+        dir.path(),
+        &["src/lib.rs"],
+    );
+
+    assert!(
+        !report.is_sufficient,
+        "the probe judged the diff under-documented; declining to explain why \
+         does not turn that judgement into a pass: {}",
+        report.summary
+    );
+    assert!(
+        report.errored.is_none(),
+        "a judgement was obtained, so this is an adverse finding: {:?}",
+        report.errored
+    );
+
+    // A blocked PR whose scorecard row says nothing is the same false and
+    // unactionable assurance this branch exists to remove.
+    // `let summary = eval.missing_doc_summary.clone().unwrap_or_default();`
+    // satisfies every other #29 case here and blocks this contributor's PR with
+    // `is_sufficient: false, errored: None, summary: ""`.
+    assert!(
+        !report.summary.trim().is_empty(),
+        "a gate that fails a pull request must say something a contributor can \
+         act on; the probe declining to explain itself is not a licence for the \
+         gate to publish an empty reason: {report:?}"
+    );
+
+    // And it must still read as an adverse finding rather than as the pass it is
+    // not. Pinned as a relation rather than as wording, so this suite does not
+    // invent the words: the same probe verdict inverted produces the gate's
+    // passing summary, and a blocked pull request may not be described the same
+    // way as a passing one.
+    let pass_dir = tempdir().unwrap();
+    let passed = run_gate(sufficient(), ANVIL, pass_dir.path(), &["src/lib.rs"]);
+    assert_ne!(
+        report.summary.trim(),
+        passed.summary.trim(),
+        "the summary of a diff the probe judged under-documented must be \
+         distinguishable from the summary of one it judged documented, whether or \
+         not the probe said why"
+    );
+}
+
+/// A probe that produced no judgement at all is Errored, and never a pass.
+fn a_probe_that_produced_no_judgement_is_errored_and_never_a_pass() {
+    // The headline of this section, and the one the seam existed only to hide
+    // until now. A probe that spawned but never ran, exited non-zero, timed
+    // out, printed something unparseable, or was abandoned by its watchdog has
+    // told the gate NOTHING about this diff. The historical defect is recorded
+    // in `evaluate_doc_parity`'s own comment — "This arm previously returned
+    // is_doc_sufficient: true, which made gate 1 unfailable" — and the way it
+    // comes back is a fix that collapses the match into
+    // `.unwrap_or_else(|_| DocParityEvaluation { is_doc_sufficient: true, .. })`
+    // while wiring the seam. Nothing else in this suite notices that.
+    //
+    // The fixture is an empty checkout, so the corpus sync has no owned page to
+    // read and nothing of its own to report: an empty file list here means the
+    // probe failure produced nothing, and cannot be a rewritten page in
+    // disguise.
+    for failure in PROBE_FAILURES {
+        let dir = tempdir().unwrap();
+        let report = run_gate(probe_failed(failure), ANVIL, dir.path(), &["src/lib.rs"]);
+
+        let errored = report.errored.as_deref().unwrap_or_else(|| {
+            panic!(
+                "{failure:?}: no judgement was obtained, so this is absent evidence \
+                 and must be Errored — GateStatus::Errored blocks without claiming \
+                 the documentation is deficient. summary was: {}",
+                report.summary
+            )
+        });
+        assert!(
+            !errored.trim().is_empty(),
+            "{failure:?}: an Errored gate that states nothing cannot be acted on"
+        );
+        assert!(
+            !report.is_sufficient,
+            "{failure:?}: a probe that produced no judgement cannot have judged the \
+             diff documented: {}",
+            report.summary
+        );
+        assert!(
+            report.files_created_or_updated.is_empty(),
+            "{failure:?}: with no judgement there is no file list to act on, so \
+             nothing may be reported as touched: {:?}",
+            report.files_created_or_updated
+        );
+        assert!(
+            report.summary.contains(failure),
+            "{failure:?}: the gate must state why it could not evaluate parity, so \
+             the failure can be told apart from a documentation finding. got: {}",
+            report.summary
+        );
+    }
+}
+
+/// Work the gate genuinely did is not evidence about the diff the probe never
+/// judged.
+fn a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do() {
+    let failure = PROBE_FAILURES[0];
+    let dir = tempdir().unwrap();
+    write(&dir.path().join("README.md"), &drifting_page());
+
+    let report = run_gate(probe_failed(failure), ANVIL, dir.path(), &["src/lib.rs"]);
+
+    assert!(
+        report.errored.is_some(),
+        "the probe produced no judgement; a successful sync does not supply one: {}",
+        report.summary
+    );
+    assert!(
+        !report.is_sufficient,
+        "a rewritten README says nothing about whether the diff is documented: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains(failure),
+        "the gate must still state why parity could not be evaluated: {}",
+        report.summary
+    );
+
+    // The `Err` arm's fence, and the reason this case carries it: the corpus sync
+    // runs BEFORE the probe, so a probe that later failed cannot un-run it. The
+    // sync's effect on disk is therefore observable evidence that this report was
+    // composed by traversing `ensure_documentation_parity`, not by an override
+    // short-circuit at the top of it.
+    //
+    // Without this, the whole justification for widening `with_probe_override`
+    // from `DocParityEvaluation` to `Result<DocParityEvaluation, String>`
+    // evaporates: an implementer can satisfy issue #29's headline requirement
+    // with `if let Some(Err(e)) = &self.probe_override { return Ok(errored(e)) }`
+    // placed before the sync and before the frontmatter loop, leaving the
+    // production `Err` path exactly as fragile as it is today while every case in
+    // every binary goes green.
+    //
+    // It is a behaviour assertion, not a structural one: it says what the page on
+    // disk must look like after the gate has run, and says nothing about how the
+    // report was assembled.
+    let readme = std::fs::read_to_string(dir.path().join("README.md")).unwrap();
+    assert!(
+        readme.contains(&format!("{TOTAL_GATES}-gate")),
+        "the corpus sync runs before the probe, so a probe that later failed \
+         cannot un-run it: {readme}"
+    );
+
+    // Deliberately free, and stated so it reads as a decision: whether the page
+    // the sync really did rewrite is listed in `files_created_or_updated` is not
+    // pinned. Listing it is honest (it was written) and omitting it is honest
+    // (the gate errored). Both answers are compatible with everything above.
+}
+
+/// A write that never happened is never reported as AutoUpdated.
+fn a_documentation_write_that_failed_is_errored_and_never_reported_as_updated() {
+    let dir = tempdir().unwrap();
+    // `reference` is a regular file, so no file under `reference/` can be
+    // created: every write to that path fails. The path is deliberately outside
+    // the corpus sync's owned set, so the sync cannot be the source of the
+    // error this case is about.
+    std::fs::write(dir.path().join("reference"), "not a directory\n").unwrap();
+    assert!(
+        sync_published_counts(ANVIL, dir.path(), TOTAL_GATES).is_ok(),
+        "fence: the corpus sync must succeed here, so the only thing that can \
+         fail is the documentation write"
+    );
+
+    let report = run_gate(
+        insufficient(Some(MISSING_REASON), &["reference/newly-public.md"]),
+        ANVIL,
+        dir.path(),
+        &["src/lib.rs"],
+    );
+
+    assert!(
+        !dir.path().join("reference/newly-public.md").exists(),
+        "precondition: the write cannot have succeeded"
+    );
+    assert!(
+        report.errored.is_some(),
+        "a write that failed is absent evidence and must be Errored. summary was: {}",
+        report.summary
+    );
+    assert!(
+        !report.is_sufficient,
+        "a failed write must not pass the gate. summary was: {}",
+        report.summary
+    );
+    assert!(
+        report.files_created_or_updated.is_empty(),
+        "nothing was written, so nothing may be reported as AutoUpdated: {:?}",
+        report.files_created_or_updated
+    );
+}
+
+/// A failure averaged away with a success is still a failure.
+fn a_write_that_failed_is_not_reported_as_updated_even_when_another_one_succeeded() {
+    // The partial case, decided here rather than left to the implementer: the
+    // file that failed must never appear in the updated list, and the failure
+    // must reach `errored`. Whether the file that *did* write may still be
+    // listed is deliberately left free — either answer is honest — so nothing
+    // below asserts anything about `docs/reference/written.md`.
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("reference"), "not a directory\n").unwrap();
+    assert!(
+        sync_published_counts(ANVIL, dir.path(), TOTAL_GATES).is_ok(),
+        "fence: the corpus sync must succeed here"
+    );
+
+    let report = run_gate(
+        insufficient(
+            Some(MISSING_REASON),
+            &["docs/reference/written.md", "reference/unwritable.md"],
+        ),
+        ANVIL,
+        dir.path(),
+        &["src/lib.rs"],
+    );
+
+    assert!(
+        !dir.path().join("reference/unwritable.md").exists(),
+        "precondition: that write cannot have succeeded"
+    );
+    assert!(
+        report.errored.is_some(),
+        "one of the writes failed, and a failure that is averaged away with a \
+         success is absent evidence: {}",
+        report.summary
+    );
+    assert!(
+        !report.is_sufficient,
+        "a failed write must not pass the gate: {}",
+        report.summary
+    );
+    assert!(
+        !report
+            .files_created_or_updated
+            .contains(&"reference/unwritable.md".to_string()),
+        "the file that was never written must never be reported as updated: {:?}",
+        report.files_created_or_updated
+    );
+}
+
+/// A file that was named but never amended is not reported as updated, and
+/// naming it never yields a pass.
+fn naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass() {
+    let dir = tempdir().unwrap();
+    let readme = dir.path().join("README.md");
+    // The token `newly_public` is deliberately ABSENT from this fixture. It used
+    // to be present ("Nothing here mentions newly_public."), which made the
+    // else-branch's `after.contains("newly_public")` unfalsifiable: the
+    // unconditional prose-survival assertion below already required that
+    // sentence to survive, so the token was in `after` in every reachable
+    // outcome whatever the implementation did.
+    let before = "# Watched\n\nNothing here documents the new public API.\n";
+    std::fs::write(&readme, before).unwrap();
+
+    let report = run_gate(
+        // One file that does not exist and one that does. Creating a stub for
+        // the first must not license passing on the second.
+        insufficient(
+            Some(MISSING_REASON),
+            &["docs/reference/newly-public.md", "README.md"],
+        ),
+        ANVIL,
+        dir.path(),
+        &["src/lib.rs"],
+    );
+
+    let after = std::fs::read_to_string(&readme).unwrap();
+
+    // Unconditional: whatever the guard decides to do about an existing file it
+    // was told to update, clobbering the contributor's prose is not one of the
+    // options. "Amending" by overwriting with a generated stub is the same
+    // vandalism class as issues #27 and #28.
+    assert!(
+        after.contains("# Watched"),
+        "the existing README's heading must survive: {after:?}"
+    );
+    assert!(
+        after.contains("Nothing here documents the new public API."),
+        "the existing README's prose must survive: {after:?}"
+    );
+
+    // Unconditional too: the probe judged the diff under-documented, so neither
+    // branch below can be a pass.
+    assert!(
+        !report.is_sufficient,
+        "the probe judged the diff under-documented: {}",
+        report.summary
+    );
+
+    // Two legitimate outcomes, and both have to be honest.
+    if after == before {
+        assert!(
+            !report
+                .files_created_or_updated
+                .contains(&"README.md".to_string()),
+            "README.md is byte-identical, so it must not be reported as updated: {:?}",
+            report.files_created_or_updated
+        );
+    } else {
+        assert!(
+            report
+                .files_created_or_updated
+                .contains(&"README.md".to_string()),
+            "README.md was amended, so it must be reported as updated: {:?}",
+            report.files_created_or_updated
+        );
+        // The fixture above does not contain `newly_public`, so this is a real
+        // requirement and not a restatement of the prose that had to survive.
+        // The implementation it kills: "amend" an existing file by appending the
+        // generic block `generate_and_write_docs` already writes
+        // ("Auto-generated documentation stub by Anvil DocGuard."), then report
+        // README.md as updated. The contributor's PR is blocked, the scorecard
+        // says README.md was updated to close the gap, and the appended text
+        // closes nothing.
+        assert!(
+            after.contains("newly_public"),
+            "README.md was named because `newly_public` is undocumented; an \
+             amendment that never mentions it has not closed the gap it was \
+             named for, and reporting it as updated is the same false assurance: \
+             {after:?}"
+        );
+    }
+}
+
+// =========================================================================
+// The single entry point
+// =========================================================================
+
+/// Every case above, run in one thread with nothing on `PATH` for
+/// `Command::new("agy")` to find.
+#[test]
+fn the_documentation_gate_is_pinned_with_no_agy_reachable_on_path() {
+    // SAFETY: this binary contains exactly one `#[test]`, so no other thread of
+    // this process is running while the environment is mutated. That is the
+    // whole reason the cases below are functions rather than tests of their own.
+    //
+    // The empty directory is the point: `Command::new("agy")` resolves through
+    // `PATH`, so with `PATH` pointing at a directory containing nothing, a
+    // fall-through spawn fails immediately with "No such file or directory"
+    // rather than starting a model under a 120-second budget with
+    // `--dangerously-skip-permissions`. The detection mechanism of every case
+    // below is its own assertions; this is what makes the forbidden act
+    // unreachable rather than merely unasserted.
+    let empty = tempdir().unwrap();
+    unsafe {
+        std::env::set_var("PATH", empty.path());
+    }
+
+    let cases: &[(&str, fn())] = &[
+        (
+            "reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identical",
+            reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identical,
+        ),
+        (
+            "the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason",
+            the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason,
+        ),
+        (
+            "the_gate_applies_the_corpus_sync_to_anvils_own_repository",
+            the_gate_applies_the_corpus_sync_to_anvils_own_repository,
+        ),
+        (
+            "both_probe_verdicts_carry_anvils_corpus_sync_outcome_into_the_report",
+            both_probe_verdicts_carry_anvils_corpus_sync_outcome_into_the_report,
+        ),
+        (
+            "an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply",
+            an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply,
+        ),
+        (
+            "a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate",
+            a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate,
+        ),
+        (
+            "an_under_documented_diff_does_not_pass_through_the_public_gate",
+            an_under_documented_diff_does_not_pass_through_the_public_gate,
+        ),
+        (
+            "an_under_documented_diff_that_named_no_files_still_fails_the_gate",
+            an_under_documented_diff_that_named_no_files_still_fails_the_gate,
+        ),
+        (
+            "an_under_documented_diff_that_stated_no_reason_still_fails_the_gate",
+            an_under_documented_diff_that_stated_no_reason_still_fails_the_gate,
+        ),
+        (
+            "a_probe_that_produced_no_judgement_is_errored_and_never_a_pass",
+            a_probe_that_produced_no_judgement_is_errored_and_never_a_pass,
+        ),
+        (
+            "a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do",
+            a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do,
+        ),
+        (
+            "a_documentation_write_that_failed_is_errored_and_never_reported_as_updated",
+            a_documentation_write_that_failed_is_errored_and_never_reported_as_updated,
+        ),
+        (
+            "a_write_that_failed_is_not_reported_as_updated_even_when_another_one_succeeded",
+            a_write_that_failed_is_not_reported_as_updated_even_when_another_one_succeeded,
+        ),
+        (
+            "naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass",
+            naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass,
+        ),
+    ];
+
+    // `catch_unwind` so that one red case does not hide the other thirteen: a
+    // run of this binary reports every behaviour that is failing, which is the
+    // property a single aggregating test would otherwise cost.
+    let mut failures: Vec<String> = Vec::new();
+    for (name, case) in cases {
+        match catch_unwind(AssertUnwindSafe(case)) {
+            Ok(()) => eprintln!("case {name} ... ok"),
+            Err(payload) => {
+                let message = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                    .unwrap_or_else(|| "<non-string panic payload>".to_string());
+                eprintln!("case {name} ... FAILED");
+                failures.push(format!("  {name}\n    {message}"));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} of {} gate cases failed:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+}

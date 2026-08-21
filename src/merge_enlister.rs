@@ -23,10 +23,12 @@ impl MergeEnlister {
     /// `Ok(())` admits; `Err` refuses and says why.
     ///
     /// SCAFFOLDING: signature only, so the spec suite can state the invariant
-    /// before anything implements it. Where this decision is wired -- inside
-    /// `enlist_into_merge_queue` or at each of its callers -- is the
-    /// implementer's choice. That no path reaches the queue without passing
-    /// through a decision like it is not.
+    /// before anything implements it. The decision itself is not optional and
+    /// neither is where it is reached: `enlist_into_merge_queue` must reach it
+    /// for the evidence it was handed, so that a pull request cannot be admitted
+    /// by a path that skipped the caller who checks. What remains the
+    /// implementer's choice is how the refusal is phrased and how each caller
+    /// obtains the report it passes down.
     pub fn admission_refusal(_report: Option<&PreMergeCertificationReport>) -> Result<()> {
         todo!("spec: Anvil admits nothing to the merge queue on evidence it does not have")
     }

@@ -50,7 +50,7 @@ impl DocGuard {
         Self { agy_effort }
     }
 
-    /// Constructs a guard whose doc-parity judgement is supplied directly
+    /// Constructs a guard whose doc-parity probe *outcome* is supplied directly
     /// instead of being obtained by spawning the `agy` probe.
     ///
     /// SCAFFOLDING (`tdd/docguard-oracle-repair`): signature only, body left to
@@ -69,7 +69,24 @@ impl DocGuard {
     /// not a suggestion the implementer may substitute a different shape for;
     /// changing it edits the specification and requires a fresh test review.
     ///
-    /// The stored judgement must be consulted **inside `evaluate_doc_parity`**,
+    /// `outcome` is what `evaluate_doc_parity` would have *returned*, not merely
+    /// what the probe would have judged:
+    ///
+    /// * `Ok(evaluation)` — the probe produced a judgement.
+    /// * `Err(reason)` — the probe produced **no** judgement: spawn failure,
+    ///   non-zero exit, timeout, unparseable JSON, or watchdog supervision
+    ///   failure. All five are the same case to this gate and all five must
+    ///   reach `DocGuardReport::errored`.
+    ///
+    /// The `Err` arm is not a convenience. It is the arm whose historical
+    /// collapse into `is_doc_sufficient: true` made gate 1 unfailable, and a
+    /// seam that could only express a *successful* judgement would leave that
+    /// arm reachable only from production. `Err(reason)` must be delivered to
+    /// the same code path a real probe failure takes — an `Err` out of
+    /// `evaluate_doc_parity` — so that the failure handling the suite exercises
+    /// is the failure handling production runs.
+    ///
+    /// The stored outcome must be consulted **inside `evaluate_doc_parity`**,
     /// at the point where the `agy` probe's judgement is produced and returned,
     /// so that an overridden run and a production run traverse byte-identical
     /// code from the judgement onward. An override consulted earlier — one that
@@ -79,12 +96,15 @@ impl DocGuard {
     /// under-documented diff. That is the defect class this branch exists to
     /// remove, so it must not be reintroduced by the seam that tests it.
     ///
-    /// The body stays `todo!()` until then: a seam that stores the judgement
+    /// The body stays `todo!()` until then: a seam that stores the outcome
     /// without anything consulting it would make a live `agy` spawn reachable
     /// from the suite, and panicking at construction makes that impossible.
     #[allow(unused_variables)]
-    pub fn with_probe_override(agy_effort: String, evaluation: DocParityEvaluation) -> Self {
-        todo!("supply the doc-parity judgement without spawning the agy probe")
+    pub fn with_probe_override(
+        agy_effort: String,
+        outcome: Result<DocParityEvaluation, String>,
+    ) -> Self {
+        todo!("supply the doc-parity probe outcome without spawning the agy probe")
     }
 
     /// Evaluates documentation parity, frontmatter compliance, and auto-generates any missing docs or ADRs.

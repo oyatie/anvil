@@ -149,7 +149,11 @@ mod tests {
 
         let sync = sync_published_counts(dir.path(), 68).unwrap();
         assert_eq!(sync.rewritten, vec!["README.md".to_string()]);
-        assert!(sync.remaining_drift.is_empty(), "{:?}", sync.remaining_drift);
+        assert!(
+            sync.remaining_drift.is_empty(),
+            "{:?}",
+            sync.remaining_drift
+        );
 
         let got = std::fs::read_to_string(dir.path().join("README.md")).unwrap();
         assert!(got.contains("68-gate"));

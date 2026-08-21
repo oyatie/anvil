@@ -191,7 +191,6 @@ pub struct AppState {
     pub broadcaster: Arc<crate::webhook::sse::FleetEventBroadcaster>,
     pub telemetry_store: Arc<crate::telemetry_store::TelemetryStore>,
     pub fleet_observer: Arc<crate::fleet_observer::FleetObserver>,
-    pub task_orchestrator: Arc<crate::task_orchestrator::AutonomousTaskOrchestrator>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -276,10 +275,6 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/reconcile",
             post(admin_guarded(manual_reconcile_handler)),
-        )
-        .route(
-            "/api/tasks/sweep",
-            post(admin_guarded(manual_handlers::task_sweep_handler)),
         )
         .route(
             "/api/drain",

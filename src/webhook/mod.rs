@@ -254,6 +254,10 @@ pub fn create_router(state: AppState) -> Router {
             axum::routing::get(admin_guarded(crate::dashboard::dashboard_state_api_handler)),
         )
         .route(
+            "/api/fleet/shape",
+            axum::routing::get(admin_guarded(manual_handlers::fleet_shape_handler)),
+        )
+        .route(
             "/api/events/fleet",
             axum::routing::get(admin_guarded(crate::webhook::sse::sse_fleet_stream_handler)),
         )

@@ -399,17 +399,49 @@ fn expect_passed(title: &str, body: &str, context: &str) {
 fn expect_missing(title: &str, body: &str, expected: &[Artifact], context: &str) -> String {
     let mut want = expected.to_vec();
     want.sort();
-    assert!(
-        !want.is_empty(),
-        "expect_missing is for the failing side; use expect_passed"
-    );
-
     assert_eq!(
         missing(title, body),
         want,
         "{context}: the gate measured the wrong set of missing artifacts. Naming an \
          artifact the author did write tells them to write the thing they already \
          wrote; failing to name one they did not write hides the work. body={body:?}"
+    );
+    assert_failed_naming(title, body, &want, context)
+}
+
+/// The change is missing *at least* these artifacts.
+///
+/// Used where pinning the set exactly would decide something the specification
+/// leaves open. A body of unheaded prose states no acceptance bar, so the bar is
+/// missing beyond argument; whether that same prose also counts as the written
+/// problem is a marker-recognition choice this suite deliberately leaves to the
+/// implementer, and pinning it either way would be pinning the marker format.
+#[track_caller]
+fn expect_at_least_missing(
+    title: &str,
+    body: &str,
+    expected: &[Artifact],
+    context: &str,
+) -> String {
+    let got = missing(title, body);
+    for artifact in expected {
+        assert!(
+            got.contains(artifact),
+            "{context}: the gate did not report the missing {artifact:?}. It reported \
+             {got:?}. body={body:?}"
+        );
+    }
+    assert_failed_naming(title, body, &got, context)
+}
+
+/// The shared tail of both: `Failed`, measured, unacceptable, and a message that
+/// names every artifact the measurement found missing.
+#[track_caller]
+fn assert_failed_naming(title: &str, body: &str, want: &[Artifact], context: &str) -> String {
+    assert!(
+        !want.is_empty(),
+        "{context}: this is the failing side, so the measurement must report at least \
+         one missing artifact; use expect_passed otherwise. body={body:?}"
     );
 
     let status = product_bar::judge(title, body);
@@ -425,7 +457,7 @@ fn expect_missing(title: &str, body: &str, expected: &[Artifact], context: &str)
          without Product's bar. body={body:?}"
     );
     let msg = expect_failed(&status, context);
-    for artifact in &want {
+    for artifact in want {
         assert!(
             names(*artifact, &msg),
             "{context}: the message must name the missing {artifact:?} so the author \
@@ -549,44 +581,58 @@ fn a_real_pull_request_body_with_no_bar_fails_closed() {
     //
     // None of these bodies states an acceptance criterion in any spelling, so
     // none of them collides with the gate's freedom over the marker format: the
-    // point is that no bar exists, not that no heading exists.
-    let cases: Vec<(&str, String, Vec<Artifact>)> = vec![
+    // point is that no bar exists, not that no heading exists. For the same
+    // reason the first three are pinned with `expect_at_least_missing` —
+    // whether unheaded prose also counts as the written problem is a
+    // recognition choice this suite leaves open, while the absence of the bar is
+    // not open at all.
+    let at_least: Vec<(&str, String)> = vec![
         (
             "plain prose with no headings — the commonest real body there is",
             "Refactors the canary poller onto the shared HTTP client so the retry budget \
              is configured in one place instead of three. No behaviour change is intended."
                 .to_string(),
-            vec![Artifact::DoneWhenBar],
         ),
         (
             "a one-line description, the shape most drive-by fixes carry",
             "Bumps the tracing subscriber to 0.3.19.".to_string(),
-            vec![Artifact::DoneWhenBar],
         ),
+        (
+            "an emoji-and-link body, which defers the artifact to somewhere else",
+            "🚀 see https://example.invalid/issues/4192".to_string(),
+        ),
+    ];
+
+    // These two carry nothing at all, under any reading, so the set is exact.
+    let exactly_both: Vec<(&str, String)> = vec![
         (
             "an unfilled pull request template: HTML comments and nothing else",
             "<!-- Describe your change -->\n\n<!-- Done when? -->\n".to_string(),
-            vec![Artifact::WrittenProblem, Artifact::DoneWhenBar],
         ),
         (
             "whitespace only, which is what an author who deleted the template leaves",
             "   \n\t\n  \r\n  ".to_string(),
-            vec![Artifact::WrittenProblem, Artifact::DoneWhenBar],
-        ),
-        (
-            "an emoji-and-link body, no prose and no bar",
-            "🚀 see https://example.invalid/issues/4192".to_string(),
-            vec![Artifact::WrittenProblem, Artifact::DoneWhenBar],
         ),
     ];
 
-    for (context, body, expected) in &cases {
+    for (context, body) in at_least.iter().chain(exactly_both.iter()) {
         assert!(
             !body.contains("Done when") || body.starts_with("<!--"),
-            "fixture invariant: {context} must not carry this file's heading, or it \
-             stops testing the marker-less shape"
+            "fixture invariant: {context} must not carry this file's heading over real \
+             content, or it stops testing the marker-less shape"
         );
-        expect_missing(TITLE, body, expected, context);
+    }
+
+    for (context, body) in &at_least {
+        expect_at_least_missing(TITLE, body, &[Artifact::DoneWhenBar], context);
+    }
+    for (context, body) in &exactly_both {
+        expect_missing(
+            TITLE,
+            body,
+            &[Artifact::WrittenProblem, Artifact::DoneWhenBar],
+            context,
+        );
     }
 }
 

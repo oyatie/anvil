@@ -23,10 +23,11 @@ fn test_cloud_native_guard_violations() {
         .evaluate_cloud_native(Path::new("/tmp"), &diff_ctx1)
         .unwrap();
     assert!(!r1.is_compliant);
-    assert!(r1
-        .violations
-        .iter()
-        .any(|v| v.category == "HARDCODED_CLOUD_ENDPOINT"));
+    assert!(
+        r1.violations
+            .iter()
+            .any(|v| v.category == "HARDCODED_CLOUD_ENDPOINT")
+    );
 
     // 2. Violation: New Python script in scripts/
     let diff_ctx2 = PrDiffContext {
@@ -45,10 +46,11 @@ fn test_cloud_native_guard_violations() {
         .evaluate_cloud_native(Path::new("/tmp"), &diff_ctx2)
         .unwrap();
     assert!(!r2.is_compliant);
-    assert!(r2
-        .violations
-        .iter()
-        .any(|v| v.category == "NON_RUST_SCRIPT_TOOLING"));
+    assert!(
+        r2.violations
+            .iter()
+            .any(|v| v.category == "NON_RUST_SCRIPT_TOOLING")
+    );
 
     // 3. Clean: Provider-agnostic trait port
     let diff_ctx3 = PrDiffContext {

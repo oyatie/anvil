@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::{info, warn};

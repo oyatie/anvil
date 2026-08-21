@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tokio::process::Command;
@@ -98,6 +98,32 @@ impl GitManager {
         let _ = Self::install_repo_hooks(&repo_dir).await;
 
         Ok(repo_dir)
+    }
+
+    /// Points a repository at its tracked `.githooks/` directory.
+    ///
+    /// Hooks written into `.git/hooks` are invisible: untracked, unreviewable,
+    /// and silently different on every machine. A tracked `.githooks/` plus
+    /// `core.hooksPath` makes them ordinary reviewed code, and installing them
+    /// is one config write rather than a file copy that can drift.
+    ///
+    /// Anvil runs this on itself as well as on the repositories it manages.
+    /// Every previous hook mechanism here was pointed outward only, which is
+    /// the same defect as a guard that evaluates other people's repositories
+    /// and never its own.
+    pub async fn point_at_tracked_hooks(repo_dir: &Path) -> Result<bool> {
+        if !repo_dir.join(".githooks").is_dir() {
+            return Ok(false);
+        }
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.arg("-C")
+            .arg(repo_dir)
+            .args(["config", "core.hooksPath", ".githooks"])
+            .stdin(std::process::Stdio::null());
+        let out =
+            crate::exec::run_bounded(cmd, crate::exec::ExecClass::Vcs, "git config hooksPath")
+                .await?;
+        Ok(out.status.success())
     }
 
     /// Automatically maintains and updates standard developer inner-loop git hooks in a maintained repository
@@ -295,16 +321,20 @@ fi
         if let Ok(mut entries) = tokio::fs::read_dir(&self.worktrees_base_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                if let Ok(metadata) = entry.metadata().await {
-                    if let Ok(modified) = metadata.modified() {
-                        if let Ok(age) = now.duration_since(modified) {
-                            if age > ttl {
-                                info!("Pruning abandoned ephemeral worktree directory: {:?}", path);
-                                let _ = tokio::fs::remove_dir_all(&path).await;
-                                cleaned += 1;
-                            }
-                        }
+                if let Ok(metadata) = entry.metadata().await
+                    && let Ok(modified) = metadata.modified()
+                    && let Ok(age) = now.duration_since(modified)
+                    && age > ttl
+                {
+                    // A live lane holds an unexpired lease; mtime alone would
+                    // reap a lane mid-build (mechanism, not "remember to
+                    // touch the directory").
+                    if lane_lease_unexpired(&path).await {
+                        continue;
                     }
+                    info!("Pruning abandoned ephemeral worktree directory: {:?}", path);
+                    let _ = tokio::fs::remove_dir_all(&path).await;
+                    cleaned += 1;
                 }
             }
         }
@@ -462,6 +492,23 @@ fi
             Ok(Vec::new())
         }
     }
+}
+
+/// True when `dir` holds a lane lease naming a future expiry (epoch seconds).
+/// An unreadable or malformed lease does not protect the directory.
+async fn lane_lease_unexpired(dir: &std::path::Path) -> bool {
+    let lease = dir.join(crate::change_delivery::adapters::git_vcs::LANE_LEASE_FILE);
+    let Ok(raw) = tokio::fs::read_to_string(&lease).await else {
+        return false;
+    };
+    let Ok(expiry) = raw.trim().parse::<u64>() else {
+        return false;
+    };
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    expiry > now
 }
 
 #[cfg(test)]

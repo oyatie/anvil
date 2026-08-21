@@ -218,12 +218,11 @@ impl Reviewer {
     }
 
     async fn load_custom_rules(&self) -> String {
-        if let Some(path) = &self.rules_path {
-            if path.exists() {
-                if let Ok(content) = tokio::fs::read_to_string(path).await {
-                    return content;
-                }
-            }
+        if let Some(path) = &self.rules_path
+            && path.exists()
+            && let Ok(content) = tokio::fs::read_to_string(path).await
+        {
+            return content;
         }
         String::new()
     }
@@ -350,16 +349,16 @@ impl Reviewer {
 
 fn extract_json_block(text: &str) -> String {
     let json_block_re = Regex::new(r"(?s)```(?:json)?\s*(\{.*?\})\s*```").unwrap();
-    if let Some(caps) = json_block_re.captures(text) {
-        if let Some(m) = caps.get(1) {
-            return m.as_str().to_string();
-        }
+    if let Some(caps) = json_block_re.captures(text)
+        && let Some(m) = caps.get(1)
+    {
+        return m.as_str().to_string();
     }
 
-    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}')) {
-        if first < last {
-            return text[first..=last].to_string();
-        }
+    if let (Some(first), Some(last)) = (text.find('{'), text.rfind('}'))
+        && first < last
+    {
+        return text[first..=last].to_string();
     }
 
     text.to_string()

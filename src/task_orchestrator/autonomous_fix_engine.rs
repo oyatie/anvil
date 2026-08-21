@@ -98,7 +98,11 @@ impl AutonomousFixEngine {
              Required Invariants: {:?}\n\n\
              Please implement the necessary code changes according to planetary-scale engineering doctrine. \
              Ensure 100% compile compatibility and full test coverage.",
-            task.title, task.source_doc_path, task.target_files, task.domain, task.required_invariants
+            task.title,
+            task.source_doc_path,
+            task.target_files,
+            task.domain,
+            task.required_invariants
         );
 
         while attempts < 3 && !is_successful {
@@ -157,9 +161,7 @@ impl AutonomousFixEngine {
                         Ok(out) => {
                             warn!(
                                 "🚧 [Autonomous Fix Engine] Attempt {} for task '{}' does not compile (cargo check exited {}).",
-                                attempts,
-                                task.task_id,
-                                out.status
+                                attempts, task.task_id, out.status
                             );
                         }
                         Err(e) => {

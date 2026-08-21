@@ -65,7 +65,10 @@ impl IssueDocConsolidator {
 
         let summary = format!(
             "Issue #{} Doc Consolidation complete (dry_run: {}): {} files archived, {} stubs written.",
-            issue_number, dry_run, files_archived.len(), stubs_written.len()
+            issue_number,
+            dry_run,
+            files_archived.len(),
+            stubs_written.len()
         );
 
         Ok(IssueDocConsolidationReport {

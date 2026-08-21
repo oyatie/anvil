@@ -234,9 +234,11 @@ mod tests {
             .await
             .unwrap();
         assert!(!report.is_compliant);
-        assert!(report
-            .violations
-            .iter()
-            .any(|v| v.category == "HARDCODED_ABSOLUTE_PATH"));
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.category == "HARDCODED_ABSOLUTE_PATH")
+        );
     }
 }

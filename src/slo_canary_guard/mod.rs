@@ -33,7 +33,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod openslo_parser;
 pub use openslo_parser::parse_openslo_yaml;
@@ -42,8 +42,7 @@ pub use openslo_parser::parse_openslo_yaml;
 ///
 /// Published verbatim as the `NotMeasured` reason, so the reader of a pull
 /// request sees the missing dependency rather than an absence of comment.
-const MISSING_TELEMETRY_SOURCE: &str =
-    "no Prometheus or OpenTelemetry endpoint is configured, so error budget \
+const MISSING_TELEMETRY_SOURCE: &str = "no Prometheus or OpenTelemetry endpoint is configured, so error budget \
      consumption over any window was never queried";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -85,6 +85,22 @@ impl MigrationEntry {
 /// oyatie tree; see PLAN.md section 38 for method and honest limits.
 pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
     MigrationEntry {
+        component: "pre_merge_guard/report",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "",
+        counterpart_loc: 0,
+        evidence: "Split out from the pre_merge_guard entry after the migration-boundary gate found \
+                   seven Migrating modules depending on it. Every one of those imports exactly \
+                   `GateStatus` and nothing else. report.rs owns the admission vocabulary -- \
+                   Errored, NotMeasured, is_admissible -- and a search of oyatie's \
+                   governance/check/honest-claims (1878 lines) and aspirational-enforcement (692) \
+                   found aspiration tracking but ZERO not-measured, unmeasured, or abstain \
+                   vocabulary. The distinction between a gate that failed and a gate that could not \
+                   measure has no upstream equivalent. The evaluator and matrix around it ARE \
+                   superseded; the vocabulary is not.",
+    },
+    MigrationEntry {
         component: "account_pool",
         verdict: Verdict::Superseded,
         confidence: Confidence::Verified,
@@ -1001,13 +1017,17 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
     },
     MigrationEntry {
         component: "publish",
-        verdict: Verdict::Migrating,
+        verdict: Verdict::Rewired,
         confidence: Confidence::Probable,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "449 lines, PURE. One signature form, typed AnvilAction enum, hidden idempotency marker \
-                  so comments amend in place. No oyatie counterpart for GitHub comment \
-                  formatting/idempotency was found. Pure formatting logic with no infra dependency.",
+        evidence: "Reclassified Migrating -> Rewired by the migration-boundary gate. The renderer \
+                   itself is pure, but it reads two data sources oyatie supersedes: the fidelity \
+                   registry (governance/check/honest-claims, 1878 lines) and the certification \
+                   report. Its PORT -- produce a signed, findings-only scorecard from gate \
+                   results -- survives absorption; the source behind it swaps. That is the \
+                   definition of Rewired, and calling it Migrating asserted it could move as \
+                   source when it cannot.",
     },
     MigrationEntry {
         component: "queue_healer (dir)",
@@ -1391,5 +1411,40 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   trust_domain_authority, bind_caller_tenant, X509Svid, SvidRequest; plus \
                   identity-workload-domain (1333), svid-trustd adapter (750), svid-operator-k8s (901), \
                   identity-workload-rest (5430),...",
+    },
+    MigrationEntry {
+        component: "shape (dir)",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "ci/facade/module-membership + repo-root-hygiene + baseline-ratchet + \
+                            layer-dependency-acyclicity (the shape engine generalises these over a \
+                            tenant-carried spec)",
+        counterpart_loc: 0,
+        evidence: "Shape Program engine (plan breezy-purring-crayon, 2026-08-20): tenant-carried \
+                  .anvil/shape.json spec, pure placement/measurement core, ratchet consumer. Built in \
+                  core/ports/adapters/facade form from day one so it is the first conformant unit. \
+                  Counterpart loc deliberately 0: the four oyatie gates were not summed because the \
+                  engine is a generalisation, not a transcription of any one of them.",
+    },
+    MigrationEntry {
+        component: "ratchet (dir)",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "ci/facade/baseline-ratchet",
+        counterpart_loc: 0,
+        evidence: "Generic shrink-only ratchet (plan breezy-purring-crayon G15): frozen reference at \
+                  merge-base, per-rule mode as data, frozen_empty rules, one-way sign-off door with \
+                  inert-entry failure. Transcribes oyatie's baseline-ratchet semantics over string keys \
+                  so any gate can consume it. Counterpart loc 0: not summed, transcription not copy.",
+    },
+    MigrationEntry {
+        component: "change_delivery (dir)",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "ci/controller (landing) + tools/oya-reorg-codemod-app (rewrite)",
+        counterpart_loc: 0,
+        evidence: "Shape Program change delivery (plan breezy-purring-crayon B1): move plan, owner-disjoint \
+                  sharding, I8 purity check, landing policy and pure admission, ledger. Pure core and \
+                  dry-run facade; ports/adapters that open PRs follow. Counterpart loc 0: none measured.",
     },
 ];

@@ -30,7 +30,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod statistical_engine;
 pub use statistical_engine::{CanaryVerdict, MetricDistribution, StatisticalCanaryEngine};
@@ -41,8 +41,7 @@ const GATE_ID: &str = "automated_canary_status";
 
 /// What must exist before a canary verdict can be reached at all. Published
 /// verbatim as the `NotMeasured` reason.
-const MISSING_METRICS_SOURCE: &str =
-    "no canary deployment and no Prometheus or OpenTelemetry metrics endpoint are \
+const MISSING_METRICS_SOURCE: &str = "no canary deployment and no Prometheus or OpenTelemetry metrics endpoint are \
      configured, so no baseline or canary latency samples were ever read";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

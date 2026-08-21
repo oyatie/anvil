@@ -31,11 +31,18 @@ use super::provider::ModelExecutionConfig;
 /// vocabulary of which subscription CLI to spawn; a component that reasons about
 /// agreement between two peer models does not need that vocabulary and must not
 /// acquire it, because acquiring it is what welds it to the superseded executor.
-#[async_trait::async_trait]
 pub trait PromptExecutor: Send + Sync {
     /// Runs `prompt` against the model named `model`, with `working_dir` as the
     /// working directory, and returns the model's response text.
-    async fn execute(&self, model: &str, prompt: &str, working_dir: &Path) -> Result<String>;
+    /// Returns `impl Future + Send` rather than using `async fn` directly:
+    /// a bare `async fn` in a public trait cannot express the `Send` bound, so
+    /// callers cannot hold the future across an await in a spawned task.
+    fn execute(
+        &self,
+        model: &str,
+        prompt: &str,
+        working_dir: &Path,
+    ) -> impl std::future::Future<Output = Result<String>> + Send;
 }
 
 /// Runs a prompt against an already-resolved execution configuration.
@@ -43,6 +50,10 @@ pub trait PromptExecutor: Send + Sync {
 /// Used by the per-stage fallback chain, which has already decided the provider,
 /// the specific model, the reasoning effort and the timeout for each tier and needs
 /// all four to reach the adapter intact.
+// `async fn` in traits is stable, but not dyn-compatible. `stage_router` holds
+// this as `Arc<dyn ConfiguredPromptExecutor>` so the fallback chain can carry a
+// swappable adapter, which is the whole point of the port. The macro stays here
+// and only here: `PromptExecutor` is used generically and needs no erasure.
 #[async_trait::async_trait]
 pub trait ConfiguredPromptExecutor: Send + Sync {
     /// Runs `prompt` under `config`, with `working_dir` as the working directory,

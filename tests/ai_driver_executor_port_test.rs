@@ -105,8 +105,9 @@ impl ScriptedExecutor {
     }
 }
 
-#[async_trait::async_trait]
 impl PromptExecutor for ScriptedExecutor {
+    // Native `async fn` in a trait impl; no macro. The trait declares
+    // `-> impl Future + Send`, and an `async fn` satisfies it.
     async fn execute(
         &self,
         model: &str,

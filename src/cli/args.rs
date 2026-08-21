@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "pr-watch")]
@@ -14,6 +15,11 @@ pub struct Cli {
 pub enum Commands {
     /// Start the real-time webhook server and forwarders (default)
     Serve,
+    /// Shape Program: measure repositories against their tenant-carried shape spec
+    Shape {
+        #[command(subcommand)]
+        action: ShapeAction,
+    },
     /// Trigger an immediate manual review for a specific PR
     Review {
         #[arg(short, long, help = "Repository (e.g. oyatie/oyatie)")]
@@ -339,4 +345,109 @@ pub enum Commands {
     Forward,
     /// Verify GitHub CLI authentication and environment readiness
     Check,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ShapeAction {
+    /// Parse, validate and resolve a shape spec; exits non-zero on any problem
+    ValidateSpec {
+        #[arg(help = "Path to the shape spec (JSON)")]
+        path: PathBuf,
+
+        #[arg(long, help = "Path to the unit registry the spec references")]
+        registry: Option<PathBuf>,
+    },
+    /// Measure a repository at a revision against its shape spec (read by git
+    /// plumbing; nothing is checked out)
+    Measure {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value = "HEAD", help = "Commit to measure")]
+        rev: String,
+
+        #[arg(
+            long,
+            help = "Report label (e.g. oyatie/oyatie); defaults to the directory name"
+        )]
+        repo: Option<String>,
+
+        #[arg(
+            long,
+            help = "Measure against a spec outside the tree (stamped PROPOSED)"
+        )]
+        spec_override: Option<PathBuf>,
+
+        #[arg(long, help = "Unit registry document outside the tree")]
+        registry: Option<PathBuf>,
+
+        #[arg(long, help = "Print the full report as JSON")]
+        json: bool,
+    },
+    /// Seed a ratchet baseline from a named commit (full sha; never the
+    /// working directory). Prints the baseline JSON or writes it to --out.
+    Baseline {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, help = "Full 40-character commit sha to measure")]
+        rev: String,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+
+        #[arg(long, help = "Write the baseline here instead of stdout")]
+        out: Option<PathBuf>,
+    },
+    /// Dry-run: measure, derive the move plan, shard it by owner and unit, and
+    /// print what would be opened. Touches no network.
+    Plan {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value = "HEAD", help = "Commit to plan from")]
+        rev: String,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+
+        #[arg(long, help = "Landing policy JSON outside the tree")]
+        policy: Option<PathBuf>,
+
+        #[arg(long, help = "Write the move plan JSON here")]
+        plan_out: Option<PathBuf>,
+    },
+    /// Dry-run delivery: build the first shard(s) in isolated lane worktrees
+    /// (rewrite -> purity -> gate), print the result, and tear the lanes
+    /// down. Never commits, never pushes.
+    Deliver {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value_t = 1, help = "Build at most this many shards")]
+        max: usize,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+
+        #[arg(
+            long,
+            help = "Permit lanes on this checkout even if it is the daemon's own tree (operator dry-runs only)"
+        )]
+        allow_same_repo: bool,
+    },
+    /// Judge a head commit against the baseline frozen at merge-base(base-ref, head)
+    Ratchet {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, help = "The ref the change targets (e.g. origin/main)")]
+        base_ref: String,
+
+        #[arg(long, default_value = "HEAD", help = "The head commit to judge")]
+        head: String,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+    },
 }

@@ -28,16 +28,16 @@
 //!   pass (I1), never a percentage that was not measured (I2), and never an
 //!   accusation against the PR.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 use tracing::info;
 
-use crate::exec::{run_bounded, ExecClass};
+use crate::exec::{ExecClass, run_bounded};
 use crate::git_manager::PrDiffContext;
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MIN_COVERAGE_THRESHOLD_PERCENT: f64 = 85.0;
@@ -292,7 +292,7 @@ impl CoverageGuard {
                     reason,
                     executable_lines_added,
                     test_lines_added,
-                )
+                );
             }
         };
 
@@ -303,7 +303,7 @@ impl CoverageGuard {
                     format!("the coverage report could not be parsed: {e}"),
                     executable_lines_added,
                     test_lines_added,
-                )
+                );
             }
         };
 

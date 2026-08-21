@@ -27,7 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod criterion_diff;
 pub use criterion_diff::{BenchmarkRegressionVerdict, CriterionDiffAnalyzer, MicrobenchmarkSample};
@@ -36,8 +36,7 @@ pub use criterion_diff::{BenchmarkRegressionVerdict, CriterionDiffAnalyzer, Micr
 const GATE_ID: &str = "microbench_status";
 
 /// What must exist before a hotpath figure can be ratcheted.
-const MISSING_CRITERION_BASELINE: &str =
-    "no criterion benchmark harness or published baseline exists for this repository, \
+const MISSING_CRITERION_BASELINE: &str = "no criterion benchmark harness or published baseline exists for this repository, \
      so neither the base nor the head ns/op figure was ever measured";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

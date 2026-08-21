@@ -35,16 +35,15 @@ pub async fn execute_pr_review(
         .as_ref()
         .map(|s| s.last_reviewed_head_sha.as_str());
 
-    if !force {
-        if let Some(last_sha) = prev_sha {
-            if last_sha == head_sha {
-                info!(
-                    "PR {}#{} HEAD {} was already reviewed. Skipping.",
-                    repo, pr_number, head_sha
-                );
-                return Ok(());
-            }
-        }
+    if !force
+        && let Some(last_sha) = prev_sha
+        && last_sha == head_sha
+    {
+        info!(
+            "PR {}#{} HEAD {} was already reviewed. Skipping.",
+            repo, pr_number, head_sha
+        );
+        return Ok(());
     }
 
     let repo_dir = state
@@ -528,6 +527,33 @@ pub async fn execute_pr_review(
     }
 
     // Evaluate the full pre-merge, GitOps, CI-velocity and security certification matrix
+    // Shape Program: judge the head against the baseline frozen at the
+    // merge-base of the branch this PR targets, and record what was measured.
+    let shape_outcome = crate::shape::facade::gate::judge_pr(
+        &diff_ctx.repo_working_dir,
+        &diff_ctx.base_branch,
+        &diff_ctx.head_sha,
+        &diff_ctx.repo,
+    )
+    .await;
+    if let Some(m) = shape_outcome.measurement() {
+        state
+            .telemetry_store
+            .record_shape_measurement(crate::telemetry_store::ShapeMeasurementRecord {
+                repo: m.repo.clone(),
+                rev: m.rev.clone(),
+                spec_source: m.spec_source.clone(),
+                findings_total: m.distance.findings_total,
+                units_total: m.distance.units_total,
+                units_conformant: m.distance.units_conformant,
+                per_rule: m.per_rule.clone(),
+                blocking_regressions: m.blocking_regressions,
+                advisory_regressions: m.advisory_regressions,
+                recorded_at: chrono::Utc::now(),
+            })
+            .await;
+    }
+
     let cert_report = state.pre_merge_guard.evaluate_pre_merge_gates(
         &diff_ctx,
         &doc_report,
@@ -596,6 +622,7 @@ pub async fn execute_pr_review(
         &attestation_report,
         true,
         &review_resp.verdict,
+        &shape_outcome,
     )?;
 
     // Re-stamp the provenance receipt with the verdict that was actually
@@ -613,7 +640,7 @@ pub async fn execute_pr_review(
     let verified_gates: Vec<String> = cert_report
         .all_statuses()
         .iter()
-        .filter(|s| matches!(s, crate::pre_merge_guard::GateStatus::Passed))
+        .filter(|s| matches!(s, crate::pre_merge_guard::report::GateStatus::Passed))
         .enumerate()
         .map(|(i, _)| format!("gate-{}", i))
         .collect();
@@ -671,9 +698,11 @@ pub async fn execute_pr_review(
     // no failure taxonomy to act on.
     for (gate_name, status) in cert_report.named_statuses() {
         let reason = match status {
-            crate::pre_merge_guard::GateStatus::Failed(r) => Some(r.clone()),
-            crate::pre_merge_guard::GateStatus::Errored(r) => Some(format!("ERRORED: {}", r)),
-            crate::pre_merge_guard::GateStatus::NotMeasured { reason, .. } => {
+            crate::pre_merge_guard::report::GateStatus::Failed(r) => Some(r.clone()),
+            crate::pre_merge_guard::report::GateStatus::Errored(r) => {
+                Some(format!("ERRORED: {}", r))
+            }
+            crate::pre_merge_guard::report::GateStatus::NotMeasured { reason, .. } => {
                 Some(format!("NOT_MEASURED: {}", reason))
             }
             _ => None,
@@ -770,6 +799,8 @@ pub async fn execute_pr_review(
 /// Kept as a named function rather than an inline call so the upsert call site
 /// names the renderer at the argument position, which is what the wiring test
 /// asserts against (I22: enforced by mechanism, not by convention).
-pub fn scorecard_comment(report: &crate::pre_merge_guard::PreMergeCertificationReport) -> String {
+pub fn scorecard_comment(
+    report: &crate::pre_merge_guard::report::PreMergeCertificationReport,
+) -> String {
     crate::publish::scorecard::render(report)
 }

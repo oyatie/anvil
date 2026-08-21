@@ -130,3 +130,91 @@ pub async fn supervise_bounded<F, Fut>(
         tokio::time::sleep(delay).await;
     }
 }
+
+/// The GitHub-side endpoint every `gh webhook forward` hook points at.
+pub const GH_FORWARDER_ENDPOINT: &str = "https://webhook-forwarder.github.com/hook";
+
+/// Hook ids in a `GET /repos/{r}/hooks` payload that belong to the gh
+/// forwarder. Pure, so the selection is testable without GitHub.
+pub fn stale_forwarder_hook_ids(hooks_json: &[u8]) -> Vec<u64> {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(hooks_json) else {
+        return Vec::new();
+    };
+    v.as_array()
+        .map(|hooks| {
+            hooks
+                .iter()
+                .filter(|h| {
+                    h.pointer("/config/url").and_then(|u| u.as_str()) == Some(GH_FORWARDER_ENDPOINT)
+                })
+                .filter_map(|h| h.get("id").and_then(|i| i.as_u64()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Deletes forwarder hooks left behind by a forwarder that died without
+/// cleaning up (websocket 1006, SIGKILL). GitHub allows one hook per
+/// (repo, endpoint) config, so a stale hook makes every respawn fail with
+/// `HTTP 422: Validation Failed` until it is removed — observed live as six
+/// consecutive respawn failures. Called before each (re)spawn; the forwarder
+/// about to start recreates its own hook immediately.
+pub async fn remove_stale_forwarder_hooks(repo: &str) -> Result<usize, String> {
+    let mut list = tokio::process::Command::new("gh");
+    list.args(["api", &format!("repos/{repo}/hooks")]);
+    let out = crate::exec::run_bounded(
+        list,
+        crate::exec::ExecClass::Api,
+        "gh api hooks (forwarder cleanup)",
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "listing hooks for {repo} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let ids = stale_forwarder_hook_ids(&out.stdout);
+    let mut removed = 0usize;
+    for id in ids {
+        let mut del = tokio::process::Command::new("gh");
+        del.args(["api", "-X", "DELETE", &format!("repos/{repo}/hooks/{id}")]);
+        let out = crate::exec::run_bounded(
+            del,
+            crate::exec::ExecClass::Api,
+            "gh api delete hook (forwarder cleanup)",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        if out.status.success() {
+            removed += 1;
+        } else {
+            warn!(
+                "could not remove stale forwarder hook {id} on {repo}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    }
+    if removed > 0 {
+        info!("removed {removed} stale forwarder hook(s) on {repo} before respawn");
+    }
+    Ok(removed)
+}
+
+#[cfg(test)]
+mod stale_hook_tests {
+    use super::*;
+
+    #[test]
+    fn only_forwarder_hooks_are_selected() {
+        let json = br#"[
+            {"id": 1, "config": {"url": "https://webhook-forwarder.github.com/hook"}},
+            {"id": 2, "config": {"url": "https://example.com/ci"}},
+            {"id": 3, "config": {"url": "https://webhook-forwarder.github.com/hook"}}
+        ]"#;
+        assert_eq!(stale_forwarder_hook_ids(json), vec![1, 3]);
+        assert!(stale_forwarder_hook_ids(b"not json").is_empty());
+        assert!(stale_forwarder_hook_ids(b"{}").is_empty());
+    }
+}

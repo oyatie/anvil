@@ -51,18 +51,16 @@ impl SourceDocVerifier {
             let parent = full_path.parent();
 
             // If file doesn't exist, its parent directory must exist or be an expected module root
-            if !full_path.exists() {
-                if let Some(p) = parent {
-                    if !p.exists()
-                        && !target_rel.starts_with("src/")
-                        && !target_rel.starts_with("tests/")
-                    {
-                        stale_references.push(format!(
-                            "Target path '{}' points to nonexistent parent directory {:?}",
-                            target_rel, p
-                        ));
-                    }
-                }
+            if !full_path.exists()
+                && let Some(p) = parent
+                && !p.exists()
+                && !target_rel.starts_with("src/")
+                && !target_rel.starts_with("tests/")
+            {
+                stale_references.push(format!(
+                    "Target path '{}' points to nonexistent parent directory {:?}",
+                    target_rel, p
+                ));
             }
         }
 
@@ -71,18 +69,18 @@ impl SourceDocVerifier {
 
         // Check if the source doc is marked DEPRECATED or SUPERSEDED
         let source_full = repo_root.join(&task.source_doc_path);
-        if source_full.exists() {
-            if let Ok(content) = std::fs::read_to_string(&source_full) {
-                let lower = content.to_lowercase();
-                if lower.contains("status: superseded")
-                    || lower.contains("status: deprecated")
-                    || lower.contains("status: rejected")
-                {
-                    contradiction_reason = Some(format!(
-                        "Source document '{}' is marked SUPERSEDED or DEPRECATED. Execution prohibited.",
-                        task.source_doc_path
-                    ));
-                }
+        if source_full.exists()
+            && let Ok(content) = std::fs::read_to_string(&source_full)
+        {
+            let lower = content.to_lowercase();
+            if lower.contains("status: superseded")
+                || lower.contains("status: deprecated")
+                || lower.contains("status: rejected")
+            {
+                contradiction_reason = Some(format!(
+                    "Source document '{}' is marked SUPERSEDED or DEPRECATED. Execution prohibited.",
+                    task.source_doc_path
+                ));
             }
         }
 
@@ -124,12 +122,11 @@ impl SourceDocVerifier {
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("md") {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            if let Some(task) = self.parse_adr_to_task(&path, &content, repo_root) {
-                                tasks.push(task);
-                            }
-                        }
+                    if path.extension().and_then(|s| s.to_str()) == Some("md")
+                        && let Ok(content) = std::fs::read_to_string(&path)
+                        && let Some(task) = self.parse_adr_to_task(&path, &content, repo_root)
+                    {
+                        tasks.push(task);
                     }
                 }
             }

@@ -71,38 +71,37 @@ impl FrontmatterValidator {
         }
 
         // Rule 2: Supersession DAG Resolution
-        if frontmatter.status.as_deref() == Some("superseded")
-            || frontmatter.status.as_deref() == Some("Superseded")
+        if (frontmatter.status.as_deref() == Some("superseded")
+            || frontmatter.status.as_deref() == Some("Superseded"))
+            && let Some(superseded_by) = &frontmatter.superseded_by
         {
-            if let Some(superseded_by) = &frontmatter.superseded_by {
-                if superseded_by.is_empty() {
+            if superseded_by.is_empty() {
+                return Err(format!(
+                    "File '{}' marked as superseded must specify valid forward pointer in 'superseded_by'",
+                    file_path
+                ));
+            }
+
+            // Verify that at least one target pointer exists in docs/ or archive/
+            for target in superseded_by {
+                let target_clean = target.trim_start_matches('[').trim_end_matches(']');
+                let adr_path = repo_dir
+                    .join("docs/decisions")
+                    .join(format!("{}.md", target_clean));
+                let adr_alt = repo_dir
+                    .join("docs/adr")
+                    .join(format!("{}.md", target_clean));
+                let direct_path = repo_dir.join(target_clean);
+
+                if !adr_path.exists()
+                    && !adr_alt.exists()
+                    && !direct_path.exists()
+                    && !target_clean.starts_with("ADR-")
+                {
                     return Err(format!(
-                        "File '{}' marked as superseded must specify valid forward pointer in 'superseded_by'",
-                        file_path
+                        "Superseded doc '{}' specifies nonexistent target '{}'",
+                        file_path, target
                     ));
-                }
-
-                // Verify that at least one target pointer exists in docs/ or archive/
-                for target in superseded_by {
-                    let target_clean = target.trim_start_matches('[').trim_end_matches(']');
-                    let adr_path = repo_dir
-                        .join("docs/decisions")
-                        .join(format!("{}.md", target_clean));
-                    let adr_alt = repo_dir
-                        .join("docs/adr")
-                        .join(format!("{}.md", target_clean));
-                    let direct_path = repo_dir.join(target_clean);
-
-                    if !adr_path.exists()
-                        && !adr_alt.exists()
-                        && !direct_path.exists()
-                        && !target_clean.starts_with("ADR-")
-                    {
-                        return Err(format!(
-                            "Superseded doc '{}' specifies nonexistent target '{}'",
-                            file_path, target
-                        ));
-                    }
                 }
             }
         }
@@ -144,8 +143,9 @@ canonical_authority: true
             Path::new("/tmp"),
         );
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .contains("outside 'docs/' and 'contracts/'"));
+        assert!(
+            res.unwrap_err()
+                .contains("outside 'docs/' and 'contracts/'")
+        );
     }
 }

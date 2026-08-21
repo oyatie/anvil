@@ -4,15 +4,179 @@ use tracing::info;
 
 use super::args::{Cli, Commands};
 use super::server;
-use crate::webhook::{execute_pr_certify, execute_pr_fix, execute_pr_review, AppState};
+use crate::webhook::{AppState, execute_pr_certify, execute_pr_fix, execute_pr_review};
 
 pub async fn handle_cli(state: AppState) -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command.unwrap_or(Commands::Serve) {
         Commands::Serve => {
+            // Boot invariant: no managed clone may be the tree this binary runs
+            // from. Fails closed before the first webhook is accepted.
+            state
+                .config
+                .assert_managed_clones_are_not_this_tree()
+                .await?;
             server::run_server(state).await?;
         }
+        Commands::Shape { action } => match action {
+            crate::cli::args::ShapeAction::ValidateSpec { path, registry } => {
+                let summary =
+                    crate::shape::facade::cli::validate_spec_file(&path, registry.as_deref())?;
+                println!("{}", summary.render());
+            }
+            crate::cli::args::ShapeAction::Measure {
+                repo_dir,
+                rev,
+                repo,
+                spec_override,
+                registry,
+                json,
+            } => {
+                let label = repo.unwrap_or_else(|| {
+                    repo_dir
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| repo_dir.display().to_string())
+                });
+                let req = crate::shape::facade::measure::MeasureRequest {
+                    repo_dir,
+                    rev,
+                    repo: label,
+                    spec_override,
+                    registry_override: registry,
+                };
+                let report = crate::shape::facade::measure::measure_repo(&req).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print!("{}", crate::shape::facade::measure::render(&report));
+                }
+            }
+            crate::cli::args::ShapeAction::Baseline {
+                repo_dir,
+                rev,
+                spec_override,
+                out,
+            } => {
+                let (baseline, report) = crate::shape::facade::baseline::seed_from_commit(
+                    &repo_dir,
+                    &rev,
+                    spec_override.as_deref(),
+                )
+                .await?;
+                let json = baseline.to_json();
+                match out {
+                    Some(p) => {
+                        if let Some(parent) = p.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::write(&p, format!("{json}\n"))?;
+                        println!(
+                            "baseline written to {} ({} key(s) across {} rule(s), measured at {})",
+                            p.display(),
+                            baseline.total_keys(),
+                            baseline.rules.len(),
+                            &report.rev[..12]
+                        );
+                    }
+                    None => println!("{json}"),
+                }
+            }
+            crate::cli::args::ShapeAction::Plan {
+                repo_dir,
+                rev,
+                spec_override,
+                policy,
+                plan_out,
+            } => {
+                let req = crate::shape::facade::measure::MeasureRequest {
+                    repo_dir: repo_dir.clone(),
+                    rev,
+                    repo: repo_dir
+                        .canonicalize()
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_default(),
+                    spec_override,
+                    registry_override: None,
+                };
+                let report = crate::shape::facade::measure::measure_repo(&req).await?;
+                let spec_version = format!("{:?}", report.spec_source);
+                let plan =
+                    crate::change_delivery::facade::plan::plan_from_report(&report, &spec_version);
+                let owners =
+                    crate::change_delivery::facade::plan::owners_from_tree(&repo_dir, &report.rev)
+                        .await;
+                let manifests = crate::change_delivery::facade::plan::manifests_from_tree(
+                    &repo_dir,
+                    &report.rev,
+                )
+                .await;
+                let policy_bytes = policy.map(std::fs::read).transpose()?;
+                let (policy, problem) =
+                    crate::change_delivery::core::LandingPolicy::load(policy_bytes.as_deref());
+                if let Some(p) = problem {
+                    println!("warning: {p}");
+                }
+                let d = crate::change_delivery::facade::plan::dry_run(
+                    &plan, &owners, &manifests, policy,
+                );
+                print!(
+                    "{}",
+                    crate::change_delivery::facade::plan::render(&d, &plan)
+                );
+                if let Some(p) = plan_out {
+                    std::fs::write(&p, format!("{}\n", plan.to_json()))?;
+                    println!("move plan written to {}", p.display());
+                }
+            }
+            crate::cli::args::ShapeAction::Deliver {
+                repo_dir,
+                max,
+                spec_override,
+                allow_same_repo,
+            } => {
+                let label = repo_dir
+                    .canonicalize()
+                    .ok()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                    .unwrap_or_default();
+                let req = crate::change_delivery::facade::deliver::DeliverRequest {
+                    repo_dir,
+                    repo: label,
+                    max,
+                    spec_override,
+                    allow_same_repo,
+                };
+                let (runs, shards, policy) =
+                    crate::change_delivery::facade::deliver::deliver_dry_run(&req).await?;
+                print!(
+                    "{}",
+                    crate::change_delivery::facade::deliver::render(&runs, shards.len(), &policy)
+                );
+            }
+            crate::cli::args::ShapeAction::Ratchet {
+                repo_dir,
+                base_ref,
+                head,
+                spec_override,
+            } => {
+                let j = crate::shape::facade::baseline::judge(
+                    &repo_dir,
+                    &base_ref,
+                    &head,
+                    spec_override.as_deref(),
+                )
+                .await?;
+                print!("{}", crate::shape::facade::baseline::render_judgement(&j));
+                if let crate::shape::facade::baseline::Judgement::Judged { verdict, .. } = &j
+                    && verdict.fails
+                {
+                    anyhow::bail!("ratchet regressions present");
+                }
+            }
+        },
         Commands::Review { repo, pr, force } => {
             info!("Running on-demand review for {}#{}", repo, pr);
             let meta = state
@@ -595,7 +759,12 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             .await?;
             println!(
                 "🧹 DocArchivalSweeper Report for {} (dry_run: {}):\n  - Files Archived: {}\n  - Forward-Pointer Stubs Written: {}\n  - SSOT Declarations Demoted: {}\n  - Summary: {}",
-                repo, dry_run, report.files_archived.len(), report.stubs_written.len(), report.ssot_claims_demoted.len(), report.summary
+                repo,
+                dry_run,
+                report.files_archived.len(),
+                report.stubs_written.len(),
+                report.ssot_claims_demoted.len(),
+                report.summary
             );
         }
         Commands::ComponentEval { repo, target } => {
@@ -609,7 +778,13 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             println!(
                 "🔍 Component Disposition Evaluation for '{}' on {}:\n  - Disposition: {:?}\n  - Clean Architecture Compliant: {}\n  - Max File Lines: {}\n  - Rationale: {}\n  - Action: {}",
-                target, repo, report.disposition, report.is_clean_architecture, report.max_file_lines, report.rationale, report.recommended_action
+                target,
+                repo,
+                report.disposition,
+                report.is_clean_architecture,
+                report.max_file_lines,
+                report.rationale,
+                report.recommended_action
             );
         }
         Commands::AuditCorpus { repo, stale_days } => {
@@ -622,7 +797,15 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 crate::corpus_auditor::CorpusAuditor::audit_repository(&repo_dir, stale_days)?;
             println!(
                 "📊 100% Full-Corpus Audit Report for {}:\n  - Total Files Audited: {}\n  - Freshness Ratio: {:.1}%\n  - Dormant Files (>{}d): {}\n  - Stale ADRs in Archive: {}\n  - Unauthorized SSOT Claims: {}\n  - Frontmatter Violations: {}\n  - Summary: {}",
-                repo, report.total_files, report.freshness_ratio * 100.0, stale_days, report.dormant_files_count, report.stale_adrs_count, report.unauthorized_ssot_claims.len(), report.frontmatter_violations.len(), report.summary
+                repo,
+                report.total_files,
+                report.freshness_ratio * 100.0,
+                stale_days,
+                report.dormant_files_count,
+                report.stale_adrs_count,
+                report.unauthorized_ssot_claims.len(),
+                report.frontmatter_violations.len(),
+                report.summary
             );
         }
         Commands::HealCorpus {
@@ -641,7 +824,11 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 )?;
             println!(
                 "🌱 Continuous Hygiene Batch Report for {} (dry_run: {}):\n  - Batch ID: {}\n  - Files Refreshed/Healed: {}\n  - Summary: {}",
-                repo, dry_run, report.batch_id, report.files_modified.len(), report.summary
+                repo,
+                dry_run,
+                report.batch_id,
+                report.files_modified.len(),
+                report.summary
             );
         }
         Commands::IssueAudit { repo } => {
@@ -680,7 +867,11 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             .await?;
             println!(
                 "📁 Issue #{} Doc Consolidation Summary (dry_run: {}):\n  - Files Archived: {}\n  - Stubs Written: {}\n  - Summary: {}",
-                issue, dry_run, report.files_archived.len(), report.stubs_written.len(), report.summary
+                issue,
+                dry_run,
+                report.files_archived.len(),
+                report.stubs_written.len(),
+                report.summary
             );
         }
         Commands::Swap { binary } => {
@@ -701,8 +892,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             .await?;
             println!(
                 "🎉 Blue/Green Self-Replacement Successful!\n  - Swapped Target: {:?}\n  - Source Green Binary: {:?}\n  - Status: Atomic Binary Replacement Complete (Zero Downtime)",
-                current_exe,
-                green_binary
+                current_exe, green_binary
             );
         }
         Commands::Recover { repo } => {

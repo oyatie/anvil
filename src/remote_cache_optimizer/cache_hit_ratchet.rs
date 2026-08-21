@@ -42,7 +42,8 @@ impl CacheHitRateRatchet {
         } else {
             format!(
                 "⚠️ Cold compilation detected: cache hit rate ({:.1}%) fell below target ({:.1}%). Check for non-hermetic file touches or broken cache keys.",
-                metrics.hit_rate_pct, Self::MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT
+                metrics.hit_rate_pct,
+                Self::MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT
             )
         };
 

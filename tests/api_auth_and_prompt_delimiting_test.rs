@@ -66,9 +66,9 @@ use std::time::Duration;
 
 use anvil::ai_driver::router::run_with_prompt_on_stdin;
 use anvil::git_manager::PrDiffContext;
-use anvil::reviewer::{cap_diff, fence_untrusted, Reviewer, MAX_DIFF_CHARS};
+use anvil::reviewer::{MAX_DIFF_CHARS, Reviewer, cap_diff, fence_untrusted};
 use anvil::webhook::admin_auth::{
-    authorize, is_loopback, AdminAuthDecision, DenyReason, ADMIN_TOKEN_ENV, ADMIN_TOKEN_HEADER,
+    ADMIN_TOKEN_ENV, ADMIN_TOKEN_HEADER, AdminAuthDecision, DenyReason, authorize, is_loopback,
 };
 
 fn source(rel: &str) -> String {

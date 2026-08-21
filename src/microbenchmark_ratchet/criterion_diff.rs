@@ -47,7 +47,10 @@ impl CriterionDiffAnalyzer {
                     ns_increase_pct: pct_increase,
                     explanation: format!(
                         "Microbenchmark '{}' regressed by {:.2}% (Base: {:.2}ns/op, Head: {:.2}ns/op)",
-                        sample.benchmark_name, pct_increase, sample.base_ns_per_op, sample.head_ns_per_op
+                        sample.benchmark_name,
+                        pct_increase,
+                        sample.base_ns_per_op,
+                        sample.head_ns_per_op
                     ),
                 };
             }

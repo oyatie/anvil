@@ -71,7 +71,9 @@ impl FleetObserver {
     pub fn spawn_continuous_poller(self: &Arc<Self>, managed_repos: Vec<String>) {
         let observer = Arc::clone(self);
         tokio::spawn(async move {
-            info!("🌐 [Fleet Observer] Continuous background telemetry poller initialized (30s cadence)");
+            info!(
+                "🌐 [Fleet Observer] Continuous background telemetry poller initialized (30s cadence)"
+            );
             // Initial eager refresh
             let _ = observer.aggregate_fleet_overview(&managed_repos).await;
 

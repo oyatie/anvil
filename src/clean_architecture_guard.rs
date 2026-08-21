@@ -142,6 +142,25 @@ impl Default for CleanArchitectureGuard {
 
 /// Classifies a file path into an architectural layer, or `None` when the path
 /// carries no layer information at all.
+/// Whether a source line is an import statement (Rust `use`/`extern crate`,
+/// TS/JS `import`, Python `from ... import`). Comments and strings are not
+/// dependency edges, however many layer names they mention.
+fn is_import_line(trimmed: &str) -> bool {
+    let t = trimmed.trim_start();
+    if t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') || t.starts_with('#') {
+        return false;
+    }
+    let t = t
+        .strip_prefix("pub(crate) ")
+        .or_else(|| t.strip_prefix("pub(super) "))
+        .or_else(|| t.strip_prefix("pub "))
+        .unwrap_or(t);
+    t.starts_with("use ")
+        || t.starts_with("extern crate ")
+        || t.starts_with("import ")
+        || t.starts_with("from ")
+}
+
 fn classify_layer(file_path: &str) -> Option<ArchLayer> {
     // Normalise so a tree-relative path such as `core/x.rs` matches the same
     // `/core/` convention a repo-relative path uses.
@@ -288,19 +307,19 @@ impl CleanArchitectureGuard {
 
         let core_forbidden_imports = [
             (
-                r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:adapters?|adapter[-_]\w+|facade|rest)"#,
+                r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?\b(?:adapters?|adapter[-_]\w+|facade|rest)\b"#,
                 "ADAPTERS/FACADE",
                 "Core/Domain layer must never import from external Adapters or Facade layers",
             ),
             (
-                r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:ports?|application)"#,
+                r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?\b(?:ports?|application)\b"#,
                 "PORTS/APPLICATION",
                 "Core/Domain layer must never import from Ports/Application layers",
             ),
         ];
 
         let ports_forbidden_imports = [(
-            r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?(?:adapters?|adapter[-_]\w+|facade|rest)"#,
+            r#"(?i)(?:use\s+|import\s+.*?from\s+['"]).*?\b(?:adapters?|adapter[-_]\w+|facade|rest)\b"#,
             "ADAPTERS/FACADE",
             "Ports/Application layer must never import from concrete Adapters or Facade layers",
         )];
@@ -318,35 +337,41 @@ impl CleanArchitectureGuard {
 
             if line.starts_with('+') && !line.starts_with("+++") {
                 let trimmed = line[1..].trim();
+                // Only an import statement can create a dependency edge. A
+                // comment containing "because ports -> core" matched the
+                // unanchored `use\s+` through "beca|use" on Anvil's own tree.
+                if !is_import_line(trimmed) {
+                    continue;
+                }
 
                 match current_layer {
                     Some(ArchLayer::Core) => {
                         for (pattern, target_layer, desc) in &core_forbidden_imports {
-                            if let Ok(re) = Regex::new(pattern) {
-                                if re.is_match(trimmed) {
-                                    violations.push(ArchViolation {
-                                        file_path: current_file.clone(),
-                                        source_layer: "CORE/DOMAIN".to_string(),
-                                        target_layer: target_layer.to_string(),
-                                        description: desc.to_string(),
-                                        snippet: trimmed.to_string(),
-                                    });
-                                }
+                            if let Ok(re) = Regex::new(pattern)
+                                && re.is_match(trimmed)
+                            {
+                                violations.push(ArchViolation {
+                                    file_path: current_file.clone(),
+                                    source_layer: "CORE/DOMAIN".to_string(),
+                                    target_layer: target_layer.to_string(),
+                                    description: desc.to_string(),
+                                    snippet: trimmed.to_string(),
+                                });
                             }
                         }
                     }
                     Some(ArchLayer::Ports) => {
                         for (pattern, target_layer, desc) in &ports_forbidden_imports {
-                            if let Ok(re) = Regex::new(pattern) {
-                                if re.is_match(trimmed) {
-                                    violations.push(ArchViolation {
-                                        file_path: current_file.clone(),
-                                        source_layer: "PORTS/APPLICATION".to_string(),
-                                        target_layer: target_layer.to_string(),
-                                        description: desc.to_string(),
-                                        snippet: trimmed.to_string(),
-                                    });
-                                }
+                            if let Ok(re) = Regex::new(pattern)
+                                && re.is_match(trimmed)
+                            {
+                                violations.push(ArchViolation {
+                                    file_path: current_file.clone(),
+                                    source_layer: "PORTS/APPLICATION".to_string(),
+                                    target_layer: target_layer.to_string(),
+                                    description: desc.to_string(),
+                                    snippet: trimmed.to_string(),
+                                });
                             }
                         }
                     }
@@ -385,11 +410,14 @@ impl CleanArchitectureGuard {
                 files_classified,
             } => {
                 if violations.is_empty() {
+                    // Say exactly what was measured. "Verified ... 100% intact"
+                    // over 8 layered files of 256 is a claim about the 248 the
+                    // classifier never saw (I2).
                     format!(
-                        "Hexagonal Clean Architecture verified for {scope} across \
-                         {files_classified} layered file(s) of {files_inspected} examined: \
-                         strict inward dependency direction (Core <- Ports <- Adapters <- Facade) \
-                         100% intact."
+                        "Clean Architecture: 0 layer-boundary violations across \
+                         {files_classified} layered file(s) of {files_inspected} examined in \
+                         {scope}; {} file(s) belong to no recognised layer and were not measured.",
+                        files_inspected.saturating_sub(*files_classified)
                     )
                 } else {
                     format!(
@@ -466,6 +494,66 @@ mod tests {
         assert!(!report.is_clean);
         assert_eq!(report.violations.len(), 1);
         assert_eq!(report.violations[0].source_layer, "CORE/DOMAIN");
+    }
+
+    #[test]
+    fn layer_tokens_match_whole_words_not_substrings() {
+        // Observed on Anvil's own tree: `pub use report::Finding;` in a core
+        // module matched `ports?` through "re|port", and `rest` would match
+        // "forest". A layer name is a path segment, not a substring.
+        let guard = CleanArchitectureGuard::new();
+        let clean = PrDiffContext {
+            repo: "oyatie/anvil".to_string(),
+            pr_number: 204,
+            base_branch: "main".to_string(),
+            base_sha: "aaa".to_string(),
+            head_sha: "bbb".to_string(),
+            previous_head_sha: None,
+            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            diff_content: "+++ b/src/shape/core/mod.rs\n+ pub use report::Finding;\n+ use crate::forest::Tree;\n+ use crate::supporting::Thing;".to_string(),
+            changed_files: vec!["src/shape/core/mod.rs".to_string()],
+            is_incremental: false,
+        };
+        let report = guard.evaluate_architecture(&clean).expect("Evaluates");
+        assert!(
+            report.is_clean,
+            "substring hits must not be violations: {:?}",
+            report.violations
+        );
+        assert!(report.measurement.is_measured());
+
+        let dirty = PrDiffContext {
+            diff_content: "+++ b/src/shape/core/mod.rs\n+ use crate::ports::TreeSource;"
+                .to_string(),
+            ..clean
+        };
+        let report = guard.evaluate_architecture(&dirty).expect("Evaluates");
+        assert_eq!(
+            report.violations.len(),
+            1,
+            "a real ports import must still fire"
+        );
+        assert_eq!(report.violations[0].target_layer, "PORTS/APPLICATION");
+    }
+
+    #[test]
+    fn comments_and_strings_are_not_dependency_edges() {
+        let guard = CleanArchitectureGuard::new();
+        let ctx = PrDiffContext {
+            repo: "oyatie/anvil".to_string(),
+            pr_number: 205,
+            base_branch: "main".to_string(),
+            base_sha: "aaa".to_string(),
+            head_sha: "bbb".to_string(),
+            previous_head_sha: None,
+            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            diff_content: "+++ b/src/shape/core/dependency.rs\n+ // denied target (facade -> ports, because ports -> core)\n+ /// an adapters face is where adapters live\n+ let msg = \"use the ports face\";\n+ use super::tree::TreeSource;".to_string(),
+            changed_files: vec!["src/shape/core/dependency.rs".to_string()],
+            is_incremental: false,
+        };
+        let report = guard.evaluate_architecture(&ctx).expect("Evaluates");
+        assert!(report.is_clean, "{:?}", report.violations);
+        assert!(report.measurement.is_measured());
     }
 
     #[test]

@@ -5,7 +5,7 @@ use tracing::{error, info, warn};
 
 use crate::config::Config;
 use crate::github::GitHubClient;
-use crate::webhook::{create_router, AppState};
+use crate::webhook::{AppState, create_router};
 
 pub async fn run_server(state: AppState) -> Result<()> {
     let host = state.config.host.clone();
@@ -55,7 +55,8 @@ pub async fn run_server(state: AppState) -> Result<()> {
                         info!(
                             "[Outage Recovery] Dispatched review and {}-gate certification for {}#{}",
                             crate::pre_merge_guard::report::TOTAL_GATES,
-                            repo, pr.number
+                            repo,
+                            pr.number
                         );
                         let _ = crate::webhook::pipelines::review::execute_pr_review(
                             &task_state,
@@ -120,6 +121,30 @@ pub async fn run_server(state: AppState) -> Result<()> {
             }
         }
     });
+
+    // Shape Program fleet sweep: measure every watched repository's trunk on a
+    // cadence, record the trend, and write the ranked move plan for delivery.
+    // Report-only (I25): blocks nobody, mutates nothing in any repository.
+    {
+        let deps = crate::shape::facade::sweep::SweepDeps {
+            git_mgr: state.git_mgr.clone(),
+            telemetry: state.telemetry_store.clone(),
+            data_dir: state.config.data_dir.clone(),
+        };
+        let repos = state.config.watched_repos.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                for repo in &repos {
+                    match crate::shape::facade::sweep::sweep_repo(&deps, repo).await {
+                        Ok(summary) => info!("[Shape Sweep] {summary}"),
+                        Err(e) => tracing::warn!("[Shape Sweep] {repo} noticed: {e}"),
+                    }
+                }
+            }
+        });
+    }
 
     // Spawn background upstream sync for rust-skills repository
     let rsg_clone = state.rust_language_policy.clone();
@@ -244,6 +269,16 @@ pub async fn run_server(state: AppState) -> Result<()> {
                         let secret = secret_owned.clone();
                         let url = url_owned.clone();
                         async move {
+                            // A hook left by a forwarder that died uncleanly
+                            // 422s every respawn until it is removed.
+                            if let Err(e) =
+                                crate::webhook::forwarder_supervisor::remove_stale_forwarder_hooks(
+                                    &repo,
+                                )
+                                .await
+                            {
+                                warn!("stale-hook cleanup for {repo} noticed: {e}");
+                            }
                             let mut fwd = Command::new("gh");
                             // Detach stdin from the operator's terminal.
                             //

@@ -15,13 +15,13 @@
 //! still published in the review body, so validation removes the 422 without
 //! removing the finding.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::HashMap;
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::exec::{run_bounded, ExecClass};
+use crate::exec::{ExecClass, run_bounded};
 use crate::publish::{self, AnvilAction};
 use crate::reviewer::{InlineReviewComment, ReviewResponse};
 
@@ -319,16 +319,16 @@ fn parse_unified_diff(diff: &str) -> Option<HashMap<String, FileHunks>> {
         if line.starts_with("diff --git ") {
             names.clear();
         } else if let Some(spec) = line.strip_prefix("--- ") {
-            if let Some(p) = parse_file_path(spec) {
-                if !names.contains(&p) {
-                    names.push(p);
-                }
+            if let Some(p) = parse_file_path(spec)
+                && !names.contains(&p)
+            {
+                names.push(p);
             }
         } else if let Some(spec) = line.strip_prefix("+++ ") {
-            if let Some(p) = parse_file_path(spec) {
-                if !names.contains(&p) {
-                    names.push(p);
-                }
+            if let Some(p) = parse_file_path(spec)
+                && !names.contains(&p)
+            {
+                names.push(p);
             }
         } else if line.starts_with("@@") {
             let (old, new) = parse_hunk_header(line)?;
@@ -373,7 +373,7 @@ pub fn validate_comments_against_diff(
                     .iter()
                     .map(|c| drop(c, DropReason::DiffUnavailable))
                     .collect(),
-            }
+            };
         }
     };
 

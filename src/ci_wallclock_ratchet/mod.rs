@@ -28,7 +28,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
-use crate::pre_merge_guard::GateStatus;
+use crate::pre_merge_guard::report::GateStatus;
 
 pub mod cadence_classifier;
 pub mod regression_budget;
@@ -39,8 +39,7 @@ pub use regression_budget::{
 };
 
 /// The data source that must exist before a wallclock can be reported.
-const MISSING_TIMING_API: &str =
-    "no GitHub Actions workflow-run timing API access is configured, so neither \
+const MISSING_TIMING_API: &str = "no GitHub Actions workflow-run timing API access is configured, so neither \
      this PR's CI duration nor its billable compute was read";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

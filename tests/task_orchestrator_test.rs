@@ -65,10 +65,12 @@ fn test_source_doc_verifier_validates_truth_and_catches_contradictions() {
         .unwrap();
     assert!(!res_deprecated.is_valid);
     assert!(res_deprecated.contradiction_reason.is_some());
-    assert!(res_deprecated
-        .contradiction_reason
-        .unwrap()
-        .contains("SUPERSEDED"));
+    assert!(
+        res_deprecated
+            .contradiction_reason
+            .unwrap()
+            .contains("SUPERSEDED")
+    );
 }
 
 #[test]

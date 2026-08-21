@@ -8,7 +8,7 @@ pub mod webhook_handlers;
 
 use std::sync::Arc;
 
-use axum::{routing::post, Router};
+use axum::{Router, routing::post};
 use serde::{Deserialize, Serialize};
 
 use admin_auth::admin_guarded;
@@ -252,6 +252,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/dashboard/state",
             axum::routing::get(admin_guarded(crate::dashboard::dashboard_state_api_handler)),
+        )
+        .route(
+            "/api/fleet/shape",
+            axum::routing::get(admin_guarded(manual_handlers::fleet_shape_handler)),
         )
         .route(
             "/api/events/fleet",

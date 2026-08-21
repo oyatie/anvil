@@ -45,12 +45,20 @@ impl ModelProvider {
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            ModelProvider::AnthropicClaudeCode => "Anthropic Claude Code Subscription (Opus 5 - High Effort)",
+            ModelProvider::AnthropicClaudeCode => {
+                "Anthropic Claude Code Subscription (Opus 5 - High Effort)"
+            }
             ModelProvider::OpenAiCodex => "OpenAI Codex Subscription (GPT-5.6sol - High Effort)",
-            ModelProvider::CursorAgent => "Cursor Agent Subscription (Multi-Model Native - High Effort)",
+            ModelProvider::CursorAgent => {
+                "Cursor Agent Subscription (Multi-Model Native - High Effort)"
+            }
             ModelProvider::XAiGrok => "xAI Grok Subscription (Grok 4.6 - High Effort)",
-            ModelProvider::Antigravity => "Google Antigravity Subscription (Gemini 3.7 Flash - High Effort)",
-            ModelProvider::SubscriptionEnsemble => "Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)",
+            ModelProvider::Antigravity => {
+                "Google Antigravity Subscription (Gemini 3.7 Flash - High Effort)"
+            }
+            ModelProvider::SubscriptionEnsemble => {
+                "Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)"
+            }
         }
     }
 }

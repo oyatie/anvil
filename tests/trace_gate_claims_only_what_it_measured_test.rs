@@ -227,9 +227,9 @@
 //! the body of a spawn whose span is attached below it, which a lookahead must
 //! walk end to end. One further line has no diff prefix at all, begins with a
 //! multi-byte character, *and* carries a spawn call, so no pre-filter can route
-//! around the classifier -- the raw-source shape
-//! `SpanTracker::scan_detached_tasks` is already called with in its own unit
-//! tests. That line attaches its own span, so it pins the panic without pinning
+//! around the classifier -- a body line the diff carries with no `+`, `-` or
+//! leading space in front of it, which the chunk parser hands straight through.
+//! That line attaches its own span, so it pins the panic without pinning
 //! whether an unprefixed line counts as a line the pull request ships. `run()`
 //! unwraps, so a panic is a hard red.
 //!
@@ -1379,9 +1379,9 @@ fn hazardous_lines_inside_a_scanned_body_are_classified_rather_than_crashing_the
 
     // The raw-source shape: no diff prefix at all, a multi-byte first character,
     // and a spawn call on the line, so no `contains("spawn")` pre-filter can
-    // route around the classifier. `SpanTracker::scan_detached_tasks` is already
-    // called with unprefixed source in its own unit tests, so this is input the
-    // gate really sees. The call carries its own span, so what is pinned is the
+    // route around the classifier. A body line with no `+`, `-` or leading
+    // space is handed through unchanged by the chunk parser, so this is input
+    // the gate really sees. The call carries its own span, so what is pinned is the
     // panic and not whether an unprefixed line counts as a line the pull request
     // ships -- that question is left where the rest of the prefix rules are.
     let unprefixed = run(&diff_of(&[(
@@ -1539,5 +1539,295 @@ fn added_and_retained_lines_are_counted_but_removed_ones_are_not() {
             .map(|f| f.snippet.clone())
             .collect::<Vec<_>>(),
         span_attached.summary
+    );
+}
+
+// -------------------------------------------------------------------------
+// 4. A boundary owns the region its own parenthesis closes -- no more, no less
+// -------------------------------------------------------------------------
+
+#[test]
+fn the_outer_task_of_a_nested_spawn_is_cleared_by_the_span_attached_at_its_own_close() {
+    // Cut from live source, because the shape is live here and the rule that
+    // breaks it looks harmless in the abstract. `src/cli/server.rs` opens a
+    // `tokio::spawn` whose body opens a second one, and the outer block closes
+    // dozens of lines *below* the inner call. A rule that ends an outer
+    // boundary's region where the next boundary begins can therefore never
+    // reach a span attached at the outer close: the author who instruments that
+    // task exactly as the finding tells them to is still accused, and no edit to
+    // their file makes the gate pass. That is a fabricated accusation -- the
+    // symmetric half of I1, named as such at `src/pre_merge_guard/report.rs` --
+    // and it is not a smaller defect than the false clear it removes.
+    //
+    // Nothing here pins how the region is bounded. What is pinned is which
+    // boundary the span at the outer close belongs to: the outer one, whose
+    // parenthesis it is written inside, and not the inner one, which keeps its
+    // own verdict.
+    const LIVE_FILE: &str = "src/cli/server.rs";
+    let source = std::fs::read_to_string(LIVE_FILE)
+        .unwrap_or_else(|e| panic!("{LIVE_FILE} must be readable to build this fixture: {e}"));
+    let lines: Vec<&str> = source.lines().collect();
+
+    let opens = lines
+        .iter()
+        .position(|l| l.trim() == "tokio::spawn(async move {")
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture drawn from live source has rotted: {LIVE_FILE} no longer \
+                 opens a spawn on a line of its own. Re-cut this fixture from a \
+                 file that still nests one spawn inside another, or drop it."
+            )
+        });
+    // The block ends at the last non-empty line before the next top-level comment.
+    let next_section = lines
+        .iter()
+        .skip(opens)
+        .position(|l| l.contains("Spawn periodic issue refresh"))
+        .map(|k| opens + k)
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture drawn from live source has rotted: the comment that \
+                 followed the outage-recovery block in {LIVE_FILE} is gone, so \
+                 this cut can no longer find the end of the block. Re-cut it."
+            )
+        });
+    let closes = (opens..next_section)
+        .rev()
+        .find(|&i| !lines[i].trim().is_empty())
+        .expect("the block has at least one non-empty line");
+
+    let cut: Vec<String> = lines[opens..=closes]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+    assert_eq!(
+        cut.iter()
+            .filter(|l| l.trim() == "tokio::spawn(async move {")
+            .count(),
+        2,
+        "fixture drawn from live source has rotted: the block cut from \
+         {LIVE_FILE} no longer contains one spawn nested inside another, which \
+         is the whole of what this test is about. Re-cut it or drop it."
+    );
+    assert!(
+        !cut.iter().any(|l| l.contains(".instrument(")),
+        "fixture drawn from live source has rotted: the block cut from \
+         {LIVE_FILE} now attaches a span of its own, so this test can no longer \
+         control which spans are present. Re-cut it or drop it."
+    );
+    assert_eq!(
+        cut[cut.len() - 1].trim(),
+        "});",
+        "fixture drawn from live source has rotted: the block cut from \
+         {LIVE_FILE} does not end at the parenthesis that closes the outer \
+         spawn, so replacing that line no longer instruments the outer task."
+    );
+
+    // Calibration run: neither task carries a span, so both are detached and the
+    // gate reports where each one is. The inner spawn's reported position is
+    // read off this run rather than written down, so nothing here depends on how
+    // the gate numbers its lines or on where in `server.rs` the block sits.
+    let bare = run(&diff_of(&[(LIVE_FILE, &as_added(&cut.join("\n")))]));
+    assert_eq!(
+        bare.detached_findings.len(),
+        2,
+        "neither spawn in this block attaches a span, so both are detached. The \
+         gate reported {} at {:?}. Summary was: {}",
+        bare.detached_findings.len(),
+        bare.detached_findings
+            .iter()
+            .map(|f| f.line_number)
+            .collect::<Vec<_>>(),
+        bare.summary
+    );
+    let mut bare_lines: Vec<usize> = bare
+        .detached_findings
+        .iter()
+        .map(|f| f.line_number)
+        .collect();
+    bare_lines.sort_unstable();
+    let (outer_line, inner_line) = (bare_lines[0], bare_lines[1]);
+
+    // The same block with a span attached to the outer task, at the only place
+    // the combinator can go: the line that closes the outer call.
+    let mut instrumented = cut.clone();
+    let last = instrumented.len() - 1;
+    instrumented[last] = "    }.instrument(tracing::info_span!(\"outage_recovery\")));".to_string();
+    let report = run(&diff_of(&[(
+        LIVE_FILE,
+        &as_added(&instrumented.join("\n")),
+    )]));
+
+    assert_eq!(
+        report.tasks_scanned, 2,
+        "both spawns are still boundaries the gate looked at. Summary was: {}",
+        report.summary
+    );
+    assert_eq!(
+        report.detached_findings.len(),
+        1,
+        "the outer task now carries a span attached inside its own parentheses, \
+         so only the inner one is detached. The gate reported {} finding(s) at \
+         {:?} (outer opens at {outer_line}, inner at {inner_line}). Two means \
+         the correctly instrumented outer task was accused with no edit \
+         available that would clear it; zero means the outer task's span was \
+         also credited to the inner one. Summary was: {}",
+        report.detached_findings.len(),
+        report
+            .detached_findings
+            .iter()
+            .map(|f| f.line_number)
+            .collect::<Vec<_>>(),
+        report.summary
+    );
+    assert_eq!(
+        report.detached_findings[0].line_number, inner_line,
+        "the surviving finding must be the inner spawn, which attaches nothing. \
+         It was reported at line {} and the inner spawn is at {inner_line}. \
+         Summary was: {}",
+        report.detached_findings[0].line_number, report.summary
+    );
+}
+
+#[test]
+fn the_sibling_propagation_form_is_recognised_and_a_thread_is_told_a_fix_that_compiles() {
+    // `Instrument::in_current_span()` is the other half of the same trait and
+    // the canonical way to carry the caller's span across a spawn. Neither form
+    // appears in this repository today, which is exactly the hazard: a gate that
+    // knows only `.instrument(` fails the first pull request that reaches for
+    // the idiomatic one, over a boundary that propagates context correctly.
+    let carried = run(&diff_of(&[(
+        "src/dispatch.rs",
+        &as_added(
+            "pub async fn dispatch() {\n    tokio::spawn(\n        async move {\n            work().await;\n        }\n        .in_current_span(),\n    );\n}",
+        ),
+    )]));
+    assert!(
+        carried.detached_findings.is_empty(),
+        "this task carries the caller's span across the boundary, which is what \
+         the gate exists to require. It was reported detached: {:?}. Summary \
+         was: {}",
+        carried
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>(),
+        carried.summary
+    );
+    assert_eq!(
+        carried.tasks_scanned, 1,
+        "one boundary is in this diff and it was inspected. Summary was: {}",
+        carried.summary
+    );
+
+    // A `std::thread::spawn` is a boundary the table above already pins as
+    // detected. What it does not pin is what the author is then told to do, and
+    // the obvious sentence prescribes a fix that does not build: `Instrumented<T>`
+    // implements `Future` only when `T` does, and a thread is handed an
+    // `FnOnce()`. So `closure.instrument(span)` fails to compile, and a gate
+    // that blocks a merge on advice the compiler rejects is worse than one that
+    // says nothing.
+    let threaded = run(&diff_of(&[(
+        "src/dispatch.rs",
+        &as_added(
+            "pub fn dispatch() {\n    let h = std::thread::spawn(move || {\n        pump();\n    });\n    let _ = h.join();\n}",
+        ),
+    )]));
+    assert_eq!(
+        threaded.detached_findings.len(),
+        1,
+        "the thread spawn is a boundary that carries no span. Summary was: {}",
+        threaded.summary
+    );
+    let advice = threaded.detached_findings[0].issue.clone();
+    assert!(
+        !advice.contains(".instrument("),
+        "a thread is given a closure, not a future, so `.instrument(..)` on it \
+         does not compile under tracing 0.1. The gate told the author to write \
+         it anyway: {advice:?}"
+    );
+    assert!(
+        advice.to_lowercase().contains("enter"),
+        "having ruled out the combinator, the finding has to name the fix that \
+         does work -- entering the caller's span inside the closure -- or it \
+         blocks a merge and leaves the author to guess. It said: {advice:?}"
+    );
+    assert!(
+        !advice.to_lowercase().contains("asynchronous task"),
+        "a `std::thread::spawn` is not an asynchronous task, and calling it one \
+         sends the author looking for an async fix that does not exist here. \
+         The finding said: {advice:?}"
+    );
+}
+
+#[test]
+fn a_boundary_whose_region_never_closes_in_the_lines_read_is_neither_cleared_nor_accused() {
+    // git hands the gate three lines of context, so a hunk can carry a spawn and
+    // stop before the parenthesis that closes it -- and `shipped_lines` flattens
+    // every hunk of a file into one list, so a walk runs straight across the gap
+    // between them and into unrelated code further down the file. The same thing
+    // happens on any line whose parentheses the scanner miscounts.
+    //
+    // Neither verdict is available over a region whose extent was never
+    // established. Publishing "a span is attached" credits this boundary with an
+    // `.instrument(...)` written somewhere else entirely; publishing a finding
+    // accuses it on evidence just as absent. So it is not counted among the
+    // boundaries the summary reports having inspected, and it is not accused.
+    let body = "+    tokio::spawn(async move {\n\
+                +        let a = load().await;\n\
+                +        publish(a).await;\n\
+                @@ -80,3 +82,4 @@ pub async fn later() {\n\
+                +    let guarded = other_future().instrument(tracing::info_span!(\"unrelated\"));\n\
+                +    guarded.await;";
+
+    let report = run(&diff_of(&[("src/worker.rs", body)]));
+
+    assert_eq!(
+        report.tasks_scanned, 0,
+        "this hunk stops inside the spawn's body, so the region the boundary \
+         owns was never established and no boundary here was inspected. \
+         Counting it puts it under whatever verdict the summary publishes, on \
+         the strength of an `.instrument(...)` that belongs to a different hunk \
+         further down the file. Summary was: {}",
+        report.summary
+    );
+    assert!(
+        report.detached_findings.is_empty(),
+        "an unestablished region is not evidence of a defect either; the gate \
+         reported {} finding(s): {:?}. Summary was: {}",
+        report.detached_findings.len(),
+        report
+            .detached_findings
+            .iter()
+            .map(|f| f.snippet.clone())
+            .collect::<Vec<_>>(),
+        report.summary
+    );
+    assert!(
+        verification_claims_in(&report.summary).is_empty(),
+        "nothing here was measured, so the gate holds no evidence to claim; it \
+         published {:?} in: {}",
+        verification_claims_in(&report.summary),
+        report.summary
+    );
+    assert!(
+        discloses_that_nothing_was_inspected(&report.summary),
+        "the reader must be told that no boundary was classified rather than \
+         left to read a clean verdict as a measurement; summary was: {}",
+        report.summary
+    );
+    assert!(
+        accusations_in(&report.summary).is_empty(),
+        "the pull request is accused of nothing here; the gate published {:?} \
+         in: {}",
+        accusations_in(&report.summary),
+        report.summary
+    );
+    assert!(
+        report.is_propagated || !report.detached_findings.is_empty(),
+        "the gate produced no finding against this diff and still reported it \
+         as not propagating trace context, which `evaluator.rs:292` publishes \
+         as a failed gate. Summary was: {}",
+        report.summary
     );
 }

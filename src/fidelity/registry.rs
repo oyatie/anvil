@@ -52,18 +52,35 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      introduces, so a request's spans stay one trace.",
         reference: "W3C Trace Context; OpenTelemetry context propagation; tracing-futures `Instrument`",
         fidelity: Fidelity::Heuristic,
-        gap: "Runs no tracing runtime and resolves no types. It text-scans the added and retained lines \
-              of Rust chunks for a call whose final path segment is `spawn`, `spawn_blocking` or \
-              `spawn_local` and whose argument list is not empty (trace_context_guard/span_tracker.rs:14-23), \
-              then asks whether `.instrument(` appears inside the parenthesised region that call opens \
-              (trace_context_guard/span_tracker.rs:62-107). So it cannot tell whether the span attached \
-              is the right one, and it cannot see a boundary crossed by a call it cannot name that way -- \
-              an imported or aliased spawn, a runtime handle's method, or a task started by code this \
-              diff does not touch. Only the first such call on a line is inspected, and block comments \
-              are not modelled. A diff crossing no boundary it can see publishes `NOTHING TO MEASURE` \
-              (trace_context_guard/mod.rs:69-72) and passes, following the `NothingToMeasure` precedent \
-              (coverage_guard.rs:139) rather than the SLO gate's absent-source one -- a choice left open \
-              for the owner in tests/trace_gate_claims_only_what_it_measured_test.rs.",
+        gap: "Runs no tracing runtime and resolves no types, and reads only the diff hunks -- never the \
+              file -- so a boundary this pull request keeps outside a hunk is invisible to it and no \
+              fix below removes that. It text-scans the added and retained lines of Rust chunks for a \
+              call whose final path segment is `spawn`, `spawn_blocking` or `spawn_local` and whose \
+              argument list is not empty (trace_context_guard/span_tracker.rs:14-23), then asks whether \
+              `.instrument(` or `.in_current_span(` appears anywhere inside the parenthesised region \
+              that call opens, minus the regions the boundaries nested in it own \
+              (trace_context_guard/span_tracker.rs:97-125). Appearing in the region is not attachment: \
+              the call is not matched against the spawned future, so a span attached to some other \
+              value inside the body reads as clean, and the gate can tell neither that the span is the \
+              right one nor that it is attached to this task at all. The published sentence says what \
+              is measured rather than the word attaches. A task instrumented at its definition by \
+              `#[tracing::instrument]` has no such call at the spawn site and is reported detached \
+              (trace_context_guard/span_tracker.rs:26-38). A boundary whose parenthesis does not close \
+              within the hunks read is `unresolved`: not classified, not counted among the inspected, \
+              and not accused (trace_context_guard/span_tracker.rs:97-125). Only the first such call on \
+              a line is inspected. Block comments and `r#`-prefixed raw strings are not modelled, so a \
+              multi-line raw string is lexed as live code and a spawn written inside one is scanned as \
+              real (trace_context_guard/span_tracker.rs:230-244). It cannot see a boundary crossed by a \
+              call it cannot name that way -- a spawn imported under a different name, or a task \
+              started by code this diff does not touch. A diff crossing no boundary it can see records \
+              `NOTHING TO MEASURE` (trace_context_guard/mod.rs:82-99), but that string reaches no \
+              published surface: `trace_status` is rebuilt from a boolean and only the failing arm \
+              carries a summary (pre_merge_guard/evaluator.rs:292-296), so the scorecard row \
+              End-to-end span instrumentation across async tasks (pre_merge_guard/matrix.rs:102-105) \
+              renders a bare `✅ PASSED` (pre_merge_guard/report.rs:452-455) over a diff in which \
+              nothing was inspected. That follows the `NothingToMeasure` precedent \
+              (coverage_guard.rs:139) rather than the SLO gate's absent-source one -- a choice left \
+              open for the owner in tests/trace_gate_claims_only_what_it_measured_test.rs.",
         blocked_on: None,
     },
     GateFidelity {

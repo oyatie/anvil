@@ -115,13 +115,22 @@
 //!   6. **Section boundaries are falsified in both directions.** A previous
 //!      revision contained no body with a third section anywhere, so an
 //!      extractor that ran the done-when to the next `"\n## "` was never
-//!      falsified: an empty `## Done when` followed by `### Testing` came back
+//!      falsified: an empty `## Done when` followed by `**Testing**` came back
 //!      `Passed`, which is the pasted-template defect in the shape real
 //!      templates produce. `a_third_section_does_not_hide_an_empty_one` places
 //!      a real third section after an empty and after a deferred section at
-//!      every heading depth an author writes, and its passing counterpart
+//!      every heading weight that terminates one, and its passing counterpart
 //!      places one after a genuine bar, so the fix cannot degenerate into
-//!      "ignore everything after the marker".
+//!      "ignore everything after the marker". In both directions means in both
+//!      directions ON THE HEADINGS THE FAMILY RUNS, and two spellings are
+//!      deliberately not among them: a colon-terminated lead-in and a heading
+//!      deeper than the marker are pinned as CONTENT, not as boundaries, and
+//!      each of those decisions buys a false green that is stated in "What this
+//!      suite does NOT close" below rather than left to be inferred from a doc
+//!      comment about a different fixture. Both are decisions with vetoes, not
+//!      oversights: see `BOUNDARY_HEADERS`,
+//!      `a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary`
+//!      and `a_heading_deeper_than_the_marker_is_content_inside_the_section`.
 //!   7. **The passing side is wide enough not to block everyone.** See the next
 //!      section: a suite whose only passing bodies spelled the marker one exact
 //!      way admitted a gate that fails closed on nearly every real change,
@@ -270,10 +279,18 @@
 //!      `assignments_to` now reads a write to the field on ANY receiver
 //!      (`report.product_bar_status = ..`, the idiom report.rs already uses for
 //!      a neighbour) rather than only a bare-identifier reassignment. The
-//!      determinism scan reads every file the gate's code can live in —
-//!      `product_bar*.rs` plus a `product_bar/` directory — because scanning
-//!      one hardcoded path made the whole property escapable by moving the
-//!      parser into a sibling module, and `without_string_literals` no longer
+//!      determinism scan reads the whole module CLOSURE the gate can reach —
+//!      the `product_bar*` seeds, plus every file any of them imports, to a
+//!      fixed point — because scanning one hardcoded path made the whole
+//!      property escapable by moving the parser into a sibling module, and
+//!      scanning a filename prefix left it escapable by NAMING that sibling
+//!      anything else. `impure_import` returns `None` for every `crate::`,
+//!      `self::` and `super::` path and has to, so the delegation is invisible
+//!      by design and the file at the other end of it has to be opened. Both
+//!      halves run over the closure and both are exercised on a two-file
+//!      delegation fixture — one sibling reaching for `std::fs`, one reaching
+//!      only for `std::fmt` — before either is trusted. `without_string_literals`
+//!      no longer
 //!      blanks the rest of the file out from under that scan when it meets a
 //!      `'"'` char literal or a raw string ending in a backslash. Every one of
 //!      those rules is exercised on both sides in
@@ -314,6 +331,24 @@
 //!        enumerates every call site under `src/` and holds each to an effect
 //!        rule, because the correct call sites do not agree on one spelling:
 //!        three reach the body through a field, one through a local.
+//!      * **The binding at that hop, not its spelling.** Every rule in the
+//!        bullet above reads the ARGUMENT's text, and none of them asked what a
+//!        local at that position was bound TO — so `shadowed_argument`, the rule
+//!        that follows the value one line up, was applied at the pipeline's own
+//!        call site and not at its callers'. `let pr_body = String::new();`
+//!        written above `src/cli/server.rs`'s call, and `&pr_body` passed, made
+//!        every assertion pass: the argument is a plain local whose name says
+//!        body, carries no literal and no truncating token. The sweep still
+//!        handed the gate the empty string, so every pull request certified
+//!        through that path was told it wrote neither artifact — the same
+//!        100%-incidence fabricated accusation the test exists to prevent,
+//!        reinstated one line above the call it guards. `caller_binding_defect`
+//!        follows the value: when the argument is ROOTED at the identifier that
+//!        names the body, the binding in effect at the call must name the body
+//!        too, and must be neither a literal nor an empty-value constructor.
+//!        Both sides are exercised, because the one correct call site that
+//!        reaches the body through a local — `let pr_body =
+//!        pr.body.unwrap_or_default();` — must stay clean.
 //!  18. **The change's body reaches the gate as a PARAMETER.** The guards used
 //!      to accept a second route — a body field on `PrDiffContext`, the
 //!      change-under-review struct the evaluator already takes — because
@@ -337,6 +372,52 @@
 //! so nothing here is vacuous on account of it — but nothing here decides it
 //! either, and an implementer should not read the silence as an accident. It is
 //! listed in open_questions.
+//!
+//! TWO FALSE GREENS ARE BOUGHT BY THE TWO BOUNDARY DECISIONS, and they are
+//! written down here rather than only in the doc comment of the constant that
+//! creates them. A false green a reader has to infer from a comment about a
+//! different fixture is the undisclosed silence this file calls the worse half.
+//!
+//! The first is what taking `"Testing:"` out of `BOUNDARY_HEADERS` costs. This
+//! body is pinned nowhere and an implementation may reach either verdict on it:
+//!
+//! ```text
+//! ## Problem
+//!
+//! <a real problem statement>
+//!
+//! ## Done when
+//!
+//! Testing:
+//!
+//! Ran `cargo test --all` locally and re-ran the canary suite twice.
+//! ```
+//!
+//! Under the decision that a colon-terminated line is never a boundary, the
+//! done-when section reads as `["Testing:", the testing prose]`, `any(is_content)`
+//! is true and the bar is reported PRESENT. That is this file's headline defect —
+//! a pasted template with the middle section skipped, certified — in a shape
+//! real templates produce, and its incidence is every author who writes a
+//! colon-terminated lead-in instead of a heading for the section after an
+//! unfilled one. It is not pinned as `expect_passed`: asserting the false green
+//! would forbid a better implementation from closing it. The VETO, if a human
+//! decides the trade is wrong: restore `"Testing:"` to `BOUNDARY_HEADERS` and
+//! flip the blank-line fixtures in
+//! `a_short_colon_terminated_lead_in_line_is_writing_not_a_section_boundary` to
+//! `expect_missing` — which costs a rejected `Acceptance criteria:` above a real
+//! list of bullets, the other half of the same trade.
+//!
+//! The second is what taking `"### Testing"` out of `BOUNDARY_HEADERS` costs,
+//! and it is the same shape one heading weight over: an empty `## Done when`
+//! above `### Testing` and real testing notes. Under the decision that a heading
+//! deeper than the marker is nested content, the notes are inside the done-when
+//! section and the bar is reported present. Incidence is lower than the first —
+//! templates that skip a section usually head the next one at the same depth,
+//! which `## Testing` still terminates — but it is the same class. It is not
+//! pinned either way. The VETO: put `"### Testing"` back into `BOUNDARY_HEADERS`
+//! and flip the `expect_passed` fixtures in
+//! `a_heading_deeper_than_the_marker_is_content_inside_the_section`, which costs
+//! a rejected acceptance bar written under `### Criteria`.
 //!
 //! One more combination is deliberately open, and it is recorded here for the
 //! same reason: an inline deferral on a colon marker line WITH real content
@@ -493,12 +574,27 @@
 //! and the evaluator carries a placeholder status rather than a call to them,
 //! so the wiring tests at the bottom of this file are red for the same reason
 //! as the rest.
+//!
+//! And they are not the only red on this branch, which is worth stating plainly
+//! rather than leaving a reader to infer that only this file moves. The
+//! scaffolding adds a seventy-third `: GateStatus` field to
+//! `PreMergeCertificationReport` without moving `all_statuses()`,
+//! `named_statuses()` or `TOTAL_GATES` — because moving them is implementation,
+//! and it is the implementation that
+//! `the_product_bar_gate_joins_the_corpus_without_desynchronising_the_declared_total`
+//! and `the_product_bar_name_is_bound_to_the_product_bar_field` specify. Three
+//! pre-existing tests are red against that field until they are:
+//! `pre_merge_guard::report::tests::all_statuses_covers_every_gate_field`,
+//! `brand_absence::tests::real_gate_count_reads_the_corpus`, and
+//! `every_computed_gate_reaches_the_report_test::the_declared_total_matches_what_the_report_actually_carries`.
+//! Those are the corpus invariants this change genuinely moves, and they go
+//! green with the corpus work the two tests above demand.
 
 use anvil::pre_merge_guard::product_bar;
 use anvil::pre_merge_guard::product_bar::Artifact;
 use anvil::pre_merge_guard::report::TOTAL_GATES;
 use anvil::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -879,7 +975,55 @@ const THIRD_SECTION_HEADERS: &[&str] = &[
 /// lead-in as passing. Whichever a human picks, the pair has to stay
 /// consistent, which is what `assert_the_boundary_families_state_one_consistent_rule`
 /// asserts.
-const BOUNDARY_HEADERS: &[&str] = &["# Testing", "## Testing", "### Testing", "**Testing**"];
+///
+/// # Why `"### Testing"` is not in this list any more either
+///
+/// The third boundary decision, and it is the same shape as the first. This
+/// list used to require `# Testing`, `## Testing` AND `### Testing` to
+/// terminate an empty `## Done when`, at every depth including deeper than the
+/// marker itself, so the only rule that satisfied the family was "any ATX
+/// heading ends the section above it". No fixture anywhere in the file put a
+/// heading INSIDE a section, above that section's content, so the cost of that
+/// rule was never written down: it reports a missing acceptance bar for
+///
+/// ```text
+/// ## Done when
+///
+/// ### Criteria
+///
+/// - p99 < 5ms
+/// - the scorecard names the canary it queried
+/// ```
+///
+/// a body that genuinely states both artifacts, under an ordinary sub-heading,
+/// rejected. That is the fabricated accusation this file names as equal in
+/// severity to a false green, and — like `Acceptance criteria:` above a list of
+/// bullets — it is structurally identical to the shape the boundary rule exists
+/// to catch. Only the English tells `### Criteria` above a bar apart from
+/// `### Testing` above testing notes.
+///
+/// So the suite decides, the same way and in the same direction as the colon
+/// case, rather than leaving an implementer to meet it as a live defect:
+///
+///   * a heading DEEPER than the marker that opened the section is nested
+///     content, not a boundary. `a_heading_deeper_than_the_marker_is_content_inside_the_section`
+///     pins the bar under `### Criteria` as passing, and pins the emptied mirror
+///     as failing, so the widened reading cannot itself become a fail-open.
+///   * a heading at the marker's own depth or shallower is a SIBLING section and
+///     still terminates, which is why `# Testing` and `## Testing` stay.
+///   * a heading the gate recognises as a MARKER terminates whatever depth it
+///     sits at. That is not new and not a choice: the marker family already pins
+///     `# Problem` with nothing under it above `## Done when` as missing its
+///     problem statement, and `**Problem**` carries no depth at all.
+///
+/// What that decision costs is a false green, and it is stated in the module
+/// docs' "What this suite does NOT close" rather than left to be inferred from
+/// here: an empty `## Done when` above `### Testing` and real testing notes is
+/// no longer pinned, and the natural implementation certifies it. The veto is
+/// putting `"### Testing"` back into this list and flipping
+/// `a_heading_deeper_than_the_marker_is_content_inside_the_section`'s passing
+/// fixtures to `expect_missing`.
+const BOUNDARY_HEADERS: &[&str] = &["# Testing", "## Testing", "**Testing**"];
 
 /// What a third section says. It reports what the author did; it states neither
 /// what is wrong nor how anyone checks the change is done, so counting it as
@@ -2089,12 +2233,17 @@ fn a_third_section_does_not_hide_an_empty_one() {
     // `## Done when`. That is the headline defect of this file, certified, in
     // the exact line endings a browser produces.
     //
-    // `BOUNDARY_HEADERS`, not `THIRD_SECTION_HEADERS`: `"Testing:"` is no
-    // longer required to end a section, because the rule that makes it end one
-    // also rejects `Acceptance criteria:` above a real list of bullets. See
-    // BOUNDARY_HEADERS' own docs for that decision and its veto, and
-    // `assert_the_boundary_families_state_one_consistent_rule` for the invariant
-    // that stops the two families drifting apart.
+    // `BOUNDARY_HEADERS`, not `THIRD_SECTION_HEADERS`, and two entries are
+    // deliberately absent from it. `"Testing:"` is no longer required to end a
+    // section, because the rule that makes it end one also rejects
+    // `Acceptance criteria:` above a real list of bullets; `"### Testing"` is no
+    // longer required either, because the rule that makes a heading DEEPER than
+    // the marker end the section also rejects a real bar written under
+    // `### Criteria`. Both are the same trade and both are decided in the same
+    // direction. See BOUNDARY_HEADERS' own docs for the decisions and their
+    // vetoes, the module docs' "What this suite does NOT close" for what each
+    // one costs, and `assert_the_boundary_families_state_one_consistent_rule`
+    // for the invariant that stops the families drifting apart.
     for eol in BOTH_EOLS {
         for header in BOUNDARY_HEADERS {
             let third = third_section(header);
@@ -2140,6 +2289,99 @@ fn a_third_section_does_not_hide_an_empty_one() {
                     ),
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn a_heading_deeper_than_the_marker_is_content_inside_the_section() {
+    // THE THIRD BOUNDARY DECISION, and the half of it that costs the gate
+    // something. `BOUNDARY_HEADERS` used to carry `### Testing`, so an empty
+    // `## Done when` had to be terminated by a heading DEEPER than the marker
+    // itself — and no fixture anywhere in this file ever put a heading inside a
+    // section, above that section's content. The only rule satisfying the family
+    // was "any ATX heading ends the section above it", and its unwritten cost is
+    // the body below: a real, checkable, three-item acceptance bar under an
+    // ordinary sub-heading, reported missing.
+    //
+    // That is this file's own definition of a fabricated accusation, and it is
+    // structurally identical to the `Acceptance criteria:` collision the suite
+    // already met and decided — two demands only the English can tell apart. It
+    // is decided here in the same direction, so an implementer meets it as a
+    // decision rather than as a live production defect: a heading deeper than
+    // the marker is nested content.
+    //
+    // BOTH HALVES, or the widened reading becomes a fail-open of its own. The
+    // sub-heading is not itself content — an emptied section under one is still
+    // empty, however the emptying is spelled — and a heading at the marker's own
+    // depth or shallower still terminates, which `a_third_section_does_not_hide_an_empty_one`
+    // pins over `# Testing` and `## Testing`.
+    //
+    // The vocabulary stays open, which is the reason the sub-headings below are
+    // safe to write: a gate generous enough to read `### Criteria` as a
+    // done-when marker of its own reaches the same verdict on every fixture here
+    // — the criteria section carries the bar in the passing half and carries
+    // nothing in the failing half. Nothing here obliges the gate to recognise
+    // the word, and nothing here punishes it for doing so.
+    assert_the_boundary_families_state_one_consistent_rule();
+
+    for eol in BOTH_EOLS {
+        for header in ["### Criteria", "#### Criteria"] {
+            expect_passed(
+                &as_eol(
+                    &format!(
+                        "## Problem\n\n{PROBLEM}\n\n## Done when\n\n{header}\n\n{MULTILINE_BAR}\n"
+                    ),
+                    eol,
+                ),
+                &format!(
+                    "a real acceptance bar under the sub-heading {header:?} inside the \
+                     done-when section, {eol:?}"
+                ),
+            );
+        }
+        for header in ["### Background", "#### Background"] {
+            expect_passed(
+                &as_eol(
+                    &format!("## Problem\n\n{header}\n\n{PROBLEM}\n\n## Done when\n\n{BAR}\n"),
+                    eol,
+                ),
+                &format!(
+                    "a real problem statement under the sub-heading {header:?} inside the \
+                     problem section, {eol:?}"
+                ),
+            );
+        }
+
+        // THE MIRROR. A sub-heading is a heading and not content, so a section
+        // that holds one and nothing else is still an empty section — otherwise
+        // this decision hands every pasted template a way to certify by adding
+        // one `###` line.
+        for filler in ["", "   ", "TBD", "- [ ]"] {
+            expect_missing(
+                &as_eol(
+                    &format!(
+                        "## Problem\n\n{PROBLEM}\n\n## Done when\n\n### Criteria\n\n{filler}\n"
+                    ),
+                    eol,
+                ),
+                &[Artifact::DoneWhenBar],
+                &format!(
+                    "a done-when section holding the sub-heading \"### Criteria\" over \
+                     only {filler:?}, {eol:?}"
+                ),
+            );
+            expect_missing(
+                &as_eol(
+                    &format!("## Problem\n\n### Background\n\n{filler}\n\n## Done when\n\n{BAR}\n"),
+                    eol,
+                ),
+                &[Artifact::WrittenProblem],
+                &format!(
+                    "a problem section holding the sub-heading \"### Background\" over \
+                     only {filler:?}, {eol:?}"
+                ),
+            );
         }
     }
 }
@@ -3609,6 +3851,27 @@ fn assert_the_boundary_families_state_one_consistent_rule() {
          **Done when** and **Problem** being markers. Dropping it here without \
          flipping that test re-opens the bold-third-section fail-open"
     );
+    assert!(
+        !BOUNDARY_HEADERS.contains(&"### Testing"),
+        "a heading DEEPER than the marker that opened the section is pinned as nested \
+         content by a_heading_deeper_than_the_marker_is_content_inside_the_section, so \
+         requiring one to terminate a section here demands two incompatible things of \
+         the same rule: `### Criteria` above a real bar and `### Testing` above testing \
+         notes are structurally identical and only the English tells them apart. Flip \
+         that test's expect_passed fixtures to expect_missing before putting this \
+         entry back"
+    );
+    for sibling in ["# Testing", "## Testing"] {
+        assert!(
+            BOUNDARY_HEADERS.contains(&sibling),
+            "{sibling:?} sits at the marker's own depth or shallower, which makes it a \
+             SIBLING section rather than nested content, and an empty `## Done when` \
+             above one must not swallow it — that is this file's headline defect. \
+             Dropping it here without flipping \
+             a_third_section_does_not_hide_an_empty_one guts the boundary rule to \
+             nothing while leaving both families green"
+        );
+    }
 }
 
 #[test]
@@ -4470,11 +4733,14 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
         );
     }
 
-    // EVERY FILE THE GATE'S CODE CAN LIVE IN, not one hardcoded path. Scanning
-    // `product_bar.rs` alone made the whole property escapable by moving the
-    // parser into a sibling module — see `product_bar_sources` — while the
-    // behavioural half above stayed green, because it only proves two calls in
-    // one process agree and a file does not change between them.
+    // EVERY FILE THE GATE'S CODE CAN BE REACHED FROM — the module closure, not a
+    // filename prefix. Scanning `product_bar.rs` alone made the whole property
+    // escapable by moving the parser into a sibling module; scanning
+    // `product_bar*` made it escapable by NAMING that sibling anything else,
+    // which is one rename and the ordinary way a several-hundred-line parser
+    // gets split out. Either way the behavioural half above stays green, because
+    // it only proves two calls in one process agree and a file on disk does not
+    // change between them. See `module_closure`.
     let sources = product_bar_sources();
     assert!(
         !sources.is_empty(),
@@ -4493,25 +4759,6 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
          than the gate. Found: {:?}",
         sources.iter().map(|(rel, _)| rel).collect::<Vec<_>>()
     );
-
-    for (rel, raw) in &sources {
-        let src = without_block_comments(&without_string_literals(&without_line_comments(raw)));
-        for line in src.lines() {
-            let trimmed = line.trim();
-            for path in imported_paths(trimmed) {
-                if let Some(reason) = impure_import(&path) {
-                    panic!(
-                        "{rel} imports {trimmed:?}, which reaches {path:?} — {reason}. \
-                         The Product artifact is authored on the change under review \
-                         and nowhere else: a gate that reads a file, an environment \
-                         variable, a clock or the network is both a flake this suite \
-                         could not attribute and a second source of truth for what the \
-                         author wrote"
-                    );
-                }
-            }
-        }
-    }
 
     // The things reachable without a `use` line at all.
     //
@@ -4613,34 +4860,105 @@ fn the_verdict_depends_on_nothing_but_the_change_it_was_handed() {
     // spellings. `::io::` and `::net::` are spelled with both separators so that
     // an ordinary identifier ending in those two letters (`Ratio::new`) is not
     // mistaken for a syscall.
-    for (rel, raw) in &sources {
-        let src = without_block_comments(&without_string_literals(&without_line_comments(raw)));
-        for forbidden in [
-            "env!",
-            "option_env!",
-            "include_str!",
-            "include_bytes!",
-            "File::open",
-            "fs::",
-            "env::",
-            "process::",
-            "thread::",
-            "mpsc",
-            "::io::",
-            "::net::",
-            "Command",
-            "::var(",
-            "SystemTime",
-            "Instant",
-            "reqwest",
-            "tokio",
-        ] {
-            assert!(
-                !src.contains(forbidden),
-                "{rel} reaches for {forbidden}. The gate's verdict must be a function \
-                 of the one string it was handed and nothing else"
-            );
-        }
+    // THE CLOSURE WALK AND THE RULE IT FEEDS, BOTH SIDES, on a fixture the real
+    // tree cannot supply. The escape this replaces is one rename wide: the
+    // previous revision enumerated only files whose NAME starts with
+    // `product_bar`, and `impure_import` returns None for any `super::` path, so
+    // a parser split into `bar_vocabulary.rs` — an ordinary name for an ordinary
+    // split — was never opened, while `product_bar.rs` stayed spotless and the
+    // behavioural half above stayed green, because it only proves two calls in
+    // one process agree and a file on disk does not change between them.
+    //
+    // The clean half matters as much: a closure that reported a sibling reaching
+    // for `std::fmt` would fail every correct implementation that splits its
+    // parser out, which is the accusation this file forbids.
+    const DELEGATING_GATE: &str = "use super::bar_vocabulary;\n\
+                                   pub fn judge(pr_body: &str) -> GateStatus {\n\
+                                   \x20   bar_vocabulary::judge(pr_body)\n\
+                                   }\n";
+    for (sibling, impure) in [
+        (
+            "use std::fs;\nfn deferrals() -> String { fs::read_to_string(\"d.txt\").unwrap() }\n",
+            true,
+        ),
+        (
+            "use std::fmt::Write;\nfn render(out: &mut String) { let _ = write!(out, \"x\"); }\n",
+            false,
+        ),
+    ] {
+        let mut fixture: BTreeMap<String, String> = BTreeMap::new();
+        fixture.insert(
+            "src/pre_merge_guard/product_bar.rs".to_string(),
+            DELEGATING_GATE.to_string(),
+        );
+        fixture.insert(
+            "src/pre_merge_guard/bar_vocabulary.rs".to_string(),
+            sibling.to_string(),
+        );
+        let seeds = product_bar_seeds(&fixture);
+        assert_eq!(
+            seeds,
+            vec!["src/pre_merge_guard/product_bar.rs".to_string()],
+            "the seed rule must find the gate's own module and not its differently \
+             named sibling, or this fixture is not exercising the closure at all"
+        );
+        let reached = module_closure(&fixture, &seeds);
+        assert_eq!(
+            reached
+                .iter()
+                .map(|(rel, _)| rel.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "src/pre_merge_guard/bar_vocabulary.rs",
+                "src/pre_merge_guard/product_bar.rs",
+            ],
+            "the closure must follow `use super::bar_vocabulary;` to the file that \
+             holds the parser. A scan that stops at the filename prefix is one rename \
+             away from vacuous, and `impure_import` cannot see the delegation itself: \
+             it returns None for every `super::` path, and has to"
+        );
+        assert_eq!(
+            impurity_in(&reached).is_some(),
+            impure,
+            "the determinism rule misjudged a gate that delegates to a sibling \
+             module. Missing the `std::fs` half lets the gate's vocabulary come off \
+             disk, so in any environment where that file is absent or stale every \
+             pull request is told it wrote no bar; reporting the `std::fmt` half \
+             accuses a correct implementation that merely split its parser out. \
+             Sibling: {sibling:?}"
+        );
+    }
+
+    // And an ancestor module is not part of the closure: `use super::GateStatus;`
+    // is how the gate imports its own return type, and following it to
+    // `pre_merge_guard/mod.rs` would pull in the whole guard subtree and report
+    // the Product seat for what `evaluator.rs` and `scanner.rs` do. See
+    // `resolved_import_target`.
+    let mut parent_fixture: BTreeMap<String, String> = BTreeMap::new();
+    parent_fixture.insert(
+        "src/pre_merge_guard/product_bar.rs".to_string(),
+        "use super::GateStatus;\n".to_string(),
+    );
+    parent_fixture.insert(
+        "src/pre_merge_guard/mod.rs".to_string(),
+        "use std::process::Command;\npub mod product_bar;\n".to_string(),
+    );
+    let parent_seeds = product_bar_seeds(&parent_fixture);
+    assert_eq!(
+        module_closure(&parent_fixture, &parent_seeds)
+            .iter()
+            .map(|(rel, _)| rel.as_str())
+            .collect::<Vec<_>>(),
+        vec!["src/pre_merge_guard/product_bar.rs"],
+        "the closure must stop at the gate's parent module. A gate is not \
+         responsible for what its siblings do, and a settled specification test that \
+         goes red when a NEIGHBOURING gate reaches for a subprocess is a guard \
+         misreading what it guards"
+    );
+
+    // And now over the real tree.
+    if let Some(defect) = impurity_in(&sources) {
+        panic!("{defect}");
     }
 }
 
@@ -4942,61 +5260,16 @@ fn without_block_comments(src: &str) -> String {
     out
 }
 
-/// Every source file the Product gate's own code can be reached from, as
-/// (path relative to the crate root, source text).
+/// Every `.rs` file under `src/`, keyed by its path relative to the crate root.
 ///
-/// `src/pre_merge_guard/product_bar*.rs` plus everything under a
-/// `src/pre_merge_guard/product_bar/` directory, so a gate split across a
-/// module and its siblings is scanned whole.
-///
-/// # Why this is an enumeration and not a path
-///
-/// The determinism scan used to read exactly one file,
-/// `src/pre_merge_guard/product_bar.rs`, and the behavioural half of that test
-/// only proves two calls in one process agree — which a gate that reads a file
-/// satisfies trivially, because the file does not change between the two calls.
-/// So the whole property was escapable by moving the parser one module over:
-///
-/// ```text
-/// // src/pre_merge_guard/product_bar.rs — passes the old scan unchanged
-/// use super::product_bar_parse;                  // impure_import -> None
-/// pub fn judge(pr_body: &str) -> GateStatus { product_bar_parse::judge(pr_body) }
-///
-/// // src/pre_merge_guard/product_bar_parse.rs — never scanned
-/// use std::fs;
-/// fn deferrals() -> Vec<String> { fs::read_to_string("config/deferrals.txt")… }
-/// ```
-///
-/// That is precisely the defect the test's own comment names — "a gate that
-/// loaded its deferral vocabulary from a config file would satisfy every
-/// behavioural assertion in this file and still be non-deterministic" — and
-/// splitting a several-hundred-line markdown parser into its own module is an
-/// ordinary thing to do, not an evasion. The enumeration is asserted non-empty
-/// at the call site, so a rename cannot make the guard vacuous instead.
-fn product_bar_sources() -> Vec<(String, String)> {
+/// The universe the module closure below is resolved against. Read once and
+/// passed around, so the closure walk is a pure function of a file map and can
+/// be exercised on a fixture — see the two-file delegation fixture in
+/// `the_verdict_depends_on_nothing_but_the_change_it_was_handed`.
+fn crate_sources() -> BTreeMap<String, String> {
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let guard_dir = manifest.join("src/pre_merge_guard");
-
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    let entries =
-        std::fs::read_dir(&guard_dir).unwrap_or_else(|e| panic!("{}: {e}", guard_dir.display()));
-    for entry in entries {
-        let path = entry.expect("a readable directory entry").path();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-        if path.is_dir() {
-            if name == "product_bar" {
-                collect_rust_sources(&path, &mut files);
-            }
-        } else if name.starts_with("product_bar") && name.ends_with(".rs") {
-            files.push(path);
-        }
-    }
-    files.sort();
-
+    collect_rust_sources(&manifest.join("src"), &mut files);
     files
         .into_iter()
         .map(|path| {
@@ -5011,6 +5284,262 @@ fn product_bar_sources() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The files the Product gate's module is named after: everything matching
+/// `src/pre_merge_guard/product_bar*.rs`, plus everything under a
+/// `src/pre_merge_guard/product_bar/` directory.
+///
+/// The SEED of the closure, not the closure. A gate split across a module and
+/// its siblings is reached from here by following its imports; see
+/// `module_closure`.
+fn product_bar_seeds(files: &BTreeMap<String, String>) -> Vec<String> {
+    files
+        .keys()
+        .filter(|rel| {
+            rel.starts_with("src/pre_merge_guard/product_bar")
+                && (rel.ends_with(".rs"))
+                && (rel["src/pre_merge_guard/product_bar".len()..].starts_with('/')
+                    || !rel["src/pre_merge_guard/product_bar".len()..].contains('/'))
+        })
+        .cloned()
+        .collect()
+}
+
+/// The module path a file declares, as segments under the crate root.
+///
+/// `src/pre_merge_guard/product_bar.rs` is `[pre_merge_guard, product_bar]`,
+/// `src/pre_merge_guard/mod.rs` is `[pre_merge_guard]`, and `src/lib.rs` is the
+/// crate root itself, `[]`.
+fn module_path_of(rel: &str) -> Vec<String> {
+    let Some(inner) = rel.strip_prefix("src/") else {
+        return Vec::new();
+    };
+    let stem = inner.strip_suffix(".rs").unwrap_or(inner);
+    let mut segments: Vec<String> = stem.split('/').map(|s| s.to_string()).collect();
+    if matches!(
+        segments.last().map(String::as_str),
+        Some("mod" | "lib" | "main")
+    ) {
+        segments.pop();
+    }
+    segments
+}
+
+/// The file an intra-crate `use` path in `from_rel` reaches, or `None`.
+///
+/// `crate::`, `super::` and `self::` are resolved against the importing file's
+/// own module path; anything else is an external crate, which `impure_import`
+/// judges on its own. Trailing segments are dropped one at a time until a file
+/// matches, because a `use` path ends in an ITEM (`super::bar_vocabulary::judge`
+/// reaches `src/pre_merge_guard/bar_vocabulary.rs`) as often as in a module.
+///
+/// # Why an ancestor module is not a target
+///
+/// `use super::GateStatus;` is what the gate imports its own return type with,
+/// and dropping the item segment off it lands on `src/pre_merge_guard/mod.rs` —
+/// the gate's PARENT. Following that would pull the whole guard subtree into the
+/// closure and the sweep would report the gate for what its neighbours do:
+/// `evaluator.rs` shells out, `scanner.rs` reads the working tree, and neither
+/// is the Product seat's code. A guard that misreads what it guards is worse
+/// than no guard, so a resolved target that is a strict ancestor of the
+/// importing module is not followed. The bound that leaves — a gate whose parser
+/// lives in `pre_merge_guard/mod.rs` itself, which is the module tree's wiring
+/// and not a place a markdown parser goes — is stated in open_questions.
+fn resolved_import_target(
+    from_rel: &str,
+    path: &str,
+    files: &BTreeMap<String, String>,
+) -> Option<String> {
+    let segments: Vec<&str> = path
+        .split("::")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let from = module_path_of(from_rel);
+    let mut here = from.clone();
+    let mut rest = segments.as_slice();
+    match *rest.first()? {
+        "crate" => {
+            here.clear();
+            rest = &rest[1..];
+        }
+        "self" => rest = &rest[1..],
+        "super" => {
+            while rest.first() == Some(&"super") {
+                here.pop()?;
+                rest = &rest[1..];
+            }
+        }
+        // An external crate. `impure_import` decides that one; there is no file
+        // under `src/` to add.
+        _ => return None,
+    }
+
+    let mut target: Vec<String> = here;
+    target.extend(rest.iter().map(|s| (*s).to_string()));
+
+    while !target.is_empty() {
+        if target.len() < from.len() && from[..target.len()] == target[..] {
+            return None;
+        }
+        let joined = target.join("/");
+        for candidate in [format!("src/{joined}.rs"), format!("src/{joined}/mod.rs")] {
+            if files.contains_key(&candidate) {
+                return Some(candidate);
+            }
+        }
+        target.pop();
+    }
+    None
+}
+
+/// Every file the gate's code can be reached from: the seeds, plus every file
+/// any of them imports, to a fixed point.
+///
+/// # Why the scanned universe is a closure and not a filename prefix
+///
+/// The determinism scan used to read exactly one file, then
+/// `src/pre_merge_guard/product_bar*.rs` plus a `product_bar/` directory. The
+/// behavioural half of that test only proves two calls in one process agree —
+/// which a gate that reads a file satisfies trivially, because the file does not
+/// change between the two calls — so the whole property lived on the source
+/// scan, and the source scan was one RENAME away from vacuous:
+///
+/// ```text
+/// // src/pre_merge_guard/product_bar.rs — passed the old scan unchanged
+/// use super::bar_vocabulary;                     // impure_import -> None
+/// pub fn judge(pr_body: &str) -> GateStatus { bar_vocabulary::judge(pr_body) }
+///
+/// // src/pre_merge_guard/bar_vocabulary.rs — matched no prefix, never opened
+/// use std::fs;
+/// fn deferrals() -> Vec<String> { fs::read_to_string("config/deferrals.txt")… }
+/// ```
+///
+/// `impure_import` returns `None` for any path whose first segment is `crate`,
+/// `self` or `super`, so the delegation itself is invisible by design — it has
+/// to be, or every gate that imports its own `GateStatus` would be reported. The
+/// previous revision's doc comment named exactly this escape and claimed to have
+/// closed it; it closed it only for siblings an implementer happened to name
+/// `product_bar*`, and `markdown.rs`, `deferrals.rs` or `bar_vocabulary.rs` are
+/// all ordinary names for the module a several-hundred-line parser is split out
+/// into. In any environment where the file it reads is absent or stale, every
+/// pull request is then told it wrote no bar.
+///
+/// So the universe is the module closure the gate can actually reach. Both the
+/// import rule and the substring sweep run over the whole of it, and
+/// `impurity_in` is exercised on a two-file delegation fixture — one sibling
+/// reaching for `std::fs`, one reaching only for `std::fmt` — before it is
+/// trusted.
+fn module_closure(files: &BTreeMap<String, String>, seeds: &[String]) -> Vec<(String, String)> {
+    let mut chosen: BTreeSet<String> = seeds
+        .iter()
+        .filter(|rel| files.contains_key(*rel))
+        .cloned()
+        .collect();
+
+    loop {
+        let mut grew = false;
+        for rel in chosen.clone() {
+            let src = without_block_comments(&without_line_comments(&files[&rel]));
+            for line in src.lines() {
+                for path in imported_paths(line.trim()) {
+                    if let Some(target) = resolved_import_target(&rel, &path, files)
+                        && chosen.insert(target)
+                    {
+                        grew = true;
+                    }
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    chosen
+        .into_iter()
+        .map(|rel| {
+            let text = files[&rel].clone();
+            (rel, text)
+        })
+        .collect()
+}
+
+/// Why some file in the gate's module closure makes the verdict depend on
+/// something other than the change it was handed — or `None`.
+///
+/// Both halves of the determinism rule, over the whole closure: the import rule
+/// (`impure_import`, a denylist of EFFECTS) and the sweep for the things
+/// reachable without a `use` line at all.
+///
+/// Returned rather than asserted so the rule can be exercised on both sides on a
+/// fixture. A guard nobody has watched fire is a guard nobody knows fires.
+fn impurity_in(sources: &[(String, String)]) -> Option<String> {
+    for (rel, raw) in sources {
+        let src = without_block_comments(&without_string_literals(&without_line_comments(raw)));
+        for line in src.lines() {
+            let trimmed = line.trim();
+            for path in imported_paths(trimmed) {
+                if let Some(reason) = impure_import(&path) {
+                    return Some(format!(
+                        "{rel} imports {trimmed:?}, which reaches {path:?} — {reason}. \
+                         The Product artifact is authored on the change under review \
+                         and nowhere else: a gate that reads a file, an environment \
+                         variable, a clock or the network is both a flake this suite \
+                         could not attribute and a second source of truth for what the \
+                         author wrote"
+                    ));
+                }
+            }
+        }
+
+        // The things reachable with a `use` that `impure_import` admits — `use
+        // std;` followed by a full path, or `use std::sync;` followed by
+        // `sync::mpsc` — are caught here rather than by widening the import rule
+        // back into a ban on spellings. `::io::` and `::net::` are spelled with
+        // both separators so that an ordinary identifier ending in those two
+        // letters (`Ratio::new`) is not mistaken for a syscall.
+        for forbidden in [
+            "env!",
+            "option_env!",
+            "include_str!",
+            "include_bytes!",
+            "File::open",
+            "fs::",
+            "env::",
+            "process::",
+            "thread::",
+            "mpsc",
+            "::io::",
+            "::net::",
+            "Command",
+            "::var(",
+            "SystemTime",
+            "Instant",
+            "reqwest",
+            "tokio",
+        ] {
+            if src.contains(forbidden) {
+                return Some(format!(
+                    "{rel} reaches for {forbidden}. The gate's verdict must be a \
+                     function of the one string it was handed and nothing else"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Every source file the Product gate's own code can be reached from, as
+/// (path relative to the crate root, source text).
+///
+/// The seeds under `src/pre_merge_guard/product_bar*` closed under every
+/// intra-crate import. See `module_closure` for why the closure and not the
+/// prefix, and `resolved_import_target` for the one bound it keeps.
+fn product_bar_sources() -> Vec<(String, String)> {
+    let files = crate_sources();
+    let seeds = product_bar_seeds(&files);
+    module_closure(&files, &seeds)
+}
 /// Every `.rs` file under `dir`, recursively.
 fn collect_rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
@@ -5083,16 +5612,16 @@ fn without_string_literals(src: &str) -> String {
         }
 
         // A char literal: 'x', '\n', '\u{200b}' — but never a lifetime.
-        if chars[i] == '\'' {
-            if let Some(close) = char_literal_close(&chars, i) {
-                out.push('\'');
-                for _ in i + 1..close {
-                    out.push(' ');
-                }
-                out.push('\'');
-                i = close + 1;
-                continue;
+        if chars[i] == '\''
+            && let Some(close) = char_literal_close(&chars, i)
+        {
+            out.push('\'');
+            for _ in i + 1..close {
+                out.push(' ');
             }
+            out.push('\'');
+            i = close + 1;
+            continue;
         }
 
         // An ordinary string literal.
@@ -5429,7 +5958,10 @@ fn product_bar_judge_calls(src: &str) -> Vec<JudgeCall> {
 struct JudgeCall {
     /// `Some(name)` when the call is the initialiser of `let name = `.
     binding: Option<String>,
-    /// The text between the call's parentheses.
+    /// The text between the call's parentheses, trimmed of whitespace and of a
+    /// single trailing comma — the two things rustfmt adds when it wraps a call
+    /// across lines, and neither of which is anything the source DID to the
+    /// argument. See `calls_at_anchor`.
     args: String,
     /// The text immediately after the call's closing paren, truncated to the
     /// handful of characters this file asks a question of.
@@ -5438,6 +5970,34 @@ struct JudgeCall {
 
 /// The calls whose `(` follows `anchor`, skipping opening parens already
 /// claimed by an earlier (more specific) anchor.
+///
+/// # Why the captured argument is normalised
+///
+/// `args` used to be the raw text between the parentheses, and
+/// `truncated_argument` then demanded that `arg.trim()` be a plain path. For a
+/// call rustfmt wraps — which is what happens the moment the fully qualified
+/// path is written inside the deeply indented report literal, or the implementer
+/// simply formats it that way —
+///
+/// ```text
+/// product_bar::judge(
+///     pr_body,
+/// )
+/// ```
+///
+/// the raw text trims to `"pr_body,"`. A trailing comma is not a plain path and
+/// no `WHOLE_VALUE_ADAPTERS` suffix strips it, so the guard panicked that a
+/// perfectly correct wiring "is not a plain path to the change's body" —
+/// accusing it of the truncation defect it does not have, and leaving the
+/// implementer editing a settled specification test mid-implementation, which
+/// this project's method forbids.
+///
+/// Whitespace and rustfmt's trailing comma are formatting, not effects, so they
+/// are removed before any rule reads the argument. Everything the rules are
+/// actually about — a slice, a `.take(`, a literal, a different identifier —
+/// survives the trim untouched. The sibling path was already safe: at the
+/// pipeline's own call site the argument comes from `one_argument_per_line`,
+/// which trims and drops the trailing comma already.
 fn calls_at_anchor(src: &str, anchor: &str, seen: &mut BTreeSet<usize>) -> Vec<JudgeCall> {
     let mut out = Vec::new();
     let mut from = 0usize;
@@ -5464,9 +6024,10 @@ fn calls_at_anchor(src: &str, anchor: &str, seen: &mut BTreeSet<usize>) -> Vec<J
             }
         }
         if let Some(end) = end {
+            let raw = src[open + 1..end].trim();
             out.push(JudgeCall {
                 binding: let_binding_before(&src[..start]),
-                args: src[open + 1..end].to_string(),
+                args: raw.strip_suffix(',').unwrap_or(raw).trim().to_string(),
                 tail: src[end + 1..].chars().take(40).collect(),
             });
         }
@@ -6029,6 +6590,103 @@ fn names_the_change_body(expr: &str) -> bool {
         }
     }
     found
+}
+
+/// Expressions that construct an EMPTY value of the body's type.
+///
+/// None of them can hold anything the author wrote, so a local bound to one and
+/// then passed at the body position is the `""` literal wearing a name.
+/// Spelled without their arguments so `String::new()` and `String::new( )` are
+/// the same thing to this list.
+const EMPTY_VALUE_CONSTRUCTORS: &[&str] = &[
+    "String::new(",
+    "String::default(",
+    "Default::default(",
+    "str::default(",
+];
+
+/// Why the local a call site passes at the body position does not hold the
+/// change's body — or `None` when nothing in the file says it does not.
+///
+/// # Why the caller hop needs a value chain and not a grep
+///
+/// `every_caller_of_the_review_pipeline_hands_it_the_change_body` used to ask
+/// three questions about the ARGUMENT's spelling and nothing about what the
+/// argument was BOUND to: that it holds no `"`, that some identifier in it says
+/// body, and that it carries no truncating token. `shadowed_argument` — the rule
+/// that follows the value one line up, applied at the pipeline's own call site
+/// by this same commit — was never applied here. So the cheapest way to turn
+/// that test green at the one call site this repository has that owns no body,
+/// `src/cli/server.rs`, was
+///
+/// ```text
+/// let pr_body = String::new();          // or pr.title.clone()
+/// … execute_pr_review(…, &pr_body, …)
+/// ```
+///
+/// `root_ident` is `pr_body`, `names_the_change_body` is true, there is no
+/// literal in the argument text and no truncating token, and the position lines
+/// up. Every assertion passed, `judge` stayed perfectly correct, every other
+/// test in the suite stayed green — and the outage-recovery sweep still handed
+/// the gate the empty string, so every pull request certified through that path
+/// was told it wrote neither artifact. That is the same 100%-incidence
+/// fabricated accusation the test exists to prevent, reinstated one line above
+/// the call it guards, and it abandons this file's own argument against the
+/// `PrDiffContext` route — "a parameter is not a grep: it can hold only what the
+/// caller passed" — at precisely the hop where the known-bad call site lives.
+///
+/// # When the rule applies, and why not always
+///
+/// Only when the argument is ROOTED at the identifier that names the body — a
+/// local claiming to BE the body, `&pr_body`. At three of this repository's call
+/// sites the body is reached through a FIELD of a local
+/// (`&meta.body.unwrap_or_default()`), where the local is a metadata struct and
+/// is not claiming to be the body at all: following `meta` to `let meta =
+/// fetch_pr_metadata(..).await?;` and demanding that initialiser say "body"
+/// would report all three correct call sites, which is the accusation this file
+/// forbids. The field access does the naming there, and the `"` and
+/// truncating-token rules already cover it.
+///
+/// The bound: a root bound by no `let` in the file — a parameter of the
+/// enclosing function — is left alone. Following it is the next hop up, and this
+/// rule stops at one; see open_questions.
+fn caller_binding_defect(src: &str, root: &str) -> Option<String> {
+    // The LAST binding before the call is the one in effect at it, and `src` is
+    // the file up to the call, so a `#[cfg(test)]` fixture further down the file
+    // that happens to bind the same name is not mistaken for the wiring.
+    let statement = binding_statements(src, root).pop()?;
+    let initialiser = binding_initialiser(&statement)?;
+
+    if initialiser.contains('"') {
+        return Some(format!(
+            "{statement:?} binds {root:?} to a string literal, which can hold only \
+             what this file wrote and never what the author of the change wrote"
+        ));
+    }
+    let dense: String = initialiser.chars().filter(|c| !c.is_whitespace()).collect();
+    if let Some(ctor) = EMPTY_VALUE_CONSTRUCTORS
+        .iter()
+        .find(|c| dense.contains(**c))
+    {
+        return Some(format!(
+            "{statement:?} binds {root:?} to an empty-value constructor ({ctor}…)), \
+             which can hold nothing the author wrote — the empty-string literal \
+             wearing the name of the body"
+        ));
+    }
+    if !names_the_change_body(&initialiser) {
+        return Some(format!(
+            "{statement:?} binds {root:?} to something no identifier in which names \
+             the pull request's body"
+        ));
+    }
+    if let Some(defect) = truncating_token_in(&without_string_literals(&initialiser)) {
+        return Some(format!(
+            "{statement:?} binds {root:?} to less than the whole change body, and \
+             {defect}"
+        ));
+    }
+    None
 }
 
 /// Argument syntax that hands the gate LESS than the whole change body.
@@ -6727,6 +7385,10 @@ fn every_caller_of_the_review_pipeline_hands_it_the_change_body() {
     files.sort();
 
     let mut sites: Vec<(String, usize, String)> = Vec::new();
+    // The file text up to each call, aligned with `sites` by index. Kept beside
+    // the sites rather than in them because `sites` is printed in every failure
+    // message and a whole source file is not a thing a reader can read.
+    let mut prefixes: Vec<String> = Vec::new();
     for path in &files {
         let rel = path
             .strip_prefix(&manifest)
@@ -6756,6 +7418,7 @@ fn every_caller_of_the_review_pipeline_hands_it_the_change_body() {
                 parameters.len()
             );
             sites.push((rel.clone(), line, args[position].clone()));
+            prefixes.push(text[..at].to_string());
         }
     }
 
@@ -6773,7 +7436,7 @@ fn every_caller_of_the_review_pipeline_hands_it_the_change_body() {
         sites.len()
     );
 
-    for (rel, line, arg) in &sites {
+    for (index, (rel, line, arg)) in sites.iter().enumerate() {
         assert!(
             !arg.contains('"'),
             "{rel}:{line} hands execute_pr_review the string literal {arg:?} where the \
@@ -6807,6 +7470,31 @@ fn every_caller_of_the_review_pipeline_hands_it_the_change_body() {
                  author of a long, careful change that they wrote no acceptance bar, \
                  while `judge` stays perfectly correct and every behavioural test in \
                  this file stays green. All call sites: {sites:?}"
+            );
+        }
+
+        // AND THE VALUE THE LOCAL WAS BOUND TO, which is the same rule
+        // `shadowed_argument` applies one level down and which this hop went
+        // without. Every assertion above reads the argument's SPELLING, so the
+        // cheapest way to make this test green at a call site that owns no body
+        // is `let pr_body = String::new();` one line above it: the argument then
+        // reads as a plain local naming the body, and the gate is still handed
+        // the empty string on every pull request through that path. A name is
+        // not a value; the binding is where the value comes from.
+        let root = root_ident(arg);
+        if names_the_change_body(&root)
+            && let Some(defect) = caller_binding_defect(&prefixes[index], &root)
+        {
+            panic!(
+                "{rel}:{line} hands execute_pr_review {arg:?} at the body position, and \
+                 the local it is rooted at does not hold the change's body: {defect}. \
+                 Once the Product gate is wired, every change certified through this \
+                 path is told it carries no written problem statement and no done-when \
+                 acceptance bar, whatever its author actually wrote — the fabricated \
+                 accusation at 100% incidence on this path, with every other test in \
+                 this file green. Fetch the body (the sibling call sites do it with \
+                 `&meta.body.unwrap_or_default()` off the metadata this path can also \
+                 fetch) and bind THAT. All call sites: {sites:?}"
             );
         }
     }
@@ -7368,6 +8056,73 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         );
     }
 
+    // THE CALLER-HOP BINDING RULE, which is the shadow rule applied one hop
+    // further up: at a call site the argument's spelling says nothing about the
+    // value, and `let pr_body = String::new();` above the call satisfies every
+    // spelling rule while handing the gate the empty string. BOTH SIDES, and the
+    // clean half is not decoration — it is the real binding at
+    // src/webhook/webhook_handlers.rs, and a rule that reported it would
+    // fabricate an accusation against the one correct call site in this
+    // repository that reaches the body through a local.
+    for (src_text, root, defective) in [
+        (
+            "        let pr_body = pr.body.unwrap_or_default();\n",
+            "pr_body",
+            false,
+        ),
+        (
+            "        let pr_body = pr.body.clone().unwrap_or_default();\n",
+            "pr_body",
+            false,
+        ),
+        (
+            "        let pr_body = meta.body.unwrap_or_default();\n",
+            "pr_body",
+            false,
+        ),
+        (
+            "        let pr_body = fetch_pr_body(&state, repo, pr.number).await?;\n",
+            "pr_body",
+            false,
+        ),
+        // The root is bound by no `let` here at all: it is a parameter of the
+        // enclosing function, and this rule stops at one hop.
+        ("        let repo_dir = clone(repo);\n", "pr_body", false),
+        ("        let pr_body = String::new();\n", "pr_body", true),
+        ("        let pr_body = String :: new ();\n", "pr_body", true),
+        (
+            "        let pr_body = Default::default();\n",
+            "pr_body",
+            true,
+        ),
+        ("        let pr_body = pr.title.clone();\n", "pr_body", true),
+        ("        let pr_body = \"\".to_string();\n", "pr_body", true),
+        (
+            "        let pr_body = pr.body.unwrap_or_default()[..2000].to_string();\n",
+            "pr_body",
+            true,
+        ),
+        // The last binding before the call is the one in effect, so a harmless
+        // one above a clamp does not clear it.
+        (
+            "        let pr_body = pr.body.unwrap_or_default();\n\
+             \x20       let pr_body = String::new();\n",
+            "pr_body",
+            true,
+        ),
+    ] {
+        assert_eq!(
+            caller_binding_defect(src_text, root).is_some(),
+            defective,
+            "caller_binding_defect({src_text:?}, {root:?}) misjudged what the local was \
+             bound to. A rule that reads `pr.body.unwrap_or_default()` as a defect \
+             accuses the one correct call site that reaches the body through a local; \
+             one that reads `String::new()` as the body lets the empty string reach \
+             the gate under the body's own name, and every pull request through that \
+             path is told it wrote neither artifact"
+        );
+    }
+
     // THE BODY-NAMING RULE, which is how a call site says it is passing the
     // change's body rather than something else in scope. Every identifier, not
     // just the root: at three of this repository's five call sites the body is
@@ -7493,6 +8248,32 @@ fn assert_the_wiring_parsers_read_a_real_wiring() {
         ),
         (
             "let product_bar_status = product_bar::judge(pr_body).softened();\n",
+            false,
+        ),
+        // THE CALL RUSTFMT WRAPPED, in both its spellings. The captured
+        // argument used to be the raw text between the parentheses, so this
+        // shape reached `truncated_argument` as `"pr_body,"` — not a plain
+        // path, no adapter suffix to strip — and the guard reported a correct
+        // wiring as a truncation. Writing the fully qualified path inside the
+        // deeply indented report literal is enough to make rustfmt produce it,
+        // so an implementer met it as an unwinnable settled test rather than as
+        // a defect. See `calls_at_anchor`.
+        (
+            "            product_bar_status: product_bar::judge(\n                \
+             pr_body,\n            ),\n",
+            true,
+        ),
+        (
+            "            product_bar_status: product_bar::judge(\n                \
+             &pr_body,\n            ),\n",
+            true,
+        ),
+        // And the mirror, so the trim cannot swallow the defect with the
+        // formatting: the same wrapped call carrying a slice is still a
+        // truncation.
+        (
+            "            product_bar_status: product_bar::judge(\n                \
+             &pr_body[..2000],\n            ),\n",
             false,
         ),
     ] {

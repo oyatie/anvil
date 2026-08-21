@@ -806,13 +806,12 @@ pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome)
 /// the documentation is deficient, only that we could not judge it. Both block
 /// (invariant I1).
 ///
-/// SCAFFOLDING (`tdd/docguard-oracle-repair`): the body below is the mapping
-/// `evaluate_pre_merge_gates` has always performed inline, extracted verbatim so
-/// the suite can drive it. Nothing about it was changed, and the defect it
-/// carries is live: a non-empty `files_created_or_updated` is read as
-/// `AutoUpdated` *before* `is_sufficient` is consulted, and
-/// `AutoUpdated.is_acceptable()` is `true`, so a report that says the diff is
-/// under-documented still certifies as long as DocGuard wrote a stub.
+/// This mapping used to live inline in `evaluate_pre_merge_gates`, where it read
+/// a non-empty `files_created_or_updated` as `AutoUpdated` *before* consulting
+/// `is_sufficient`. `AutoUpdated.is_acceptable()` is `true`, so a report saying
+/// the diff was under-documented still certified as long as DocGuard had written
+/// a stub — and DocGuard writes one precisely when the probe flags a gap. An
+/// adverse finding therefore out-ranks work done here (issue #29).
 ///
 /// # Contract
 ///

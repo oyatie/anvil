@@ -164,18 +164,7 @@ impl PreMergeGuard {
         );
 
         // 1. Doc Parity
-        // A probe that could not run is Errored, not Failed: we have no evidence
-        // the documentation is deficient, only that we could not judge it.
-        // Both block (invariant I1).
-        let doc_parity_status = if let Some(err) = &doc_report.errored {
-            GateStatus::Errored(err.clone())
-        } else if !doc_report.files_created_or_updated.is_empty() {
-            GateStatus::AutoUpdated
-        } else if doc_report.is_sufficient {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(doc_report.summary.clone())
-        };
+        let doc_parity_status = doc_parity_status(doc_report);
 
         // 2. Cedar IAM Policy
         let cedar_status = if !cedar_report.files_created_or_updated.is_empty() {
@@ -820,5 +809,43 @@ pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome)
                 GateStatus::Passed
             }
         }
+    }
+}
+
+/// Maps a `DocGuardReport` onto gate 1's `GateStatus`.
+///
+/// A probe that could not run is `Errored`, not `Failed`: we have no evidence
+/// the documentation is deficient, only that we could not judge it. Both block
+/// (invariant I1).
+///
+/// SCAFFOLDING (`tdd/docguard-oracle-repair`): the body below is the mapping
+/// `evaluate_pre_merge_gates` has always performed inline, extracted verbatim so
+/// the suite can drive it. Nothing about it was changed, and the defect it
+/// carries is live: a non-empty `files_created_or_updated` is read as
+/// `AutoUpdated` *before* `is_sufficient` is consulted, and
+/// `AutoUpdated.is_acceptable()` is `true`, so a report that says the diff is
+/// under-documented still certifies as long as DocGuard wrote a stub.
+///
+/// # Contract
+///
+/// This is the seam issue #29's requirement is actually observable at.
+/// `DocGuardReport` is a value; the merge decision is
+/// `PreMergeCertificationReport::seal()`, which conjoins
+/// `GateStatus::is_acceptable()` over every gate. A repair that makes
+/// `ensure_documentation_parity` return `is_sufficient: false` and stops there
+/// leaves gate 1 passing every under-documented diff the probe flagged, because
+/// the stub it wrote makes the file list non-empty. So the mapping is pinned by
+/// `tests/docguard_oracle_repair_test.rs` and must keep being called from
+/// `evaluate_pre_merge_gates` — a second, private copy of it inside the
+/// evaluator would put the decision back out of the suite's reach.
+pub fn doc_parity_status(report: &DocGuardReport) -> GateStatus {
+    if let Some(err) = &report.errored {
+        GateStatus::Errored(err.clone())
+    } else if !report.files_created_or_updated.is_empty() {
+        GateStatus::AutoUpdated
+    } else if report.is_sufficient {
+        GateStatus::Passed
+    } else {
+        GateStatus::Failed(report.summary.clone())
     }
 }

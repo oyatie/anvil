@@ -41,13 +41,49 @@ pub struct DocGuardReport {
 /// what the previous limit was; every timeout became a silent pass.
 const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Where `evaluate_doc_parity` gets its judgement from.
+///
+/// SCAFFOLDING (`tdd/docguard-oracle-repair`): declaration only. It carries no
+/// logic, and the arm that would return a stored outcome is `todo!()`.
+///
+/// # Contract
+///
+/// This shape is pinned by `tests/docguard_oracle_repair_test.rs` and
+/// `tests/docguard_oracle_repair_probe_seam_test.rs`. It has **no empty arm and
+/// no drainable arm**, and that is the whole point of it being an enum rather
+/// than the `Option`-shaped field the seam would otherwise want:
+///
+/// * `Option<Result<..>>` (or a `Mutex<Option<..>>` that is `take()`n) has a
+///   `None` state, and the only thing an implementation can do in that state is
+///   fall through to the real `agy` spawn. A guard built by
+///   `with_probe_override` would then spawn
+///   `agy --dangerously-skip-permissions`, on a 120-second budget, from inside
+///   `cargo test` the moment anything called the gate twice — a retry loop, a
+///   shared guard, a second gate invocation.
+/// * `Probe` makes that state unrepresentable. A guard is `Live` or it is
+///   `Overridden`, permanently, and an `Overridden` guard has an outcome to
+///   return on every call. There is no "override exhausted" condition for an
+///   implementer to handle, because there is no way to spell one.
+///
+/// Do not widen this to carry an `Option`, and do not add a third arm meaning
+/// "used up". `the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate`
+/// pins the behaviour; this type is what stops the mistake from compiling.
+pub enum Probe {
+    /// Spawn the real `agy` probe at this effort level.
+    Live(String),
+    /// Return this outcome, on every call, without spawning anything.
+    Overridden(Result<DocParityEvaluation, String>),
+}
+
 pub struct DocGuard {
-    agy_effort: String,
+    probe: Probe,
 }
 
 impl DocGuard {
     pub fn new(agy_effort: String) -> Self {
-        Self { agy_effort }
+        Self {
+            probe: Probe::Live(agy_effort),
+        }
     }
 
     /// Constructs a guard whose doc-parity probe *outcome* is supplied directly
@@ -90,11 +126,21 @@ impl DocGuard {
     /// `ensure_documentation_parity` on a guard built this way observes it, and
     /// there is no "override exhausted" state in which spawning `agy` becomes
     /// legal again. A `take()`-able slot that falls through to the real spawn
-    /// once drained passes every case in the suite as written today and puts
-    /// `agy --dangerously-skip-permissions`, on a 120-second budget, one retry
-    /// loop or one shared guard away from running inside `cargo test`.
+    /// once drained puts `agy --dangerously-skip-permissions`, on a 120-second
+    /// budget, one retry loop or one shared guard away from running inside
+    /// `cargo test`.
+    ///
+    /// That is a requirement of this contract, and it is also enforced by the
+    /// type: `outcome` must be stored as `Probe::Overridden(outcome)` on the
+    /// guard's single `probe` field, replacing the `Probe::Live` the guard
+    /// would otherwise carry. `Probe` deliberately has no empty arm and no
+    /// drainable arm, so "the override has been used up" is a state this code
+    /// cannot spell. Do not reintroduce it by adding a second field, an
+    /// `Option`, or a `Mutex<Option<..>>` alongside `probe` —
     /// `the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate` pins
-    /// this: the gate is run twice on one guard and the two reports must agree.
+    /// the behaviour (the gate is run twice on one guard and the two reports
+    /// must agree), and `Probe` is what stops the mistake from compiling in the
+    /// first place.
     ///
     /// The stored outcome must be consulted **inside `evaluate_doc_parity`**,
     /// at the point where the `agy` probe's judgement is produced and returned,
@@ -334,7 +380,18 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         );
 
         let target = format!("{}#{}", repo, diff_ctx.pr_number);
-        let agy_effort = self.agy_effort.clone();
+        // SCAFFOLDING (`tdd/docguard-oracle-repair`): the `Live` arm is what
+        // this line already did, verbatim. The `Overridden` arm is the seam and
+        // its body is left to the implementer — it must return the stored
+        // outcome from here, at the point the probe's judgement is produced, so
+        // an overridden run and a production run traverse byte-identical code
+        // from the outcome onward. See `with_probe_override`.
+        let agy_effort = match &self.probe {
+            Probe::Live(effort) => effort.clone(),
+            Probe::Overridden(_) => {
+                todo!("return the stored probe outcome instead of spawning `agy`")
+            }
+        };
         let repo_dir_owned = repo_dir.to_path_buf();
         let prompt_clone = prompt.clone();
 

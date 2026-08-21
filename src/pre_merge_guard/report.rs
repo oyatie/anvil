@@ -120,7 +120,7 @@ pub struct PreMergeCertificationReport {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 72;
+pub const TOTAL_GATES: usize = 73;
 
 impl PreMergeCertificationReport {
     /// Every gate status on this report, in declaration order.
@@ -198,6 +198,7 @@ impl PreMergeCertificationReport {
             &self.schema_compat_status,
             &self.performance_concurrency_status,
             &self.test_suite_status,
+            &self.product_bar_status,
         ]
     }
 
@@ -287,6 +288,7 @@ impl PreMergeCertificationReport {
                 &self.performance_concurrency_status,
             ),
             ("test_suite_status", &self.test_suite_status),
+            ("product_bar_status", &self.product_bar_status),
         ]
     }
 

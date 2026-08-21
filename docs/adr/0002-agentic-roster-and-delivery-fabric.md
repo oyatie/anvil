@@ -53,7 +53,7 @@ No DevOps seat. That work is Builder tools plus Production. Quality sign-off is 
 Roster names are the live report fields minus the `_status` suffix, so every `Today:` line can be checked mechanically against `PreMergeCertificationReport`. Every gate in the live corpus is named by exactly one seat.
 
 ### Discover
-1. Product. Job: the bet and the acceptance bar. Artifact: written problem + done-when. Measurement: Quality cannot sign off without it. Today: nothing.
+1. Product. Job: the bet and the acceptance bar. Artifact: written problem + done-when. Measurement: Quality cannot sign off without it. Today: product_bar. Absence of the bar is Failed, not unmeasured.
 2. Program. Job: sequence the work. Artifact: spec, plan, phase-sequence milestones. Measurement: stale or contradictory plan fails closed. Today: nothing.
 3. Research. Job: experiment before a bet is fact. Artifact: rerunnable result, including negatives. Today: nothing.
 4. UX. Job: evidence that changed a decision. Artifact: task / a11y / dark-pattern findings, not a mock. Measurement: pre-ticked or biased checkout fails. Today: nothing.

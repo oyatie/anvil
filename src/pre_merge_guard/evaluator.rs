@@ -155,6 +155,7 @@ impl PreMergeGuard {
         test_suite_passed: bool,
         review_verdict: &str,
         shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
+        pr_body: &str,
     ) -> Result<PreMergeCertificationReport> {
         info!(
             "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
@@ -689,6 +690,13 @@ impl PreMergeGuard {
 
         let shape_status = shape_gate_status(shape_outcome);
 
+        // The Product seat, ADR-0002 Discover 1: the change under review has to
+        // state its bet and its acceptance bar. The artifact is authored on the
+        // change, so the measurement is the body the pipeline handed us and
+        // nothing else. Absence is the defect, not an unread measurement, so
+        // this is the judge call and nothing around it.
+        let product_bar_status = super::product_bar::judge(pr_body);
+
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
             is_certified_ready: false,
@@ -764,16 +772,7 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
-            // SCAFFOLDING, NOT AN IMPLEMENTATION. The Product seat's gate is
-            // unwritten, so the report carries a placeholder that measures
-            // nothing. `tests/product_seat_done_when_test.rs` specifies what has
-            // to replace it: a `product_bar::judge` call over the change under
-            // review. Those wiring tests are red against this line on purpose —
-            // a gate computed from nothing gates nothing.
-            product_bar_status: GateStatus::NotMeasured {
-                gate_id: "product_bar_status".to_string(),
-                reason: "the Product seat gate is not implemented yet".to_string(),
-            },
+            product_bar_status,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
         };

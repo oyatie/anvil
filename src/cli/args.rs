@@ -417,6 +417,25 @@ pub enum ShapeAction {
         #[arg(long, help = "Write the move plan JSON here")]
         plan_out: Option<PathBuf>,
     },
+    /// Dry-run delivery: build the first shard(s) in isolated lane worktrees
+    /// (rewrite -> purity -> gate), print the result, and tear the lanes
+    /// down. Never commits, never pushes.
+    Deliver {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value_t = 1, help = "Build at most this many shards")]
+        max: usize,
+
+        #[arg(long, help = "Measure against a spec outside the tree")]
+        spec_override: Option<PathBuf>,
+
+        #[arg(
+            long,
+            help = "Permit lanes on this checkout even if it is the daemon's own tree (operator dry-runs only)"
+        )]
+        allow_same_repo: bool,
+    },
     /// Judge a head commit against the baseline frozen at merge-base(base-ref, head)
     Ratchet {
         #[arg(long, help = "Path to a local clone")]

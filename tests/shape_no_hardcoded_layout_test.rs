@@ -49,6 +49,10 @@ const EXEMPTIONS: &[(&str, &[&str])] = &[
         "src/change_delivery/facade/plan.rs",
         &["CODEOWNERS", "OWNERS", ".anvil/landing.json"],
     ),
+    (
+        "src/change_delivery/facade/deliver.rs",
+        &[".anvil/landing.json", ".anvil-lanes"],
+    ),
 ];
 
 fn repo_root() -> PathBuf {

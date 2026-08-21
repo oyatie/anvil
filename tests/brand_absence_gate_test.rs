@@ -52,18 +52,21 @@
 //! ledger, so it lands green while every NEW violation becomes visible.
 
 use anvil::brand_absence::{
-    AllowlistedDebt, BrandAbsenceGate, BrandViolationKind, FORBIDDEN_STAMPS, KNOWN_VIOLATIONS,
+    AllowlistedDebt, BrandAbsenceGate, BrandViolationKind, FORBIDDEN_STAMPS, load_allowlist,
 };
 use std::path::Path;
 
 /// A hermetic allowlist used by the tests that need to exercise the ratchet
 /// without depending on the exact contents of the production debt ledger.
-static TEST_ALLOWLIST: &[AllowlistedDebt] = &[AllowlistedDebt {
-    path: "src/legacy/known_offender.rs",
-    stamp: "hyperscaler",
-    occurrences: 1,
-    debt_note: "test fixture: one recorded occurrence, ratchet must not allow a second",
-}];
+fn test_allowlist() -> Vec<AllowlistedDebt> {
+    vec![AllowlistedDebt {
+        path: "src/legacy/known_offender.rs".to_string(),
+        stamp: "hyperscaler".to_string(),
+        occurrences: 1,
+        debt_note: "test fixture: one recorded occurrence, ratchet must not allow a second"
+            .to_string(),
+    }]
+}
 
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -84,7 +87,7 @@ fn repo_root() -> &'static Path {
 /// standard. Nothing in review distinguishes the claim from the fact.
 #[test]
 fn flags_an_aspiration_stamp_in_a_module_or_type_name() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
 
     let synthetic = r#"
 pub struct EnterpriseThroughputOptimizer;
@@ -122,7 +125,7 @@ impl EnterpriseThroughputOptimizer {
 /// reviewer is asked "does this folder name describe what is inside it?".
 #[test]
 fn flags_an_aspiration_stamp_in_a_module_path() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
 
     let report = gate.scan_source(
         "src/hyperscale_throughput_guard/mod.rs",
@@ -156,7 +159,7 @@ fn flags_an_aspiration_stamp_in_a_module_path() {
 /// is exactly the part that must be checked mechanically.
 #[test]
 fn flags_an_aspiration_stamp_in_a_pr_visible_display_string() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
 
     let synthetic = r#"
 fn emit() {
@@ -191,7 +194,7 @@ fn emit() {
 /// false accusation).
 #[test]
 fn does_not_flag_a_string_that_states_the_check_it_performs() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
 
     let synthetic = r#"
 fn emit() {
@@ -240,7 +243,7 @@ fn emit() {
 /// against the live count does.
 #[test]
 fn flags_a_gate_count_claim_that_disagrees_with_the_real_count() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
     let real = gate.real_gate_count();
 
     assert_eq!(
@@ -295,7 +298,7 @@ fn flags_a_gate_count_claim_that_disagrees_with_the_real_count() {
 /// switched off. The truthful claim must pass.
 #[test]
 fn accepts_a_gate_count_claim_that_matches_the_real_count() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
     let real = gate.real_gate_count();
     assert!(
         real > 0,
@@ -343,7 +346,7 @@ fn accepts_a_gate_count_claim_that_matches_the_real_count() {
 /// that cannot be merged guards nothing.
 #[test]
 fn does_not_flag_an_allowlisted_known_violation() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
 
     let report = gate.scan_source(
         "src/legacy/known_offender.rs",
@@ -374,9 +377,9 @@ fn does_not_flag_an_allowlisted_known_violation() {
 /// written.
 #[test]
 fn allowlist_does_not_absorb_a_new_violation_in_an_already_listed_file() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
 
-    // TEST_ALLOWLIST records exactly one 'hyperscaler' occurrence for this path.
+    // test_allowlist() records exactly one 'hyperscaler' occurrence for this path.
     let two_occurrences = "info!(\"hyperscaler patterns\");\ninfo!(\"hyperscaler consensus\");\n";
 
     let report = gate.scan_source("src/legacy/known_offender.rs", two_occurrences);
@@ -401,12 +404,12 @@ fn allowlist_does_not_absorb_a_new_violation_in_an_already_listed_file() {
 #[test]
 fn allowlist_is_a_finite_enumerated_ledger_not_a_wildcard_exemption() {
     assert!(
-        !KNOWN_VIOLATIONS.is_empty(),
+        !load_allowlist(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))).is_empty(),
         "the ledger must enumerate the known violations; an empty ledger on a tree that \
          demonstrably contains them means the scanner is not finding them"
     );
 
-    for entry in KNOWN_VIOLATIONS {
+    for entry in load_allowlist(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))) {
         assert!(
             !entry.path.is_empty() && !entry.stamp.is_empty(),
             "every entry needs a concrete path and stamp, got {entry:?}"
@@ -431,7 +434,7 @@ fn allowlist_is_a_finite_enumerated_ledger_not_a_wildcard_exemption() {
              does not say what it is owed for is an exemption"
         );
 
-        let full = repo_root().join(entry.path);
+        let full = repo_root().join(&entry.path);
         assert!(
             full.exists(),
             "allowlisted path '{}' does not exist; a ledger entry must be a verified fact \
@@ -451,7 +454,11 @@ fn allowlist_is_a_finite_enumerated_ledger_not_a_wildcard_exemption() {
 
     // No duplicate keys: two entries for the same (path, stamp) would make the
     // effective ceiling ambiguous and unauditable.
-    let mut keys: Vec<(&str, &str)> = KNOWN_VIOLATIONS.iter().map(|e| (e.path, e.stamp)).collect();
+    let mut keys: Vec<(String, String)> =
+        load_allowlist(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+            .iter()
+            .map(|e| (e.path.clone(), e.stamp.clone()))
+            .collect();
     let before = keys.len();
     keys.sort_unstable();
     keys.dedup();
@@ -470,7 +477,10 @@ fn allowlist_is_a_finite_enumerated_ledger_not_a_wildcard_exemption() {
 fn report_states_the_allowlisted_debt_count() {
     let gate = BrandAbsenceGate::new();
 
-    let expected_total: usize = KNOWN_VIOLATIONS.iter().map(|e| e.occurrences).sum();
+    let expected_total: usize = load_allowlist(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+        .iter()
+        .map(|e| e.occurrences)
+        .sum();
     let report = gate.scan_source("src/synthetic/clean.rs", "pub fn ok() {}\n");
 
     assert_eq!(
@@ -489,7 +499,7 @@ fn report_states_the_allowlisted_debt_count() {
 /// fatal — `is_blocking` stays false even when `new_violations` is non-empty.
 #[test]
 fn gate_ships_warn_only_so_it_lands_green_while_showing_new_violations() {
-    let gate = BrandAbsenceGate::with_allowlist(TEST_ALLOWLIST);
+    let gate = BrandAbsenceGate::with_allowlist(test_allowlist());
 
     let report = gate.scan_source(
         "src/synthetic/new_module.rs",

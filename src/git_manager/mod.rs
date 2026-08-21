@@ -326,6 +326,12 @@ fi
                     && let Ok(age) = now.duration_since(modified)
                     && age > ttl
                 {
+                    // A live lane holds an unexpired lease; mtime alone would
+                    // reap a lane mid-build (mechanism, not "remember to
+                    // touch the directory").
+                    if lane_lease_unexpired(&path).await {
+                        continue;
+                    }
                     info!("Pruning abandoned ephemeral worktree directory: {:?}", path);
                     let _ = tokio::fs::remove_dir_all(&path).await;
                     cleaned += 1;
@@ -486,6 +492,23 @@ fi
             Ok(Vec::new())
         }
     }
+}
+
+/// True when `dir` holds a lane lease naming a future expiry (epoch seconds).
+/// An unreadable or malformed lease does not protect the directory.
+async fn lane_lease_unexpired(dir: &std::path::Path) -> bool {
+    let lease = dir.join(crate::change_delivery::adapters::git_vcs::LANE_LEASE_FILE);
+    let Ok(raw) = tokio::fs::read_to_string(&lease).await else {
+        return false;
+    };
+    let Ok(expiry) = raw.trim().parse::<u64>() else {
+        return false;
+    };
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    expiry > now
 }
 
 #[cfg(test)]

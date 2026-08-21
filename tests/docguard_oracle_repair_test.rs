@@ -27,7 +27,7 @@
 //! *stored*; it does not oblige `evaluate_doc_parity` to read it. An implementer
 //! who writes `Probe::Overridden(_) => "low".to_string()` — meaning to consult
 //! the override somewhere else, and missing a path — turns a parallel test
-//! binary into up to fourteen concurrent invocations of
+//! binary into up to eighteen concurrent invocations of
 //! `agy --print <prompt> --effort low --dangerously-skip-permissions`, each on a
 //! 120-second budget, because `agy` is resolved through the inherited `PATH` and
 //! is installed on developer machines.
@@ -57,10 +57,16 @@
 //! `tests/docguard_oracle_repair_gate_test.rs` and
 //! `tests/docguard_oracle_repair_probe_seam_test.rs`.
 //!
-//! ## Four cases in this file are GREEN at review time, deliberately
+//! ## Nine cases in this file are GREEN at review time, deliberately
 //!
-//! Measured: this binary reports **4 passed, 19 failed**. The four are named
+//! Measured: this binary reports **9 passed, 19 failed**. All nine are named
 //! below and every one of them is a regression fence rather than red evidence.
+//!
+//! Five of the nine are the `classify_probe_output` /
+//! `probe_supervision_failure` section at the end of this file, which pins where
+//! a probe failure is PRODUCED. Their disclosure, and the mutation each one
+//! kills, is written at the head of that section. The other four are the
+//! `DocGuardReport` -> `GateStatus` mapping cases described next.
 //!
 //! The `DocGuardReport` -> `GateStatus` mapping section pins where issue #29's
 //! requirement is actually decided. To drive it, the scaffolding EXTRACTED the
@@ -105,8 +111,8 @@
 //! `oyatie/anvil` is still synced. It lives in its own test binary because it
 //! mutates the environment, which is a data race in a parallel one.
 
-use anvil::doc_guard::DocGuardReport;
 use anvil::doc_guard::corpus_sync::sync_published_counts;
+use anvil::doc_guard::{DocGuardReport, classify_probe_output, probe_supervision_failure};
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::evaluator::{PreMergeGuard, doc_parity_status};
 use anvil::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport, TOTAL_GATES};
@@ -245,6 +251,13 @@ const MISSING_REASON: &str = "newly_public is a new public API with no reference
 /// The strings are the shapes the real call site produces (spawn failure,
 /// non-zero exit, timeout, unparseable output, watchdog supervision failure);
 /// their wording is the test's, and it is only ever asserted as pass-through.
+///
+/// These strings therefore say nothing about whether the product produces `Err`
+/// in those five situations — they are the CONSUMPTION side only. The production
+/// side is pinned separately and against the product's own output, by
+/// `classify_probe_output` and `probe_supervision_failure` in the last section
+/// of this file and by the two live-path cases at the end of
+/// `tests/docguard_oracle_repair_gate_test.rs`.
 const PROBE_FAILURES: &[&str] = &[
     "failed to run doc parity probe: No such file or directory (os error 2)",
     "doc parity probe exited with status exit status: 1: permission check failed for command",
@@ -1093,6 +1106,11 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
 //   * The trailing newline is consumed only when `start` landed at a line start
 //     *and* nothing survives on that line after `end` — otherwise the surviving
 //     prefix or suffix would be fused with the next line.
+//   * Both halves of that condition are WHITESPACE-BLIND, in the same direction,
+//     and each carries its own whitespace with the newline when the newline
+//     goes. Stated as two bullets because they are two separate decisions an
+//     implementation makes at two separate indices, and a suite that decided one
+//     and left the other open would let a whole published line differ.
 //   * "`start` landed at a line start" means nothing but WHITESPACE precedes it
 //     on that line, and when the newline is consumed that leading whitespace
 //     goes with it. Anvil's own `openapi/openapi.yaml` is an owned page and it
@@ -1104,6 +1122,35 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
 //     indentation, which on a page nobody re-indents is only diff noise —
 //     but diff noise on a page the pipeline commits and pushes is still a
 //     change nobody asked for.
+//   * "nothing survives on that line after `end`" means nothing but WHITESPACE
+//     follows it on that line, and when the newline is consumed that trailing
+//     whitespace goes with it. This is the exact mirror of the bullet above and
+//     it is decided here for the same reason. The literal reading —
+//     `end == line_end` — is what an implementer writes first, and on
+//
+//         Alpha line.
+//         DocGuard does **not** yet amend existing documents.··
+//         Gamma line.
+//
+//     (`··` being an ordinary markdown hard line break, two trailing spaces,
+//     which Anvil's own README really can carry) it leaves `"··\n"` behind: the
+//     published page keeps a whitespace-only line where the sentence was, one
+//     line MORE than the whitespace-blind reading produces, on a page the
+//     pipeline commits and pushes onto the contributor's branch. Both readings
+//     satisfy every fixture that ends its exemption line flush, which is why
+//     `the_trailing_newline_goes_only_when_the_deletion_started_at_a_line_start`
+//     now carries a fixture that does not.
+//   * The mirror of the mirror, and the reason both bullets say "when the
+//     newline is consumed": whitespace on a line that SURVIVES is not touched.
+//     A hard line break at the end of a line whose prefix survives belonged to
+//     that line before the deletion and still does after it — removing it would
+//     change how the page renders, on a line the deletion was never asked to
+//     edit. That is issue #28's own requirement ("text before and after the
+//     marker on the same line survives") applied to the text that happens to be
+//     whitespace. STATED COST: it forbids an implementation that tidies
+//     trailing whitespace on surviving lines, which some editors would call an
+//     improvement — but an unrequested improvement committed and pushed onto a
+//     contributor's branch is the same class of act as issue #27.
 //   * Every occurrence is removed, not only the first — including two on one
 //     line, and including one of each marker variant on the same line.
 //   * ORDER: the gate-count rewrite and the `sixty-gate` rewrite run BEFORE the
@@ -1732,6 +1779,95 @@ fn the_trailing_newline_goes_only_when_the_deletion_started_at_a_line_start() {
          spaces on a page the pipeline commits and pushes: {got:?}"
     );
     assert!(remaining_drift.is_empty(), "{remaining_drift:?}");
+
+    // The fourth and fifth layouts, and the ones that settle what "nothing
+    // survives on that line after `end`" means: the sentence occupies a whole
+    // line and that line ends in WHITESPACE before its newline.
+    //
+    // This is the exact mirror of the indented case above, and it was left open
+    // while that one was decided. `end < line_end` — the literal reading of the
+    // rule, and the one an implementer writes first — leaves `"  \n"` behind
+    // here: a whitespace-only line where the sentence was, one line MORE than
+    // the correct result, on a page the pipeline commits and pushes onto the
+    // contributor's branch. `out[end..line_end].trim().is_empty()` removes the
+    // line. Every other fixture in all four binaries ends its exemption line
+    // flush, so both readings survive them, and the two outputs differ by a
+    // whole published line.
+    //
+    // MEASURED, and disclosed for the same reason the indented case's status is
+    // not stated by omission: these two fixtures PASS against `main` today, and
+    // so does the indented one. Today's `end` runs to end-of-line and consumes
+    // the newline, which swallows trailing whitespace by accident — it is the
+    // same over-reach that fuses lines in the negative below. They are here to
+    // constrain the REPAIR, which narrows `end` to the sentence terminator and
+    // must then decide this question explicitly, not to report a live defect.
+    // The red evidence in this case is the second and fifth layouts.
+    //
+    // Two trailing spaces first, because that is not a typo in markdown: it is
+    // an ordinary hard line break, and Anvil's own README carries them.
+    for (label, tail) in [("markdown hard break", "  "), ("tab", "\t")] {
+        let trailing = format!(
+            "# Anvil\n\nAlpha line.\nDocGuard does **not** yet amend existing documents.{tail}\nGamma line.\n"
+        );
+        let (got, remaining_drift) = rewrite_anvil_readme(&trailing);
+
+        assert!(
+            !got.contains(EXEMPTION_MARKER),
+            "{label}: the exemption marker is the thing being removed: {got:?}"
+        );
+        assert_eq!(
+            got, "# Anvil\n\nAlpha line.\nGamma line.\n",
+            "{label}: the exemption line goes whole — its trailing whitespace and \
+             its newline with it — leaving neither a blank line nor a \
+             whitespace-only line where the sentence was. Byte-exact, because the \
+             two readings of \"nothing survives after `end`\" differ by exactly \
+             that line and nothing else in this suite can tell them apart: {got:?}"
+        );
+        assert!(remaining_drift.is_empty(), "{label}: {remaining_drift:?}");
+    }
+
+    // The mirror negative, in the same case because it is the same decision seen
+    // from the other side: trailing whitespace after `end` when a prefix
+    // SURVIVES on the line. The newline must stay — fusing `Preamble.` with
+    // `Gamma line.` is issue #28's own headline — and the hard break must stay
+    // with it, because it belonged to a line that survives and nothing asked the
+    // rewriter to edit that line's rendering.
+    for (label, tail) in [("markdown hard break", "  "), ("tab", "\t")] {
+        let kept = format!(
+            "# Anvil\n\nAlpha line.\nPreamble. DocGuard does **not** yet amend existing documents.{tail}\nGamma line.\n"
+        );
+        let (got, remaining_drift) = rewrite_anvil_readme(&kept);
+
+        assert!(
+            !got.contains(EXEMPTION_MARKER),
+            "{label}: the exemption marker is the thing being removed: {got:?}"
+        );
+        assert_eq!(
+            normalise(&got),
+            normalise("# Anvil\n\nAlpha line.\nPreamble.\nGamma line.\n"),
+            "{label}: the surviving prefix keeps its own line; whitespace after \
+             `end` is not a licence to consume the newline: {got:?}"
+        );
+        assert_eq!(
+            got.lines().count(),
+            kept.lines().count(),
+            "{label}: no line may be lost here — the exemption line had other \
+             prose on it, so its newline is what keeps `Gamma line.` a line of \
+             its own: {got:?}"
+        );
+        let surviving = got
+            .lines()
+            .find(|l| l.trim_start().starts_with("Preamble."))
+            .unwrap_or_else(|| panic!("{label}: the prefix must survive: {got:?}"));
+        assert!(
+            surviving.ends_with(tail),
+            "{label}: the line survives, so its own trailing hard break survives \
+             with it. Consuming it changes how a line the deletion was never \
+             asked to edit renders, on a page the pipeline commits and pushes: \
+             {surviving:?}"
+        );
+        assert!(remaining_drift.is_empty(), "{label}: {remaining_drift:?}");
+    }
 }
 
 #[test]
@@ -2884,4 +3020,319 @@ fn a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_eval
         blocked.doc_parity_status,
         certified.doc_parity_status
     );
+}
+
+// =========================================================================
+// Issue #29 at the source — whether a probe run produced a judgement at all
+// =========================================================================
+//
+// `PROBE_FAILURES` above, and its twin in the gate binary, are five strings a
+// test wrote. Every case that uses them pins what the gate does with a probe
+// failure; not one of them runs the code that decides whether a probe run IS a
+// failure. That code is `doc_guard::classify_probe_output`, and the arm of it
+// that returns `Err` is the arm whose historical collapse into
+// `is_doc_sufficient: true` made gate 1 unfailable — the comment recording that
+// is still in `evaluate_doc_parity`. Pinning the consumption of `Err` five ways
+// over while leaving its production unpinned is the same shape of gap as the
+// defects this branch exists to close.
+//
+// These five cases pin it. They need no environment, no tempdir and no process:
+// `classify_probe_output` is pure, which is why they live in this binary rather
+// than with the gate cases.
+//
+// FENCES, disclosed: all five PASS today, for the same reason and with the same
+// justification as the four `doc_parity_status` cases named at the head of this
+// file. The scaffolding EXTRACTED this classification out of
+// `evaluate_doc_parity`'s probe closure verbatim, defect and all, rather than
+// replacing it with a `todo!()`, and the classification is one of the parts of
+// the oracle that is already correct. What they buy is that the repair for
+// issues #27, #28 and #29 — which reaches into this function's caller — cannot
+// quietly restore the collapse while the rest of the suite stays green. Their
+// falsifiability is not assumed: each case names the mutation it kills.
+//
+// The binding half of the requirement — that the gate reaches its verdict
+// through THIS function rather than through a second, private copy — is
+// `the_supplied_probe_output_is_classified_by_the_exported_classifier` in
+// `tests/docguard_oracle_repair_gate_test.rs`, which needs the gate and
+// therefore needs that binary's emptied `PATH`.
+
+/// A completed process' exit status, built rather than obtained.
+///
+/// STATED COST: there is no portable constructor, so on a non-unix target this
+/// fixture cannot be built. It panics there rather than letting the cases that
+/// need it disappear from the run — a vanished test publishes the same false
+/// assurance as a vacuous one, which is the defect class this suite exists to
+/// prevent.
+#[cfg(unix)]
+fn exit_status(code: i32) -> std::process::ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    std::process::ExitStatus::from_raw(code << 8)
+}
+
+#[cfg(not(unix))]
+fn exit_status(_code: i32) -> std::process::ExitStatus {
+    panic!(
+        "this fixture needs a constructed `ExitStatus`, which only the unix \
+         extension trait provides. The behaviour is not satisfied on this \
+         platform, it is unmeasured on it"
+    )
+}
+
+/// The judgement body the probe's own prompt asks the model to print. Held as
+/// text, not as a `DocParityEvaluation`, because the thing under test is the
+/// reading of it.
+const PRINTED_JUDGEMENT: &str = "{\"is_doc_sufficient\": false, \
+     \"missing_doc_summary\": \"newly_public is a new public API with no reference page\", \
+     \"doc_files_to_update\": [\"docs/reference/newly-public.md\", \"CHANGELOG.md\"], \
+     \"suggested_adr_title\": null}";
+
+#[test]
+fn a_probe_run_that_printed_a_judgement_is_that_judgement() {
+    // The counterweight to the `Err` cases below, and it is not optional:
+    // without it, "classify everything as Err" satisfies all of them and gate 1
+    // becomes unpassable instead of unfailable. Both failures publish a
+    // scorecard that is not about the diff.
+    //
+    // Three layouts, because all three are what a model really prints against
+    // this prompt: the fenced block the prompt asks for, that block with the
+    // model's own commentary around it, and the bare object a model prints when
+    // it takes "output strictly valid JSON" literally.
+    let layouts: &[(&str, String)] = &[
+        (
+            "the fenced block the prompt asks for",
+            format!("```json\n{PRINTED_JUDGEMENT}\n```\n"),
+        ),
+        (
+            "the same block with the model's commentary around it",
+            format!(
+                "Here is my assessment.\n\n```json\n{PRINTED_JUDGEMENT}\n```\n\nHope that helps.\n"
+            ),
+        ),
+        ("the bare object", format!("{PRINTED_JUDGEMENT}\n")),
+    ];
+
+    for (label, stdout) in layouts {
+        let eval = classify_probe_output(exit_status(0), stdout, "").unwrap_or_else(|e| {
+            panic!(
+                "{label}: the probe ran, exited zero and printed a judgement. \
+                 Reporting no judgement here turns every well-behaved probe run \
+                 into a blocked pull request: {e}"
+            )
+        });
+
+        // The verdict, the reason and the file list are what the rest of the
+        // gate acts on, so all three must survive unaltered — a classifier that
+        // returned a DEFAULT judgement satisfies an assertion on the verdict
+        // alone.
+        assert!(
+            !eval.is_doc_sufficient,
+            "{label}: the probe said this diff is under-documented"
+        );
+        assert_eq!(
+            eval.missing_doc_summary.as_deref(),
+            Some(MISSING_REASON),
+            "{label}: the probe's stated reason is what reaches the contributor's \
+             scorecard, so it must survive"
+        );
+        assert_eq!(
+            eval.doc_files_to_update,
+            vec![
+                "docs/reference/newly-public.md".to_string(),
+                "CHANGELOG.md".to_string()
+            ],
+            "{label}: the files the probe named are what the gate acts on"
+        );
+        assert!(
+            eval.suggested_adr_title.is_none(),
+            "{label}: the probe suggested no ADR title: {:?}",
+            eval.suggested_adr_title
+        );
+    }
+
+    // The other verdict, so nothing here is satisfied by a classifier that reads
+    // every judgement as adverse.
+    let printed_sufficient = "```json\n{\"is_doc_sufficient\": true, \
+         \"missing_doc_summary\": null, \"doc_files_to_update\": [], \
+         \"suggested_adr_title\": null}\n```\n";
+    let eval = classify_probe_output(exit_status(0), printed_sufficient, "")
+        .expect("a probe that printed a judgement of sufficiency produced a judgement");
+    assert!(
+        eval.is_doc_sufficient,
+        "the probe judged this diff documented, and a classifier that cannot \
+         report that blocks every pull request Anvil reviews"
+    );
+    assert!(
+        eval.doc_files_to_update.is_empty(),
+        "{:?}",
+        eval.doc_files_to_update
+    );
+}
+
+#[test]
+fn a_probe_run_that_printed_no_judgement_is_not_a_judgement() {
+    // THE case. A probe that exited zero has told the gate nothing unless it
+    // printed something the gate can read, and "nothing" is not "sufficient".
+    // The mutation this kills is the historical one: an
+    // `Ok(DocParityEvaluation { is_doc_sufficient: true, .. })` on the
+    // unparseable path, which makes gate 1 unfailable for every model outage,
+    // refusal, truncation and prompt regression at once — silently, because the
+    // run looks successful from the outside.
+    //
+    // Six shapes, all of them things a real probe prints.
+    let printed_nothing_usable: &[(&str, String)] = &[
+        ("nothing at all", String::new()),
+        ("only whitespace", "   \n\n".to_string()),
+        (
+            "prose with no JSON in it — a refusal, or an outage message",
+            "I was unable to review this diff.\n".to_string(),
+        ),
+        (
+            "a block cut off mid-object, which is what a truncated stream leaves",
+            "```json\n{\n  \"is_doc_sufficient\": tr".to_string(),
+        ),
+        (
+            "a fenced block whose contents are not JSON",
+            "```json\nis_doc_sufficient: false\n```\n".to_string(),
+        ),
+        (
+            "valid JSON that answers a different question",
+            "```json\n{\"answer\": \"the docs look fine to me\"}\n```\n".to_string(),
+        ),
+    ];
+
+    for (label, stdout) in printed_nothing_usable {
+        let err = classify_probe_output(exit_status(0), stdout, "")
+            .err()
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label}: the probe exited zero but said nothing about this \
+                     diff. A judgement obtained from this is a judgement nobody \
+                     made, and reading it as sufficiency is the collapse that made \
+                     gate 1 unfailable. stdout was: {stdout:?}"
+                )
+            });
+        assert!(
+            !err.to_string().trim().is_empty(),
+            "{label}: a gate blocked on absent evidence must say what was absent, \
+             or a contributor has nothing to act on"
+        );
+    }
+}
+
+#[test]
+fn a_probe_run_that_exited_non_zero_is_not_a_judgement() {
+    const STDERR: &str = "permission check failed for command\n";
+
+    // A judgement on stdout AND a failure exit. The run failed, so its answer is
+    // not taken — an implementation that reads stdout first and consults the
+    // status only when the parse fails passes every other case in this file
+    // while certifying diffs on the strength of a probe invocation that did not
+    // work.
+    let printed_a_judgement_anyway = format!("```json\n{PRINTED_JUDGEMENT}\n```\n");
+    let err = classify_probe_output(exit_status(1), &printed_a_judgement_anyway, STDERR)
+        .err()
+        .unwrap_or_else(|| {
+            panic!(
+                "the probe exited non-zero. Whatever it printed on the way out is \
+                 not a judgement the gate may act on"
+            )
+        });
+    let message = err.to_string();
+    assert!(
+        !message.trim().is_empty(),
+        "a gate blocked on a failed probe must say so"
+    );
+    assert!(
+        message.contains(STDERR.trim()),
+        "the run's own stderr is what tells an operator whether this was a broken \
+         invocation or a broken repository, and it is the only diagnostic that \
+         exists on this path. got: {message}"
+    );
+
+    // Which status it exited with is part of that diagnostic. Asserted as a
+    // difference rather than against a literal, so this says "the exit status
+    // reaches the message" without pinning how it is rendered.
+    let one = classify_probe_output(exit_status(1), "", STDERR)
+        .expect_err("non-zero is never a judgement")
+        .to_string();
+    let two = classify_probe_output(exit_status(2), "", STDERR)
+        .expect_err("non-zero is never a judgement")
+        .to_string();
+    assert_ne!(
+        one, two,
+        "two probe runs that failed differently must not produce the same line on \
+         a contributor's scorecard: the exit status is the distinguishing detail"
+    );
+}
+
+#[test]
+fn a_probe_abandoned_by_its_supervisor_is_not_a_judgement() {
+    // The way `evaluate_doc_parity` comes back with nothing that has no
+    // `ExitStatus` at all, and therefore the one case in this section that is
+    // not unix-gated: the watchdog gave up on the probe. This arm's own comment
+    // records that it "previously returned is_doc_sufficient: true, which made
+    // gate 1 unfailable".
+    //
+    // `run_with_adaptive_watchdog` calls this fallback for BOTH of its own
+    // failure modes — a global SLA breach and an inactivity stall — and for an
+    // operation that simply returned `Err`, so it is the last thing every
+    // unsuccessful probe passes through, and the reason it is handed is the only
+    // thing that separates them.
+    const STALL: &str = "Inactivity stall: 0 bytes/tokens/syscalls emitted in 15.0s";
+    const SLA: &str = "Exceeded global SLA limit of 30s";
+
+    let stalled = probe_supervision_failure(STALL).to_string();
+    let over_sla = probe_supervision_failure(SLA).to_string();
+
+    assert!(
+        !stalled.trim().is_empty() && !over_sla.trim().is_empty(),
+        "a gate blocked because its probe was abandoned must say so"
+    );
+    assert!(
+        stalled.contains(STALL),
+        "the supervisor's own reason is the whole diagnostic; without it a stall, \
+         an SLA breach and a probe that exited non-zero are one unactionable \
+         line. got: {stalled}"
+    );
+    assert!(
+        over_sla.contains(SLA),
+        "the same on the other supervision failure: {over_sla}"
+    );
+    assert_ne!(
+        stalled, over_sla,
+        "two different supervision failures must not read identically"
+    );
+}
+
+#[test]
+fn the_ways_a_probe_can_fail_are_told_apart_in_what_it_reports() {
+    // Absent evidence blocks, and it blocks the same way whichever shape it
+    // took — so the only thing that tells an operator what to do about it is
+    // what the gate says. A classifier that reports one fixed string for
+    // everything satisfies every "non-empty" assertion above while leaving a
+    // model outage, a broken invocation and an abandoned run looking identical
+    // on the scorecard.
+    let printed_nothing = classify_probe_output(exit_status(0), "I could not review this.", "")
+        .expect_err("no parseable judgement is no judgement")
+        .to_string();
+    let exited_non_zero = classify_probe_output(exit_status(1), "", "permission check failed")
+        .expect_err("a non-zero exit is no judgement")
+        .to_string();
+    let abandoned = probe_supervision_failure("watchdog channel closed").to_string();
+
+    let reported = [
+        ("ran, printed nothing usable", printed_nothing),
+        ("exited non-zero", exited_non_zero),
+        ("abandoned by its supervisor", abandoned),
+    ];
+    for (i, (a_label, a)) in reported.iter().enumerate() {
+        for (b_label, b) in reported.iter().skip(i + 1) {
+            assert_ne!(
+                a, b,
+                "a probe that {a_label} and a probe that {b_label} are different \
+                 failures with different remedies, and the gate's report is the \
+                 only place that difference can survive"
+            );
+        }
+    }
 }

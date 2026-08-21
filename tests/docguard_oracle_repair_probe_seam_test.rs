@@ -34,7 +34,7 @@
 //! Mutating the environment is a data race in a parallel test binary, which is
 //! why this case is alone in its own — the same reason
 //! `tests/docguard_oracle_repair_self_repo_test.rs` is, and the same reason
-//! `tests/docguard_oracle_repair_gate_test.rs` runs its fourteen cases from a
+//! `tests/docguard_oracle_repair_gate_test.rs` runs its eighteen cases from a
 //! single `#[test]`.
 //!
 //! ## Agreement is not the assertion; the stored value is
@@ -63,8 +63,14 @@
 //! pub enum Probe {
 //!     Live(String),
 //!     Overridden(Result<DocParityEvaluation, String>),
+//!     SuppliedOutput(std::process::Output),
 //! }
 //! ```
+//!
+//! (`SuppliedOutput` is the seam for the OTHER half of the probe boundary —
+//! supplying a completed probe run so that the code deciding whether it produced
+//! a judgement is the code under test. It is a stored value on exactly the same
+//! terms, and it is driven from `tests/docguard_oracle_repair_gate_test.rs`.)
 //!
 //! It has no empty arm and no drainable arm, so an implementer cannot reach for
 //! `take()` — there is no `None` to fall through from, and "the override has

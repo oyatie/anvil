@@ -195,14 +195,43 @@ const OWNED_PAGES: &[&str] = &[
 /// is not doctrine — and the pipeline commits and pushes those edits onto the
 /// contributor's branch.
 ///
-/// `CHANGELOG.md` is chosen deliberately: it is named in the historical
-/// exemption sentence itself (`such as README.md or CHANGELOG.md`), so excluding
-/// it is a real decision about the corpus boundary rather than an arbitrary
-/// path. The nested `docs/notes/roadmap.md` is chosen because it sits under
-/// `docs/`, beside the two directories `collect_owned_pages` really does
-/// enumerate, which is exactly where a recursive walk stops being
-/// distinguishable from the fixed list.
-const NOT_OWNED_PAGES: &[&str] = &["CHANGELOG.md", "docs/notes/roadmap.md"];
+/// Each of the three kills a different way of not maintaining a list, and the
+/// third exists because the first two do not.
+///
+/// * `CHANGELOG.md` is chosen deliberately: it is named in the historical
+///   exemption sentence itself (`such as README.md or CHANGELOG.md`), so
+///   excluding it is a real decision about the corpus boundary rather than an
+///   arbitrary path. It is at the checkout root, so it kills a walk rooted
+///   there.
+/// * The nested `docs/notes/roadmap.md` sits under `docs/`, beside the two
+///   directories `collect_owned_pages` really does enumerate, which is exactly
+///   where a recursive walk stops being distinguishable from the fixed list.
+/// * `docs/runbook.md` is a SIBLING of `docs/doctrine.md` — a `*.md` sitting
+///   directly under `docs/`, at the same depth as an owned page and in the same
+///   directory. It is here because the other two leave the second natural way
+///   to stop maintaining a list completely alive: not a recursive walk but a
+///   SHALLOW glob of the directories the corpus already lives in —
+///   `README.md`, `openapi/openapi.yaml`, every `*.md` directly under `docs/`,
+///   plus the two ADR directories. That reaches all five `OWNED_PAGES`
+///   (`docs/doctrine.md` sits directly under `docs/`), never touches a root
+///   file, and never descends into `docs/notes/`, so `CHANGELOG.md` and
+///   `docs/notes/roadmap.md` both survive it and every byte-identity and
+///   `rewritten.len()` assertion in all four binaries holds.
+///
+/// In the live checkout that shallow glob is currently INDISTINGUISHABLE from
+/// the fixed list, which is what makes it dangerous rather than merely wrong:
+/// `docs/` today contains only `doctrine.md`, `adr/` and `decisions/`. The
+/// moment anyone adds `docs/runbook.md`, or any other page beside doctrine, the
+/// sync starts rewriting that page's gate-count claims and deleting its
+/// exemption sentences on every Anvil pull request, and the pipeline commits and
+/// pushes the edit onto the contributor's branch. That is issue #27's harm aimed
+/// inward — latent, silent, and triggered by an ordinary documentation commit
+/// rather than by any change to this code.
+///
+/// All three carry the same drifting bytes as the owned pages, written in the
+/// same checkout in the same run, so the only thing that can separate any of
+/// them from `docs/doctrine.md` is the corpus boundary this constant fences.
+const NOT_OWNED_PAGES: &[&str] = &["CHANGELOG.md", "docs/notes/roadmap.md", "docs/runbook.md"];
 
 const EXEMPTION_MARKER: &str = "does **not** yet amend existing documents";
 const PLAIN_EXEMPTION_MARKER: &str = "does not yet amend existing documents";
@@ -933,64 +962,66 @@ fn a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently() {
     // `the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason`
     // (`tests/docguard_oracle_repair_gate_test.rs`).
     #[cfg(unix)]
-    for repo in WATCHED {
-        let dir = tempdir().unwrap();
-        let Some(original) = make_adr_dir_unreadable(dir.path()) else {
-            panic!(
-                "fixture: this process can read a 0o000 directory, so the \
-                 unreadable-ADR fixture cannot be built. That is a root container, \
-                 not a passing implementation — run this suite as a non-root user. \
-                 The `README.md`-is-a-directory fixture above still ran, but it \
-                 fences only the per-page read, never `collect_owned_pages`."
+    {
+        for repo in WATCHED {
+            let dir = tempdir().unwrap();
+            let Some(original) = make_adr_dir_unreadable(dir.path()) else {
+                panic!(
+                    "fixture: this process can read a 0o000 directory, so the \
+                     unreadable-ADR fixture cannot be built. That is a root container, \
+                     not a passing implementation — run this suite as a non-root user. \
+                     The `README.md`-is-a-directory fixture above still ran, but it \
+                     fences only the per-page read, never `collect_owned_pages`."
+                );
+            };
+
+            // Both calls are made while the directory is unreadable, and the guard
+            // restores the permissions however this block leaves — assertion,
+            // panic inside the sync, or ordinary fall-through — because an
+            // unreadable directory also defeats `TempDir`'s own cleanup.
+            let _restore = RestoreAdrDir {
+                repo_dir: dir.path(),
+                original: Some(original),
+            };
+            let anvil_result = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES);
+            let watched_result = sync_published_counts(repo, dir.path(), TOTAL_GATES);
+
+            assert!(
+                anvil_result.is_err(),
+                "fence: an unreadable `docs/adr` must remain a real failure for Anvil's \
+                 own corpus, or the case below is not about a corpus the sync could not \
+                 read"
             );
-        };
 
-        // Both calls are made while the directory is unreadable, and the guard
-        // restores the permissions however this block leaves — assertion,
-        // panic inside the sync, or ordinary fall-through — because an
-        // unreadable directory also defeats `TempDir`'s own cleanup.
-        let _restore = RestoreAdrDir {
-            repo_dir: dir.path(),
-            original: Some(original),
-        };
-        let anvil_result = sync_published_counts(ANVIL, dir.path(), TOTAL_GATES);
-        let watched_result = sync_published_counts(repo, dir.path(), TOTAL_GATES);
+            let sync = watched_result.unwrap_or_else(|e| {
+                panic!(
+                    "{repo}: `docs/adr` in somebody else's checkout is not Anvil's \
+                     corpus, and LISTING it is not something this sync had any reason \
+                     to do. Deciding ownership after `collect_owned_pages` blocks every \
+                     pull request on {repo} at gate 1 on a directory Anvil should never \
+                     have opened. got: {e}"
+                )
+            });
 
-        assert!(
-            anvil_result.is_err(),
-            "fence: an unreadable `docs/adr` must remain a real failure for Anvil's \
-             own corpus, or the case below is not about a corpus the sync could not \
-             read"
-        );
-
-        let sync = watched_result.unwrap_or_else(|e| {
-            panic!(
-                "{repo}: `docs/adr` in somebody else's checkout is not Anvil's \
-                 corpus, and LISTING it is not something this sync had any reason \
-                 to do. Deciding ownership after `collect_owned_pages` blocks every \
-                 pull request on {repo} at gate 1 on a directory Anvil should never \
-                 have opened. got: {e}"
-            )
-        });
-
-        assert!(
-            sync.rewritten.is_empty(),
-            "{repo}: nothing may be reported as rewritten: {:?}",
-            sync.rewritten
-        );
-        assert!(
-            sync.remaining_drift.is_empty(),
-            "{repo}: a corpus the sync does not own is not drift against Anvil's \
-             TOTAL_GATES, listable or not: {:?}",
-            sync.remaining_drift
-        );
-        let reason = sync.not_applicable.as_deref().unwrap_or_else(|| {
-            panic!("{repo}: the skip must be stated here too, not read as a clean page")
-        });
-        assert!(
-            !reason.trim().is_empty(),
-            "{repo}: the stated reason must actually say something"
-        );
+            assert!(
+                sync.rewritten.is_empty(),
+                "{repo}: nothing may be reported as rewritten: {:?}",
+                sync.rewritten
+            );
+            assert!(
+                sync.remaining_drift.is_empty(),
+                "{repo}: a corpus the sync does not own is not drift against Anvil's \
+                 TOTAL_GATES, listable or not: {:?}",
+                sync.remaining_drift
+            );
+            let reason = sync.not_applicable.as_deref().unwrap_or_else(|| {
+                panic!("{repo}: the skip must be stated here too, not read as a clean page")
+            });
+            assert!(
+                !reason.trim().is_empty(),
+                "{repo}: the stated reason must actually say something"
+            );
+        }
     }
 }
 

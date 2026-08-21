@@ -5,6 +5,7 @@ use std::path::Path;
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod corpus_sync;
 pub mod docs_as_code_guard;
 pub mod frontmatter;
 pub use docs_as_code_guard::{DocsAsCodeGuard, DocsAsCodeReport};
@@ -31,8 +32,7 @@ pub struct DocGuardReport {
     /// timeout, unparseable response). Distinct from `is_sufficient: false`,
     /// which is a real adverse finding.
     ///
-    /// Invariant I1: absent evidence is never a pass — but nor is it a
-    /// fabricated accusation, so this maps to `GateStatus::Errored`.
+    /// Invariant I1: absent evidence is never a pass. Maps to `GateStatus::Errored`.
     pub errored: Option<String>,
 }
 
@@ -49,7 +49,10 @@ impl DocGuard {
         Self { agy_effort }
     }
 
-    /// Evaluates documentation parity, frontmatter compliance, and auto-generates any missing docs or ADRs
+    /// Evaluates documentation parity, frontmatter compliance, and auto-generates any missing docs or ADRs.
+    ///
+    /// Published gate-count claims are owned by `corpus_sync`. That pass is
+    /// mechanical and runs first. The LLM probe is not the authority for counts.
     pub async fn ensure_documentation_parity(
         &self,
         repo: &str,
@@ -62,6 +65,36 @@ impl DocGuard {
             "Running DocGuard documentation parity & frontmatter check on {}#{}...",
             repo, diff_ctx.pr_number
         );
+
+        // Mechanical corpus sync first. Remaining drift must fail the gate
+        // without being reported as AutoUpdated (the evaluator treats a
+        // non-empty files list as AutoUpdated).
+        let rewritten = match corpus_sync::sync_published_counts(
+            repo_dir,
+            crate::pre_merge_guard::report::TOTAL_GATES,
+        ) {
+            Ok(sync) if !sync.remaining_drift.is_empty() => {
+                return Ok(DocGuardReport {
+                    errored: None,
+                    is_sufficient: false,
+                    files_created_or_updated: Vec::new(),
+                    summary: format!(
+                        "Published docs still disagree with TOTAL_GATES={}: {}",
+                        crate::pre_merge_guard::report::TOTAL_GATES,
+                        sync.remaining_drift.join("; ")
+                    ),
+                });
+            }
+            Ok(sync) => sync.rewritten,
+            Err(e) => {
+                return Ok(DocGuardReport {
+                    errored: Some(e.to_string()),
+                    is_sufficient: false,
+                    files_created_or_updated: Vec::new(),
+                    summary: format!("Could not make published docs honest: {e}"),
+                });
+            }
+        };
 
         // Step 1: Validate frontmatters on all modified documentation and config files
         for file in &diff_ctx.changed_files {
@@ -76,7 +109,7 @@ impl DocGuard {
                             errored: None,
                             is_sufficient: false,
                             files_created_or_updated: Vec::new(),
-                            summary: format!("❌ Frontmatter & SSOT validation failed: {}", err),
+                            summary: format!("Frontmatter & SSOT validation failed: {}", err),
                         });
                     }
                 }
@@ -113,11 +146,21 @@ impl DocGuard {
                 "Documentation parity is satisfied for {}#{}",
                 repo, diff_ctx.pr_number
             );
+            let summary = if rewritten.is_empty() {
+                "Documentation and SSOT frontmatters satisfy the required fields and parity rules."
+                    .to_string()
+            } else {
+                format!(
+                    "Published docs rewritten to TOTAL_GATES={}: {}",
+                    crate::pre_merge_guard::report::TOTAL_GATES,
+                    rewritten.join(", ")
+                )
+            };
             return Ok(DocGuardReport {
-                            errored: None,
+                errored: None,
                 is_sufficient: true,
-                files_created_or_updated: Vec::new(),
-                summary: "Documentation and SSOT frontmatters satisfy the required fields and parity rules.".to_string(),
+                files_created_or_updated: rewritten,
+                summary,
             });
         }
 
@@ -127,9 +170,10 @@ impl DocGuard {
         );
 
         // Step 3: Auto-generate missing documentation / ADRs in the workspace
-        let updated_files = self
+        let mut updated_files = self
             .generate_and_write_docs(repo, repo_dir, diff_ctx, pr_title, pr_body, &eval)
             .await?;
+        updated_files.extend(rewritten);
 
         let summary = format!(
             "Auto-generated documentation updates for: {}",
@@ -233,28 +277,13 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             std::time::Duration::from_secs(30),
             move || async move {
                 let mut cmd = Command::new("agy");
-                // Match the invocation form used by every other agy call site
-                // (`--print <prompt> --effort <e>`); the previous
-                // `prompt --raw` form was unique to this guard.
                 cmd.args([
                     "--print",
                     &prompt_clone,
                     "--effort",
                     &agy_effort,
-                    // Required for agy to read the repository at all. Omitting it
-                    // in the Phase 0a rewrite made every doc-parity probe fail
-                    // with "permission check failed for command", which the
-                    // fail-closed change then surfaced as a blocked gate --
-                    // correctly, but for a reason this code introduced.
-                    //
-                    // This probe only READS, so a scoped read-only agy mode would
-                    // be the right long-term fix; passing the blanket flag here
-                    // widens the S5 surface by one more call site.
                     "--dangerously-skip-permissions",
                 ]);
-                // Run inside the repository under review. Previously unset, so
-                // this probe executed in anvil's own working directory and
-                // judged the wrong tree.
                 cmd.current_dir(&repo_dir_owned);
 
                 match crate::exec::run_bounded_for(
@@ -272,8 +301,6 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                                 return Ok(eval);
                             }
                         }
-                        // Ran successfully but produced nothing parseable: we
-                        // have no judgement, so we must not claim sufficiency.
                         anyhow::bail!(
                             "doc parity probe returned no parseable evaluation (stdout {} bytes)",
                             stdout.len()
@@ -284,16 +311,10 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                         output.status,
                         String::from_utf8_lossy(&output.stderr).trim()
                     ),
-                    // `run_bounded_for` already distinguishes "failed to run"
-                    // from "timed out" in its message, and both stay errors.
                     Err(e) => Err(e),
                 }
             },
             |err| {
-                // No deterministic local fallback exists for doc parity, so the
-                // watchdog path must report the failure rather than manufacture
-                // a pass. This arm previously returned is_doc_sufficient: true,
-                // which made gate 1 unfailable.
                 Err(anyhow::anyhow!(
                     "doc parity probe supervision failed: {}",
                     err

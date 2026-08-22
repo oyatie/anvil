@@ -592,20 +592,69 @@ pub async fn certify_pull_request(
     Ok(cert_report)
 }
 
-/// The repository's own verification gate, as `test_suite_status` reports it.
+/// The repository's own verification gate, run against `head_sha` itself.
 ///
-/// `Some(true)`/`Some(false)` is a gate that ran; `None` is a repository that
-/// offers none, which the corpus records as `NotMeasured` and which withholds
-/// the merge. Deliberately the same gate the queue healer runs and the same
-/// thing the scorecard row already says it is ("Local verification gate
-/// passed"), so no path has to invent an outcome for it — `execute_pr_review`
-/// used to pass a literal `Some(true)` for a suite it never ran.
-pub async fn local_verification_gate(repo_dir: &Path) -> Option<bool> {
-    match crate::queue_healer::QueueHealer::run_local_test_gate(repo_dir).await {
+/// `Some(true)`/`Some(false)` is a gate that ran on this commit; `None` is a
+/// gate that could not be attributed to it — the repository offers none, or no
+/// tree at `head_sha` could be produced — which the corpus records as
+/// `NotMeasured` and which withholds the merge.
+///
+/// The tree is an ephemeral worktree checked out at `head_sha`, which is the
+/// whole of the correctness here. Run in the shared clone that
+/// `ensure_repo_cloned` hands out, this gate builds whatever that clone is
+/// currently on: nothing on the review or the certify path ever checks a pull
+/// request head out into it (`ensure_repo_cloned` only fetches, and
+/// `prepare_pr_diff` only fetches the pull ref), while `execute_pr_fix` runs
+/// `git checkout -B pr-<N>` in it. So its outcome was the default branch's, or
+/// the last PR the fixer touched — published as this pull request's
+/// `test_suite_status`, counted in "N of 72 gates passed", and signed into a
+/// formal GitHub APPROVE. A green default branch admitted a pull request that
+/// does not compile; a clone left dirty by the fixer accused one nothing
+/// measured. `QueueHealer::heal_ejected_pr` already ran this gate correctly, on
+/// an ephemeral worktree at the head it had just produced; this is the same
+/// mechanism, and the reason its result may be called a measurement of the
+/// certified commit.
+pub async fn local_verification_gate(
+    git_mgr: &crate::git_manager::GitManager,
+    repo: &str,
+    pr_number: u64,
+    head_sha: &str,
+) -> Option<bool> {
+    let worktree = match git_mgr
+        .create_ephemeral_worktree(repo, pr_number, head_sha)
+        .await
+    {
+        Ok(worktree) => worktree,
+        Err(e) => {
+            // `None`, not `Some(false)`: a tree that could not be produced is
+            // not a suite that failed. `NotMeasured` withholds the merge and
+            // names itself; a fabricated `Failed` would accuse the pull request
+            // of something nothing ran.
+            warn!(
+                "No tree at {} for {}#{}, so the local verification gate was not measured: {:#}",
+                head_sha, repo, pr_number, e
+            );
+            return None;
+        }
+    };
+
+    let outcome = match crate::queue_healer::QueueHealer::run_local_test_gate(
+        &worktree.worktree_path,
+    )
+    .await
+    {
         crate::queue_healer::TestGate::Passed(_) => Some(true),
         crate::queue_healer::TestGate::Failed(_) => Some(false),
         crate::queue_healer::TestGate::Unavailable => None,
+    };
+
+    if let Err(e) = worktree.cleanup().await {
+        warn!(
+            "Verification-gate worktree cleanup failed for {}#{}: {}",
+            repo, pr_number, e
+        );
     }
+    outcome
 }
 
 /// The evidence an enlistment path holds, or the reason it holds none.
@@ -618,9 +667,14 @@ pub async fn local_verification_gate(repo_dir: &Path) -> Option<bool> {
 /// asserted absent.
 ///
 /// `expected_head` is the commit the caller believes it is enlisting — the
-/// healer knows it, because it just pushed it. Certifying a different head is
-/// refused rather than reported, because GitHub's view of a PR head is
-/// eventually consistent immediately after a push.
+/// healer knows it, because it just pushed it. GitHub's view of a PR head is
+/// eventually consistent immediately after a push, so
+/// `fetch_pr_metadata_at` waits a bounded while for the API to name that commit
+/// and only then refuses: the race is tolerated, and certifying a *different*
+/// head is still refused rather than reported.
+///
+/// A run that measured nothing is refused too. An empty diff certifies every
+/// diff-scanning gate by default, so it is a cause here rather than a report.
 ///
 /// `Err` is fail-closed and carries the cause: the caller turns it into the
 /// refusal an operator reads, rather than leaving it in a server log.
@@ -668,23 +722,9 @@ async fn certify_for_enlistment(
     );
     let meta = state
         .github_client
-        .fetch_pr_metadata(repo, pr_number)
+        .fetch_pr_metadata_at(repo, pr_number, expected_head)
         .await
         .context("Failed to read pull request metadata before certification")?;
-
-    if let Some(expected) = expected_head
-        && meta.head_ref_oid != expected
-    {
-        anyhow::bail!(
-            "the head to certify for {}#{} is {}, and GitHub reports {}. Certifying the commit \
-             the API happens to name would produce evidence about a commit nobody asked to \
-             enlist.",
-            repo,
-            pr_number,
-            expected,
-            meta.head_ref_oid
-        );
-    }
 
     let repo_dir = state
         .git_mgr
@@ -703,6 +743,34 @@ async fn certify_for_enlistment(
         )
         .await
         .context("Failed to prepare PR diff context before certification")?;
+
+    // A corpus with nothing to measure certifies nothing. `execute_pr_review`
+    // has always refused an empty diff -- it returns before a single gate runs
+    // -- and this entry point, shared by the three doors that never reviewed the
+    // pull request, had no such refusal. Every diff-scanning guard reports a
+    // clean pass over a zero-byte diff, and the run then stamps that with a
+    // genuine provenance mark and a subject naming the real head: a fully
+    // admissible report over zero measured lines, arriving through the front
+    // door. `prepare_pr_diff` no longer swallows the fetch failure that made it
+    // reachable; this refuses the state itself, which is the fact that matters
+    // however it was arrived at.
+    //
+    // `bail`, not `return Ok(())`: the caller is about to enlist, so the
+    // difference between "nothing to measure" and "everything passed" has to
+    // reach it as a cause.
+    if diff_ctx.diff_content.trim().is_empty() || diff_ctx.changed_files.is_empty() {
+        anyhow::bail!(
+            "the corpus has nothing to measure for {}#{} at {}: the diff against {} is {} byte(s) \
+             and {} file(s) are listed as changed. A pull request whose changes cannot be read is \
+             not a pull request whose gates passed.",
+            repo,
+            pr_number,
+            meta.head_ref_oid,
+            meta.base_ref_name,
+            diff_ctx.diff_content.trim().len(),
+            diff_ctx.changed_files.len()
+        );
+    }
 
     let body = meta.body.as_deref().unwrap_or("");
 
@@ -732,7 +800,8 @@ async fn certify_for_enlistment(
         }
     };
 
-    let test_suite_passed = local_verification_gate(&repo_dir).await;
+    let test_suite_passed =
+        local_verification_gate(&state.git_mgr, repo, pr_number, &meta.head_ref_oid).await;
 
     certify_pull_request(
         state,

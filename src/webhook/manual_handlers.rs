@@ -5,16 +5,6 @@ use tracing::{error, info, warn};
 use super::pipelines::{execute_pr_certify, execute_pr_fix, execute_pr_review};
 use super::{ApiResponse, AppState};
 
-/// How long `POST /api/enlist` will wait for the certification corpus and the
-/// enlistment before answering that it gave up.
-///
-/// The corpus runs a build gate (`ExecClass::Build`, 30 minutes) and a model
-/// turn (`ExecClass::Model`, 10 minutes) among other things, so this is the
-/// span in which a real answer is possible at all. The point is not that the
-/// bound is short: it is that Anvil says what happened rather than leaving the
-/// caller's own timeout to answer for it.
-const ENLIST_REQUEST_LIMIT: std::time::Duration = std::time::Duration::from_secs(2_700);
-
 #[derive(Deserialize, Debug)]
 pub struct ManualReviewRequest {
     pub repo: String,
@@ -279,54 +269,47 @@ pub async fn manual_enlist_handler(
     // happened, so a refusal reached a log line inside a dropped task and never
     // the person who asked for the merge.
     //
-    // Bounded, because the work behind that answer is a clone, the whole gate
-    // corpus and a commit in the shared clone. An unbounded handler is answered
-    // by the caller's timeout instead of by Anvil, which is the same silence the
-    // detached spawn produced.
-    let enlistment = async {
-        // This path has not reviewed the pull request, so it runs the
-        // certification corpus and hands over what that produced.
-        let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
-            &state, &repo, pr_number, None,
-        )
-        .await;
-        // The reason no report was obtained, kept for the answer rather than
-        // left in a server log: "no report was obtained" with no cause tells an
-        // operator nothing they can act on.
-        let why_no_report = evidence.as_ref().err().map(|e| format!("{e:#}"));
-        let outcome = state
-            .merge_enlister
-            .enlist_into_merge_queue(&repo, pr_number, evidence.as_ref().ok())
+    // Run to completion rather than under a `tokio::time::timeout`. A timeout
+    // cancels a future by dropping it at whatever await it is suspended on, and
+    // there is no await here at which that is safe to assert anything about:
+    // `enlist_into_merge_queue` keeps awaiting after `gh pr merge --auto` has
+    // returned success, so a bound expiring during the enlistment note left the
+    // pull request armed in the merge queue while this handler answered 504
+    // "nothing was enlisted" -- a published claim about an outcome nothing
+    // measured, which is the defect this whole change exists to remove. Earlier
+    // in the run the same cancellation abandons `certify_pull_request` while it
+    // holds the per-PR lock and after the doc and cedar guards have written
+    // files into the shared clone, leaving them for the next review run's
+    // `git add -A` to sweep into a different pull request's governance commit.
+    //
+    // What bounds this endpoint is what bounds every other path through the
+    // corpus: `crate::exec::run_bounded` gives every child process a deadline
+    // and `kill_on_drop`, and the model turn carries `--print-timeout`. There is
+    // no unbounded await in the pipeline -- only a long one.
+    //
+    // This path has not reviewed the pull request, so it runs the certification
+    // corpus and hands over what that produced.
+    let evidence =
+        crate::webhook::pipelines::certify::evidence_for_enlistment(&state, &repo, pr_number, None)
             .await;
-        (outcome, why_no_report)
-    };
+    // The reason no report was obtained, kept for the answer rather than left in
+    // a server log: "no report was obtained" with no cause tells an operator
+    // nothing they can act on.
+    let why_no_report = evidence.as_ref().err().map(|e| format!("{e:#}"));
+    let outcome = state
+        .merge_enlister
+        .enlist_into_merge_queue(&repo, pr_number, evidence.as_ref().ok())
+        .await;
 
-    let bounded = tokio::time::timeout(ENLIST_REQUEST_LIMIT, enlistment).await;
-
-    match bounded {
-        Err(_) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(ApiResponse {
-                success: false,
-                message: format!(
-                    "Merge queue enlistment for {}#{} did not finish within {}s and was \
-                     abandoned; nothing was enlisted. The certification corpus behind this \
-                     endpoint clones the repository and runs every gate, so it can outlast an \
-                     HTTP request.",
-                    req.repo,
-                    req.pr_number,
-                    ENLIST_REQUEST_LIMIT.as_secs()
-                ),
-            }),
-        ),
-        Ok((Ok(()), _)) => (
+    match outcome {
+        Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse {
                 success: true,
                 message: format!("Enlisted {}#{} in the merge queue", req.repo, req.pr_number),
             }),
         ),
-        Ok((Err(e), why_no_report)) => (
+        Err(e) => (
             StatusCode::CONFLICT,
             Json(ApiResponse {
                 success: false,

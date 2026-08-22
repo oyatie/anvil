@@ -366,17 +366,32 @@ fi
             pr_number, repo, head_sha, base_branch
         );
 
+        // Propagated, not swallowed. Discarded, a failed or rate-limited fetch
+        // fell through to `unwrap_or_default()` below and returned a context
+        // with an empty diff and no changed files: every diff-scanning gate
+        // then passed on nothing, and the corpus stamped a fully certified
+        // report over zero measured lines. "The diff could not be obtained" is
+        // an error, not a measurement of no changes.
         let pr_ref = format!("pull/{}/head", pr_number);
         let mut fetch_ref_cmd = Command::new("git");
         fetch_ref_cmd
             .current_dir(&repo_dir)
             .args(["fetch", "origin", &pr_ref, "--force"]);
-        let _ = crate::exec::run_bounded(
+        let fetch_out = crate::exec::run_bounded(
             fetch_ref_cmd,
             crate::exec::ExecClass::Vcs,
             "git fetch pull request ref",
         )
-        .await;
+        .await
+        .context("Failed to run git fetch for the pull request ref")?;
+        if !fetch_out.status.success() {
+            bail!(
+                "git fetch origin {} failed for {}: {}",
+                pr_ref,
+                repo,
+                String::from_utf8_lossy(&fetch_out.stderr).trim()
+            );
+        }
 
         let is_incremental = last_reviewed_sha.is_some()
             && last_reviewed_sha.unwrap() != head_sha
@@ -393,7 +408,12 @@ fi
                     let base_ref = format!("origin/{}", base_branch);
                     self.run_git_diff(&repo_dir, &base_ref, head_sha)
                         .await
-                        .unwrap_or_default()
+                        .with_context(|| {
+                            format!(
+                                "no diff could be computed for {}#{} between {} and {}",
+                                repo, pr_number, base_ref, head_sha
+                            )
+                        })?
                 }
             }
         };
@@ -409,7 +429,12 @@ fi
                 head_sha,
             )
             .await
-            .unwrap_or_default();
+            .with_context(|| {
+                format!(
+                    "the changed-file list could not be read for {}#{} at {}",
+                    repo, pr_number, head_sha
+                )
+            })?;
 
         Ok(PrDiffContext {
             repo: repo.to_string(),
@@ -481,16 +506,23 @@ fi
         .await
         .context("Failed to get changed files")?;
 
-        if output.status.success() {
-            let files = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            Ok(files)
-        } else {
-            Ok(Vec::new())
+        if !output.status.success() {
+            // An unreadable file list is not an empty file list. Returned as
+            // `Ok(vec![])` it read as "this pull request changes nothing", which
+            // is the shape every diff-scanning gate passes on.
+            bail!(
+                "git diff --name-only {}..{} failed: {}",
+                from_ref,
+                to_ref,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
+        let files = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Ok(files)
     }
 }
 

@@ -332,6 +332,17 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               (carbon_aware/mod.rs:62).",
         blocked_on: Some("a CPU-time meter and a grid carbon-intensity feed"),
     },
+    GateFidelity {
+        gate_id: "openvex_status",
+        aspiration: "Attest CVE exploitability by pruning advisories against the real call graph.",
+        reference: "OpenVEX; Google capslock",
+        fidelity: Fidelity::Aspirational,
+        gap: "No advisory feed or dependency inventory is read. The whole reachability decision is \
+              `!source_code.contains(vuln_symbol)`, and the review pipeline supplied placeholder \
+              CVE and symbol names, so every PR was attested NotAffected by an advisory that does \
+              not exist. Now reports NotMeasured (vex_scanner/callgraph_pruner.rs:36).",
+        blocked_on: Some("an advisory feed and a call graph; neither exists yet"),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

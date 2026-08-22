@@ -131,7 +131,11 @@ pub struct PreMergeCertificationReport {
     /// `enlist_into_merge_queue` re-reads the head and refuses when it has
     /// moved.
     #[serde(default)]
-    pub(super) subject: Option<CertifiedSubject>,
+    /// `pub(crate)` rather than `pub(super)`: the door that acts on this lives
+    /// in `merge_enlister`, and while only the evaluator may set it, the check
+    /// that reads it was untestable from outside `pre_merge_guard` — which is
+    /// why it went unpinned.
+    pub(crate) subject: Option<CertifiedSubject>,
 }
 
 /// The pull request and commit a certification run was performed against.

@@ -49,7 +49,11 @@ impl MergeEnlister {
     /// merge is requested. `gh pr merge --match-head-commit` carries the same
     /// SHA to GitHub, so the queue rejects the merge if it moves again between
     /// this check and the request.
-    fn subject_refusal(
+    /// Exposed rather than private because the only caller is the door, and the
+    /// door talks to GitHub. Left private, this check was pinned by nothing:
+    /// `if false && subject.head_sha != head` kept clippy clean and all 68 test
+    /// targets green while admitting a report measured against another commit.
+    pub fn subject_refusal(
         report: Option<&PreMergeCertificationReport>,
         repo: &str,
         pr_number: u64,
@@ -608,5 +612,80 @@ impl MergeEnlister {
             .post_pr_comment(repo, pr_number, &note)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod subject_refusal_tests {
+    use super::*;
+    use crate::pre_merge_guard::report::CertifiedSubject;
+
+    /// A report measured against one commit is not evidence about another.
+    ///
+    /// This is the door's headline defence against the healer race and the
+    /// push-during-corpus race, and it was pinned by nothing: changing the
+    /// comparison to `if false && subject.head_sha != head` left clippy clean
+    /// and all 68 test targets green, while admitting — and formally
+    /// approving — a pull request whose head no gate had seen. Deleting the
+    /// call outright was caught only by a dead-code lint.
+    ///
+    /// It sits in-crate because `subject` is set by the evaluator alone; from
+    /// outside `pre_merge_guard` no test can build a report that carries one,
+    /// which is exactly why the invariant went uncovered.
+    fn measured_at(head: &str) -> PreMergeCertificationReport {
+        let mut report = PreMergeCertificationReport::unmeasured("fixture");
+        report.subject = Some(CertifiedSubject {
+            repo: "oyatie/anvil".to_string(),
+            pr_number: 7,
+            head_sha: head.to_string(),
+        });
+        report
+    }
+
+    #[test]
+    fn the_door_refuses_a_report_measured_against_another_commit() {
+        let measured = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let now_at = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let report = measured_at(measured);
+
+        let err = MergeEnlister::subject_refusal(Some(&report), "oyatie/anvil", 7, now_at)
+            .expect_err(
+                "the report was measured against one commit and the head is now another; \
+                 admitting it queues a commit the corpus never saw",
+            );
+        let msg = err.to_string();
+        assert!(
+            msg.contains(measured) && msg.contains(now_at),
+            "the refusal must name both commits so an author can see what moved: {msg}"
+        );
+    }
+
+    #[test]
+    fn the_door_admits_the_commit_the_report_was_measured_on() {
+        let measured = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let report = measured_at(measured);
+        assert!(
+            MergeEnlister::subject_refusal(Some(&report), "oyatie/anvil", 7, measured).is_ok(),
+            "a check that refuses its own subject refuses everything, which passes the \
+             test above for the wrong reason"
+        );
+    }
+
+    #[test]
+    fn a_report_about_another_pull_request_is_not_evidence_about_this_one() {
+        let measured = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let report = measured_at(measured);
+        assert!(
+            MergeEnlister::subject_refusal(Some(&report), "oyatie/console", 7, measured).is_err(),
+            "another repository"
+        );
+        assert!(
+            MergeEnlister::subject_refusal(Some(&report), "oyatie/anvil", 8, measured).is_err(),
+            "another pull request"
+        );
+        assert!(
+            MergeEnlister::subject_refusal(None, "oyatie/anvil", 7, measured).is_err(),
+            "no report at all is not evidence"
+        );
     }
 }

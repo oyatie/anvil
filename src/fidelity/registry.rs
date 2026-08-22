@@ -343,6 +343,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               not exist. Now reports NotMeasured (vex_scanner/callgraph_pruner.rs:36).",
         blocked_on: Some("an advisory feed and a call graph; neither exists yet"),
     },
+    GateFidelity {
+        gate_id: "finops_status",
+        aspiration: "Ratchet cost-per-outcome by budgeting heap allocations on hot paths.",
+        reference: "Zero-copy parsing; allocation budgets",
+        fidelity: Fidelity::Heuristic,
+        gap: "Scope is a fixed list of path fragments -- `is_hotpath` matches network/, codec/, \
+              engine/, hotpath, packet -- and no tracked file in this repository contains any of \
+              them, so nothing is ever scanned here. The gate used to report a clean hotpath \
+              budget from that empty scope; it now separates a clean scan from an empty one \
+              (finops_ratchet/allocation_scanner.rs:30).",
+        blocked_on: Some("a per-tenant hotpath declaration; the marker set is hardcoded"),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

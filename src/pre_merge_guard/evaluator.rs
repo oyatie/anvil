@@ -475,23 +475,10 @@ impl PreMergeGuard {
         };
 
         // 45. Hermetic Build Reproducibility
-        let hermetic_build_status = if hermetic_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(
-                "Hermetic build reproducibility check detected bitwise artifact non-determinism."
-                    .to_string(),
-            )
-        };
+        let hermetic_build_status = hermetic_report.status.clone();
 
         // 46. OpenVEX Reachability Analysis
-        let openvex_status = if openvex_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(
-                "OpenVEX scanner identified reachable upstream CVE symbol in binary.".to_string(),
-            )
-        };
+        let openvex_status = openvex_report.status.clone();
 
         // 47. Cosign & Sigstore Provenance Signing
         let cosign_status = if cosign_report.passed {

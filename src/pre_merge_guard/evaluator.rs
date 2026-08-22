@@ -312,11 +312,12 @@ impl PreMergeGuard {
         };
 
         // 17. W3C TraceContext Distributed Tracing
-        let trace_status = if trace_report.is_propagated {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(trace_report.summary.clone())
-        };
+        // The guard composes four sentences and decides between four statuses.
+        // Rebuilt here from `is_propagated`, three of them were discarded --
+        // `GateStatus::Passed` carries no string -- so a diff in which nothing
+        // was inspected rendered as a bare tick counted in "N/N gates passed".
+        // Same shape as gate 14 above: the guard decides, this clones.
+        let trace_status = trace_report.status.clone();
 
         // 18. Constant-Work Static Bounded Allocations
         let constant_work_status = if constant_work_report.is_bounded {

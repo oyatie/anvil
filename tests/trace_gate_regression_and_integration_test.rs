@@ -525,7 +525,6 @@ mod stub {
             status: GateStatus::Passed,
             passed: true,
             rollback_triggered: false,
-            postmortem: None,
             summary: STUB.to_string(),
         };
         let wasm = WasmSandboxReport {

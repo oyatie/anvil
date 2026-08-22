@@ -392,7 +392,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               postmortem. Nothing measures error rate or latency, though -- the review pipeline \
               passed hardcoded healthy readings, so the degraded branch was unreachable on every \
               pull request. `is_degraded` is the whole decision, and nothing feeds it a reading \
-              (auto_rollback/mod.rs:63).",
+              (auto_rollback/mod.rs:47).",
         blocked_on: Some("a canary telemetry source; there is none"),
     },
     GateFidelity {

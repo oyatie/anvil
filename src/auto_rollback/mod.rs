@@ -102,7 +102,6 @@ mod no_telemetry_source_tests {
         assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
         assert!(!report.passed, "an unobserved service is not a healthy one");
         assert!(!report.rollback_triggered);
-        assert!(report.postmortem.is_none());
     }
 
     /// The measuring path must still fire on a degraded reading.

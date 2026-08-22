@@ -6,16 +6,12 @@ use crate::self_governance::account_pool::AccountQuotaView;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DashboardStateView {
     pub server_version: String,
-    pub uptime_secs: u64,
     pub watched_repos: Vec<String>,
-    pub total_prs_reviewed: usize,
     pub total_gates_evaluated: usize,
     pub merge_queue_depth: usize,
     pub quota_spent_usd: f64,
     pub quota_budget_usd: f64,
     pub active_processes_count: usize,
-    pub compiler_pass_at_1_ratio: f64,
-    pub quality_score_mean: f64,
     pub fleet_repos: Vec<FleetRepoView>,
     pub gate_heatmap: Vec<GateHeatmapItem>,
     pub ai_bandit_models: Vec<ModelBanditView>,
@@ -57,7 +53,6 @@ pub struct GateHeatmapItem {
     pub gate_name: String,
     pub fail_count: usize,
     pub pass_percentage: f64,
-    pub mutation_kill_rate: f64,
     pub category: String,
     pub status: String,
 }

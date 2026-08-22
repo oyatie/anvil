@@ -38,7 +38,6 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         .as_ref()
         .map_or(&[], |overview| overview.repos.as_slice());
 
-    let total_open_prs: usize = observed_repos.iter().map(|r| r.open_pr_count).sum();
     let total_merge_queue_depth: usize = observed_repos.iter().map(|r| r.merge_queue_depth).sum();
 
     let fleet_repos = observed_repos
@@ -76,101 +75,38 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         })
         .collect();
 
-    // Generate 70 Canonical Gates with Mutation Kill Rates (MKR)
-    let gate_names = [
-        "Docs-As-Code Parity",
-        "AWS Cedar IAM Policy",
-        "Compliance PIPA/FSS",
-        "API Wire Contract",
-        "Cell Multi-Tenancy",
-        "WASM Plugin Sandbox",
-        "Monorepo Public API",
-        "ADR Drift Ratchet",
-        "TraceContext W3C",
-        "Zero-Trust SPIFFE",
-        "Dependency Whitelist",
-        "Safe Rust No-Panic",
-        "Kani Undocumented Unsafe",
-        "Schema Evolution",
-        "Ghost Migration Lock",
-        "Constant Work Buffer",
-        "Jittered Retry",
-        "Modularization DAG",
-        "Deadlock Analyzer",
-        "Clean Architecture",
-        "Formal Verification",
-        "Debt Shrink Ratchet",
-        "Carbon-Aware Emission",
-        "Automated Canary ACA",
-        "PSA Namespace Admission",
-        "Auto-Rollback Postmortem",
-        "Active-Active Clock",
-        "Microbenchmark Ratchet",
-        "Semantic ABI Invariance",
-        "Cosign SLSA Provenance",
-        "Hermetic CAS Sandbox",
-        "OpenVEX CVE Filter",
-        "Ring Deployment Ev2",
-        "Zero-Day Threat Sweep",
-        "Chaos Latency Inject",
-        "Stacked Diff Slicing",
-        "Replay Trace Vector",
-        "Proactive Upgrade Train",
-        "Shadow Traffic Diff",
-        "Unresolved Comment Thread",
-        "Local Diff Probe",
-        "CodeQL Static Security",
-        "Cargo Audit Advisory",
-        "Clippy Zero-Warning",
-        "Cargo Fmt Compliance",
-        "Integration Test Suite",
-        "E2E Browser Workflow",
-        "Chaos Fault Injection",
-        "Shuffle Shard Subset",
-        "CAS Bit-Rot Scrubber",
-        "Git Hook Provisioning",
-        "Apex ADR Lock",
-        "Asymmetric Ratchet",
-        "Subscription Quota",
-        "Process Registry Reap",
-        "Watchdog Monotonic",
-        "Blue/Green SO_REUSEPORT",
-        "Outage Sweep Recurse",
-        "Zero-Bypass Enforcement",
-        "Environment DAG",
-        "Chaos Mutation MKR",
-        "Lens Feedback Engine",
-        "Cross-Model Validator",
-        "Bandit Routing Ledger",
-        "Mainline Trunk Healer",
-        "Durable JSON Journal",
-        "Flake Quarantine 100x",
-        "SSE Fleet Broadcaster",
-        "Fail-Closed Gate 69",
-        "Merge Queue Enlistment",
-    ];
-
-    let gate_heatmap = gate_names
-        .iter()
+    // The gate table is published, so it is derived rather than written down.
+    // Names come from the live corpus, not a hand-kept list that was seventy
+    // entries against a corpus of TOTAL_GATES. Failure counts come from the
+    // telemetry the review pipeline actually records; a gate with no recorded
+    // failure reads as no failures observed, which is what the number means.
+    let mut failures: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for repo in &state.config.watched_repos {
+        for (gate, count) in state.telemetry_store.get_gate_failure_heatmap(repo).await {
+            *failures.entry(gate).or_insert(0) += count;
+        }
+    }
+    let corpus = crate::pre_merge_guard::report::PreMergeCertificationReport::unmeasured(
+        "dashboard: names only",
+    );
+    let gate_heatmap = corpus
+        .named_statuses()
+        .into_iter()
         .enumerate()
-        .map(|(idx, name)| GateHeatmapItem {
-            gate_number: idx + 1,
-            gate_name: name.to_string(),
-            fail_count: 0,
-            pass_percentage: 100.0,
-            mutation_kill_rate: 100.0,
-            category: if idx < 12 {
-                "Architecture".to_string()
-            } else if idx < 24 {
-                "Security & Formal".to_string()
-            } else if idx < 36 {
-                "GitOps & SRE".to_string()
-            } else if idx < 48 {
-                "Continuous Resiliency".to_string()
-            } else {
-                "Governance & Consensus".to_string()
-            },
-            status: "CERTIFIED_PASS".to_string(),
+        .map(|(idx, (name, _))| {
+            let fail_count = failures.get(name).copied().unwrap_or(0);
+            GateHeatmapItem {
+                gate_number: idx + 1,
+                gate_name: name.to_string(),
+                fail_count,
+                pass_percentage: if fail_count == 0 { 100.0 } else { 0.0 },
+                category: "Corpus".to_string(),
+                status: if fail_count == 0 {
+                    "NO FAILURE RECORDED".to_string()
+                } else {
+                    "FAILURES RECORDED".to_string()
+                },
+            }
         })
         .collect();
 
@@ -212,16 +148,12 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
 
     DashboardStateView {
         server_version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: 300,
         watched_repos: state.config.watched_repos.clone(),
-        total_prs_reviewed: total_open_prs + 8,
         total_gates_evaluated: crate::pre_merge_guard::report::TOTAL_GATES,
         merge_queue_depth: total_merge_queue_depth,
         quota_spent_usd: state.self_governor.quota.current_spend_usd(),
         quota_budget_usd: 100.0,
         active_processes_count: state.self_governor.registry.active_task_count().await,
-        compiler_pass_at_1_ratio: 0.958,
-        quality_score_mean: 0.97,
         fleet_repos,
         gate_heatmap,
         ai_bandit_models,
@@ -256,5 +188,57 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         ],
         merge_train,
         account_quotas,
+    }
+}
+
+#[cfg(test)]
+mod published_values_are_measured_tests {
+    /// Everything above the test module. Without this the scan matches the
+    /// needles written in the tests themselves and can never fail.
+    fn production_source() -> &'static str {
+        let whole = include_str!("mod.rs");
+        &whole[..whole.find("#[cfg(test)]").unwrap_or(whole.len())]
+    }
+
+    /// The dashboard is a published surface, so a constant on it is a claim.
+    ///
+    /// It carried a fixed uptime, a review count with eight added to it, two
+    /// DORA-shaped ratios derived from nothing, and a seventy-row gate table
+    /// where every row read no failures and certified — on a corpus of
+    /// `TOTAL_GATES`. None of the four scalars had a reader; the table did, and
+    /// is now built from the live corpus and recorded failures.
+    #[test]
+    fn the_dashboard_source_carries_no_fabricated_scalar() {
+        let src = production_source();
+        for needle in [
+            "uptime_secs: 300",
+            "total_open_prs + 8",
+            "compiler_pass_at_1_ratio: 0.958",
+            "quality_score_mean: 0.97",
+        ] {
+            assert!(
+                !src.contains(needle),
+                "`{needle}` is a value nothing measured, published to a viewer"
+            );
+        }
+    }
+
+    /// A hand-kept list of gate names drifts from the corpus the moment a gate
+    /// is added, and it had: seventy entries against TOTAL_GATES.
+    #[test]
+    fn the_gate_table_is_derived_from_the_corpus() {
+        let src = production_source();
+        assert!(
+            src.contains("named_statuses()"),
+            "the published gate table must take its names from the live corpus"
+        );
+        assert!(
+            src.contains("get_gate_failure_heatmap"),
+            "failure counts must come from recorded telemetry, not a literal"
+        );
+        assert!(
+            !src.contains("pass_percentage: 100.0,\n            mutation_kill_rate"),
+            "every row reading a perfect score is the shape this test exists to stop"
+        );
     }
 }

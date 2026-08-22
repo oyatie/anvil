@@ -474,11 +474,24 @@ pub async fn webhook_handler(
         let state_clone = state.clone();
         let repo_clone = repo_name.clone();
 
+        // This door is a webhook delivery, so there is nobody to answer with
+        // the outcome and the heal is genuinely detached. The outcome is still
+        // consumed: `heal_in_worktree` now returns the refusal that used to be
+        // a `warn!` inside it, and dropped into `let _` in a detached task it
+        // would be logged nowhere at all -- the one enlist door where the
+        // refusal would have become *less* observable than before.
         tokio::spawn(async move {
-            let _ = state_clone
+            match state_clone
                 .queue_healer
-                .heal_ejected_pr(&repo_clone, pr_number)
-                .await;
+                .heal_ejected_pr(&state_clone, &repo_clone, pr_number)
+                .await
+            {
+                Ok(what_happened) => info!("{}", what_happened),
+                Err(e) => warn!(
+                    "Automatic queue heal for {}#{} did not complete: {:#}",
+                    repo_clone, pr_number, e
+                ),
+            }
         });
 
         return (

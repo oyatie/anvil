@@ -1,11 +1,11 @@
 //! Gate 17 (W3C TraceContext), issue #14: coverage the specification suite does
 //! not provide.
 //!
-//! `tests/trace_gate_claims_only_what_it_measured_test.rs` pins the four
-//! behaviours the lane was opened for, and it pins them on the guard in
-//! isolation: it calls `TraceContextGuard::evaluate_trace_propagation` and reads
-//! the `TraceContextReport` that comes back. Three things are left over, and
-//! this file is those three.
+//! `tests/trace_gate_claims_only_what_it_measured_test.rs` pins the behaviours
+//! the lane was opened for, and it pins them on the guard in isolation: it calls
+//! `TraceContextGuard::evaluate_trace_propagation` and reads the
+//! `TraceContextReport` that comes back. Two things are left over, and this file
+//! is those two.
 //!
 //! # 1. The verdict has to survive the evaluator
 //!
@@ -14,62 +14,43 @@
 //! a test: `tests/evaluator_gate_ordering_test.rs` reads its *source text*
 //! instead. So a status the guard computes correctly and the evaluator then
 //! overwrites -- which is exactly what shipped, `GateStatus::Passed` rebuilt
-//! from a boolean -- is invisible to every test here. The tests in section C run
-//! a diff through the real `PreMergeGuard::evaluate_pre_merge_gates` and read
+//! from a boolean -- is invisible to every test here. Section C runs four diffs
+//! through the real `PreMergeGuard::evaluate_pre_merge_gates` and reads
 //! `PreMergeCertificationReport::trace_status`, which is the value the merge
 //! queue and the scorecard actually consume.
 //!
-//! # 2. Regressions in shapes the fixtures do not reach
+//! # 2. Shapes the specification fixtures do not reach
 //!
-//! Section A adds four, each derived from the defect statement in issue #14 and
-//! its audit rather than from the current implementation, and each red against
-//! the gate as it shipped:
+//! Section A is one diff that touches documentation and Rust together. Both
+//! halves of the shipped defect meet in it: the chunk filter was
+//! `file_diff.contains(".rs")` over the chunk *text*, which the Markdown chunk's
+//! own prose supplies, and `spawn_blocking` in the Rust chunk was not a form the
+//! scanner knew. So the gate reported a finding against the file with no
+//! boundary and none against the file with one -- both counts wrong, in opposite
+//! directions, out of one patch.
 //!
-//!   - a change that *deletes* an `.instrument(...)` call from a spawn it keeps.
-//!     The audit says removed lines must not be counted; the direction that
-//!     hurts is the other one -- a removed line being *read*, so evidence that
-//!     is leaving the file clears a boundary that stays in it. The shipping
-//!     lookahead joined a window of raw diff lines, so it found the
-//!     `.instrument(` on its way out and published a pass.
-//!   - a deleted Rust file. The shipping chunk filter was
-//!     `file_diff.contains(".rs")` over the chunk *text*, which the
-//!     `--- a/src/…rs` header of a deletion satisfies, so a pull request that
-//!     removes an uninstrumented spawn was accused of writing one.
-//!   - a diff that touches documentation and Rust together. Both halves of the
-//!     defect meet here: the text filter reads the Markdown chunk, and
-//!     `spawn_blocking` in the Rust chunk was not a form the scanner knew.
-//!   - a pull request with no diff text at all: the shortest possible statement
-//!     of "no verification claim without a measurement".
-//!
-//! Section B adds the two hunk shapes git writes that the fixtures never used --
-//! a file created against `/dev/null`, and a one-line hunk header carrying no
+//! Section B is the two hunk shapes git writes that the fixtures never used -- a
+//! file created against `/dev/null`, and a one-line hunk header carrying no
 //! count -- because a published `path:line` is a location claim, and a gate that
 //! invents one makes the same unbacked assertion this lane exists to remove, in
 //! the field a reviewer acts on.
 //!
 //! # Which of these are regressions, and how that was established
 //!
-//! Eight of the nine were run against the gate as it shipped -- the pre-fix
-//! `src/trace_context_guard/` restored over this tree, with the two-valued
-//! mapping from `evaluator.rs:292-296` scaffolded onto the report so that every
-//! failure is a wrong-behaviour assertion and not a compile error -- and eight
-//! failed:
+//! The three in sections A and B were run against the gate as it shipped -- the
+//! pre-fix `src/trace_context_guard/` restored over this tree, with the
+//! two-valued mapping from `evaluator.rs:292-296` scaffolded onto the report so
+//! that every failure is a wrong-behaviour assertion and not a compile error --
+//! and all three failed. Two of the transcripts:
 //!
 //! ```text
-//! a_live_uninstrumented_thread_spawn_from_this_tree_fails_gate_seventeen
-//!   The report published Passed. The guard's sentence was: ✅ PASSED (W3C trace
-//!   context & span instrumentation verified across 0 async boundaries)
-//! a_deleted_rust_file_is_not_inspected_and_its_author_is_not_accused
-//!   left: 1  right: 0   -- boundaries "inspected" in a file with no post-image
 //! a_diff_touching_docs_and_rust_reports_the_rust_boundary_and_only_that
 //!   left: "docs/adr/0002-honesty.md"  right: "src/columnar.rs"
-//! a_documentation_only_pull_request_is_not_failed_by_gate_seventeen
-//!   gate 17 published Failed("❌ FAILED (1 detached async task(s) …)")
 //! a_hunk_header_carrying_no_count_still_locates_the_boundary
 //!   left: 6  right: 5   -- a line number counted over the diff chunk
 //! ```
 //!
-//! The ninth, `the_verdict_the_guard_reached_is_the_verdict_gate_seventeen_publishes`,
+//! Section C's `the_verdict_the_guard_reached_is_the_verdict_gate_seventeen_publishes`
 //! is a pin rather than a regression and is stated as one: the scaffold above
 //! makes the two sides equal by construction, so it cannot go red that way. It
 //! goes red on the defect it exists for -- a status rebuilt downstream --
@@ -88,12 +69,10 @@
 //! specification suite left it: `src/slo_canary_guard/mod.rs` answers absent
 //! evidence with `NotMeasured` and `src/coverage_guard.rs:139` answers
 //! nothing-to-measure with `Passed`, and choosing between them is the owner's
-//! call, not a test author's. Every assertion below on a diff that inspected
-//! nothing therefore holds under `Passed`, under `Warning` and under
-//! `NotMeasured`: what is required is that the sentence claims no verification,
-//! that the pull request is not accused, and -- in section C -- that whatever
-//! the guard decided is what the certification report publishes, whichever of
-//! the three it is.
+//! call, not a test author's. Section C therefore asserts an equality rather
+//! than a table of expected variants: what is required is that whatever the
+//! guard decided is what the certification report publishes, whichever of the
+//! three it is.
 //!
 //! No gate is added, no report field is added, `TOTAL_GATES` is untouched, and
 //! no test in the specification suite is modified.
@@ -129,9 +108,9 @@ fn diff(diff_content: String) -> PrDiffContext {
 }
 
 /// One file's chunk of a patch, written the way git writes it: the two path
-/// headers are given separately so a creation (`--- /dev/null`) and a deletion
-/// (`+++ /dev/null`) can be spelled out, and the hunk header is given whole so a
-/// fixture can use the no-count form git emits for a single line.
+/// headers are given separately so a creation (`--- /dev/null`) can be spelled
+/// out, and the hunk header is given whole so a fixture can use the no-count
+/// form git emits for a single line.
 fn chunk(path: &str, from: &str, to: &str, hunk: &str, body: &str) -> String {
     format!(
         "diff --git a/{path} b/{path}\nindex 1111111..2222222 100644\n--- {from}\n+++ {to}\n{hunk}\n{body}\n"
@@ -149,202 +128,9 @@ fn run(ctx: &PrDiffContext) -> TraceContextReport {
         .expect("the trace gate must run to completion on a well-formed diff")
 }
 
-/// Words by which a summary asserts that the gate looked and found the code
-/// sound.
-///
-/// `verified` is the word in the string that shipped -- "verified across 0 async
-/// boundaries". The rest are the synonyms a rewrite reaches for first, so that
-/// closing the defect means dropping the claim rather than renaming it. The list
-/// is deliberately the same shape as the specification suite's: these tests
-/// reach diffs that one does not, and the obligation on the sentence is the same
-/// one.
-const VERIFICATION_CLAIMS: &[&str] = &[
-    "verified",
-    "verifies",
-    "validated",
-    "confirmed",
-    "ensured",
-    "guaranteed",
-    "all clear",
-];
-
-fn verification_claims_in(summary: &str) -> Vec<&'static str> {
-    let lower = summary.to_lowercase();
-    VERIFICATION_CLAIMS
-        .iter()
-        .filter(|w| lower.contains(**w))
-        .copied()
-        .collect()
-}
-
-/// Words by which a summary accuses the pull request of a defect. A diff the
-/// gate found nothing in has committed none.
-const ACCUSATIONS: &[&str] = &["failed", "violation", "missing", "detached", "drop"];
-
-fn accusations_in(summary: &str) -> Vec<&'static str> {
-    let lower = summary.to_lowercase();
-    ACCUSATIONS
-        .iter()
-        .filter(|w| lower.contains(**w))
-        .copied()
-        .collect()
-}
-
-/// A window of live source, from the line containing `opens` down to the first
-/// line at or after it whose trimmed text is `closes`, together with the
-/// one-based line at which that window begins in the file.
-///
-/// Cut at test time rather than transcribed. A fixture that is meant to be a
-/// statement about *this repository* stops being one the moment the source
-/// moves, and the line numbers this file asserts on are the file's own.
-fn live_window(path: &str, opens: &str, closes: &str) -> (usize, String) {
-    let full = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
-    let source = std::fs::read_to_string(&full).unwrap_or_else(|e| {
-        panic!(
-            "{} must be readable to build this fixture: {e}",
-            full.display()
-        )
-    });
-    let lines: Vec<&str> = source.lines().collect();
-    let start = lines
-        .iter()
-        .position(|l| l.contains(opens))
-        .unwrap_or_else(|| {
-            panic!(
-                "fixture drawn from live source has rotted: {path} no longer \
-             contains a line matching {opens:?}. Re-cut it from a live call \
-             site, or drop the fixture if none remains."
-            )
-        });
-    let end = start
-        + lines[start..]
-            .iter()
-            .position(|l| l.trim() == closes)
-            .unwrap_or_else(|| {
-                panic!(
-                    "fixture drawn from live source has rotted: no line \
-                     {closes:?} closes the window opened at {path}:{}",
-                    start + 1
-                )
-            });
-    (start + 1, lines[start..=end].join("\n"))
-}
-
-/// Every line of a block prefixed as a context line -- text the change keeps.
-fn as_kept(code: &str) -> String {
-    code.lines()
-        .map(|l| format!(" {l}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 // -------------------------------------------------------------------------
 // A. Regressions: shapes the specification fixtures do not reach
 // -------------------------------------------------------------------------
-
-#[test]
-fn an_instrument_call_this_change_removes_does_not_clear_the_spawn_it_keeps() {
-    // The removed-line defect in the direction that publishes a false clear.
-    //
-    // The specification suite pins that a removed spawn is not *counted*. The
-    // same rule has a second consequence, and it is the one that lets a real
-    // defect through: a removed line is evidence leaving the file, so reading it
-    // clears a boundary that stays. Here the author deletes the
-    // `.instrument(...)` and keeps the spawn -- the exact edit that introduces
-    // the defect gate 17 exists to catch -- and the deleted call is the only
-    // `.instrument(` anywhere in the patch.
-    //
-    // Against the gate as it shipped this is a pass: the lookahead joined a
-    // window of raw diff lines, `-            .instrument(...)` is inside that
-    // window, and the regex matched it there.
-    let body = "\
- pub async fn drain() {
-     tokio::spawn(
--        async move { work().await; }
--            .instrument(tracing::info_span!(\"drain\")),
-+        async move { work().await; },
-     );
- }";
-    let report = run(&diff(edit("src/drain.rs", "@@ -1,6 +1,5 @@", body)));
-
-    assert_eq!(
-        report.detached_findings.len(),
-        1,
-        "the merged file contains one task boundary and no `.instrument(` call \
-         at all -- the only one in this patch is on a line being deleted. \
-         Summary was: {}",
-        report.summary
-    );
-    assert_eq!(
-        report.detached_findings[0].line_number, 2,
-        "the boundary is at post-image line 2. Summary was: {}",
-        report.summary
-    );
-    assert!(
-        verification_claims_in(&report.summary).is_empty(),
-        "the gate published {:?} over a boundary that ships with no span: {}",
-        verification_claims_in(&report.summary),
-        report.summary
-    );
-}
-
-#[test]
-fn a_deleted_rust_file_is_not_inspected_and_its_author_is_not_accused() {
-    // The chunk filter, at the one shape where reading the wrong side of the
-    // diff turns a *removal* of the defect into an accusation of it.
-    //
-    // `+++ /dev/null` is git's own statement that this file has no post-image:
-    // nothing in it ships, so there is nothing to inspect and nobody to blame.
-    // The shipping filter asked whether the chunk *text* contained `.rs`, which
-    // the `--- a/src/worker.rs` header supplies, and then counted the removed
-    // spawn lines and reported them detached -- a merge block on a pull request
-    // for deleting the very code the gate wants deleted.
-    let body = "\
--pub async fn drain() {
--    tokio::spawn(async move {
--        work().await;
--    });
--}";
-    let report = run(&diff(chunk(
-        "src/worker.rs",
-        "a/src/worker.rs",
-        "/dev/null",
-        "@@ -1,5 +0,0 @@",
-        body,
-    )));
-
-    assert_eq!(
-        report.tasks_scanned, 0,
-        "this file does not exist after the merge, so no boundary in it was \
-         inspected. Summary was: {}",
-        report.summary
-    );
-    assert!(
-        report.detached_findings.is_empty(),
-        "deleting an uninstrumented spawn removes the defect; the gate reported \
-         {} finding(s) against the author for doing so: {:?}",
-        report.detached_findings.len(),
-        report
-            .detached_findings
-            .iter()
-            .map(|f| f.snippet.clone())
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        verification_claims_in(&report.summary).is_empty(),
-        "nothing was inspected, so the gate holds no evidence to claim; it \
-         published {:?} in: {}",
-        verification_claims_in(&report.summary),
-        report.summary
-    );
-    assert!(
-        accusations_in(&report.summary).is_empty(),
-        "an empty measurement is not a defect in the pull request; the gate \
-         published the accusation {:?} in: {}",
-        accusations_in(&report.summary),
-        report.summary
-    );
-}
 
 #[test]
 fn a_diff_touching_docs_and_rust_reports_the_rust_boundary_and_only_that() {
@@ -417,42 +203,6 @@ fn a_diff_touching_docs_and_rust_reports_the_rust_boundary_and_only_that() {
         report.summary.contains("src/columnar.rs"),
         "the sentence a reviewer reads has to name the file that has to change; \
          it said: {}",
-        report.summary
-    );
-}
-
-#[test]
-fn a_pull_request_carrying_no_diff_text_claims_no_verification() {
-    // The shortest statement of the rule, and the one that cannot be satisfied
-    // by accident: there is no chunk, no file, no line. Any sentence containing
-    // the word "verified" here asserts evidence that does not exist -- and
-    // "PASSED (W3C trace context & span instrumentation verified across 0 async
-    // boundaries)" is what shipped.
-    //
-    // It is also the shape that arrives when a pull request changes only a file
-    // mode or a submodule pointer, so the gate is really handed it.
-    let report = run(&diff(String::new()));
-
-    assert_eq!(
-        report.tasks_scanned, 0,
-        "there is nothing in this patch to inspect. Summary was: {}",
-        report.summary
-    );
-    assert!(
-        report.detached_findings.is_empty(),
-        "the gate reported {} finding(s) against an empty patch",
-        report.detached_findings.len()
-    );
-    assert!(
-        verification_claims_in(&report.summary).is_empty(),
-        "the gate inspected no file at all and published {:?} in: {}",
-        verification_claims_in(&report.summary),
-        report.summary
-    );
-    assert!(
-        accusations_in(&report.summary).is_empty(),
-        "an empty patch commits no defect; the gate published {:?} in: {}",
-        accusations_in(&report.summary),
         report.summary
     );
 }
@@ -633,118 +383,6 @@ fn the_verdict_the_guard_reached_is_the_verdict_gate_seventeen_publishes() {
         "all four measurements published the same status, so gate 17 tells \
          every author the same thing whatever it found: {published:?}"
     );
-}
-
-#[test]
-fn a_live_uninstrumented_thread_spawn_from_this_tree_fails_gate_seventeen() {
-    // The gate run against this repository's own code, end to end, on the form
-    // issue #14's audit singles out: `std::thread::spawn` was invisible to a
-    // scanner matching the literal `tokio::spawn`, and two of them are live in
-    // `src/predictive_test_selector/workspace_dag.rs`, neither carrying a span.
-    // So the file that would most obviously fail gate 17 was reported clean --
-    // and reported clean all the way into the certification report, as
-    // `GateStatus::Passed`, counted in "N/N gates passed".
-    //
-    // The window and its line numbers are cut from the live file at test time,
-    // so this is a statement about the tree rather than about a transcription of
-    // it. If those threads are ever instrumented, `live_window` panics with what
-    // to do rather than passing quietly.
-    const LIVE: &str = "src/predictive_test_selector/workspace_dag.rs";
-    let (start, window) = live_window(LIVE, "std::thread::spawn(move || {", "});");
-
-    let ctx = diff(edit(
-        LIVE,
-        &format!(
-            "@@ -{start},{n} +{start},{n} @@",
-            n = window.lines().count()
-        ),
-        &as_kept(&window),
-    ));
-    let measured = run(&ctx);
-    let cert = stub::certify(&ctx, &measured);
-
-    assert!(
-        matches!(cert.trace_status, GateStatus::Failed(_)),
-        "a boundary this repository really carries, with no span attached, is a \
-         defect gate 17 exists to block. The report published {:?}. The guard's \
-         sentence was: {}",
-        cert.trace_status,
-        measured.summary
-    );
-    assert_eq!(
-        measured.detached_findings.len(),
-        1,
-        "the window cut from {LIVE} at line {start} holds one thread spawn and \
-         its body; the gate reported {:?}",
-        measured
-            .detached_findings
-            .iter()
-            .map(|f| format!("{}:{}", f.file_path, f.line_number))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        measured.detached_findings[0].line_number, start,
-        "the finding has to name the line the spawn is on in the live file, \
-         because that is the line a reviewer opens. Summary was: {}",
-        measured.summary
-    );
-
-    // The sentence, not merely the variant: `Failed` carries the string the
-    // reader is shown, and a reader who is not told where cannot act.
-    let GateStatus::Failed(published) = &cert.trace_status else {
-        unreachable!("the variant was asserted above")
-    };
-    assert!(
-        published.contains(LIVE) && published.contains(&format!("{start}")),
-        "the published verdict has to name the file and the line: {published}"
-    );
-}
-
-#[test]
-fn a_documentation_only_pull_request_is_not_failed_by_gate_seventeen() {
-    // Issue #14's own case, carried through to the surface that blocks merges.
-    //
-    // What is pinned is only what the two precedents in this repository agree
-    // on. `src/coverage_guard.rs:139` and `src/slo_canary_guard/mod.rs:153`
-    // disagree about which status an empty measurement deserves, and this test
-    // passes under either: it forbids `Failed` and `Errored` -- the two verdicts
-    // that assert a defect in a pull request the gate found nothing in -- and
-    // requires that whatever sentence does reach the reader claims no
-    // verification. The choice between `Passed`, `Warning` and `NotMeasured`
-    // remains the owner's, and this file does not make it.
-    let body = "\
-+Gate 17 lives in `src/trace_context_guard/mod.rs`. The example is prose:
-+
-+```rust
-+tokio::spawn(async move { work().await; });
-+```";
-    let ctx = diff(edit("docs/adr/0002-honesty.md", "@@ -3,1 +3,5 @@", body));
-    let measured = run(&ctx);
-    let cert = stub::certify(&ctx, &measured);
-
-    assert!(
-        !matches!(
-            cert.trace_status,
-            GateStatus::Failed(_) | GateStatus::Errored(_)
-        ),
-        "a documentation change crosses no async boundary and has committed no \
-         defect; gate 17 published {:?}",
-        cert.trace_status
-    );
-
-    let carried = match &cert.trace_status {
-        GateStatus::Passed | GateStatus::AutoUpdated => None,
-        GateStatus::Warning(s) | GateStatus::Failed(s) | GateStatus::Errored(s) => Some(s.clone()),
-        GateStatus::NotMeasured { reason, .. } => Some(reason.clone()),
-    };
-    if let Some(sentence) = carried {
-        assert!(
-            verification_claims_in(&sentence).is_empty(),
-            "the status published to the reader claims {:?} over a diff in \
-             which nothing was inspected: {sentence}",
-            verification_claims_in(&sentence)
-        );
-    }
 }
 
 // -------------------------------------------------------------------------

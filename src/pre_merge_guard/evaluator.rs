@@ -574,18 +574,10 @@ impl PreMergeGuard {
         };
 
         // 59. Deterministic Record-and-Replay
-        let replay_harness_status = if replay_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(replay_report.summary.clone())
-        };
+        let replay_harness_status = replay_report.status.clone();
 
         // 60. Proactive Dependency Upgrade Train
-        let upgrade_train_status = if upgrade_train_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(upgrade_train_report.summary.clone())
-        };
+        let upgrade_train_status = upgrade_train_report.status.clone();
 
         // 61. AST Chaos Mutation Test Adequacy
         let mutation_status = if mutation_report.is_adequate {

@@ -401,11 +401,7 @@ impl PreMergeGuard {
         };
 
         // 32. Ephemeral Sandbox Isolation
-        let sandbox_status = if sandbox_report.is_hermetic {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(sandbox_report.summary.clone())
-        };
+        let sandbox_status = sandbox_report.status.clone();
 
         // 33. Cross-Service Monorepo Blast Radius
         let cross_service_status = if cross_service_report.is_compatible {

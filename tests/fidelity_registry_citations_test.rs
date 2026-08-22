@@ -483,7 +483,7 @@ fn every_constant_quoted_in_a_gap_still_exists_in_a_file_that_gap_cites() {
         for c in &claims.citations {
             if let Ok(p) = resolve(&c.fragment, &files) {
                 let body = std::fs::read_to_string(&p).expect("cited file is readable");
-                bodies.push((p, body));
+                bodies.push((p, code_only_body(&body)));
             }
         }
         if bodies.is_empty() {
@@ -524,6 +524,40 @@ fn every_constant_quoted_in_a_gap_still_exists_in_a_file_that_gap_cites() {
 ///
 /// Prompting cannot prevent it because nobody edits line numbers on purpose;
 /// they are invalidated as a side effect of an unrelated insertion.
+/// A file's code with every `//` comment removed, for the same reason as
+/// [`code_only`]: a quotation is evidence only when the code contains it.
+fn code_only_body(body: &str) -> String {
+    body.lines().map(code_only).collect::<Vec<_>>().join("\n")
+}
+
+/// The code on a line, with any trailing `//` comment removed.
+///
+/// A citation must be answerable by the code it names. Matching against the
+/// raw line let a gap cite its own commentary: a draft in PR #63 quoted
+/// "CVE-NONE" and "symbol_none" against `vex_scanner/mod.rs` and passed,
+/// because the same PR had just written those strings into a doc comment two
+/// lines above the cited line. The decision they described lived in another
+/// file entirely.
+///
+/// Quotes inside string literals are kept -- a gap quoting a literal the code
+/// really contains is exactly what this check is for -- so the scan tracks
+/// whether it is inside a `"` before treating `//` as a comment opener.
+fn code_only(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_string = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => i += 1,
+            b'"' => in_string = !in_string,
+            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    line
+}
+
 #[test]
 fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
     let files = all_source_files();
@@ -552,7 +586,7 @@ fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
                 let lo = a.saturating_sub(1 + ANCHOR_TOLERANCE);
                 let hi = (z + ANCHOR_TOLERANCE).min(lines.len());
                 for line in &lines[lo.min(lines.len())..hi] {
-                    window.push_str(line);
+                    window.push_str(code_only(line));
                     window.push('\n');
                 }
             }
@@ -581,4 +615,19 @@ fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
         failures.len(),
         failures.join("\n  ")
     );
+}
+
+#[test]
+fn code_only_strips_commentary_but_keeps_string_literals() {
+    assert_eq!(code_only("    let x = 1; // CVE-NONE").trim(), "let x = 1;");
+    assert_eq!(code_only("/// quotes \"symbol_none\" in prose").trim(), "");
+    assert_eq!(code_only("//! module doc").trim(), "");
+
+    // A comment opener inside a string literal is code, not commentary.
+    let url = r#"    let u = "https://example.com/x";"#;
+    assert_eq!(code_only(url), url, "a // inside a string is not a comment");
+
+    // The evidence this check exists to protect: a real decision line survives.
+    let decision = "        if !source_code.contains(vuln_symbol) {";
+    assert_eq!(code_only(decision), decision);
 }

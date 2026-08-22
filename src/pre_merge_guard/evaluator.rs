@@ -83,6 +83,26 @@ impl PreMergeGuard {
         Self
     }
 
+    /// The test-suite gate's status for a run that happened, or did not.
+    ///
+    /// Split out and `pub` so the `None` arm is reachable from a test: it is
+    /// the arm the review pipeline actually takes, and it was unreachable from
+    /// outside while the whole decision sat inline in a 69-argument function.
+    pub fn test_suite_gate_status(passed: Option<bool>) -> GateStatus {
+        match passed {
+            Some(true) => GateStatus::Passed,
+            Some(false) => GateStatus::Failed(
+                "Test suite reported failures during verification gate.".to_string(),
+            ),
+            None => GateStatus::NotMeasured {
+                gate_id: "test_suite_status".to_string(),
+                reason: "no test suite was executed for this pull request, so nothing verifies \
+                         that the tests pass"
+                    .to_string(),
+            },
+        }
+    }
+
     /// Evaluates all 70 hyperscale full-lifecycle quality, architecture, GitOps, CI/CD velocity, and security gates
     #[allow(clippy::too_many_arguments)]
     pub fn evaluate_pre_merge_gates(
@@ -152,7 +172,10 @@ impl PreMergeGuard {
         feature_flag_report: &FeatureFlagReport,
         bench_report: &BenchmarkReport,
         attestation_report: &AttestationReport,
-        test_suite_passed: bool,
+        // `None` when no suite was run. This was a plain `bool`, and the review
+        // pipeline passed the literal `true`: a gate named for the test suite
+        // asserted the suite passed without anything having run it.
+        test_suite_passed: Option<bool>,
         review_verdict: &str,
         shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
     ) -> Result<PreMergeCertificationReport> {
@@ -310,11 +333,7 @@ impl PreMergeGuard {
         };
 
         // 20. FinOps Unit-Cost Zero-Copy Ratchet
-        let finops_status = if finops_report.is_cost_optimal {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(finops_report.summary.clone())
-        };
+        let finops_status = finops_report.status.clone();
 
         // 21. Ghost DB Migration & Zero Exclusive Locks
         let ghost_migration_status = if ghost_migration_report.is_safe {
@@ -382,11 +401,7 @@ impl PreMergeGuard {
         };
 
         // 32. Ephemeral Sandbox Isolation
-        let sandbox_status = if sandbox_report.is_hermetic {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(sandbox_report.summary.clone())
-        };
+        let sandbox_status = sandbox_report.status.clone();
 
         // 33. Cross-Service Monorepo Blast Radius
         let cross_service_status = if cross_service_report.is_compatible {
@@ -475,23 +490,10 @@ impl PreMergeGuard {
         };
 
         // 45. Hermetic Build Reproducibility
-        let hermetic_build_status = if hermetic_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(
-                "Hermetic build reproducibility check detected bitwise artifact non-determinism."
-                    .to_string(),
-            )
-        };
+        let hermetic_build_status = hermetic_report.status.clone();
 
         // 46. OpenVEX Reachability Analysis
-        let openvex_status = if openvex_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(
-                "OpenVEX scanner identified reachable upstream CVE symbol in binary.".to_string(),
-            )
-        };
+        let openvex_status = openvex_report.status.clone();
 
         // 47. Cosign & Sigstore Provenance Signing
         let cosign_status = if cosign_report.passed {
@@ -532,11 +534,7 @@ impl PreMergeGuard {
         };
 
         // 53. Auto-Rollback & Postmortem Engine
-        let auto_rollback_status = if auto_rollback_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(auto_rollback_report.summary.clone())
-        };
+        let auto_rollback_status = auto_rollback_report.status.clone();
 
         // 54. Dynamic WebAssembly Policy Sandbox
         let wasm_sandbox_status = if wasm_report.passed {
@@ -567,25 +565,13 @@ impl PreMergeGuard {
         };
 
         // 58. GreenOps Carbon-Aware Compute
-        let carbon_compute_status = if carbon_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(carbon_report.summary.clone())
-        };
+        let carbon_compute_status = carbon_report.status.clone();
 
         // 59. Deterministic Record-and-Replay
-        let replay_harness_status = if replay_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(replay_report.summary.clone())
-        };
+        let replay_harness_status = replay_report.status.clone();
 
         // 60. Proactive Dependency Upgrade Train
-        let upgrade_train_status = if upgrade_train_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(upgrade_train_report.summary.clone())
-        };
+        let upgrade_train_status = upgrade_train_report.status.clone();
 
         // 61. AST Chaos Mutation Test Adequacy
         let mutation_status = if mutation_report.is_adequate {
@@ -629,11 +615,7 @@ impl PreMergeGuard {
             PreMergeScanner::scan_for_concurrency_and_flakes(&diff_ctx.diff_content);
 
         // 68. Test Suite Status
-        let test_suite_status = if test_suite_passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed("Test suite reported failures during verification gate.".to_string())
-        };
+        let test_suite_status = Self::test_suite_gate_status(test_suite_passed);
 
         // 69. AI Code Review & 16-Lens Invariant Gate
         //

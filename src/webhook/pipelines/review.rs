@@ -316,19 +316,10 @@ pub async fn execute_pr_review(
     );
 
     // 46. HermeticBuildValidator: Deterministic Bit-for-Bit Reproducibility
-    let hermetic_report = state.hermetic_build.evaluate_hermetic_reproducibility(
-        "sha256_clean",
-        "sha256_clean",
-        &diff_ctx.diff_content,
-    );
+    let hermetic_report = state.hermetic_build.evaluate_without_build_pair();
 
     // 47. OpenVexReachabilityScanner: Callgraph-Pruned Dead-Code Exploitability
-    let openvex_report = state.vex_scanner.scan_reachability(
-        "CVE-NONE",
-        "none",
-        "symbol_none",
-        &diff_ctx.diff_content,
-    );
+    let openvex_report = state.vex_scanner.evaluate_without_advisory_source();
 
     // 48. CosignProvenanceSigner: OIDC Keyless Cryptographic Attestation
     let cosign_report = state.cosign_signer.generate_cosign_attestation(head_sha);
@@ -363,9 +354,9 @@ pub async fn execute_pr_review(
         .evaluate_schema_evolution(&diff_ctx.diff_content);
 
     // 54. AutoRollbackPostmortemEngine: Canary Auto-Rollback & Postmortem Engine
-    let auto_rollback_report = state
-        .auto_rollback
-        .evaluate_health_and_rollback(repo, 0.01, 45.0);
+    // No canary telemetry is queried here; the previous literals (0.01, 45.0)
+    // sat far below the degradation thresholds, so the rollback path never ran.
+    let auto_rollback_report = state.auto_rollback.evaluate_without_telemetry_source();
 
     // 55. WasmPolicySandbox: WebAssembly Dynamic Bytecode Policy Sandbox Gate
     let wasm_report = state
@@ -388,13 +379,18 @@ pub async fn execute_pr_review(
         .evaluate_workload_identity(&diff_ctx.diff_content);
 
     // 59. CarbonAwareComputeRatchet: GreenOps Carbon-Aware Compute Efficiency Ratchet
-    let carbon_report = state.carbon_aware.evaluate_compute_carbon(30.0, 12.0);
+    // As above: no CPU-time or grid-intensity reading is taken.
+    let carbon_report = state.carbon_aware.evaluate_without_energy_source();
 
     // 60. DeterministicReplayHarness: Production Dark-Trace Record-and-Replay Gate
-    let replay_report = state.replay_harness.evaluate_replay_parity(&[]);
+    // No production trace corpus is collected, so there is nothing to replay.
+    // Reporting the absence beats certifying parity across fixtures that were
+    // never read; see the fidelity registry entry for this gate.
+    let replay_report = state.replay_harness.evaluate_without_trace_source();
 
     // 61. ProactiveUpgradeTrain: Proactive Dependency & Security Upgrade Train Gate
-    let upgrade_train_report = state.upgrade_train.evaluate_upgrade_train(&[]);
+    // As above: no dependency manifest or advisory feed is read here.
+    let upgrade_train_report = state.upgrade_train.evaluate_without_dependency_source();
 
     // 62. ChaosMutationGuard: AST Chaos Mutation Test Adequacy Gate
     let mutation_report = state
@@ -609,7 +605,9 @@ pub async fn execute_pr_review(
         &feature_flag_report,
         &bench_report,
         &attestation_report,
-        true,
+        // Nothing in this pipeline runs the test suite. Passing `true` here
+        // asserted the tests pass; `None` reports that nobody looked.
+        None,
         &review_resp.verdict,
         &shape_outcome,
     )?;

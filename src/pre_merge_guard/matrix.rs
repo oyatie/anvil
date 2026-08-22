@@ -376,7 +376,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "test_suite_status",
         "🧪 Automated Test Suite",
-        "Local verification gate passed",
+        "Result of a suite run, when one was run; not measured in the PR pipeline",
     ),
 ];
 

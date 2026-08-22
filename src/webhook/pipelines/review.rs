@@ -605,7 +605,9 @@ pub async fn execute_pr_review(
         &feature_flag_report,
         &bench_report,
         &attestation_report,
-        true,
+        // Nothing in this pipeline runs the test suite. Passing `true` here
+        // asserted the tests pass; `None` reports that nobody looked.
+        None,
         &review_resp.verdict,
         &shape_outcome,
     )?;

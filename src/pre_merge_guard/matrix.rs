@@ -220,13 +220,13 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "formal_verification_status",
-        "📐 SMT Formal Invariant Verification",
-        "Mathematical proof of zero unauthorized state reachability",
+        "📐 Policy Pattern Scan",
+        "Keyword scan for wildcard principals and open egress; not a proof",
     ),
     (
         "deadlock_status",
-        "🔒 Lock Graph & Deadlock Prevention",
-        "Lock acquisition hierarchy verified against circular waits",
+        "🔒 Lock Order Keyword Scan",
+        "Scans for a fixed set of known lock-name inversions; not a graph analysis",
     ),
     (
         "review_verdict_status",

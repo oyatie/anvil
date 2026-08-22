@@ -83,6 +83,26 @@ impl PreMergeGuard {
         Self
     }
 
+    /// The test-suite gate's status for a run that happened, or did not.
+    ///
+    /// Split out and `pub` so the `None` arm is reachable from a test: it is
+    /// the arm the review pipeline actually takes, and it was unreachable from
+    /// outside while the whole decision sat inline in a 69-argument function.
+    pub fn test_suite_gate_status(passed: Option<bool>) -> GateStatus {
+        match passed {
+            Some(true) => GateStatus::Passed,
+            Some(false) => GateStatus::Failed(
+                "Test suite reported failures during verification gate.".to_string(),
+            ),
+            None => GateStatus::NotMeasured {
+                gate_id: "test_suite_status".to_string(),
+                reason: "no test suite was executed for this pull request, so nothing verifies \
+                         that the tests pass"
+                    .to_string(),
+            },
+        }
+    }
+
     /// Evaluates all 70 hyperscale full-lifecycle quality, architecture, GitOps, CI/CD velocity, and security gates
     #[allow(clippy::too_many_arguments)]
     pub fn evaluate_pre_merge_gates(
@@ -152,7 +172,10 @@ impl PreMergeGuard {
         feature_flag_report: &FeatureFlagReport,
         bench_report: &BenchmarkReport,
         attestation_report: &AttestationReport,
-        test_suite_passed: bool,
+        // `None` when no suite was run. This was a plain `bool`, and the review
+        // pipeline passed the literal `true`: a gate named for the test suite
+        // asserted the suite passed without anything having run it.
+        test_suite_passed: Option<bool>,
         review_verdict: &str,
         shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
     ) -> Result<PreMergeCertificationReport> {
@@ -600,11 +623,7 @@ impl PreMergeGuard {
             PreMergeScanner::scan_for_concurrency_and_flakes(&diff_ctx.diff_content);
 
         // 68. Test Suite Status
-        let test_suite_status = if test_suite_passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed("Test suite reported failures during verification gate.".to_string())
-        };
+        let test_suite_status = Self::test_suite_gate_status(test_suite_passed);
 
         // 69. AI Code Review & 16-Lens Invariant Gate
         //

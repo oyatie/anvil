@@ -299,12 +299,27 @@ pub async fn execute_pr_review(
     // process restarts. They are not two spellings of one fact, and only this
     // one is durable.
     //
-    // Written only for a head the corpus actually certified, on the same
-    // question `enlist_into_merge_queue` asks. Stamped for a refused head it
-    // would tell the recovery sweep that a blocked pull request needs no
-    // further certification -- recording the field on a run that refused would
-    // be the field asserting something the run did not find.
+    // Written only for a head the corpus certified AND the merge queue took.
+    // Stamped for a refused head it would tell the recovery sweep that a
+    // blocked pull request needs no further certification -- recording the
+    // field on a run that refused would be the field asserting something the
+    // run did not find.
+    //
+    // `enlistment.is_ok()` is part of the condition and not only the value.
+    // `needs_cert` in `recovery/reconciliation_sweep.rs` is
+    // `last_certified_head_sha != head_sha`, and `cli/server.rs` dispatches
+    // `execute_pr_review` for exactly the pull requests the sweep marks
+    // uncertified. Written for a certified head whose `gh pr merge` failed -- a
+    // rate limit, a `--match-head-commit` race, the queue temporarily disabled
+    // -- the field would remove that pull request from the outage-recovery
+    // dispatch set on every subsequent daemon start, permanently, at that head:
+    // the anti-loop filter in `webhook_handlers.rs` also requires
+    // `is_enlisted_in_merge_queue`, so nothing else would pick it back up once
+    // the contributor stopped pushing. Before this writer existed the sweep
+    // retried on every pass; a new writer must not silently disable the retry
+    // path.
     if cert_report.admission_refusal().is_ok()
+        && enlistment.is_ok()
         && let Err(e) = state
             .state_mgr
             .record_certification(repo, pr_number, head_sha, enlistment.is_ok())

@@ -45,6 +45,28 @@ pub use openslo_parser::parse_openslo_yaml;
 const MISSING_TELEMETRY_SOURCE: &str = "no Prometheus or OpenTelemetry endpoint is configured, so error budget \
      consumption over any window was never queried";
 
+/// Why this gate cannot report a pass in this build, or `None` when it can.
+///
+/// `SloCanaryGuard::evaluate` below produces exactly three statuses — `Failed`,
+/// `Errored`, `NotMeasured` — and no `Passed`, because there is no telemetry
+/// source for it to query: nothing in the crate reads a Prometheus or
+/// OpenTelemetry endpoint, and there is no configuration field that would name
+/// one. All three of those statuses are refused by
+/// `PreMergeCertificationReport::admission_refusal`, so no report this build can
+/// produce admits a pull request to the merge queue.
+///
+/// Read by `pre_merge_guard::unmeasurable_gates_in_this_build` so the enlist
+/// doors can refuse before paying for a corpus run whose outcome the
+/// configuration already fixed. It is a statement about this build, not about
+/// any pull request; the gate itself still runs on the review path and still
+/// publishes its own `NotMeasured` reason on the scorecard.
+///
+/// Wiring a telemetry source is what adds the missing `Passed` branch, and this
+/// returns `None` from the same change that adds it.
+pub fn burn_rate_is_unmeasurable() -> Option<&'static str> {
+    Some(MISSING_TELEMETRY_SOURCE)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SloCanaryReport {
     pub status: GateStatus,

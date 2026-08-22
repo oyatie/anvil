@@ -95,19 +95,41 @@ impl MergeEnlister {
     /// Deliberately not `gate_counts()`, which scores a `Warning` as
     /// acceptable and would report the whole corpus as passing for a report
     /// where a gate regressed.
+    ///
+    /// `AutoUpdated` is counted apart from `Passed`, and said out loud. A guard
+    /// reports `AutoUpdated` when it found a deficiency and wrote files to fix
+    /// it, and those files are staged and committed only in Anvil's own shared
+    /// clone -- nothing in the crate pushes them to the pull request's branch.
+    /// The enlistment then pins the merge to `meta.head_ref_oid`, the head
+    /// *without* the fix. Folded into the passed count, the approving review
+    /// published "72 of 72 gates passed" about a tree that will never be merged,
+    /// while the commit that does merge is the one whose doc-parity, cedar and
+    /// api-contract gates did not pass. A compliance claim has to be about the
+    /// commit being endorsed.
     fn measured_lines(report: &PreMergeCertificationReport) -> String {
         let named = report.named_statuses();
-        let passed = named
+        let is_clean = |status: &GateStatus| matches!(status, GateStatus::Passed);
+        let is_auto = |status: &GateStatus| matches!(status, GateStatus::AutoUpdated);
+        let passed = named.iter().filter(|(_, s)| is_clean(s)).count();
+        let auto_updated: Vec<&str> = named
             .iter()
-            .filter(|(_, status)| matches!(status, GateStatus::Passed | GateStatus::AutoUpdated))
-            .count();
+            .filter(|(_, s)| is_auto(s))
+            .map(|(gate, _)| *gate)
+            .collect();
+
         let mut lines = vec![format!("- {} of {} gates passed", passed, named.len())];
+        if !auto_updated.is_empty() {
+            lines.push(format!(
+                "- {} gate(s) were auto-corrected and are NOT in the commit being merged ({}): \
+                 the fix exists only in Anvil's local clone and was never pushed to this branch",
+                auto_updated.len(),
+                auto_updated.join(", ")
+            ));
+        }
         lines.extend(
             named
                 .iter()
-                .filter(|(_, status)| {
-                    !matches!(status, GateStatus::Passed | GateStatus::AutoUpdated)
-                })
+                .filter(|(_, status)| !is_clean(status) && !is_auto(status))
                 .map(|(gate, status)| format!("- {}: {}", gate, status.badge())),
         );
         lines.join("\n")
@@ -195,9 +217,27 @@ impl MergeEnlister {
             .await?;
 
         // Step 2: Enlist into Merge Queue using `gh pr merge --auto`.
+        //
         // `--match-head-commit` carries the certified SHA to GitHub, so a push
-        // landing between the check above and this request is rejected by the
-        // queue rather than merged on a report that never saw it.
+        // landing between the check above and this request is rejected rather
+        // than armed on a report that never saw it.
+        //
+        // What it does NOT do, stated rather than implied: GitHub validates
+        // `--match-head-commit` at the moment auto-merge is enabled, and the
+        // merge itself happens later, whenever the required checks go green. A
+        // contributor with write access who pushes after that point moves the
+        // head, and GitHub does not disable auto-merge for it -- so the commit
+        // that eventually merges can be one no report ever measured. Nothing in
+        // this crate calls `gh pr merge --disable-auto`, and the review
+        // pipeline's response to a later, inadmissible head is a `warn!`.
+        //
+        // That window is accepted here, knowingly, and not closed by this flag.
+        // Closing it needs a disarm path -- re-running the corpus for the new
+        // head and calling `--disable-auto` when it does not certify -- which
+        // depends on GitHub's documented auto-merge-disable conditions for the
+        // token's permission level, and neither was verified for this change.
+        // The flag narrows the certify-to-enable race; it does not make a moved
+        // head unmergeable.
         let mut cmd = Command::new("gh");
         cmd.args([
             "pr",
@@ -224,8 +264,24 @@ impl MergeEnlister {
                 "Successfully enlisted {}#{} into Merge Queue (squash)",
                 repo, pr_number
             );
-            self.post_enlistment_note(repo, pr_number, "Squash & Merge", report)
-                .await?;
+            // Warned, not propagated. The merge queue arming has already
+            // happened and no failure to comment undoes it, so a rate-limited
+            // or refused `post_pr_comment` must not turn a completed
+            // enlistment into `Err` -- `/api/enlist` would answer `409 …
+            // refused` about a pull request that is armed and will merge, and
+            // `record_certification` would record `enlisted = false` for one
+            // that was enlisted. That is the same fabricated negative the 504
+            // was removed for, one step later. A note that must be able to
+            // block would have to be posted before the merge is requested.
+            if let Err(e) = self
+                .post_enlistment_note(repo, pr_number, "Squash & Merge", report)
+                .await
+            {
+                warn!(
+                    "{}#{} is enlisted; its enlistment note could not be posted: {:#}",
+                    repo, pr_number, e
+                );
+            }
             return Ok(());
         }
 
@@ -259,8 +315,16 @@ impl MergeEnlister {
                 "Successfully enlisted {}#{} into Merge Queue (standard merge)",
                 repo, pr_number
             );
-            self.post_enlistment_note(repo, pr_number, "Merge Commit", report)
-                .await?;
+            // Warned, not propagated; see the squash arm above.
+            if let Err(e) = self
+                .post_enlistment_note(repo, pr_number, "Merge Commit", report)
+                .await
+            {
+                warn!(
+                    "{}#{} is enlisted; its enlistment note could not be posted: {:#}",
+                    repo, pr_number, e
+                );
+            }
             return Ok(());
         }
 

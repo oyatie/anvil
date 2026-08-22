@@ -624,10 +624,11 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
         }
         Commands::HealQueue { repo, pr } => {
             info!("Running on-demand merge queue healer for {}#{}", repo, pr);
-            state
+            let what_happened = state
                 .queue_healer
                 .heal_ejected_pr(&state, &repo, pr)
                 .await?;
+            info!("{}", what_happened);
         }
         Commands::Reconcile { repo, pr } => {
             info!(

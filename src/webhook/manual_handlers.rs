@@ -264,63 +264,93 @@ pub async fn manual_enlist_handler(
     let repo = req.repo.clone();
     let pr_number = req.pr_number;
 
-    // Answered on the request's own thread, with the outcome. The enlistment
-    // used to be detached and the response asserted success before anything had
-    // happened, so a refusal reached a log line inside a dropped task and never
-    // the person who asked for the merge.
+    // Detached from the connection, and answered with the outcome anyway.
     //
-    // Run to completion rather than under a `tokio::time::timeout`. A timeout
-    // cancels a future by dropping it at whatever await it is suspended on, and
-    // there is no await here at which that is safe to assert anything about:
-    // `enlist_into_merge_queue` keeps awaiting after `gh pr merge --auto` has
-    // returned success, so a bound expiring during the enlistment note left the
-    // pull request armed in the merge queue while this handler answered 504
-    // "nothing was enlisted" -- a published claim about an outcome nothing
-    // measured, which is the defect this whole change exists to remove. Earlier
-    // in the run the same cancellation abandons `certify_pull_request` while it
-    // holds the per-PR lock and after the doc and cedar guards have written
-    // files into the shared clone, leaving them for the next review run's
-    // `git add -A` to sweep into a different pull request's governance commit.
+    // The enlistment used to be spawned and forgotten, and the response
+    // asserted success before anything had happened, so a refusal reached a log
+    // line inside a dropped task and never the person who asked for the merge.
+    // Awaiting it directly on the handler's own future fixed that and created
+    // the mirror-image defect: axum drops a handler future when the client or
+    // an intermediary closes the connection, and this run is a clone, seventy-
+    // two guards, a model turn and a cold `cargo check` -- tens of minutes,
+    // over which a proxy or client cut is ordinary rather than exceptional.
+    // Dropped mid-run the future is cancelled at whatever await it is suspended
+    // on: after `gh pr merge --auto` returned success that leaves the pull
+    // request armed while the operator sees a connection error, and earlier it
+    // abandons `certify_pull_request` holding the per-PR lock, after the doc
+    // and cedar guards have written files into the shared clone, for the next
+    // review run's `git add -A` to sweep into another pull request's commit.
+    // Removing the 45-minute timeout did not remove that; it moved it from a
+    // known moment to an arbitrary one.
     //
-    // What bounds this endpoint is what bounds every other path through the
-    // corpus: `crate::exec::run_bounded` gives every child process a deadline
-    // and `kill_on_drop`, and the model turn carries `--print-timeout`. There is
-    // no unbounded await in the pipeline -- only a long one.
+    // `tokio::spawn` gives the work its own task, so no client action cancels
+    // it, and awaiting the `JoinHandle` still answers this request with what
+    // actually happened. A cut connection now costs the answer and nothing
+    // else: the enlistment runs to completion either way.
+    //
+    // What bounds the work is what bounds every other path through the corpus:
+    // `crate::exec::run_bounded` gives every child process a deadline and
+    // `kill_on_drop`, the model turn carries `--print-timeout`, and the per-PR
+    // lock acquisition in `certify_for_enlistment` is bounded there rather than
+    // waited on forever.
     //
     // This path has not reviewed the pull request, so it runs the certification
     // corpus and hands over what that produced.
-    let evidence =
-        crate::webhook::pipelines::certify::evidence_for_enlistment(&state, &repo, pr_number, None)
-            .await;
-    // The reason no report was obtained, kept for the answer rather than left in
-    // a server log: "no report was obtained" with no cause tells an operator
-    // nothing they can act on.
-    let why_no_report = evidence.as_ref().err().map(|e| format!("{e:#}"));
-    let outcome = state
-        .merge_enlister
-        .enlist_into_merge_queue(&repo, pr_number, evidence.as_ref().ok())
+    let task_state = state.clone();
+    let task_repo = repo;
+    let enlistment = tokio::spawn(async move {
+        let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
+            &task_state,
+            &task_repo,
+            pr_number,
+            None,
+        )
         .await;
+        // The reason no report was obtained, carried back for the answer rather
+        // than left in a server log: "no report was obtained" with no cause
+        // tells an operator nothing they can act on.
+        let why_no_report = evidence.as_ref().err().map(|e| format!("{e:#}"));
+        let outcome = task_state
+            .merge_enlister
+            .enlist_into_merge_queue(&task_repo, pr_number, evidence.as_ref().ok())
+            .await;
+        (outcome, why_no_report)
+    })
+    .await;
+
+    let (outcome, why_no_report) = match enlistment {
+        Ok(pair) => pair,
+        // The task itself died (panic, or runtime shutdown). Nothing observed
+        // the enlistment, so nothing is claimed about it.
+        Err(e) => (
+            Err(anyhow::anyhow!(
+                "the enlistment task did not run to completion: {e}"
+            )),
+            None,
+        ),
+    };
+    let enlisted = outcome.is_ok();
 
     match outcome {
         Ok(()) => (
             StatusCode::OK,
             Json(ApiResponse {
-                success: true,
+                success: enlisted,
                 message: format!("Enlisted {}#{} in the merge queue", req.repo, req.pr_number),
             }),
         ),
         Err(e) => (
             StatusCode::CONFLICT,
             Json(ApiResponse {
-                success: false,
+                success: enlisted,
                 message: match why_no_report {
                     Some(why) => format!(
-                        "Merge queue enlistment refused for {}#{}: {}\nNo certification report \
+                        "Merge queue enlistment refused for {}#{}: {:#}\nNo certification report \
                          was obtained because: {}",
                         req.repo, req.pr_number, e, why
                     ),
                     None => format!(
-                        "Merge queue enlistment refused for {}#{}: {}",
+                        "Merge queue enlistment refused for {}#{}: {:#}",
                         req.repo, req.pr_number, e
                     ),
                 },
@@ -352,20 +382,57 @@ pub async fn manual_heal_queue_handler(
     let repo = req.repo.clone();
     let pr_number = req.pr_number;
 
-    tokio::spawn(async move {
-        let _ = state_clone
+    // The same treatment `/api/enlist` was given, for the same reason.
+    //
+    // This endpoint answered `202 ACCEPTED` with `success: true` the instant a
+    // task was spawned, and discarded the task's `Result` -- so it reported
+    // success about a pull request that pushed a heal commit and was never put
+    // back in the queue, which is the defect `heal_in_worktree` was changed to
+    // surface. Making that function return its outcome reached only the CLI
+    // while this door went on claiming what it had not observed.
+    //
+    // Spawned rather than awaited inline so a client or proxy closing the
+    // connection cannot cancel a heal that force-pushes to a contributor's
+    // branch; the `JoinHandle` is awaited so the answer is still the outcome.
+    let heal = tokio::spawn(async move {
+        state_clone
             .queue_healer
             .heal_ejected_pr(&state_clone, &repo, pr_number)
-            .await;
-    });
+            .await
+    })
+    .await;
 
-    (
-        StatusCode::ACCEPTED,
-        Json(ApiResponse {
-            success: true,
-            message: format!("Queue healing queued for {}#{}", req.repo, req.pr_number),
-        }),
-    )
+    let outcome = match heal {
+        Ok(result) => result,
+        Err(e) => Err(anyhow::anyhow!(
+            "the queue-heal task did not run to completion: {e}"
+        )),
+    };
+    let healed = outcome.is_ok();
+
+    match outcome {
+        // The heal's own account of what it did, not this handler's. `Ok` here
+        // covers a pull request that was not open, a repair with nothing to
+        // push, and a commit pushed and re-enlisted, and only one of the three
+        // is "healed and re-enlisted".
+        Ok(what_happened) => (
+            StatusCode::OK,
+            Json(ApiResponse {
+                success: healed,
+                message: what_happened,
+            }),
+        ),
+        Err(e) => (
+            StatusCode::CONFLICT,
+            Json(ApiResponse {
+                success: healed,
+                message: format!(
+                    "Queue heal for {}#{} did not complete: {:#}",
+                    req.repo, req.pr_number, e
+                ),
+            }),
+        ),
+    }
 }
 
 pub async fn manual_reconcile_handler(

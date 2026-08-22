@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tokio::process::Command;
-use tracing::info;
+use tracing::{info, warn};
 
 pub mod diff_context;
 pub mod worktree;
@@ -200,7 +200,18 @@ fi
         Ok(())
     }
 
-    /// Creates an isolated, ephemeral git worktree for concurrent PR evaluation
+    /// Creates an isolated, ephemeral git worktree for concurrent PR evaluation.
+    ///
+    /// `head_sha` is what is *asked for*, and the returned worktree may not be
+    /// at it: when the object is not local the `FETCH_HEAD` fallback below
+    /// checks out whatever ref the shared clone fetched last, and that clone is
+    /// shared across every pull request of the repository -- a concurrent
+    /// `prepare_pr_diff` for a different pull request, or the
+    /// `git fetch origin <base> --prune` the queue healer runs immediately
+    /// before calling this, moves it. Callers that are going to describe the
+    /// result as a particular commit must say so with
+    /// `EphemeralWorktree::verify_at`, which is what makes the tree evidence
+    /// about that commit rather than about the clone's last fetch.
     pub async fn create_ephemeral_worktree(
         &self,
         repo: &str,
@@ -209,18 +220,37 @@ fi
     ) -> Result<EphemeralWorktree> {
         let repo_dir = self.ensure_repo_cloned(repo).await?;
 
-        // Ensure PR ref is fetched in the main repo
+        // Ensure PR ref is fetched in the main repo. A failure here is not
+        // fatal -- `head_sha` may already be local -- but it is not nothing
+        // either: it is what makes the `FETCH_HEAD` fallback below reachable,
+        // and the fallback is what checks out a commit nobody asked for. Logged
+        // rather than swallowed, so the reason a `verify_at` refusal happened is
+        // in the same log as the refusal.
         let pr_ref = format!("pull/{}/head", pr_number);
         let mut fetch_ref_cmd = Command::new("git");
         fetch_ref_cmd
             .current_dir(&repo_dir)
             .args(["fetch", "origin", &pr_ref, "--force"]);
-        let _ = crate::exec::run_bounded(
+        match crate::exec::run_bounded(
             fetch_ref_cmd,
             crate::exec::ExecClass::Vcs,
             "git fetch pull request ref",
         )
-        .await;
+        .await
+        {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => warn!(
+                "git fetch origin {} did not succeed for {}#{}: {}",
+                pr_ref,
+                repo,
+                pr_number,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Err(e) => warn!(
+                "git fetch origin {} did not complete for {}#{}: {:#}",
+                pr_ref, repo, pr_number, e
+            ),
+        }
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)

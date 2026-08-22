@@ -115,7 +115,9 @@ pub struct PreMergeCertificationReport {
     ///
     /// Not `pub`: a `Copy` field readable and writable from anywhere is a mark
     /// that can be lifted off a genuine report and dropped onto a struct
-    /// literal. Read it through `provenance()`.
+    /// literal. It has no public reader either — `admission_refusal` below is
+    /// the only thing that asks, and a report has exactly one door, so an
+    /// accessor would be public surface with nothing on the other side of it.
     #[serde(skip)]
     pub(super) provenance: GateProvenance,
     /// The pull request and the commit this run measured, or `None` for a
@@ -381,11 +383,6 @@ impl PreMergeCertificationReport {
             .iter()
             .filter_map(|s| s.unmeasured_gate_id().map(str::to_string))
             .collect();
-    }
-
-    /// Where the seventy-two statuses came from.
-    pub fn provenance(&self) -> GateProvenance {
-        self.provenance
     }
 
     /// The pull request and commit this report was measured against, if it was

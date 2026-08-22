@@ -17,7 +17,6 @@ pub fn build_repo_cards(state: &DashboardStateView) -> String {
                         <div class="repo-name">
                             <span class="icon">📦</span>
                             <strong>{}</strong>
-                            <span class="badge badge-healthy">{}</span>
                         </div>
                         <div class="repo-stats">
                             <span>Open PRs: <strong class="text-cyan">{}</strong></span>
@@ -36,7 +35,6 @@ pub fn build_repo_cards(state: &DashboardStateView) -> String {
                     </div>
                 </div>"#,
                 esc(&r.name),
-                esc(&r.health_badge),
                 r.open_prs,
                 r.lead_time_hours,
                 r.deploy_frequency_per_day,

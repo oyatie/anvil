@@ -51,20 +51,21 @@ impl FleetObserver {
         }
     }
 
-    /// Returns the cached fleet overview immediately (sub-millisecond TTFB)
+    /// The cached fleet overview, or `None` when nothing has been polled yet.
+    ///
+    /// This used to fall back to a report built from literals -- 98.6% pass
+    /// rate, 1.2h lead time, 4.8 deployments a day, one incident in thirty --
+    /// which the browser reads and renders as the fleet's DORA metrics. The
+    /// fallback ran on every request before the first successful poll, and
+    /// forever if polling never succeeded, so a fleet nobody could observe
+    /// displayed as a healthy one. `None` is the honest answer to "what is the
+    /// fleet doing" when nothing has looked.
     pub async fn get_fleet_overview_instant(
         &self,
-        managed_repos: &[String],
-    ) -> FleetOverviewReport {
-        {
-            let guard = self.cache.read().await;
-            if let Some(cached) = guard.as_ref() {
-                return cached.report.clone();
-            }
-        }
-
-        // Fallback default if not yet populated
-        self.build_default_report(managed_repos)
+        _managed_repos: &[String],
+    ) -> Option<FleetOverviewReport> {
+        let guard = self.cache.read().await;
+        guard.as_ref().map(|cached| cached.report.clone())
     }
 
     /// Spawns an asynchronous background poller that continuously refreshes the telemetry cache
@@ -83,46 +84,6 @@ impl FleetObserver {
                 let _ = observer.aggregate_fleet_overview(&managed_repos).await;
             }
         });
-    }
-
-    fn build_default_report(&self, managed_repos: &[String]) -> FleetOverviewReport {
-        let default_summaries: Vec<RepoFleetSummary> = managed_repos
-            .iter()
-            .map(|r| RepoFleetSummary {
-                repo_name: r.clone(),
-                active_branch_head_sha: "HEAD".to_string(),
-                open_pr_count: 0,
-                merge_queue_depth: 0,
-                pass_rate_percent: 98.6,
-                dora_metrics: DoraMetricSnapshot {
-                    repo: r.clone(),
-                    timestamp: chrono::Utc::now(),
-                    lead_time_for_changes_hours: 1.2,
-                    deployment_frequency_per_day: 4.8,
-                    change_failure_rate_percent: 1.4,
-                    mean_time_to_restore_mins: 8.0,
-                    total_deployments_30d: 48,
-                    total_incidents_30d: 1,
-                },
-                gate_failure_top3: Vec::new(),
-                branch_shas: HashMap::new(),
-            })
-            .collect();
-
-        FleetOverviewReport {
-            total_managed_repos: managed_repos.len(),
-            repos: default_summaries,
-            global_dora: DoraMetricSnapshot {
-                repo: "fleet_global".to_string(),
-                timestamp: chrono::Utc::now(),
-                lead_time_for_changes_hours: 1.2,
-                deployment_frequency_per_day: 4.8,
-                change_failure_rate_percent: 1.4,
-                mean_time_to_restore_mins: 8.0,
-                total_deployments_30d: 144,
-                total_incidents_30d: 2,
-            },
-        }
     }
 
     /// Aggregates fleet-wide live telemetry concurrently across all repositories
@@ -259,5 +220,34 @@ impl FleetObserver {
         );
 
         Ok(report)
+    }
+}
+
+#[cfg(test)]
+mod unpolled_fleet_tests {
+    use super::*;
+
+    /// The observer used to answer a cache miss with a report built from
+    /// literals -- 98.6% pass rate, 1.2h lead time, one incident in thirty
+    /// days -- which the dashboard renders as the fleet's real DORA metrics.
+    /// That path ran on every request before the first successful poll and
+    /// forever if polling never succeeded, so an unobservable fleet displayed
+    /// as a healthy one. Nothing polled means nothing to report.
+    #[tokio::test]
+    async fn an_unpolled_observer_reports_nothing_rather_than_a_healthy_fleet() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let observer = FleetObserver::new(
+            Arc::new(GitHubClient::new()),
+            Arc::new(TelemetryStore::new(dir.path()).await),
+        );
+
+        let overview = observer
+            .get_fleet_overview_instant(&["oyatie/anvil".to_string()])
+            .await;
+
+        assert!(
+            overview.is_none(),
+            "a fleet nobody has polled must report nothing, not a fabricated summary"
+        );
     }
 }

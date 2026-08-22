@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::self_governance::account_pool::AccountQuotaView;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DashboardStateView {
     pub server_version: String,
     pub uptime_secs: u64,
@@ -19,7 +19,9 @@ pub struct DashboardStateView {
     pub fleet_repos: Vec<FleetRepoView>,
     pub gate_heatmap: Vec<GateHeatmapItem>,
     pub ai_bandit_models: Vec<ModelBanditView>,
-    pub dora_metrics: DoraMetricsView,
+    /// `None` until the fleet poller lands a successful sweep. The client
+    /// already guards on this being present; the SSR path renders an em dash.
+    pub dora_metrics: Option<DoraMetricsView>,
     pub recent_activities: Vec<ActivityEventView>,
     pub merge_train: Vec<MergeTrainItemView>,
     pub account_quotas: Vec<AccountQuotaView>,
@@ -45,7 +47,6 @@ pub struct FleetRepoView {
     pub pass_rate: f64,
     pub lead_time_hours: f64,
     pub deploy_frequency_per_day: f64,
-    pub health_badge: String,
     pub branch_shas: HashMap<String, String>,
     pub gate_failures: Vec<GateHeatmapItem>,
 }
@@ -74,6 +75,15 @@ pub struct ModelBanditView {
     pub p_value: f64,
     pub is_statistically_significant: bool,
     pub significance_badge: String,
+}
+
+/// Renders a DORA figure, or an em dash when the fleet has not been polled.
+/// Absent telemetry has to look absent -- a number here is read as measured.
+fn dora_or_dash(
+    metrics: Option<&DoraMetricsView>,
+    render: impl Fn(&DoraMetricsView) -> String,
+) -> String {
+    metrics.map_or_else(|| "\u{2014}".to_string(), render)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,19 +149,19 @@ impl SsrDashboardRenderer {
         <div class="dora-kpis">
             <div class="dora-metric">
                 <span class="dora-lbl">Lead Time</span>
-                <span class="dora-num" id="lead-time-val">{:.1}h</span>
+                <span class="dora-num" id="lead-time-val">{}</span>
             </div>
             <div class="dora-metric">
                 <span class="dora-lbl">Deploy Cadence</span>
-                <span class="dora-num" id="deploy-cadence-val">{:.1}/d</span>
+                <span class="dora-num" id="deploy-cadence-val">{}</span>
             </div>
             <div class="dora-metric">
                 <span class="dora-lbl">MTTR</span>
-                <span class="dora-num" id="mttr-val">{:.0}m</span>
+                <span class="dora-num" id="mttr-val">{}</span>
             </div>
             <div class="dora-metric">
                 <span class="dora-lbl">Failure Rate</span>
-                <span class="dora-num" id="failure-rate-val">{:.1}%</span>
+                <span class="dora-num" id="failure-rate-val">{}</span>
             </div>
         </div>
         <div class="socket-status">
@@ -326,10 +336,20 @@ impl SsrDashboardRenderer {
 </body>
 </html>"#,
             state.server_version,
-            state.dora_metrics.lead_time_hours,
-            state.dora_metrics.deployment_frequency_per_day,
-            state.dora_metrics.mttr_minutes,
-            state.dora_metrics.change_failure_rate_pct,
+            dora_or_dash(state.dora_metrics.as_ref(), |d| format!(
+                "{:.1}h",
+                d.lead_time_hours
+            )),
+            dora_or_dash(state.dora_metrics.as_ref(), |d| {
+                format!("{:.1}/d", d.deployment_frequency_per_day)
+            }),
+            dora_or_dash(state.dora_metrics.as_ref(), |d| format!(
+                "{:.0}m",
+                d.mttr_minutes
+            )),
+            dora_or_dash(state.dora_metrics.as_ref(), |d| {
+                format!("{:.1}%", d.change_failure_rate_pct)
+            }),
             repo_cards,
             merge_train_rows,
             gate_cells,
@@ -337,5 +357,63 @@ impl SsrDashboardRenderer {
             account_quota_rows,
             activity_rows
         )
+    }
+}
+
+#[cfg(test)]
+mod unmeasured_dora_tests {
+    use super::*;
+
+    /// The four DORA figures are the headline of the dashboard. When the fleet
+    /// poller has not landed a sweep there is no measurement behind them, and
+    /// the page has to say so: a zero reads as "we deploy zero times a day",
+    /// which is a claim, not an absence.
+    #[test]
+    fn unmeasured_dora_renders_as_absent_not_as_zero() {
+        let html = SsrDashboardRenderer::render_html(&DashboardStateView {
+            dora_metrics: None,
+            ..Default::default()
+        });
+
+        for id in [
+            "lead-time-val",
+            "deploy-cadence-val",
+            "mttr-val",
+            "failure-rate-val",
+        ] {
+            let cell = html
+                .split_once(&format!("id=\"{id}\">"))
+                .unwrap_or_else(|| panic!("dashboard is missing the {id} cell"))
+                .1
+                .split_once('<')
+                .expect("unterminated cell")
+                .0;
+            assert_eq!(
+                cell, "\u{2014}",
+                "{id} must render an em dash when unmeasured, not the number {cell:?}"
+            );
+        }
+    }
+
+    /// Measured telemetry still has to reach the page -- an em dash everywhere
+    /// would pass the test above while showing nothing at all.
+    #[test]
+    fn measured_dora_still_renders_its_figures() {
+        let html = SsrDashboardRenderer::render_html(&DashboardStateView {
+            dora_metrics: Some(DoraMetricsView {
+                deployment_frequency_per_day: 4.0,
+                lead_time_hours: 2.5,
+                change_failure_rate_pct: 3.0,
+                mttr_minutes: 7.0,
+            }),
+            ..Default::default()
+        });
+
+        for expected in ["2.5h", "4.0/d", "7m", "3.0%"] {
+            assert!(
+                html.contains(expected),
+                "measured DORA value {expected} never reached the rendered page"
+            );
+        }
     }
 }

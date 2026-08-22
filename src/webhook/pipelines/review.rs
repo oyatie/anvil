@@ -316,19 +316,10 @@ pub async fn execute_pr_review(
     );
 
     // 46. HermeticBuildValidator: Deterministic Bit-for-Bit Reproducibility
-    let hermetic_report = state.hermetic_build.evaluate_hermetic_reproducibility(
-        "sha256_clean",
-        "sha256_clean",
-        &diff_ctx.diff_content,
-    );
+    let hermetic_report = state.hermetic_build.evaluate_without_build_pair();
 
     // 47. OpenVexReachabilityScanner: Callgraph-Pruned Dead-Code Exploitability
-    let openvex_report = state.vex_scanner.scan_reachability(
-        "CVE-NONE",
-        "none",
-        "symbol_none",
-        &diff_ctx.diff_content,
-    );
+    let openvex_report = state.vex_scanner.evaluate_without_advisory_source();
 
     // 48. CosignProvenanceSigner: OIDC Keyless Cryptographic Attestation
     let cosign_report = state.cosign_signer.generate_cosign_attestation(head_sha);

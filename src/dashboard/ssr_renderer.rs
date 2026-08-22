@@ -13,7 +13,6 @@ pub struct DashboardStateView {
     pub quota_budget_usd: f64,
     pub fleet_repos: Vec<FleetRepoView>,
     pub gate_heatmap: Vec<GateHeatmapItem>,
-    pub ai_bandit_models: Vec<ModelBanditView>,
     /// `None` until the fleet poller lands a successful sweep. The client
     /// already guards on this being present; the SSR path renders an em dash.
     pub dora_metrics: Option<DoraMetricsView>,
@@ -56,21 +55,6 @@ pub struct GateHeatmapItem {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelBanditView {
-    pub model_name: String,
-    pub empirical_trials: usize,
-    pub empirical_pass_at_1: f64,
-    pub bayesian_posterior_pass_at_1: f64,
-    pub avg_cost_per_pr: f64,
-    pub p99_latency_sec: f64,
-    pub ucb1_score: f64,
-    pub statistical_power: f64,
-    pub p_value: f64,
-    pub is_statistically_significant: bool,
-    pub significance_badge: String,
-}
-
 /// Renders a DORA figure, or an em dash when the fleet has not been polled.
 /// Absent telemetry has to look absent -- a number here is read as measured.
 fn dora_or_dash(
@@ -110,7 +94,6 @@ impl SsrDashboardRenderer {
         let gate_cells = crate::dashboard::panel_formatters::build_gate_cells(state);
         let account_quota_rows =
             crate::dashboard::panel_formatters::build_account_quota_rows(state);
-        let model_rows = crate::dashboard::panel_formatters::build_model_rows(state);
         let activity_rows = crate::dashboard::panel_formatters::build_activity_rows(state);
 
         let css_styles = crate::dashboard::styles::get_cockpit_css();
@@ -197,31 +180,6 @@ impl SsrDashboardRenderer {
             <div class="gate-grid-container">
                 {}
             </div>
-        </div>
-
-        <!-- QUADRANT 4: AI ROUTING BANDIT & PARETO FRONTIER -->
-        <div class="panel-card">
-            <div class="panel-header">
-                <span class="panel-title">🤖 Panel 4: AI Model Routing Bandit (Empirical + Bayesian Bayes)</span>
-                <span class="badge badge-warning">Cold Start (N=0)</span>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Model Family</th>
-                        <th>Obs (N)</th>
-                        <th>Pass@1</th>
-                        <th>Bayes μ</th>
-                        <th>Cost/PR</th>
-                        <th>Latency</th>
-                        <th>UCB1</th>
-                        <th>Significance</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {}
-                </tbody>
-            </table>
         </div>
     </div>
 
@@ -347,7 +305,6 @@ impl SsrDashboardRenderer {
             repo_cards,
             merge_train_rows,
             gate_cells,
-            model_rows,
             account_quota_rows,
             activity_rows
         )

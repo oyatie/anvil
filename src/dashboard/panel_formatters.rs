@@ -177,42 +177,6 @@ pub fn build_account_quota_rows(state: &DashboardStateView) -> String {
         .join("\n")
 }
 
-pub fn build_model_rows(state: &DashboardStateView) -> String {
-    state
-        .ai_bandit_models
-        .iter()
-        .map(|m| {
-            let sig_class = if m.is_statistically_significant {
-                "badge-healthy"
-            } else {
-                "badge-warning"
-            };
-            format!(
-                r#"<tr>
-                    <td><strong>{}</strong></td>
-                    <td>{}</td>
-                    <td><strong>{:.1}%</strong></td>
-                    <td><strong>{:.1}%</strong></td>
-                    <td>${:.3}</td>
-                    <td>{:.1}s</td>
-                    <td><code>{:.3}</code></td>
-                    <td><span class="badge {}">{}</span></td>
-                </tr>"#,
-                m.model_name,
-                m.empirical_trials,
-                m.empirical_pass_at_1 * 100.0,
-                m.bayesian_posterior_pass_at_1 * 100.0,
-                m.avg_cost_per_pr,
-                m.p99_latency_sec,
-                m.ucb1_score,
-                sig_class,
-                m.significance_badge
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub fn build_activity_rows(state: &DashboardStateView) -> String {
     state
         .recent_activities

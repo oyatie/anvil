@@ -522,6 +522,7 @@ mod stub {
             summary: STUB.to_string(),
         };
         let auto_rollback = AutoRollbackReport {
+            status: GateStatus::Passed,
             passed: true,
             rollback_triggered: false,
             postmortem: None,
@@ -553,18 +554,21 @@ mod stub {
             summary: STUB.to_string(),
         };
         let carbon = CarbonComputeReport {
+            status: GateStatus::Passed,
             passed: true,
             estimated_joules_per_build: 0.0,
             green_window_scheduled: true,
             summary: STUB.to_string(),
         };
         let replay = ReplayHarnessReport {
+            status: GateStatus::Passed,
             passed: true,
             replayed_fixtures_count: 0,
             divergence_detected: false,
             summary: STUB.to_string(),
         };
         let upgrade = UpgradeTrainReport {
+            status: GateStatus::Passed,
             passed: true,
             pending_upgrades_available: 0,
             breaking_major_upgrades: 0,
@@ -638,7 +642,7 @@ mod stub {
                 &neutral::<FeatureFlagReport>(),
                 &neutral::<BenchmarkReport>(),
                 &neutral::<AttestationReport>(),
-                true,
+                Some(true),
                 "APPROVE",
                 &ShapeGateOutcome::NoSpec {
                     reason: STUB.to_string(),

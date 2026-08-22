@@ -280,9 +280,23 @@ impl MergeEnlister {
         bail!("Merge queue enlistment failed: {}", err2);
     }
 
-    /// Verifies if PR has an approving review; if not, submits a formal APPROVE review
-    /// Verifies if PR has an approving review; if not, submits a formal APPROVE review.
-    /// Strictly fails closed if CHANGES_REQUESTED exists or if any review comment threads are unresolved.
+    /// Verifies if PR has an approving review; if not, submits a formal APPROVE
+    /// review derived from `report`.
+    ///
+    /// Fails closed on CHANGES_REQUESTED, on unresolved review comment threads,
+    /// and on *either read failing* -- an unreadable review state is not an
+    /// absent one, and this function may not sign an APPROVE on evidence it did
+    /// not obtain.
+    ///
+    /// The `report` argument is defence in depth and nothing more. Its `None`
+    /// arm below is unreachable in the shipped code: `enlist_into_merge_queue`
+    /// runs `Self::admission_refusal(report)?` at its entry point, so `report`
+    /// is already `Some` and already admissible by the time this is called, and
+    /// that entry-point guard is this call's only caller. The arm exists so
+    /// that a future second caller cannot walk from "no report" into
+    /// `gh pr merge --auto`; it is not what protects the merge today. Do not
+    /// remove the entry-point guard in the belief that this one stands in for
+    /// it.
     pub async fn ensure_approving_review(
         &self,
         repo: &str,
@@ -306,9 +320,15 @@ impl MergeEnlister {
             "--json",
             "reviewDecision,reviews",
         ]);
-        // Fail closed: this is the CHANGES_REQUESTED check that gates merge
-        // queue admission. Swallowing a timeout here left `needs_approval` at
-        // its default and walked straight past a blocking review verdict.
+        // Fail closed on every way this read can fail, not just on the one that
+        // errors. `run_bounded` returns `Ok(output)` for a non-zero exit -- it
+        // errors only on a spawn failure or a timeout -- and `gh pr view` exits
+        // non-zero on auth failure, on rate limiting and on transient API
+        // errors. Read only through `?`, all three of those skipped the whole
+        // block below with `needs_approval` still at its `true` default, and
+        // this function went on to publish a formal APPROVE without ever having
+        // learned whether a CHANGES_REQUESTED verdict exists. An unreadable
+        // review state is not an absent one.
         let check_out = crate::exec::run_bounded(
             check_cmd,
             crate::exec::ExecClass::Api,
@@ -316,53 +336,72 @@ impl MergeEnlister {
         )
         .await
         .context("Failed to read PR review decision before merge queue admission")?;
+        if !check_out.status.success() {
+            bail!(
+                "🚨 Merge queue enlistment blocked: the review state of {}#{} could not be read, \
+                 so nothing establishes that no CHANGES_REQUESTED verdict exists: {}",
+                repo,
+                pr_number,
+                String::from_utf8_lossy(&check_out.stderr).trim()
+            );
+        }
+        let val: serde_json::Value =
+            serde_json::from_slice(&check_out.stdout).with_context(|| {
+                format!(
+                    "🚨 Merge queue enlistment blocked: the review state of {}#{} did not parse, \
+                     so nothing establishes that no CHANGES_REQUESTED verdict exists",
+                    repo, pr_number
+                )
+            })?;
 
         let mut needs_approval = true;
-        {
-            let out = check_out;
-            if out.status.success()
-                && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
-            {
-                if let Some(decision) = val.get("reviewDecision").and_then(|d| d.as_str()) {
-                    if decision == "CHANGES_REQUESTED" {
-                        bail!(
-                            "🚨 Merge queue enlistment blocked: PR {}#{} has active CHANGES_REQUESTED review verdict. Invariant 2 requires all reviews to approve.",
-                            repo,
-                            pr_number
-                        );
-                    }
-                    if decision == "APPROVED" {
-                        info!(
-                            "PR {}#{} already has reviewDecision: APPROVED",
-                            repo, pr_number
-                        );
-                        needs_approval = false;
-                    }
-                }
+        if let Some(decision) = val.get("reviewDecision").and_then(|d| d.as_str()) {
+            if decision == "CHANGES_REQUESTED" {
+                bail!(
+                    "🚨 Merge queue enlistment blocked: PR {}#{} has active CHANGES_REQUESTED review verdict. Invariant 2 requires all reviews to approve.",
+                    repo,
+                    pr_number
+                );
+            }
+            if decision == "APPROVED" {
+                info!(
+                    "PR {}#{} already has reviewDecision: APPROVED",
+                    repo, pr_number
+                );
+                needs_approval = false;
+            }
+        }
 
-                // Check individual review states in the payload
-                if let Some(reviews) = val.get("reviews").and_then(|r| r.as_array()) {
-                    for review in reviews {
-                        if let Some(state) = review.get("state").and_then(|s| s.as_str())
-                            && state == "CHANGES_REQUESTED"
-                        {
-                            bail!(
-                                "🚨 Merge queue enlistment blocked: PR {}#{} has a blocking review with state CHANGES_REQUESTED",
-                                repo,
-                                pr_number
-                            );
-                        }
-                    }
+        // Check individual review states in the payload
+        if let Some(reviews) = val.get("reviews").and_then(|r| r.as_array()) {
+            for review in reviews {
+                if let Some(state) = review.get("state").and_then(|s| s.as_str())
+                    && state == "CHANGES_REQUESTED"
+                {
+                    bail!(
+                        "🚨 Merge queue enlistment blocked: PR {}#{} has a blocking review with state CHANGES_REQUESTED",
+                        repo,
+                        pr_number
+                    );
                 }
             }
         }
 
-        // Step 2: Check for unresolved review comment threads
+        // Step 2: Check for unresolved review comment threads. Propagated, not
+        // `unwrap_or_default()`: an API failure turned into an empty list reads
+        // as "zero unresolved threads" and satisfies the check below, which is
+        // the same fail-open shape as the one above.
         let comments = self
             .github_client
             .fetch_review_comments(repo, pr_number)
             .await
-            .unwrap_or_default();
+            .with_context(|| {
+                format!(
+                    "🚨 Merge queue enlistment blocked: the review threads on {}#{} could not be \
+                     read, so nothing establishes that none are unresolved",
+                    repo, pr_number
+                )
+            })?;
 
         let unresolved_comments: Vec<_> = comments
             .into_iter()
@@ -389,9 +428,11 @@ impl MergeEnlister {
             );
             // Absent evidence is not a reason to report success from the one
             // function whose job is to guarantee an approving review exists.
-            // Every other absent-evidence branch here withholds the merge; this
-            // one used to `return Ok(())`, and the caller walks straight from
-            // that into `gh pr merge --auto`.
+            // This used to `return Ok(())`, which is the wrong answer to give
+            // whoever asked. It is unreachable behind the entry-point
+            // `admission_refusal` -- see this function's doc comment -- so what
+            // changed here is the answer a second caller would get, not a live
+            // path into `gh pr merge --auto`.
             let Some(summary) = Self::approval_summary(report) else {
                 bail!(
                     "🚨 Merge queue enlistment blocked: approving review not submitted on PR {}#{}: \
@@ -478,6 +519,13 @@ impl MergeEnlister {
         Ok(())
     }
 
+    /// Posts the enlistment note, or nothing when there is no report to derive
+    /// one from.
+    ///
+    /// Like the `None` arm in `ensure_approving_review`, the "post nothing" arm
+    /// is unreachable behind the entry-point `admission_refusal`: this is only
+    /// called after `gh pr merge` succeeded, on a path that already proved
+    /// `report` admissible.
     async fn post_enlistment_note(
         &self,
         repo: &str,

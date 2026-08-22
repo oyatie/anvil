@@ -429,40 +429,48 @@ impl QueueHealer {
         // a push, so re-reading `head_ref_oid` can hand the corpus the pre-heal
         // commit while the merge queue takes the healed one. The healer knows
         // the OID it just pushed; certification is refused unless that is the
-        // commit being certified.
-        let healed_head = Self::head_oid(work_dir).await;
-        match healed_head {
-            None => warn!(
-                "Could not read the healed head for {}#{} after pushing it, so no certification \
-                 was run and nothing was re-enlisted.",
-                repo, pr_number
-            ),
-            Some(healed_head) => {
-                let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
-                    state,
-                    repo,
-                    pr_number,
-                    Some(&healed_head),
+        // commit being certified. `evidence_for_enlistment` waits a bounded
+        // while for GitHub's view to catch up before it refuses, so the race
+        // this comment names is tolerated rather than made fatal by the
+        // mitigation for it.
+        //
+        // Every outcome below is returned rather than logged. Warned and
+        // swallowed, a heal that certified nothing and re-enlisted nothing still
+        // returned `Ok(())`, so `anvil heal-queue` exited 0 and
+        // `POST /api/heal-queue` answered success about a pull request that was
+        // never put back in the queue. The push did happen and the error does
+        // not undo it; what the error says is that the re-enlistment did not.
+        let Some(healed_head) = Self::head_oid(work_dir).await else {
+            bail!(
+                "Queue heal for {}#{} pushed a commit and then could not read which commit it \
+                 was, so nothing was certified and nothing was re-enlisted.",
+                repo,
+                pr_number
+            );
+        };
+        let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
+            state,
+            repo,
+            pr_number,
+            Some(&healed_head),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "Queue heal for {}#{} pushed {} and nothing was re-enlisted: no certification \
+                 could be obtained for it",
+                repo, pr_number, healed_head
+            )
+        })?;
+        self.merge_enlister
+            .enlist_into_merge_queue(repo, pr_number, Some(&evidence))
+            .await
+            .with_context(|| {
+                format!(
+                    "Queue heal for {}#{} pushed {} and it was not re-enlisted",
+                    repo, pr_number, healed_head
                 )
-                .await;
-                if let Err(e) = &evidence {
-                    warn!(
-                        "No certification could be obtained for the healed head {} of {}#{}: {:#}",
-                        healed_head, repo, pr_number, e
-                    );
-                }
-                if let Err(e) = self
-                    .merge_enlister
-                    .enlist_into_merge_queue(repo, pr_number, evidence.as_ref().ok())
-                    .await
-                {
-                    warn!(
-                        "Could not re-enlist {}#{} after heal: {}",
-                        repo, pr_number, e
-                    );
-                }
-            }
-        }
+            })?;
 
         Ok(())
     }

@@ -83,11 +83,13 @@ pub async fn execute_pr_review(
         )
         .await?;
 
-    // The repository's own verification gate, run rather than assumed. This
-    // used to be a literal `Some(true)` for a suite nothing in this pipeline
-    // ran, which the corpus turned into `test_suite_status: Passed` and the
-    // approving review published as a measured pass.
-    let test_suite_passed = super::certify::local_verification_gate(&repo_dir).await;
+    // The repository's own verification gate, run rather than assumed, and run
+    // against `head_sha` rather than against whatever the shared clone happens
+    // to be on. This used to be a literal `Some(true)` for a suite nothing in
+    // this pipeline ran, which the corpus turned into `test_suite_status:
+    // Passed` and the approving review published as a measured pass.
+    let test_suite_passed =
+        super::certify::local_verification_gate(&state.git_mgr, repo, pr_number, head_sha).await;
 
     // 2..69. The gate corpus, run for this pull request.
     let cert_report = match super::certify::certify_pull_request(
@@ -267,12 +269,51 @@ pub async fn execute_pr_review(
             cert_report.unmeasured_gates.join(", ")
         );
     }
-    if let Err(e) = state
+    let enlistment = state
         .merge_enlister
         .enlist_into_merge_queue(repo, pr_number, Some(&cert_report))
-        .await
-    {
+        .await;
+    if let Err(e) = &enlistment {
         warn!("Automatic merge queue enlistment notice: {}", e);
+    }
+
+    // Record which head this run certified, and whether it went into the queue.
+    //
+    // `StateManager::record_certification` and the two fields it writes have
+    // existed all along with no writer anywhere in `src/`, while two live
+    // readers depend on them: the `pull_request` webhook's anti-loop filter
+    // (`webhook_handlers.rs`) drops a webhook only for a head already certified
+    // and queued, and the outage-recovery sweep
+    // (`recovery/reconciliation_sweep.rs`) decides a pull request needs
+    // certification when the recorded head is not its current one. With nothing
+    // writing them, the filter never fired and the sweep re-certified every open
+    // pull request on every pass. That is the same defect class as the rest of
+    // this change from the other side: a decision taken on a field that no
+    // measurement ever reaches.
+    //
+    // This is the one writer, and it is the review pipeline rather than the
+    // enlist doors, because this is the path that has both run the corpus and
+    // seen what the merge queue did with it. `CertifiedSubject` on the report
+    // answers "is this report about this commit" for one enlistment; this
+    // answers "which head has been certified for this pull request" across
+    // process restarts. They are not two spellings of one fact, and only this
+    // one is durable.
+    //
+    // Written only for a head the corpus actually certified, on the same
+    // question `enlist_into_merge_queue` asks. Stamped for a refused head it
+    // would tell the recovery sweep that a blocked pull request needs no
+    // further certification -- recording the field on a run that refused would
+    // be the field asserting something the run did not find.
+    if cert_report.admission_refusal().is_ok()
+        && let Err(e) = state
+            .state_mgr
+            .record_certification(repo, pr_number, head_sha, enlistment.is_ok())
+            .await
+    {
+        warn!(
+            "Could not persist the certification record for {}#{}: {}",
+            repo, pr_number, e
+        );
     }
 
     Ok(())

@@ -48,7 +48,7 @@ use anvil::brand_absence::{
     BrandAbsenceGate, BrandViolation, BrandViolationKind, VOCABULARY_DEFINITION_PATH,
 };
 use anvil::migration::{MIGRATION_LEDGER, Verdict};
-use anvil::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
+use anvil::pre_merge_guard::PreMergeCertificationReport;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -613,90 +613,18 @@ fn is_identifier_shaped(token: &str) -> bool {
 
 /// The gate corpus size, read from the **gate API** rather than from a constant.
 ///
-/// Every `GateStatus` field must be named here, so removing or adding a gate
-/// breaks this fixture at compile time — which is the point. The count this test
-/// compares strings against cannot drift away from the corpus without the build
-/// noticing.
+/// This used to name every `GateStatus` field in a struct literal so that
+/// adding or removing a gate broke the fixture at compile time. It cannot any
+/// more — `provenance` is a private field, so no struct literal outside
+/// `pre_merge_guard` compiles at all — and it no longer needs to: the compile-
+/// time tripwire moved into `PreMergeCertificationReport::build`, the one place
+/// the corpus is written down as a construction, which `unmeasured` goes
+/// through. A gate added to the struct and not given a value there fails the
+/// build; a gate added and left out of `all_statuses()` fails
+/// `all_statuses_matches_the_declared_total`. The count this test compares
+/// strings against still cannot drift away from the corpus unnoticed.
 fn live_gate_count() -> usize {
-    let report = PreMergeCertificationReport {
-        is_certified_ready: true,
-        doc_parity_status: GateStatus::Passed,
-        cedar_status: GateStatus::Passed,
-        compliance_status: GateStatus::Passed,
-        api_contract_status: GateStatus::Passed,
-        cell_isolation_status: GateStatus::Passed,
-        supply_chain_status: GateStatus::Passed,
-        clean_arch_status: GateStatus::Passed,
-        monorepo_status: GateStatus::Passed,
-        debt_shrink_status: GateStatus::Passed,
-        modularization_status: GateStatus::Passed,
-        coverage_status: GateStatus::Passed,
-        rust_skills_status: GateStatus::Passed,
-        kani_status: GateStatus::Passed,
-        slo_status: GateStatus::Passed,
-        adr_status: GateStatus::Passed,
-        shuffle_status: GateStatus::Passed,
-        trace_status: GateStatus::Passed,
-        constant_work_status: GateStatus::Passed,
-        idempotency_status: GateStatus::Passed,
-        finops_status: GateStatus::Passed,
-        ghost_migration_status: GateStatus::Passed,
-        gitops_promo_status: GateStatus::Passed,
-        gitops_drift_status: GateStatus::Passed,
-        canary_status: GateStatus::Passed,
-        cluster_audit_status: GateStatus::Passed,
-        migration_orch_status: GateStatus::Passed,
-        ci_wallclock_status: GateStatus::Passed,
-        predictive_test_status: GateStatus::Passed,
-        compile_profile_status: GateStatus::Passed,
-        remote_cache_status: GateStatus::Passed,
-        runner_economics_status: GateStatus::Passed,
-        sandbox_status: GateStatus::Passed,
-        cross_service_status: GateStatus::Passed,
-        ephemeral_secret_status: GateStatus::Passed,
-        psa_status: GateStatus::Passed,
-        shadow_traffic_status: GateStatus::Passed,
-        unresolved_review_status: GateStatus::Passed,
-        local_probe_status: GateStatus::Passed,
-        semantic_abi_status: GateStatus::Passed,
-        zero_day_status: GateStatus::Passed,
-        formal_verification_status: GateStatus::Passed,
-        deadlock_status: GateStatus::Passed,
-        review_verdict_status: GateStatus::Passed,
-        brand_absence_status: GateStatus::Passed,
-        migration_boundary_status: GateStatus::Passed,
-        shape_status: GateStatus::Passed,
-        automated_canary_status: GateStatus::Passed,
-        progressive_ring_status: GateStatus::Passed,
-        hermetic_build_status: GateStatus::Passed,
-        openvex_status: GateStatus::Passed,
-        cosign_status: GateStatus::Passed,
-        chaos_injection_status: GateStatus::Passed,
-        stacked_diffs_status: GateStatus::Passed,
-        microbench_status: GateStatus::Passed,
-        jittered_backoff_status: GateStatus::Passed,
-        schema_evolution_status: GateStatus::Passed,
-        auto_rollback_status: GateStatus::Passed,
-        wasm_sandbox_status: GateStatus::Passed,
-        consistency_status: GateStatus::Passed,
-        flake_quarantine_status: GateStatus::Passed,
-        zero_trust_workload_status: GateStatus::Passed,
-        carbon_compute_status: GateStatus::Passed,
-        replay_harness_status: GateStatus::Passed,
-        upgrade_train_status: GateStatus::Passed,
-        mutation_status: GateStatus::Passed,
-        feature_flag_status: GateStatus::Passed,
-        bench_status: GateStatus::Passed,
-        attestation_status: GateStatus::Passed,
-        security_scan_status: GateStatus::Passed,
-        schema_compat_status: GateStatus::Passed,
-        performance_concurrency_status: GateStatus::Passed,
-        test_suite_status: GateStatus::Passed,
-        unmeasured_gates: Vec::new(),
-        summary_markdown: String::new(),
-        // A hand-built fixture is not a measurement, and says so.
-        provenance: Default::default(),
-    };
+    let report = PreMergeCertificationReport::unmeasured("counting the live corpus");
     let (passed, failed) = report.gate_counts();
     assert_eq!(
         passed + failed,

@@ -44,86 +44,20 @@ use anvil::webhook::pipelines::review;
 /// GitHub rejects an issue-comment body above this length.
 const GITHUB_COMMENT_LIMIT: usize = 65_536;
 
+/// Every gate in the corpus reporting `Passed`, built the way a report is
+/// built: by handing the gate outcomes to the constructor that consumes them.
+///
+/// This was seventy-two lines of struct literal until `provenance` became a
+/// private field — a `Copy` mark that any struct literal could lift off a
+/// genuine report. The gate names are now read off the corpus rather than typed
+/// out, so the fixture stays correct when the corpus grows.
 fn all_passing() -> PreMergeCertificationReport {
-    let mut r = PreMergeCertificationReport {
-        is_certified_ready: true,
-        doc_parity_status: GateStatus::Passed,
-        cedar_status: GateStatus::Passed,
-        compliance_status: GateStatus::Passed,
-        api_contract_status: GateStatus::Passed,
-        cell_isolation_status: GateStatus::Passed,
-        supply_chain_status: GateStatus::Passed,
-        clean_arch_status: GateStatus::Passed,
-        monorepo_status: GateStatus::Passed,
-        debt_shrink_status: GateStatus::Passed,
-        modularization_status: GateStatus::Passed,
-        coverage_status: GateStatus::Passed,
-        rust_skills_status: GateStatus::Passed,
-        kani_status: GateStatus::Passed,
-        slo_status: GateStatus::Passed,
-        adr_status: GateStatus::Passed,
-        shuffle_status: GateStatus::Passed,
-        trace_status: GateStatus::Passed,
-        constant_work_status: GateStatus::Passed,
-        idempotency_status: GateStatus::Passed,
-        finops_status: GateStatus::Passed,
-        ghost_migration_status: GateStatus::Passed,
-        gitops_promo_status: GateStatus::Passed,
-        gitops_drift_status: GateStatus::Passed,
-        canary_status: GateStatus::Passed,
-        cluster_audit_status: GateStatus::Passed,
-        migration_orch_status: GateStatus::Passed,
-        ci_wallclock_status: GateStatus::Passed,
-        predictive_test_status: GateStatus::Passed,
-        compile_profile_status: GateStatus::Passed,
-        remote_cache_status: GateStatus::Passed,
-        runner_economics_status: GateStatus::Passed,
-        sandbox_status: GateStatus::Passed,
-        cross_service_status: GateStatus::Passed,
-        ephemeral_secret_status: GateStatus::Passed,
-        psa_status: GateStatus::Passed,
-        shadow_traffic_status: GateStatus::Passed,
-        unresolved_review_status: GateStatus::Passed,
-        local_probe_status: GateStatus::Passed,
-        semantic_abi_status: GateStatus::Passed,
-        zero_day_status: GateStatus::Passed,
-        formal_verification_status: GateStatus::Passed,
-        deadlock_status: GateStatus::Passed,
-        review_verdict_status: GateStatus::Passed,
-        brand_absence_status: GateStatus::Passed,
-        migration_boundary_status: GateStatus::Passed,
-        shape_status: GateStatus::Passed,
-        automated_canary_status: GateStatus::Passed,
-        progressive_ring_status: GateStatus::Passed,
-        hermetic_build_status: GateStatus::Passed,
-        openvex_status: GateStatus::Passed,
-        cosign_status: GateStatus::Passed,
-        chaos_injection_status: GateStatus::Passed,
-        stacked_diffs_status: GateStatus::Passed,
-        microbench_status: GateStatus::Passed,
-        jittered_backoff_status: GateStatus::Passed,
-        schema_evolution_status: GateStatus::Passed,
-        auto_rollback_status: GateStatus::Passed,
-        wasm_sandbox_status: GateStatus::Passed,
-        consistency_status: GateStatus::Passed,
-        flake_quarantine_status: GateStatus::Passed,
-        zero_trust_workload_status: GateStatus::Passed,
-        carbon_compute_status: GateStatus::Passed,
-        replay_harness_status: GateStatus::Passed,
-        upgrade_train_status: GateStatus::Passed,
-        mutation_status: GateStatus::Passed,
-        feature_flag_status: GateStatus::Passed,
-        bench_status: GateStatus::Passed,
-        attestation_status: GateStatus::Passed,
-        security_scan_status: GateStatus::Passed,
-        schema_compat_status: GateStatus::Passed,
-        performance_concurrency_status: GateStatus::Passed,
-        test_suite_status: GateStatus::Passed,
-        unmeasured_gates: Vec::new(),
-        summary_markdown: String::new(),
-        // A hand-built fixture is not a measurement, and says so.
-        provenance: Default::default(),
-    };
+    let base = PreMergeCertificationReport::unmeasured("fixture baseline");
+    let names: Vec<&'static str> = base.named_statuses().into_iter().map(|(n, _)| n).collect();
+    let outcomes: Vec<(&str, GateStatus)> =
+        names.into_iter().map(|n| (n, GateStatus::Passed)).collect();
+    let mut r = PreMergeCertificationReport::from_gate_outcomes(&outcomes)
+        .expect("the fixture hands over an outcome for every gate in the corpus");
     r.recompute_unmeasured();
     r.summary_markdown = matrix_for(&r);
     r

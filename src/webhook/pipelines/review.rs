@@ -83,8 +83,14 @@ pub async fn execute_pr_review(
         )
         .await?;
 
+    // The repository's own verification gate, run rather than assumed. This
+    // used to be a literal `Some(true)` for a suite nothing in this pipeline
+    // ran, which the corpus turned into `test_suite_status: Passed` and the
+    // approving review published as a measured pass.
+    let test_suite_passed = super::certify::local_verification_gate(&repo_dir).await;
+
     // 2..69. The gate corpus, run for this pull request.
-    let cert_report = super::certify::certify_pull_request(
+    let cert_report = match super::certify::certify_pull_request(
         state,
         repo,
         pr_number,
@@ -94,16 +100,29 @@ pub async fn execute_pr_review(
         &repo_dir,
         &diff_ctx,
         &review_resp.verdict,
-        Some(true),
+        test_suite_passed,
     )
-    .await?;
+    .await
+    {
+        Ok(report) => report,
+        Err(e) => {
+            // Roll back the reviewed-SHA stamp so this PR is retried rather
+            // than stranded: the stamp is set above, and the early-exit guard
+            // would otherwise skip every later webhook for this SHA. The stamp
+            // belongs to this pipeline, so the rollback does too — the corpus
+            // is shared with the enlistment paths, and an enlist attempt must
+            // not be able to un-stamp a pull request.
+            state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+            return Err(e);
+        }
+    };
 
     // Re-stamp the provenance receipt with the verdict that was actually
     // computed. The first stamp above records only that the receipt mechanism
     // works; it deliberately carries PENDING_CERTIFICATION because at that
     // point no gate has run. Invariant I2: never report a value you did not
     // measure.
-    let final_verdict = if cert_report.is_admissible() {
+    let final_verdict = if cert_report.admission_refusal().is_ok() {
         "CERTIFIED_READY"
     } else if !cert_report.unmeasured_gates.is_empty() {
         "BLOCKED_UNMEASURED"
@@ -234,9 +253,11 @@ pub async fn execute_pr_review(
             payload_json: None,
         });
 
-    // Enlist only when certified AND every gate actually produced a measurement.
-    // `is_admissible()` is deliberately stricter than `is_certified_ready`:
-    // invariant I1 — absent evidence must never merge.
+    // The admission decision is taken once, by the entry point, on the report
+    // this run produced. There is deliberately no pre-check here: a second
+    // predicate over the same fields — `is_admissible()`, which cannot see
+    // `Errored` and cannot see provenance — was a weaker question asked
+    // immediately before the stricter one, and the two agreed only by accident.
     if !cert_report.unmeasured_gates.is_empty() {
         warn!(
             "PR {}#{} withheld from merge queue: {} gate(s) produced no measurement: {}",
@@ -246,18 +267,12 @@ pub async fn execute_pr_review(
             cert_report.unmeasured_gates.join(", ")
         );
     }
-    if cert_report.is_admissible() {
-        info!(
-            "PR {}#{} is 100% Certified. Autonomously enlisting in Merge Queue...",
-            repo, pr_number
-        );
-        if let Err(e) = state
-            .merge_enlister
-            .enlist_into_merge_queue(repo, pr_number, Some(&cert_report))
-            .await
-        {
-            warn!("Automatic merge queue enlistment notice: {}", e);
-        }
+    if let Err(e) = state
+        .merge_enlister
+        .enlist_into_merge_queue(repo, pr_number, Some(&cert_report))
+        .await
+    {
+        warn!("Automatic merge queue enlistment notice: {}", e);
     }
 
     Ok(())

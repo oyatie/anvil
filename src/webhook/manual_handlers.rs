@@ -5,6 +5,16 @@ use tracing::{error, info, warn};
 use super::pipelines::{execute_pr_certify, execute_pr_fix, execute_pr_review};
 use super::{ApiResponse, AppState};
 
+/// How long `POST /api/enlist` will wait for the certification corpus and the
+/// enlistment before answering that it gave up.
+///
+/// The corpus runs a build gate (`ExecClass::Build`, 30 minutes) and a model
+/// turn (`ExecClass::Model`, 10 minutes) among other things, so this is the
+/// span in which a real answer is possible at all. The point is not that the
+/// bound is short: it is that Anvil says what happened rather than leaving the
+/// caller's own timeout to answer for it.
+const ENLIST_REQUEST_LIMIT: std::time::Duration = std::time::Duration::from_secs(2_700);
+
 #[derive(Deserialize, Debug)]
 pub struct ManualReviewRequest {
     pub repo: String,
@@ -264,36 +274,73 @@ pub async fn manual_enlist_handler(
     let repo = req.repo.clone();
     let pr_number = req.pr_number;
 
-    // This path has not reviewed the pull request, so it runs the certification
-    // corpus and hands over what that produced.
-    let evidence =
-        crate::webhook::pipelines::certify::evidence_for_enlistment(&state, &repo, pr_number).await;
-
     // Answered on the request's own thread, with the outcome. The enlistment
     // used to be detached and the response asserted success before anything had
     // happened, so a refusal reached a log line inside a dropped task and never
     // the person who asked for the merge.
-    let outcome = state
-        .merge_enlister
-        .enlist_into_merge_queue(&repo, pr_number, evidence.as_ref())
+    //
+    // Bounded, because the work behind that answer is a clone, the whole gate
+    // corpus and a commit in the shared clone. An unbounded handler is answered
+    // by the caller's timeout instead of by Anvil, which is the same silence the
+    // detached spawn produced.
+    let enlistment = async {
+        // This path has not reviewed the pull request, so it runs the
+        // certification corpus and hands over what that produced.
+        let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
+            &state, &repo, pr_number, None,
+        )
         .await;
+        // The reason no report was obtained, kept for the answer rather than
+        // left in a server log: "no report was obtained" with no cause tells an
+        // operator nothing they can act on.
+        let why_no_report = evidence.as_ref().err().map(|e| format!("{e:#}"));
+        let outcome = state
+            .merge_enlister
+            .enlist_into_merge_queue(&repo, pr_number, evidence.as_ref().ok())
+            .await;
+        (outcome, why_no_report)
+    };
 
-    match outcome {
-        Ok(()) => (
+    let bounded = tokio::time::timeout(ENLIST_REQUEST_LIMIT, enlistment).await;
+
+    match bounded {
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(ApiResponse {
+                success: false,
+                message: format!(
+                    "Merge queue enlistment for {}#{} did not finish within {}s and was \
+                     abandoned; nothing was enlisted. The certification corpus behind this \
+                     endpoint clones the repository and runs every gate, so it can outlast an \
+                     HTTP request.",
+                    req.repo,
+                    req.pr_number,
+                    ENLIST_REQUEST_LIMIT.as_secs()
+                ),
+            }),
+        ),
+        Ok((Ok(()), _)) => (
             StatusCode::OK,
             Json(ApiResponse {
                 success: true,
                 message: format!("Enlisted {}#{} in the merge queue", req.repo, req.pr_number),
             }),
         ),
-        Err(e) => (
+        Ok((Err(e), why_no_report)) => (
             StatusCode::CONFLICT,
             Json(ApiResponse {
                 success: false,
-                message: format!(
-                    "Merge queue enlistment refused for {}#{}: {}",
-                    req.repo, req.pr_number, e
-                ),
+                message: match why_no_report {
+                    Some(why) => format!(
+                        "Merge queue enlistment refused for {}#{}: {}\nNo certification report \
+                         was obtained because: {}",
+                        req.repo, req.pr_number, e, why
+                    ),
+                    None => format!(
+                        "Merge queue enlistment refused for {}#{}: {}",
+                        req.repo, req.pr_number, e
+                    ),
+                },
             }),
         ),
     }

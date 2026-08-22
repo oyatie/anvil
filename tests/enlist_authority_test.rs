@@ -1650,37 +1650,6 @@ fn a_report_that_certifies_while_a_gate_errored_is_still_refused() {
     );
 }
 
-/// P5 at its own seam: the provenance mark is only worth what the constructor
-/// that confers it demands in return.
-///
-/// `from_gate_outcomes` is the one way gate outcomes enter a report and the one
-/// mark `admission_refusal` can trust absolutely, because no caller can type
-/// it. Everything else in this suite hands it the whole corpus and reads the
-/// report back, which leaves the overlay spelling green:
-///
-/// ```ignore
-/// let mut r = Self { doc_parity_status: GateStatus::Passed, /* ..71 more.. */ };
-/// for (name, s) in outcomes { r.set(name, s.clone()); }
-/// r.seal();
-/// Ok(r)
-/// ```
-///
-/// Seeded from an optimistic skeleton rather than from `unmeasured`. Handed all
-/// seventy-two outcomes the skeleton is entirely overwritten and nothing
-/// observes it; handed one, it mints a report with seventy-one hardcoded
-/// `Passed` gates, a real provenance mark, `is_admissible() == true` and an
-/// `admission_refusal` that says `Ok`. That is worse than the `optimistic`
-/// fabricator the forgery scan was built to kill, because it carries the mark
-/// nothing else can forge — and
-/// `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`
-/// cannot see it either: the door traces to a genuine certification run, and
-/// the hole is inside the constructor that run uses.
-///
-/// So the corpus is the obligation. An outcome for every gate, named once, or
-/// no report. The positive case is kept beside the three refusals so the rule
-/// cannot be satisfied by refusing everything — a constructor that never
-/// answers `Ok` stops the fleet as surely as one that always does admits it.
-#[test]
 /// The constructor carries the STATUS it was handed, on the gate it was named for.
 ///
 /// Every other call in this suite hands `from_gate_outcomes` a uniformly
@@ -1785,6 +1754,37 @@ fn a_report_carries_back_the_status_each_named_gate_was_given() {
     );
 }
 
+/// P5 at its own seam: the provenance mark is only worth what the constructor
+/// that confers it demands in return.
+///
+/// `from_gate_outcomes` is the one way gate outcomes enter a report and the one
+/// mark `admission_refusal` can trust absolutely, because no caller can type
+/// it. Everything else in this suite hands it the whole corpus and reads the
+/// report back, which leaves the overlay spelling green:
+///
+/// ```ignore
+/// let mut r = Self { doc_parity_status: GateStatus::Passed, /* ..71 more.. */ };
+/// for (name, s) in outcomes { r.set(name, s.clone()); }
+/// r.seal();
+/// Ok(r)
+/// ```
+///
+/// Seeded from an optimistic skeleton rather than from `unmeasured`. Handed all
+/// seventy-two outcomes the skeleton is entirely overwritten and nothing
+/// observes it; handed one, it mints a report with seventy-one hardcoded
+/// `Passed` gates, a real provenance mark, `is_admissible() == true` and an
+/// `admission_refusal` that says `Ok`. That is worse than the `optimistic`
+/// fabricator the forgery scan was built to kill, because it carries the mark
+/// nothing else can forge — and
+/// `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`
+/// cannot see it either: the door traces to a genuine certification run, and
+/// the hole is inside the constructor that run uses.
+///
+/// So the corpus is the obligation. An outcome for every gate, named once, or
+/// no report. The positive case is kept beside the three refusals so the rule
+/// cannot be satisfied by refusing everything — a constructor that never
+/// answers `Ok` stops the fleet as surely as one that always does admits it.
+#[test]
 fn a_report_is_not_produced_from_gate_outcomes_that_do_not_cover_the_corpus() {
     let base = PreMergeCertificationReport::unmeasured("fixture baseline");
     let names: Vec<&'static str> = base.named_statuses().into_iter().map(|(n, _)| n).collect();

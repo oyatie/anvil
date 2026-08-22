@@ -44,9 +44,19 @@ pub async fn execute_pr_certify(state: &AppState, repo: &str, pr_number: u64) ->
 /// Runs the whole gate corpus against `diff_ctx` and returns what it produced.
 ///
 /// `review_verdict` is the verdict the AI code review reached for this head.
-/// `test_suite_passed` is the outcome of the verification suite, and `None`
-/// where no suite ran on this path -- which reports `NotMeasured` rather than
+/// `test_suite_passed` is the outcome of the verification gate, and `None`
+/// where the repository offers none -- which reports `NotMeasured` rather than
 /// inventing either answer.
+///
+/// This function mutates the caller's working tree (`git add -A`, `git commit`)
+/// and the caller is responsible for holding `acquire_pr_lock` across it. It
+/// does not take the lock itself: `execute_pr_review` already holds it here and
+/// the mutex is not reentrant.
+///
+/// It also does not touch review state. The reviewed-SHA stamp belongs to
+/// `execute_pr_review`, which sets it and rolls it back; an enlistment running
+/// this corpus must not be able to un-stamp a pull request and cause the review
+/// pipeline to re-review it.
 #[allow(clippy::too_many_arguments)]
 pub async fn certify_pull_request(
     state: &AppState,
@@ -423,11 +433,6 @@ pub async fn certify_pull_request(
         .await
         .context("Failed to stage auto-synced documentation & cedar policies")?;
         if !add_out.status.success() {
-            // Roll back the reviewed-SHA stamp so this PR is retried rather than
-            // stranded: the stamp happens ~380 lines above, and the early-exit
-            // guard would otherwise skip every later webhook for this SHA.
-            state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
-
             anyhow::bail!(
                 "git add -A failed while staging auto-synced governance files on PR #{}: {}",
                 pr_number,
@@ -475,11 +480,6 @@ pub async fn certify_pull_request(
                     modified_files, pr_number
                 );
             } else {
-                // Roll back the reviewed-SHA stamp so this PR is retried rather than
-                // stranded: the stamp happens ~380 lines above, and the early-exit
-                // guard would otherwise skip every later webhook for this SHA.
-                state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
-
                 anyhow::bail!(
                     "git commit failed for auto-synced governance files on PR #{}: {} {}",
                     pr_number,
@@ -592,41 +592,76 @@ pub async fn certify_pull_request(
     Ok(cert_report)
 }
 
-/// The certification an enlistment path runs for itself.
+/// The repository's own verification gate, as `test_suite_status` reports it.
+///
+/// `Some(true)`/`Some(false)` is a gate that ran; `None` is a repository that
+/// offers none, which the corpus records as `NotMeasured` and which withholds
+/// the merge. Deliberately the same gate the queue healer runs and the same
+/// thing the scorecard row already says it is ("Local verification gate
+/// passed"), so no path has to invent an outcome for it — `execute_pr_review`
+/// used to pass a literal `Some(true)` for a suite it never ran.
+pub async fn local_verification_gate(repo_dir: &Path) -> Option<bool> {
+    match crate::queue_healer::QueueHealer::run_local_test_gate(repo_dir).await {
+        crate::queue_healer::TestGate::Passed(_) => Some(true),
+        crate::queue_healer::TestGate::Failed(_) => Some(false),
+        crate::queue_healer::TestGate::Unavailable => None,
+    }
+}
+
+/// The evidence an enlistment path holds, or the reason it holds none.
 ///
 /// The CLI `enlist` subcommand, `POST /api/enlist` and the queue healer each
 /// hand a pull request to the merge queue without having reviewed it. They may
 /// not enlist on evidence they do not have, so they obtain it here: the same
-/// corpus, against the pull request's current head, with the two gates this
-/// path genuinely did not measure -- the code review and the test suite --
-/// reporting what they are rather than what would be convenient.
-/// The evidence an enlistment path holds, with the reason it holds none
-/// written down where that was discovered.
+/// corpus `execute_pr_review` runs, against the pull request's current head,
+/// with the review verdict and the verification gate measured rather than
+/// asserted absent.
 ///
-/// `None` is fail-closed: `enlist_into_merge_queue` refuses what it was handed
-/// no report for.
+/// `expected_head` is the commit the caller believes it is enlisting — the
+/// healer knows it, because it just pushed it. Certifying a different head is
+/// refused rather than reported, because GitHub's view of a PR head is
+/// eventually consistent immediately after a push.
+///
+/// `Err` is fail-closed and carries the cause: the caller turns it into the
+/// refusal an operator reads, rather than leaving it in a server log.
 pub async fn evidence_for_enlistment(
     state: &AppState,
     repo: &str,
     pr_number: u64,
-) -> Option<PreMergeCertificationReport> {
-    match certify_for_enlistment(state, repo, pr_number).await {
-        Ok(report) => Some(report),
-        Err(e) => {
-            warn!(
-                "Pre-merge certification could not run for {}#{}, so nothing may be enlisted for it: {:#}",
-                repo, pr_number, e
-            );
-            None
-        }
-    }
+    expected_head: Option<&str>,
+) -> Result<PreMergeCertificationReport> {
+    certify_for_enlistment(state, repo, pr_number, expected_head)
+        .await
+        .with_context(|| {
+            format!(
+                "pre-merge certification could not be obtained for {}#{}, so nothing may be \
+                 enlisted for it",
+                repo, pr_number
+            )
+        })
 }
 
 async fn certify_for_enlistment(
     state: &AppState,
     repo: &str,
     pr_number: u64,
+    expected_head: Option<&str>,
 ) -> Result<PreMergeCertificationReport> {
+    // The corpus mutates the one shared clone `ensure_repo_cloned` hands out
+    // per repository: `git fetch origin pull/N/head --force`, then `git add -A`
+    // and `git commit` in that working tree. `execute_pr_review` holds this
+    // lock across exactly those mutations for exactly that reason, so a second
+    // corpus runner that took no lock would leave it serialising nothing —
+    // this path would stage and commit a review run's half-written governance
+    // output under its own message, and the review run would then log
+    // "nothing to commit" as a benign no-op and certify a tree it did not
+    // produce.
+    //
+    // Taken here rather than inside `certify_pull_request`: `execute_pr_review`
+    // already holds it around that call and the mutex is not reentrant.
+    let pr_lock = state.state_mgr.acquire_pr_lock(repo, pr_number).await;
+    let _guard = pr_lock.lock().await;
+
     info!(
         "Running pre-merge certification for {}#{} before merge queue admission...",
         repo, pr_number
@@ -636,6 +671,21 @@ async fn certify_for_enlistment(
         .fetch_pr_metadata(repo, pr_number)
         .await
         .context("Failed to read pull request metadata before certification")?;
+
+    if let Some(expected) = expected_head
+        && meta.head_ref_oid != expected
+    {
+        anyhow::bail!(
+            "the head to certify for {}#{} is {}, and GitHub reports {}. Certifying the commit \
+             the API happens to name would produce evidence about a commit nobody asked to \
+             enlist.",
+            repo,
+            pr_number,
+            expected,
+            meta.head_ref_oid
+        );
+    }
+
     let repo_dir = state
         .git_mgr
         .ensure_repo_cloned(repo)
@@ -654,20 +704,47 @@ async fn certify_for_enlistment(
         .await
         .context("Failed to prepare PR diff context before certification")?;
 
+    let body = meta.body.as_deref().unwrap_or("");
+
+    // The two gates this path used to assert absent. Hardcoding them to
+    // `VERDICT_ERRORED` and `None` made every report this function could ever
+    // return inadmissible, for every input, in every configuration — after
+    // paying a full clone, seventy-two guards and a commit in the shared clone
+    // to arrive at a refusal that was fixed before the run started. A door that
+    // runs the most expensive operation in the codebase to reach a constant is
+    // not a gate. So they are measured, on the path that has to live with the
+    // answer.
+    //
+    // The review is obtained but not submitted: this path is admitting a pull
+    // request, not reviewing one, and the approving review it may go on to
+    // publish is `MergeEnlister`'s to sign.
+    let review_verdict = match state.reviewer.review_pr(&diff_ctx, &meta.title, body).await {
+        Ok(review) => review.verdict,
+        Err(e) => {
+            // Fail-closed, and now for a reason that was measured: the review
+            // was attempted for this head and did not complete. The corpus maps
+            // this to `Errored`, which withholds the merge.
+            warn!(
+                "Code review could not complete for {}#{} during enlistment certification: {:#}",
+                repo, pr_number, e
+            );
+            crate::reviewer::VERDICT_ERRORED.to_string()
+        }
+    };
+
+    let test_suite_passed = local_verification_gate(&repo_dir).await;
+
     certify_pull_request(
         state,
         repo,
         pr_number,
         &meta.title,
-        meta.body.as_deref().unwrap_or(""),
+        body,
         &meta.head_ref_oid,
         &repo_dir,
         &diff_ctx,
-        // No review ran on this path, so the review gate has no verdict of its
-        // own to report. `VERDICT_ERRORED` is what the corpus already calls a
-        // review that did not complete, and it withholds the merge.
-        crate::reviewer::VERDICT_ERRORED,
-        None,
+        &review_verdict,
+        test_suite_passed,
     )
     .await
 }

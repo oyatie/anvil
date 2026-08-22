@@ -2,7 +2,7 @@ use anyhow::Result;
 use tracing::info;
 
 use super::matrix::MatrixRenderer;
-use super::report::{GateProvenance, GateStatus, PreMergeCertificationReport};
+use super::report::{CertifiedSubject, GateProvenance, GateStatus, PreMergeCertificationReport};
 use super::scanner::PreMergeScanner;
 use crate::adr_drift_ratchet::AdrReport;
 use crate::api_contract_guard::ApiContractReport;
@@ -756,6 +756,15 @@ impl PreMergeGuard {
             // statuses are what the gates above reported, not what a caller
             // decided they would have said.
             provenance: GateProvenance::certification_run(),
+            // ...and this is what they were reported about. A report with no
+            // subject proves "some run produced an all-passing report", never
+            // "...for this pull request at this commit", and those are the two
+            // claims the merge queue confuses when a head moves mid-run.
+            subject: Some(CertifiedSubject {
+                repo: diff_ctx.repo.clone(),
+                pr_number: diff_ctx.pr_number,
+                head_sha: diff_ctx.head_sha.clone(),
+            }),
         };
         // The verdict and the unmeasured list are derived from the statuses just
         // assigned — every field, including the two self-directed gates — so

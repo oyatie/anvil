@@ -19,71 +19,73 @@ impl MergeEnlister {
     /// Whether the evidence in hand admits a pull request to the merge queue.
     ///
     /// `report` is `None` when the caller could not obtain a certification
-    /// report at all -- it was never computed, or computing it failed.
-    /// `Ok(())` admits; `Err` refuses and says why.
-    ///
-    /// Four ways evidence can be absent, and all four withhold the merge
-    /// (invariant I1):
-    ///
-    /// 1. there is no report;
-    /// 2. the report did not come from a certification run, so its statuses
-    ///    are somebody's opinion in the shape of a measurement;
-    /// 3. a gate produced no measurement -- `NotMeasured`, which is
-    ///    individually acceptable and still absent evidence, or `Errored`,
-    ///    which `unmeasured_gates` does not record at all;
-    /// 4. the report does not certify.
-    ///
-    /// The refusal names the gates, because an operator watching a pull
-    /// request sit in the queue has nothing else to act on.
+    /// report at all -- it was never computed, or computing it failed. That is
+    /// the one shape of absent evidence the report itself cannot answer for,
+    /// so it is answered here; everything the report *can* answer for is
+    /// answered by the report, in one place, so the door and the two
+    /// publishers cannot drift apart.
     pub fn admission_refusal(report: Option<&PreMergeCertificationReport>) -> Result<()> {
-        let Some(report) = report else {
-            bail!(
+        match report {
+            None => bail!(
                 "merge queue admission withheld: no pre-merge certification report was \
                  obtained for this pull request. Absent evidence is not permission."
+            ),
+            Some(report) => report.admission_refusal(),
+        }
+    }
+
+    /// Whether the report in hand is about *this* pull request at *this*
+    /// commit.
+    ///
+    /// `admission_refusal` proves that some certification run produced an
+    /// all-passing report. It cannot prove the run measured the commit that is
+    /// about to be queued, and two live paths move the head between the run
+    /// and the enlistment: a contributor pushing while the corpus is running,
+    /// and the queue healer, which pushes a healed commit and then certifies
+    /// whatever GitHub reports as head. A report about commit X is not evidence
+    /// about commit Y.
+    ///
+    /// `head` is the head re-read at the entry point, immediately before the
+    /// merge is requested. `gh pr merge --match-head-commit` carries the same
+    /// SHA to GitHub, so the queue rejects the merge if it moves again between
+    /// this check and the request.
+    fn subject_refusal(
+        report: Option<&PreMergeCertificationReport>,
+        repo: &str,
+        pr_number: u64,
+        head: &str,
+    ) -> Result<()> {
+        let Some(subject) = report.and_then(|r| r.subject()) else {
+            bail!(
+                "merge queue admission withheld: the certification report for {}#{} names no \
+                 pull request and no commit, so nothing establishes that it was measured \
+                 against {}. A report about an unnamed commit is not evidence about this one.",
+                repo,
+                pr_number,
+                head
             );
         };
-
-        if !report.provenance.is_from_a_certification_run() {
+        if !subject.repo.eq_ignore_ascii_case(repo) || subject.pr_number != pr_number {
             bail!(
-                "merge queue admission withheld: this certification report was not produced \
-                 by a certification run, so nothing in it was measured."
+                "merge queue admission withheld: the certification report is for {}#{}, and \
+                 this is {}#{}.",
+                subject.repo,
+                subject.pr_number,
+                repo,
+                pr_number
             );
         }
-
-        let without_a_measurement: Vec<&str> = report
-            .named_statuses()
-            .into_iter()
-            .filter(|(_, status)| {
-                matches!(
-                    status,
-                    GateStatus::Errored(_) | GateStatus::NotMeasured { .. }
-                )
-            })
-            .map(|(gate, _)| gate)
-            .collect();
-        if !without_a_measurement.is_empty() {
+        if subject.head_sha != head {
             bail!(
-                "merge queue admission withheld: {} gate(s) produced no measurement: {}",
-                without_a_measurement.len(),
-                without_a_measurement.join(", ")
+                "merge queue admission withheld: the certification report for {}#{} was \
+                 measured against {}, and the pull request head is now {}. The corpus never \
+                 saw the commit that would be queued.",
+                repo,
+                pr_number,
+                subject.head_sha,
+                head
             );
         }
-
-        if !report.is_certified_ready {
-            let blocking: Vec<&str> = report
-                .named_statuses()
-                .into_iter()
-                .filter(|(_, status)| !status.is_acceptable())
-                .map(|(gate, _)| gate)
-                .collect();
-            bail!(
-                "merge queue admission withheld: the pull request is not certified; {} gate(s) \
-                 did not pass: {}",
-                blocking.len(),
-                blocking.join(", ")
-            );
-        }
-
         Ok(())
     }
 
@@ -174,14 +176,28 @@ impl MergeEnlister {
             repo, pr_number
         );
 
-        // Step 0: Reconcile and verify honest PR title & body scope
-        self.reconcile_pr_title_and_scope(repo, pr_number).await?;
-
-        // Step 1: Ensure PR has an official Approving Review submitted on GitHub
-        self.ensure_approving_review(repo, pr_number, report)
+        // The pull request as it is now, read once and used for every decision
+        // below. The head this returns is the commit the queue would take.
+        let meta = self
+            .github_client
+            .fetch_pr_metadata(repo, pr_number)
             .await?;
 
-        // Step 2: Enlist into Merge Queue using `gh pr merge --auto`
+        // Invariant I1, on identity: the report has to be about this commit.
+        Self::subject_refusal(report, repo, pr_number, &meta.head_ref_oid)?;
+
+        // Step 0: Reconcile and verify honest PR title & body scope
+        self.reconcile_pr_title_and_scope(repo, pr_number, &meta)
+            .await?;
+
+        // Step 1: Ensure PR has an official Approving Review submitted on GitHub
+        self.ensure_approving_review(repo, pr_number, &meta, report)
+            .await?;
+
+        // Step 2: Enlist into Merge Queue using `gh pr merge --auto`.
+        // `--match-head-commit` carries the certified SHA to GitHub, so a push
+        // landing between the check above and this request is rejected by the
+        // queue rather than merged on a report that never saw it.
         let mut cmd = Command::new("gh");
         cmd.args([
             "pr",
@@ -191,6 +207,8 @@ impl MergeEnlister {
             repo,
             "--auto",
             "--squash",
+            "--match-head-commit",
+            &meta.head_ref_oid,
         ]);
 
         let output = crate::exec::run_bounded(
@@ -226,6 +244,8 @@ impl MergeEnlister {
             repo,
             "--auto",
             "--merge",
+            "--match-head-commit",
+            &meta.head_ref_oid,
         ]);
 
         let retry_out = crate::exec::run_bounded(
@@ -267,17 +287,13 @@ impl MergeEnlister {
         &self,
         repo: &str,
         pr_number: u64,
+        meta: &crate::github::PrMetadata,
         report: Option<&PreMergeCertificationReport>,
     ) -> Result<()> {
         info!(
             "Verifying approving review requirement for {}#{}...",
             repo, pr_number
         );
-
-        let meta = self
-            .github_client
-            .fetch_pr_metadata(repo, pr_number)
-            .await?;
 
         // Step 1: Check GitHub Review Decision using structured JSON parsing
         let mut check_cmd = Command::new("gh");
@@ -371,12 +387,19 @@ impl MergeEnlister {
                 "Submitting formal GitHub APPROVE review for {}#{} before merge queue admission...",
                 repo, pr_number
             );
+            // Absent evidence is not a reason to report success from the one
+            // function whose job is to guarantee an approving review exists.
+            // Every other absent-evidence branch here withholds the merge; this
+            // one used to `return Ok(())`, and the caller walks straight from
+            // that into `gh pr merge --auto`.
             let Some(summary) = Self::approval_summary(report) else {
-                info!(
-                    "No approving review published for {}#{}: nothing was measured that Anvil could sign for.",
-                    repo, pr_number
+                bail!(
+                    "🚨 Merge queue enlistment blocked: approving review not submitted on PR {}#{}: \
+                     there is no measured report to derive one from, and Anvil does not sign for \
+                     what it did not measure.",
+                    repo,
+                    pr_number
                 );
-                return Ok(());
             };
             let approval = ReviewResponse {
                 summary,
@@ -410,12 +433,12 @@ impl MergeEnlister {
     }
 
     /// Reconciles PR title and body with the true scope of modified files before merge queue admission
-    pub async fn reconcile_pr_title_and_scope(&self, repo: &str, pr_number: u64) -> Result<()> {
-        let meta = self
-            .github_client
-            .fetch_pr_metadata(repo, pr_number)
-            .await?;
-
+    pub async fn reconcile_pr_title_and_scope(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        meta: &crate::github::PrMetadata,
+    ) -> Result<()> {
         let current_body = meta.body.as_deref().unwrap_or("");
         if meta.title.trim().is_empty() || current_body.trim().is_empty() {
             info!(

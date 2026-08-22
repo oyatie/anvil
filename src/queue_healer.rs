@@ -264,7 +264,7 @@ impl QueueHealer {
         self.run_agy_prompt(&prompt, work_dir).await?;
 
         // 5. Run the local gate; one self-correction turn on failure
-        let mut gate = self.run_local_test_gate(work_dir).await;
+        let mut gate = Self::run_local_test_gate(work_dir).await;
         if let TestGate::Failed(label) = gate {
             warn!(
                 "Gate `{}` failed after queue healing for {}#{}. Attempting self-correction...",
@@ -272,7 +272,7 @@ impl QueueHealer {
             );
             let retry_prompt = "Tests failed after merging trunk. Inspect test output, fix the errors, and ensure all tests pass. Do NOT commit.";
             self.run_agy_prompt(retry_prompt, work_dir).await?;
-            gate = self.run_local_test_gate(work_dir).await;
+            gate = Self::run_local_test_gate(work_dir).await;
         }
         match &gate {
             TestGate::Passed(label) => info!("Gate `{}` passed for {}#{}", label, repo, pr_number),
@@ -423,26 +423,79 @@ impl QueueHealer {
         // The healed head is a different commit from the one any earlier
         // certification judged, so the corpus is run again for it. The local
         // test gate above is not certification and never was.
-        let evidence =
-            crate::webhook::pipelines::certify::evidence_for_enlistment(state, repo, pr_number)
+        //
+        // Which commit "it" is comes from this worktree, not from the API.
+        // GitHub's view of a PR head is eventually consistent immediately after
+        // a push, so re-reading `head_ref_oid` can hand the corpus the pre-heal
+        // commit while the merge queue takes the healed one. The healer knows
+        // the OID it just pushed; certification is refused unless that is the
+        // commit being certified.
+        let healed_head = Self::head_oid(work_dir).await;
+        match healed_head {
+            None => warn!(
+                "Could not read the healed head for {}#{} after pushing it, so no certification \
+                 was run and nothing was re-enlisted.",
+                repo, pr_number
+            ),
+            Some(healed_head) => {
+                let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
+                    state,
+                    repo,
+                    pr_number,
+                    Some(&healed_head),
+                )
                 .await;
-        if let Err(e) = self
-            .merge_enlister
-            .enlist_into_merge_queue(repo, pr_number, evidence.as_ref())
-            .await
-        {
-            warn!(
-                "Could not re-enlist {}#{} after heal: {}",
-                repo, pr_number, e
-            );
+                if let Err(e) = &evidence {
+                    warn!(
+                        "No certification could be obtained for the healed head {} of {}#{}: {:#}",
+                        healed_head, repo, pr_number, e
+                    );
+                }
+                if let Err(e) = self
+                    .merge_enlister
+                    .enlist_into_merge_queue(repo, pr_number, evidence.as_ref().ok())
+                    .await
+                {
+                    warn!(
+                        "Could not re-enlist {}#{} after heal: {}",
+                        repo, pr_number, e
+                    );
+                }
+            }
         }
 
         Ok(())
     }
 
+    /// The commit at `HEAD` in a working tree, or `None` when git could not say.
+    ///
+    /// `None` withholds: a heal that cannot name the commit it pushed has no
+    /// commit to certify.
+    async fn head_oid(work_dir: &Path) -> Option<String> {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(work_dir).args(["rev-parse", "HEAD"]);
+        let out = crate::exec::run_bounded(
+            cmd,
+            crate::exec::ExecClass::Quick,
+            "git rev-parse HEAD (queue healer)",
+        )
+        .await
+        .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!sha.is_empty()).then_some(sha)
+    }
+
     /// Picks the gate from what the repository provides and runs it. A gate that
     /// never completed (spawn failure or build timeout) is a failure, not a pass.
-    async fn run_local_test_gate(&self, repo_dir: &Path) -> TestGate {
+    ///
+    /// An associated function rather than a method: the certification corpus
+    /// reports the same gate as `test_suite_status`, and the alternative to
+    /// sharing it was the literal `Some(true)` the review pipeline used to pass
+    /// for a suite it never ran.
+    pub(crate) async fn run_local_test_gate(repo_dir: &Path) -> TestGate {
         let (label, mut cmd) = if repo_dir.join("Cargo.toml").exists() {
             let mut c = Command::new("cargo");
             c.arg("check");

@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-pub mod smt_solver;
-pub use smt_solver::{SmtCheckResult, SmtConstraintEngine};
+pub mod policy_scanner;
+pub use policy_scanner::{PolicyPatternScanner, PolicyScanResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormalVerificationFinding {
     pub rule: String,
-    pub counterexample: String,
+    pub matched_text: String,
     pub message: String,
 }
 
@@ -18,32 +18,32 @@ pub struct FormalVerificationReport {
 
 #[derive(Debug, Clone, Default)]
 pub struct FormalVerificationGuard {
-    solver: SmtConstraintEngine,
+    solver: PolicyPatternScanner,
 }
 
 impl FormalVerificationGuard {
     pub fn new() -> Self {
         Self {
-            solver: SmtConstraintEngine::new(),
+            solver: PolicyPatternScanner::new(),
         }
     }
 
     pub fn evaluate_formal_invariants(&self, diff_content: &str) -> FormalVerificationReport {
         let mut findings = Vec::new();
 
-        match self.solver.verify_invariants(diff_content) {
-            SmtCheckResult::CounterexampleFound {
+        match self.solver.scan_policy_text(diff_content) {
+            PolicyScanResult::PatternMatched {
                 rule_name,
-                violating_tuple,
+                matched_text,
                 explanation,
             } => {
                 findings.push(FormalVerificationFinding {
                     rule: rule_name,
-                    counterexample: violating_tuple,
+                    matched_text,
                     message: explanation,
                 });
             }
-            SmtCheckResult::ProvablySafe => {}
+            PolicyScanResult::NoPatternMatched => {}
         }
 
         FormalVerificationReport {

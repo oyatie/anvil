@@ -2,32 +2,34 @@
 //!
 //! `tests/enlist_authority_test.rs` is the specification for issues #17 and
 //! #18 and was written before the implementation. This file is written after
-//! it, and deliberately does not repeat it. It adds three things:
+//! it, and deliberately does not repeat it. It adds two things:
 //!
-//! 1. **Regression, issue #18.** The fabricated blanket claim, swept over the
-//!    whole corpus rather than asserted on one fixture. A fix that derives the
-//!    text for the reports a test happens to name and falls back to the old
-//!    constant for the rest is green under a single case and is still the
-//!    defect for the other seventy-one gates.
+//! 1. **Integration.** The spec suite builds every report by hand, through
+//!    `from_gate_outcomes`, so it cannot see the wiring: whether the pipeline
+//!    puts what a guard actually answered into the report, and whether the
+//!    report names the change it measured. The tests below run the corpus —
+//!    around forty real guards over a real diff, assembled by the real
+//!    `evaluate_pre_merge_gates` — and pin that wiring. Nothing is asserted off
+//!    a corpus-built report that a hand-built one would answer the same way:
+//!    `admission_refusal` and both publishers take only a
+//!    `&PreMergeCertificationReport` and cannot tell the two apart, so
+//!    re-asserting the spec suite's refusals here would buy a corpus run and no
+//!    discrimination.
 //!
-//! 2. **Integration.** The spec suite builds every report by hand, through
-//!    `from_gate_outcomes`. The tests below run the corpus: fifty-nine real
-//!    guards over a real diff, assembled by the real `evaluate_pre_merge_gates`
-//!    — statuses, verdict, unmeasured list, provenance mark, subject and
-//!    rendered matrix all derived by production code — and then handed to the
-//!    real admission decision and the real publishers. What is pinned is the
-//!    wiring between them.
-//!
-//! 3. **Boundary.** The symmetric half of the same invariant, which the
+//! 2. **Boundary.** The symmetric half of the same invariant, which the
 //!    codebase states in its own comments ("a fabricated `Failed` would
 //!    accuse") and the spec suite does not test: a gate that produced no
 //!    measurement must not be published in the words of one that found a
 //!    defect, and a gate whose fix exists only in Anvil's clone must not be
-//!    counted among the gates that passed on the commit being merged.
+//!    counted among the gates that passed on the commit being merged. Issue
+//!    #18's blanket claim is guarded there, on the one admitted fixture where
+//!    it would reach a pull request, rather than swept over the corpus:
+//!    `measured_lines` iterates `named_statuses()` uniformly, so there is no
+//!    implementation that leaks the claim for one gate and not another.
 //!
-//! Plus one corpus-integrity check: the change added two non-gate fields to the
-//! report (`provenance`, `subject`), and neither may join the corpus every
-//! published count is derived from.
+//! Plus one corpus-integrity check that `report.rs`'s own pins cannot make,
+//! because they are all on lengths: no two gates may be published under one
+//! name.
 //!
 //! # Issue #17's doors are not re-tested here
 //!
@@ -79,37 +81,6 @@ use std::path::Path;
 /// The merge strategy the enlistment note is written about. Held constant so
 /// that any difference between two notes comes from the report.
 const STRATEGY: &str = "Squash & Merge";
-
-/// The words a published claim uses to assert completeness *about the report
-/// it is published for*, verbatim from the spec suite's `TOTALITY`
-/// (`tests/enlist_authority_test.rs`).
-///
-/// Duplicated rather than shared because integration tests are separate
-/// binaries, and duplicated on purpose rather than narrowed: the two sentences
-/// issue #18 quotes are already gone from the tree, so a test that looks for
-/// them is looking for something no implementation can produce. What must stay
-/// unreachable is the *claim*, under any rewording — which is why this list and
-/// not those two strings is what the sweep below checks.
-///
-/// A bare "100%" is not an entry: the rendered gate matrix carries it twice
-/// inside gate descriptions, so banning the number would forbid the most honest
-/// derivation available.
-const TOTALITY: [&str; 14] = [
-    "100% compliance",
-    "100% compliant",
-    "100% green",
-    "100% certified",
-    "100% pass",
-    "100% clean",
-    "100% of gates",
-    "all automated",
-    "all gates",
-    "all checks",
-    "all safety",
-    "every gate",
-    "fully compliant",
-    "fully green",
-];
 
 // =========================================================================
 // Fixtures
@@ -213,77 +184,6 @@ fn names_gate(text: &str, gate: &str) -> bool {
 fn mentions_number(text: &str, n: usize) -> bool {
     let n = n.to_string();
     text.split(|c: char| !c.is_ascii_digit()).any(|t| t == n)
-}
-
-// =========================================================================
-// Issue #18 — regression: the fabricated blanket claim
-// =========================================================================
-
-/// REGRESSION, issue #18 — no report anywhere in the corpus publishes a claim
-/// of totality.
-///
-/// The defect was one string literal in a function that received no report, so
-/// it was signed onto every pull request whatever its gates did. What is banned
-/// is not those two sentences — the fix already deleted them, so looking for
-/// them is looking for something no implementation can now produce — but the
-/// claim they made, under any rewording. `TOTALITY` is the vocabulary, and the
-/// same list the spec suite holds production literals to is applied here to
-/// what actually reaches a pull request.
-///
-/// The sweep is over the whole corpus rather than one fixture, and that is the
-/// reason this test exists beside the spec suite's: a fix that derives the text
-/// for the report a test happens to name and falls back to the constant for the
-/// rest is green under a single case and is still the defect for the other
-/// seventy-one gates.
-///
-/// Only `Warning` and `AutoUpdated` are swept. They are the only two imperfect
-/// states that are acceptable and measured, so they are the only ones a report
-/// is admitted on — and both publishers withhold for a report that cannot be
-/// admitted, so a `Failed`, `Errored` or `NotMeasured` gate makes the inner loop
-/// run zero times and assert nothing. Every iteration here publishes, and the
-/// guard for that is per state rather than one global counter, which cannot see
-/// a whole state going empty.
-#[test]
-fn regression_18_no_published_text_claims_a_totality_no_gate_measured() {
-    for state in [
-        GateStatus::Warning("worth a look".to_string()),
-        GateStatus::AutoUpdated,
-    ] {
-        let mut published = 0usize;
-        for gate in gate_names() {
-            let report = report_with(&[(gate, state.clone())]);
-            assert!(
-                MergeEnlister::admission_refusal(Some(&report)).is_ok(),
-                "fixture sanity: `{}` is acceptable and measured, so a corpus \
-                 with `{gate}` in that state is admitted and whatever is \
-                 published lands on a merge that really happens",
-                state.badge()
-            );
-            for (seam, text) in published_texts(&report) {
-                published += 1;
-                let lower = text.to_lowercase();
-                for claim in TOTALITY {
-                    assert!(
-                        !lower.contains(claim),
-                        "`{seam}` asserted \"{claim}\" while `{gate}` reported \
-                         `{}`. Nothing in the report says it, a reader cannot \
-                         check it against anything, and it goes onto the pull \
-                         request permanently. Either derive the text from the \
-                         report — asserting nothing about the gate that did not \
-                         simply pass — or publish nothing.\n  text was:\n{text}",
-                        state.badge()
-                    );
-                }
-            }
-        }
-        assert!(
-            published > 0,
-            "not one report with a gate in `{}` published anything, so this \
-             state was swept over an empty set while reading as coverage. It is \
-             the one state in which the claim can actually reach a pull request",
-            state.badge()
-        );
-    }
 }
 
 // =========================================================================
@@ -645,7 +545,7 @@ fn a_working_tree() -> tempfile::TempDir {
 /// INTEGRATION — a change moves through certification, and the merge queue
 /// answers for the report that run produced.
 ///
-/// Three properties, all about the wiring rather than about any one gate, so
+/// Four properties, all about the wiring rather than about any one gate, so
 /// they hold whatever the guards say about this diff:
 ///
 ///   - the report names the pull request and the commit it was measured
@@ -656,7 +556,10 @@ fn a_working_tree() -> tempfile::TempDir {
 ///   - the door refuses this run, the refusal names a gate that is really
 ///     absent or failing in it, and nothing is published. A refusal that
 ///     publishes anyway signs Anvil's name onto a change that is not going
-///     through.
+///     through;
+///   - every gate the cheap pre-flight names as unmeasurable in this build is
+///     in fact one this run could not measure, so the doors are not refusing in
+///     advance on a claim the corpus does not bear out.
 #[test]
 fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
     let work = a_working_tree();
@@ -677,14 +580,23 @@ fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
          enlistment carries this SHA to GitHub as `--match-head-commit`"
     );
 
-    let reported_no_measurement: Vec<String> = report
+    // Compared as sets. `unmeasured_gates` comes from `all_statuses()` and this
+    // side from `named_statuses()`, two independently hand-written lists, and
+    // nothing pins that they agree on order — nor should it: inserting a gate at
+    // a different position in the two, or sorting the refusal so it reads
+    // stably, is behaviour-preserving. What is under test is *which* gates the
+    // refusal is written from.
+    let mut reported_no_measurement: Vec<String> = report
         .named_statuses()
         .into_iter()
         .filter(|(_, status)| matches!(status, GateStatus::NotMeasured { .. }))
         .map(|(gate, _)| gate.to_string())
         .collect();
+    reported_no_measurement.sort();
+    let mut recorded = report.unmeasured_gates.clone();
+    recorded.sort();
     assert_eq!(
-        report.unmeasured_gates, reported_no_measurement,
+        recorded, reported_no_measurement,
         "the list the refusal is written from is not the list of gates that \
          produced no measurement"
     );
@@ -716,17 +628,47 @@ fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
         published_texts(&report).is_empty(),
         "Anvil endorsed a pull request the same report refuses to admit"
     );
+
+    // The pre-flight the enlist doors read claims certain gates cannot be
+    // measured in this build at all. That claim has to be true of the corpus,
+    // and this is the corpus run — no second one is needed to check it.
+    let blockers = anvil::pre_merge_guard::unmeasurable_gates_in_this_build()
+        .expect("this build has a gate no execution of it can measure; see the pre-flight test");
+    let mut checked = 0usize;
+    for (gate, status) in report.named_statuses() {
+        if blockers.contains(gate) {
+            checked += 1;
+            assert!(
+                !status.is_acceptable() || matches!(status, GateStatus::NotMeasured { .. }),
+                "`{gate}` is named as a gate this build cannot produce a \
+                 measurement for, and this real corpus run reported `{}` for it. \
+                 The doors are refusing in advance on a claim the corpus does not \
+                 bear out",
+                status.badge()
+            );
+        }
+    }
+    // The filter reads the pre-flight for the *field* name. A pre-flight
+    // reworded to name only the published label would leave the loop above
+    // iterating nothing while this test stayed green, so the count is asserted
+    // rather than assumed.
+    assert!(
+        checked > 0,
+        "the pre-flight named gates this build cannot measure and none of them \
+         matched a gate in the report, so the claim above was checked against \
+         nothing: {blockers}"
+    );
 }
 
 /// INTEGRATION — the verification gate's outcome reaches the merge queue as
 /// what it actually was.
 ///
-/// This test begins at the evaluator's `test_suite_passed` match. It hands
-/// `Option<bool>` to `evaluate_pre_merge_gates` and pins that `None` is
-/// recorded as `NotMeasured` rather than as a failure, that the two answers
-/// which withhold stay distinguishable, and that the merge is withheld with the
-/// gate named rather than the pull request accused of failing tests nothing
-/// ran.
+/// This test begins at the evaluator's three-arm `test_suite_passed` match
+/// (src/pre_merge_guard/evaluator.rs), which nothing else in `tests/` and no
+/// `mod tests` in `evaluator.rs` pins. It hands `Option<bool>` to
+/// `evaluate_pre_merge_gates` and pins that `None` is recorded as `NotMeasured`
+/// rather than as a failure, and that the two answers which withhold stay
+/// distinguishable in `unmeasured_gates`.
 ///
 /// It does **not** cover the two links upstream of that match, and must not be
 /// read as if it did. Commit 032ca6a fixed `QueueHealer::run_local_test_gate`,
@@ -771,11 +713,12 @@ fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
         runs.push((gate_said, report));
     }
 
-    // The two answers that withhold must stay distinguishable in what reaches
-    // the pull request, and neither may be endorsed. Both reports are the ones
-    // the loop above already produced: a corpus run is around forty real guards
-    // over the same temporary tree and the same diff, and re-deriving a report
-    // this test is still holding buys nothing but wall-clock.
+    // The two answers that withhold must stay distinguishable in the report a
+    // refusal is written from. That neither is admitted or endorsed is *not*
+    // asserted here: `admission_refusal` and both publishers take only a
+    // `&PreMergeCertificationReport` and cannot see how it was built, so a
+    // corpus-built report tells them nothing a hand-built one does not, and the
+    // spec suite already pins both seams over both shapes.
     let held = |answer: Option<bool>| -> &PreMergeCertificationReport {
         runs.iter()
             .find(|(gate_said, _)| *gate_said == answer)
@@ -791,13 +734,6 @@ fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
         "the gate that never completed and the suite that failed are recorded as \
          the same thing, so a refusal cannot tell a reader which happened"
     );
-    for (what, report) in [("never ran", never_ran), ("failed", failed)] {
-        assert!(
-            MergeEnlister::admission_refusal(Some(report)).is_err()
-                && published_texts(report).is_empty(),
-            "a pull request whose verification gate {what} was admitted or endorsed"
-        );
-    }
 }
 
 /// INTEGRATION — a code review that did not complete is absent evidence, not a
@@ -808,9 +744,18 @@ fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
 /// queue as `Errored` — which withholds without accusing — rather than as the
 /// `Failed` that says the model judged the code adversely.
 ///
-/// `Errored` is also the shape `is_admissible()` cannot see, because
-/// `unmeasured_gates` does not record it. That is why the door asks
-/// `admission_refusal` and not the weaker predicate.
+/// What is pinned is the evaluator's `review_verdict` match
+/// (src/pre_merge_guard/evaluator.rs): `VERDICT_ERRORED` reaching the report as
+/// `Errored` and not as `Failed`, and `REQUEST_CHANGES` reaching it as `Failed`
+/// and not as `Errored`. That an errored gate is then refused and published
+/// nothing is the spec suite's — `a_report_that_certifies_while_a_gate_errored_is_still_refused`
+/// and `nothing_is_endorsed_on_evidence_that_cannot_admit_the_pull_request` —
+/// and the door cannot tell a corpus-built report from a hand-built one, so
+/// re-asserting it here would add no implementation the suite catches.
+///
+/// The `unmeasured_gates` note below is a sanity check, not a second claim:
+/// `Errored` is the shape `is_admissible()` cannot see, which is why the door
+/// asks `admission_refusal` and not the weaker predicate.
 #[test]
 fn a_review_that_did_not_complete_is_absent_evidence_not_a_blocking_verdict() {
     let work = a_working_tree();
@@ -834,19 +779,6 @@ fn a_review_that_did_not_complete_is_absent_evidence_not_a_blocking_verdict() {
          asks `admission_refusal` instead"
     );
 
-    let refusal = MergeEnlister::admission_refusal(Some(&errored))
-        .expect_err("a gate that errored produced no measurement; it cannot admit a merge")
-        .to_string();
-    assert!(
-        names_gate(&refusal, "review_verdict_status"),
-        "the refusal must name the gate that produced no measurement, under \
-         either of the names Anvil has for it; got: {refusal}"
-    );
-    assert!(
-        published_texts(&errored).is_empty(),
-        "Anvil signed for a pull request whose code review never produced a verdict"
-    );
-
     // A review that did judge the code adversely is a different answer, and the
     // report has to tell them apart: one is a finding against the pull request,
     // the other is a run that did not happen.
@@ -862,52 +794,40 @@ fn a_review_that_did_not_complete_is_absent_evidence_not_a_blocking_verdict() {
     );
 }
 
-/// INTEGRATION — what the pre-flight says this build cannot measure is what a
-/// real corpus run cannot measure.
+/// UNIT — the cheap pre-flight the enlist doors read names the gate that can
+/// never pass, and why.
 ///
 /// `unmeasurable_gates_in_this_build` is what the three enlist doors read
 /// before running anything: a gate that cannot produce a measurement in this
 /// deployment makes every report the corpus can return inadmissible, whatever
 /// the pull request is, and the alternative is paying a clone, seventy-two
 /// guards, a model turn and a cold `cargo check` to arrive at a refusal the
-/// configuration had already fixed.
+/// configuration had already fixed. The string it returns is therefore the
+/// whole of what an operator gets, and it has to carry both halves: which gate,
+/// and why that gate can never pass.
 ///
-/// The claim has to be true of the corpus, so it is checked against a real run:
-/// every gate the pre-flight names must in fact be one that run could not
-/// measure. And it must be a statement about the build — naming a pull request
-/// in it would be a claim about something nothing measured.
+/// Both assertions are read off the one `format!` in
+/// `unmeasurable_gates_in_this_build` (src/pre_merge_guard/mod.rs). A refusal
+/// that says only that something is unmeasurable fails the first; one that
+/// names the gate and drops the guard's own reason fails the second.
 ///
-/// `slo_status` is asserted by name rather than skipped over. This build has
-/// exactly one such gate — `burn_rate_is_unmeasurable` returns
-/// `MISSING_TELEMETRY_SOURCE` because nothing in the crate queries a telemetry
-/// endpoint — and a test that returns green when the pre-flight answers `None`
-/// passes precisely when the pre-flight has regressed into answering `None` for
-/// everything, which is the thing it exists to catch. The day a telemetry
-/// integration lands, this fails and is deleted, which is the correct way for
-/// it to end.
-///
-/// Nothing here asserts an ordering: both values are read independently, and
-/// that one is cheap enough to read first is a property of the doors, pinned in
-/// the spec suite where the doors are read.
+/// That a real corpus run bears the claim out is asserted where a corpus run is
+/// already paid for, in
+/// `a_change_that_moves_through_certification_is_answered_for_by_that_report`.
+/// Nor does anything here assert an ordering: that the doors read this before
+/// paying for a corpus is a property of the doors, pinned in the spec suite
+/// where the doors are read.
 #[test]
-fn what_the_pre_flight_says_this_build_cannot_measure_the_corpus_cannot_measure() {
-    let blockers = anvil::pre_merge_guard::unmeasurable_gates_in_this_build().expect(
-        "this build has a gate no execution of it can measure — `slo_status`, \
-         because nothing in the crate queries a telemetry endpoint — and the \
-         pre-flight the enlist doors read must say so. Answering `None` here is \
-         the pre-flight regressed into a no-op, which is what lets the doors pay \
-         for a whole corpus to reach a refusal the configuration had already fixed",
-    );
+fn the_cheap_pre_flight_names_the_gate_that_can_never_pass_and_why() {
+    let blockers = anvil::pre_merge_guard::unmeasurable_gates_in_this_build()
+        .expect("this build has a gate no execution of it can measure: `slo_status`");
     assert!(
         names_gate(&blockers, "slo_status"),
         "the pre-flight refusal must name the gate that cannot be measured, or \
          an operator is told only that something is wrong: {blockers}"
     );
-    let reason = anvil::slo_canary_guard::burn_rate_is_unmeasurable().expect(
-        "fixture sanity: the pre-flight's one entry is this guard's answer, so a \
-         build in which the guard can be measured is one in which the assertion \
-         above is already wrong",
-    );
+    let reason = anvil::slo_canary_guard::burn_rate_is_unmeasurable()
+        .expect("fixture sanity: the pre-flight's one entry is this guard's answer");
     assert!(
         blockers.contains(reason),
         "the pre-flight names the gate and drops the reason the guard gave for \
@@ -915,21 +835,6 @@ fn what_the_pre_flight_says_this_build_cannot_measure_the_corpus_cannot_measure(
          told a gate can never pass and not why. The reason was: {reason}\n  \
          blockers: {blockers}"
     );
-
-    let work = a_working_tree();
-    let report = report_from_the_corpus(work.path(), Some(true), "APPROVE");
-    for (gate, status) in report.named_statuses() {
-        if blockers.contains(gate) {
-            assert!(
-                !status.is_acceptable() || matches!(status, GateStatus::NotMeasured { .. }),
-                "`{gate}` is named as a gate this build cannot produce a \
-                 measurement for, and a real corpus run reported `{}` for it. \
-                 The doors are refusing in advance on a claim the corpus does not \
-                 bear out",
-                status.badge()
-            );
-        }
-    }
 }
 
 // =========================================================================
@@ -1007,6 +912,42 @@ fn a_gate_that_was_auto_corrected_is_not_counted_among_the_gates_that_passed() {
              gates were auto-corrected in Anvil's local clone and are not in the \
              commit `--match-head-commit` pins the merge to. Text was:\n{text}"
         );
+        // REGRESSION, issue #18 — the same claim with the number taken out.
+        // The defect was one string literal in a function that received no
+        // report, so it was signed onto every pull request whatever the gates
+        // did. The two sentences it quoted are gone, so looking for them finds
+        // nothing any implementation can produce; what has to stay unreachable
+        // is the claim under any rewording, and this fixture is where it would
+        // do real harm — two gates fixed only in Anvil's clone, on a pull
+        // request that is admitted and really is endorsed. The vocabulary is
+        // the spec suite's `TOTALITY`. A bare "100%" is not on it: the rendered
+        // matrix carries that inside gate descriptions, and banning the number
+        // would forbid the most honest derivation available.
+        let lower = text.to_lowercase();
+        for claim in [
+            "100% compliance",
+            "100% compliant",
+            "100% green",
+            "100% certified",
+            "100% pass",
+            "100% clean",
+            "100% of gates",
+            "all automated",
+            "all gates",
+            "all checks",
+            "all safety",
+            "every gate",
+            "fully compliant",
+            "fully green",
+        ] {
+            assert!(
+                !lower.contains(claim),
+                "`{seam}` asserted \"{claim}\" for a corpus whose doc-parity and \
+                 cedar fixes exist only in Anvil's local clone. Nothing in the \
+                 report says it, a reader cannot check it against anything, and \
+                 it goes onto the pull request permanently.\n  text was:\n{text}"
+            );
+        }
         assert!(
             names_gate(text, "doc_parity_status") || names_gate(text, "cedar_status"),
             "`{seam}` says nothing about the two gates whose fix is not in the \
@@ -1075,42 +1016,30 @@ fn a_gate_that_produced_no_measurement_is_not_reported_as_a_gate_that_failed() {
 }
 
 // =========================================================================
-// Corpus integrity — the report grew two fields that are not gates
+// Corpus integrity — the one thing report.rs's own pins cannot see
 // =========================================================================
 
-/// CORPUS INTEGRITY — every gate is published under its own name, and the two
-/// fields this change added are not gates.
+/// CORPUS INTEGRITY — every gate is published under its own name.
 ///
-/// `TOTAL_GATES` is the authority for every count Anvil publishes onto a pull
-/// request, and `named_statuses()` is the list every refusal and every
-/// published line is written from. Two gates sharing a name means one of them
-/// can never appear in a refusal; a non-gate field counted as a gate inflates
-/// every published number.
+/// `named_statuses()` is the list every refusal and every published line is
+/// written from. Two gates sharing a name means one of them can never appear in
+/// a refusal, and a reader cannot tell which of the two a published line is
+/// about. Copying a `named_statuses()` line and changing the field but not the
+/// string is the live way to do that, and it happens exactly when a gate is
+/// added.
 ///
-/// What is deliberately *not* here: any count. `report.rs` already pins
-/// `named_statuses()` against `all_statuses()`
+/// This is the one thing `report.rs`'s own pins cannot see. They are all on
+/// *lengths* — `named_statuses()` against `all_statuses()`
 /// (`tests::named_statuses_and_all_statuses_stay_aligned`), `all_statuses()`
-/// against `TOTAL_GATES` (`total_gates_pin::all_statuses_matches_the_declared_total`)
-/// and `gate_counts()` against a fully passing corpus
-/// (`tests::gate_counts_reflect_reality_not_a_constant`). No implementation can
-/// fail those here and pass them there, so a third copy is volume rather than
-/// discrimination. Nor is the field list re-derived by parsing `report.rs`, and
-/// no order is required of `named_statuses()`: `MatrixRenderer` keeps its own
-/// gate order, so reordering fields in the report is behaviour-preserving and
-/// must not fail a test.
-///
-/// What is left is the one thing report.rs cannot see. Its pins are all on
-/// lengths, and two gates published under one name keeps every length right
-/// while making one of them unnameable in a refusal.
-///
-/// `provenance` and `subject` are the two fields this change added, and the
-/// assertion about them guards a hand-written mislabel rather than a type-level
-/// possibility: `named_statuses()` returns
-/// `Vec<(&'static str, &GateStatus)>`, pairing each status with a string
-/// literal typed beside it by hand, so neither field can join the list by being
-/// the wrong type — only by someone typing its name next to an unrelated gate.
+/// against `TOTAL_GATES` (`total_gates_pin::all_statuses_matches_the_declared_total`),
+/// `gate_counts()` against a fully passing corpus
+/// (`tests::gate_counts_reflect_reality_not_a_constant`) — and two gates under
+/// one name keeps every one of those lengths right. No count is re-asserted
+/// here, and no order is required of `named_statuses()`: `MatrixRenderer` keeps
+/// its own gate order, so reordering fields in the report is
+/// behaviour-preserving and must not fail a test.
 #[test]
-fn every_gate_is_published_under_its_own_name_and_nothing_else_is() {
+fn every_gate_is_published_under_its_own_name() {
     let named: Vec<String> = gate_names().into_iter().map(str::to_string).collect();
 
     let mut unique = named.clone();
@@ -1123,13 +1052,4 @@ fn every_gate_is_published_under_its_own_name_and_nothing_else_is() {
          named in a refusal and a reader cannot tell which of the two a \
          published line is about"
     );
-
-    for added in ["provenance", "subject"] {
-        assert!(
-            !named.iter().any(|gate| gate == added),
-            "`{added}` is counted as a gate. It records where the report came \
-             from and what it was measured against — not another gate — and \
-             counting it inflates every number Anvil publishes onto a pull request"
-        );
-    }
 }

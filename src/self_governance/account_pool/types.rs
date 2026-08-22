@@ -88,7 +88,6 @@ pub struct DrainAccountPayload {
 }
 
 pub type AccountPoolMap = HashMap<ModelProvider, Vec<Arc<RwLock<ManagedAccount>>>>;
-pub type AffinityCacheMap = HashMap<String, (String, Instant)>; // affinity_key -> (account_id, expires_at)
 
 /// Hand-written so a credential can never reach a log through `{:?}`.
 ///

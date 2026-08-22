@@ -17,10 +17,7 @@
 //! `GateStatus::NotMeasured` naming that source. It does not report `Failed`:
 //! there is no evidence of a slow build, only an absence of timing.
 //!
-//! `RegressionBudgetEvaluator` and `CiCadenceClassifier` are retained and still
-//! exported. Both are honest computations over a caller-supplied snapshot and
-//! are the seam the timing API plugs into; only the caller that supplied itself
-//! is deleted.
+//! The caller that supplied itself is deleted.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -29,14 +26,6 @@ use tracing::info;
 
 use crate::git_manager::PrDiffContext;
 use crate::pre_merge_guard::report::GateStatus;
-
-pub mod cadence_classifier;
-pub mod regression_budget;
-
-pub use cadence_classifier::{CadenceRoutingFinding, CiCadenceClassifier};
-pub use regression_budget::{
-    CiDurationSnapshot, OptimizationSuggestion, RegressionBudgetEvaluator,
-};
 
 /// The data source that must exist before a wallclock can be reported.
 const MISSING_TIMING_API: &str = "no GitHub Actions workflow-run timing API access is configured, so neither \

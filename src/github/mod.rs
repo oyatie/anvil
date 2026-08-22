@@ -4,12 +4,10 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod fork_guard;
-pub mod graphql;
 pub mod reviews;
 
 use crate::exec::{ExecClass, run_bounded};
 use crate::reviewer::ReviewResponse;
-pub use graphql::{GitHubGraphQLClient, ReviewThreadNode};
 
 /// How long a caller waits for GitHub to agree about a head it has just pushed,
 /// and how often it asks. See `GitHubClient::fetch_pr_metadata_at`.
@@ -263,20 +261,6 @@ impl GitHubClient {
         review: &ReviewResponse,
     ) -> Result<()> {
         reviews::submit_pr_review_impl(repo, pr_number, head_sha, review).await
-    }
-
-    /// Resolves an open review thread via GitHub GraphQL API
-    pub async fn resolve_review_thread(&self, thread_id: &str) -> Result<()> {
-        GitHubGraphQLClient::resolve_review_thread(thread_id).await
-    }
-
-    /// Fetches all review threads for a pull request
-    pub async fn fetch_review_threads(
-        &self,
-        repo: &str,
-        pr_number: u64,
-    ) -> Result<Vec<ReviewThreadNode>> {
-        GitHubGraphQLClient::fetch_review_threads(repo, pr_number).await
     }
 
     pub async fn post_pr_comment(&self, repo: &str, pr_number: u64, body: &str) -> Result<()> {

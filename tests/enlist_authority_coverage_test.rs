@@ -315,7 +315,7 @@ fn report_from_the_corpus(
     let coverage_report = anvil::coverage_guard::CoverageGuard::new()
         .evaluate_diff_coverage(dir, d)
         .expect("the coverage guard reads the diff");
-    let rust_skills_report = anvil::rust_language_policy::RustLanguagePolicy::new(dir)
+    let rust_skills_report = anvil::rust_language_policy::RustLanguagePolicy::new()
         .evaluate_rust_quality(dir, d)
         .expect("the rust language policy reads the diff");
     let kani_report = anvil::kani_guard::KaniGuard::new()

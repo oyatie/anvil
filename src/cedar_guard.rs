@@ -5,9 +5,6 @@ use std::path::Path;
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
-pub mod pdp_mock;
-pub use pdp_mock::{CedarPdpEngine, CedarPdpResult};
-
 use crate::git_manager::PrDiffContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,16 +26,11 @@ pub struct CedarGuardReport {
 
 pub struct CedarGuard {
     agy_effort: String,
-    pdp_engine: CedarPdpEngine,
 }
 
 impl CedarGuard {
     pub fn new(agy_effort: String) -> Self {
-        let pdp_engine = CedarPdpEngine::new();
-        Self {
-            agy_effort,
-            pdp_engine,
-        }
+        Self { agy_effort }
     }
 
     /// Evaluates Cedar IAM policy coverage for modified endpoints and auto-generates missing policies
@@ -103,10 +95,6 @@ impl CedarGuard {
                 created_files.join(", ")
             ),
         })
-    }
-
-    pub fn evaluate_offline_pdp(&self, policy_content: &str) -> CedarPdpResult {
-        self.pdp_engine.evaluate_synthetic_tuples(policy_content)
     }
 
     async fn analyze_cedar_coverage(

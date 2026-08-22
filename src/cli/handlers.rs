@@ -17,6 +17,10 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 .config
                 .assert_managed_clones_are_not_this_tree()
                 .await?;
+            // Ingress that cannot be authenticated rejects everything. Refusing
+            // here turns a silently inert daemon into a startup failure that
+            // names its own cause.
+            state.config.assert_webhook_ingress_is_authenticated()?;
             server::run_server(state).await?;
         }
         Commands::Shape { action } => match action {

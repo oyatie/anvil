@@ -309,6 +309,29 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               (hermetic_build/reproducibility_checker.rs:29).",
         blocked_on: None,
     },
+    GateFidelity {
+        gate_id: "auto_rollback_status",
+        aspiration: "Watch canary error budget burn and roll back autonomously on degradation.",
+        reference: "SRE Workbook, error budget policy",
+        fidelity: Fidelity::Aspirational,
+        gap: "The engine itself is correct: above its thresholds it rolls back and writes a \
+              postmortem. Nothing measures error rate or latency, though -- the review pipeline \
+              passed hardcoded healthy readings, so the degraded branch was unreachable on every \
+              pull request. `is_degraded` is the whole decision, and nothing feeds it a reading \
+              (auto_rollback/mod.rs:63).",
+        blocked_on: Some("a canary telemetry source; there is none"),
+    },
+    GateFidelity {
+        gate_id: "carbon_compute_status",
+        aspiration: "Measure build energy cost and route heavy compute to low-carbon grid windows.",
+        reference: "Green Software Foundation SCI",
+        fidelity: Fidelity::Aspirational,
+        gap: "Nothing meters CPU time or grid intensity; the review pipeline passed hardcoded \
+              budget and actual figures, so the ratchet compared two constants and published a \
+              joules figure derived from them. `evaluate_carbon_intensity` receives no measurement \
+              (carbon_aware/mod.rs:62).",
+        blocked_on: Some("a CPU-time meter and a grid carbon-intensity feed"),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

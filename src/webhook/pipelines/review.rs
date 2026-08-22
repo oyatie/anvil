@@ -363,9 +363,9 @@ pub async fn execute_pr_review(
         .evaluate_schema_evolution(&diff_ctx.diff_content);
 
     // 54. AutoRollbackPostmortemEngine: Canary Auto-Rollback & Postmortem Engine
-    let auto_rollback_report = state
-        .auto_rollback
-        .evaluate_health_and_rollback(repo, 0.01, 45.0);
+    // No canary telemetry is queried here; the previous literals (0.01, 45.0)
+    // sat far below the degradation thresholds, so the rollback path never ran.
+    let auto_rollback_report = state.auto_rollback.evaluate_without_telemetry_source();
 
     // 55. WasmPolicySandbox: WebAssembly Dynamic Bytecode Policy Sandbox Gate
     let wasm_report = state
@@ -388,7 +388,8 @@ pub async fn execute_pr_review(
         .evaluate_workload_identity(&diff_ctx.diff_content);
 
     // 59. CarbonAwareComputeRatchet: GreenOps Carbon-Aware Compute Efficiency Ratchet
-    let carbon_report = state.carbon_aware.evaluate_compute_carbon(30.0, 12.0);
+    // As above: no CPU-time or grid-intensity reading is taken.
+    let carbon_report = state.carbon_aware.evaluate_without_energy_source();
 
     // 60. DeterministicReplayHarness: Production Dark-Trace Record-and-Replay Gate
     // No production trace corpus is collected, so there is nothing to replay.

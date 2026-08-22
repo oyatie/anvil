@@ -532,11 +532,7 @@ impl PreMergeGuard {
         };
 
         // 53. Auto-Rollback & Postmortem Engine
-        let auto_rollback_status = if auto_rollback_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(auto_rollback_report.summary.clone())
-        };
+        let auto_rollback_status = auto_rollback_report.status.clone();
 
         // 54. Dynamic WebAssembly Policy Sandbox
         let wasm_sandbox_status = if wasm_report.passed {
@@ -567,11 +563,7 @@ impl PreMergeGuard {
         };
 
         // 58. GreenOps Carbon-Aware Compute
-        let carbon_compute_status = if carbon_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(carbon_report.summary.clone())
-        };
+        let carbon_compute_status = carbon_report.status.clone();
 
         // 59. Deterministic Record-and-Replay
         let replay_harness_status = replay_report.status.clone();

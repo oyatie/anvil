@@ -608,12 +608,18 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             // This path has not reviewed the pull request, so it runs the
             // certification corpus and hands over what that produced.
-            let evidence =
-                crate::webhook::pipelines::certify::evidence_for_enlistment(&state, &repo, pr)
-                    .await;
+            let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
+                &state, &repo, pr, None,
+            )
+            .await;
+            // The cause, on the way to the exit code. Collapsed to "no report
+            // was obtained" it tells an operator nothing they can act on.
+            if let Err(e) = &evidence {
+                tracing::warn!("No certification report for {}#{}: {:#}", repo, pr, e);
+            }
             state
                 .merge_enlister
-                .enlist_into_merge_queue(&repo, pr, evidence.as_ref())
+                .enlist_into_merge_queue(&repo, pr, evidence.as_ref().ok())
                 .await?;
         }
         Commands::HealQueue { repo, pr } => {

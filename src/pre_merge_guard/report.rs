@@ -112,17 +112,55 @@ pub struct PreMergeCertificationReport {
     /// one is in hand, and it is deliberately not serialisable -- a report that
     /// arrived over a wire or out of a cache is a copy of a measurement, not
     /// one.
+    ///
+    /// Not `pub`: a `Copy` field readable and writable from anywhere is a mark
+    /// that can be lifted off a genuine report and dropped onto a struct
+    /// literal. Read it through `provenance()`.
     #[serde(skip)]
-    pub provenance: GateProvenance,
+    pub(super) provenance: GateProvenance,
+    /// The pull request and the commit this run measured, or `None` for a
+    /// report that was not produced against one.
+    ///
+    /// Without it a report proves "some certification run produced an
+    /// all-passing report" and never "...for this pull request at the commit
+    /// about to be queued", and the two are not the same claim: the healer
+    /// pushes a healed commit and then certifies whatever GitHub reports as
+    /// head, and a contributor can push while the corpus is running.
+    /// `enlist_into_merge_queue` re-reads the head and refuses when it has
+    /// moved.
+    #[serde(default)]
+    pub(super) subject: Option<CertifiedSubject>,
+}
+
+/// The pull request and commit a certification run was performed against.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertifiedSubject {
+    pub repo: String,
+    pub pr_number: u64,
+    pub head_sha: String,
 }
 
 /// Whether a report's gate statuses were handed to it by a certification run.
 ///
-/// The inner flag cannot be written outside this module and
-/// `certification_run()` cannot be named outside `pre_merge_guard`, so no
-/// caller can mint a report that claims a measurement nothing performed.
-/// `Default` -- what a deserialised or hand-built report gets -- is "no run
-/// produced this".
+/// What this actually establishes, and what it does not:
+///
+/// - `Default` -- what a **deserialised** report gets, because the field is
+///   `#[serde(skip)]` -- is "no run produced this". So a report reloaded from
+///   state, read out of a cache, or round-tripped through serde with its
+///   statuses overwritten carries no mark, and `admission_refusal` refuses it.
+///   That is the forgery this design stops.
+/// - It does **not** stop an outcome list. `from_gate_outcomes` is a `pub`
+///   constructor -- the spec suite calls it from outside the crate -- and it
+///   confers this mark on whatever seventy-two statuses it is handed. A caller
+///   who can write `(name, GateStatus::Passed)` seventy-two times gets a
+///   genuinely marked, fully admissible report. The mark means "these statuses
+///   arrived as gate outcomes", not "a gate produced them".
+///
+/// The inner flag is private to this module and `certification_run()` is
+/// `pub(super)`, so the mark cannot be minted outside `pre_merge_guard` --
+/// but `from_gate_outcomes` is the public door through it, and the forgery
+/// scan in `tests/enlist_authority_test.rs` is what keeps production code
+/// from walking through that door instead of running the corpus.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GateProvenance(bool);
 
@@ -345,11 +383,97 @@ impl PreMergeCertificationReport {
             .collect();
     }
 
-    /// Whether this PR may be admitted to the merge queue.
+    /// Where the seventy-two statuses came from.
+    pub fn provenance(&self) -> GateProvenance {
+        self.provenance
+    }
+
+    /// The pull request and commit this report was measured against, if it was
+    /// measured against one.
+    pub fn subject(&self) -> Option<&CertifiedSubject> {
+        self.subject.as_ref()
+    }
+
+    /// Whether the evidence in this report admits a pull request to the merge
+    /// queue. `Ok(())` admits; `Err` refuses and says why.
     ///
-    /// Deliberately stricter than `is_certified_ready`: a report may certify on
-    /// every measured gate while some gate produced no measurement at all.
-    /// Invariant I1 — absent evidence must not merge.
+    /// This is the single definition of admissibility.
+    /// `MergeEnlister::admission_refusal` is a one-line delegation to it, so
+    /// the door and the two publishers ask the same question of the same value.
+    ///
+    /// Three ways evidence can be absent, and all three withhold the merge
+    /// (invariant I1):
+    ///
+    /// 1. the report did not come from a certification run, so its statuses are
+    ///    somebody's opinion in the shape of a measurement;
+    /// 2. a gate produced no measurement — `NotMeasured`, which is individually
+    ///    acceptable and still absent evidence, or `Errored`, which
+    ///    `unmeasured_gates` does not record at all;
+    /// 3. the report does not certify.
+    ///
+    /// The refusal names the gates, because an operator watching a pull request
+    /// sit in the queue has nothing else to act on.
+    ///
+    /// Deliberately not a check on the *subject*: whether this report is about
+    /// the commit being queued is a question about the pull request as it is
+    /// now, not about the report, and it is asked at the entry point where the
+    /// head can be re-read. See `MergeEnlister::enlist_into_merge_queue`.
+    pub fn admission_refusal(&self) -> anyhow::Result<()> {
+        if !self.provenance.is_from_a_certification_run() {
+            anyhow::bail!(
+                "merge queue admission withheld: this certification report was not produced \
+                 by a certification run, so nothing in it was measured."
+            );
+        }
+
+        let without_a_measurement: Vec<&str> = self
+            .named_statuses()
+            .into_iter()
+            .filter(|(_, status)| {
+                matches!(
+                    status,
+                    GateStatus::Errored(_) | GateStatus::NotMeasured { .. }
+                )
+            })
+            .map(|(gate, _)| gate)
+            .collect();
+        if !without_a_measurement.is_empty() {
+            anyhow::bail!(
+                "merge queue admission withheld: {} gate(s) produced no measurement: {}",
+                without_a_measurement.len(),
+                without_a_measurement.join(", ")
+            );
+        }
+
+        if !self.is_certified_ready {
+            let blocking: Vec<&str> = self
+                .named_statuses()
+                .into_iter()
+                .filter(|(_, status)| !status.is_acceptable())
+                .map(|(gate, _)| gate)
+                .collect();
+            anyhow::bail!(
+                "merge queue admission withheld: the pull request is not certified; {} gate(s) \
+                 did not pass: {}",
+                blocking.len(),
+                blocking.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
+    /// A weaker, diagnostic reading of the same fields: certified, and no gate
+    /// reported `NotMeasured`.
+    ///
+    /// **This is not the admission decision** — `admission_refusal()` is, and
+    /// nothing in production gates a merge on this predicate. It is
+    /// deliberately weaker in two ways the spec suite pins and depends on
+    /// (`nothing_is_endorsed_on_evidence_that_cannot_admit_the_pull_request`
+    /// requires the two to disagree): it does not see `Errored`, which
+    /// `recompute_unmeasured` never records, and it does not see provenance, so
+    /// it says yes to a report no run produced. Use it to describe a report — a
+    /// receipt verdict, a scorecard line — never to let one through a door.
     pub fn is_admissible(&self) -> bool {
         self.is_certified_ready && self.unmeasured_gates.is_empty()
     }
@@ -367,11 +491,21 @@ impl PreMergeCertificationReport {
     /// not by the spelling of whatever produced it: a report knows whether its
     /// statuses were handed to it as gate outcomes.
     ///
-    /// SCAFFOLDING: signature only. How provenance is represented — a private
-    /// field, a wrapper, a token no other module can name — is the
-    /// implementer's choice; what is fixed is that it cannot be typed at a
-    /// keyboard outside this function, and that `unmeasured` does not confer
-    /// it.
+    /// What this constructor does and does not establish. It confers the
+    /// provenance mark on whatever statuses it is handed, and it is `pub`
+    /// because the spec suite builds its fixtures through it from outside the
+    /// crate. So it is a public door onto the mark: a caller who writes out
+    /// seventy-two `(name, GateStatus::Passed)` pairs gets a fully admissible
+    /// report, and `admission_refusal` cannot tell it from one the corpus
+    /// produced. What the mark does rule out is the *deserialised* report — the
+    /// field is `#[serde(skip)]`, so anything that arrived over a wire, out of
+    /// a cache, or through a serde round-trip carries no mark at all. Keeping
+    /// production code off this door is the forgery scan's job, not the type's:
+    /// see `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`.
+    ///
+    /// It confers no subject: a report built from an outcome list was not
+    /// measured against a pull request, so it names none, and the entry point
+    /// refuses to queue a commit no report was measured against.
     pub fn from_gate_outcomes(outcomes: &[(&str, GateStatus)]) -> anyhow::Result<Self> {
         let mut by_gate: std::collections::HashMap<&str, GateStatus> =
             std::collections::HashMap::with_capacity(outcomes.len());
@@ -515,6 +649,7 @@ impl PreMergeCertificationReport {
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             provenance: GateProvenance::default(),
+            subject: None,
         }
     }
 
@@ -711,6 +846,7 @@ mod tests {
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             provenance: GateProvenance::default(),
+            subject: None,
         }
     }
 

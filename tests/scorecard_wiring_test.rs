@@ -769,3 +769,48 @@ fn boundary_worst_case_body_fits_a_github_comment_and_beats_the_table() {
         matrix.len()
     );
 }
+
+/// P7  The fidelity registry records that ~21 gates are heuristic or
+///     aspirational, and `finding_line` attaches that note to the scorecard.
+///     But `finding_line` runs only for Failed / Errored / NotMeasured /
+///     Warning gates. A gate that PASSES produces no line, so it carries no
+///     note -- and the certified branch discards `findings` entirely and
+///     publishes one sentence: "Certified — N/N gates passed."
+///
+///     So the disclosure renders only on the failure path, which is exactly
+///     when it is least needed. On the green path -- the only moment a human
+///     decides whether to trust the certification -- a reader sees a full
+///     score and nothing at all about how much of it is a keyword scan.
+#[test]
+fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
+    let body = publish::scorecard::render(&all_passing());
+
+    assert!(
+        body.contains("do not fully measure"),
+        "a certified scorecard must disclose that some passing gates are \
+         heuristic or aspirational; it published:\n{body}"
+    );
+
+    for gate in ["kani", "mutation", "cosign", "zero-trust-workload"] {
+        assert!(
+            body.contains(gate),
+            "gate {gate} is registry-recorded as below Measured fidelity and \
+             passed, so it must be named in the disclosure:\n{body}"
+        );
+    }
+
+    // The disclosure has to discriminate. Naming every gate would satisfy the
+    // assertions above while telling a reader nothing -- so a gate the
+    // registry does not record as low fidelity must be absent from the list.
+    let disclosure = body
+        .split_once("do not fully measure")
+        .expect("disclosure line")
+        .1;
+    for gate in ["cell-isolation", "monorepo", "debt-shrink"] {
+        assert!(
+            !disclosure.contains(gate),
+            "gate {gate} is not recorded below Measured fidelity, so naming it \
+             in the disclosure makes the list meaningless:\n{body}"
+        );
+    }
+}

@@ -32,15 +32,16 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         .get_fleet_overview_instant(&state.config.watched_repos)
         .await;
 
-    let total_open_prs: usize = fleet_overview.repos.iter().map(|r| r.open_pr_count).sum();
-    let total_merge_queue_depth: usize = fleet_overview
-        .repos
-        .iter()
-        .map(|r| r.merge_queue_depth)
-        .sum();
+    // `None` until the poller lands its first successful sweep. An unobserved
+    // fleet renders as no rows, not as rows of plausible numbers.
+    let observed_repos: &[crate::fleet_observer::RepoFleetSummary] = fleet_overview
+        .as_ref()
+        .map_or(&[], |overview| overview.repos.as_slice());
 
-    let fleet_repos = fleet_overview
-        .repos
+    let total_open_prs: usize = observed_repos.iter().map(|r| r.open_pr_count).sum();
+    let total_merge_queue_depth: usize = observed_repos.iter().map(|r| r.merge_queue_depth).sum();
+
+    let fleet_repos = observed_repos
         .iter()
         .map(|r| FleetRepoView {
             name: r.repo_name.clone(),
@@ -49,7 +50,6 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
             pass_rate: r.pass_rate_percent,
             lead_time_hours: r.dora_metrics.lead_time_for_changes_hours,
             deploy_frequency_per_day: r.dora_metrics.deployment_frequency_per_day,
-            health_badge: "HEALTHY (0 BYPASS)".to_string(),
             branch_shas: r.branch_shas.clone(),
             gate_failures: Vec::new(),
         })
@@ -225,12 +225,12 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         fleet_repos,
         gate_heatmap,
         ai_bandit_models,
-        dora_metrics: DoraMetricsView {
-            deployment_frequency_per_day: fleet_overview.global_dora.deployment_frequency_per_day,
-            lead_time_hours: fleet_overview.global_dora.lead_time_for_changes_hours,
-            change_failure_rate_pct: fleet_overview.global_dora.change_failure_rate_percent,
-            mttr_minutes: fleet_overview.global_dora.mean_time_to_restore_mins,
-        },
+        dora_metrics: fleet_overview.as_ref().map(|overview| DoraMetricsView {
+            deployment_frequency_per_day: overview.global_dora.deployment_frequency_per_day,
+            lead_time_hours: overview.global_dora.lead_time_for_changes_hours,
+            change_failure_rate_pct: overview.global_dora.change_failure_rate_percent,
+            mttr_minutes: overview.global_dora.mean_time_to_restore_mins,
+        }),
         recent_activities: vec![
             ActivityEventView {
                 timestamp: "2026-08-19 23:58:43 UTC".to_string(),

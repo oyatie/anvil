@@ -190,21 +190,6 @@ pub async fn run_server(state: AppState) -> Result<()> {
         }
     });
 
-    // Spawn background Flake Quarantine 100x stress rehabilitation worker (Daily cadence)
-    let flake_state = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400)); // 24 hours
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            info!("Running scheduled Flake Quarantine Rehabilitation stress runs...");
-            let rep = flake_state
-                .flake_quarantine
-                .evaluate_quarantine_lifecycle(&["tests::flaky_test".to_string()]);
-            info!("Flake quarantine rehabilitation outcome: {}", rep.summary);
-        }
-    });
-
     // Spawn background Ephemeral Preview Environment and Worktree Reaper (Every 15 min)
     let reaper_state = state.clone();
     tokio::spawn(async move {

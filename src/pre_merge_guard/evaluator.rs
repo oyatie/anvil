@@ -333,11 +333,7 @@ impl PreMergeGuard {
         };
 
         // 20. FinOps Unit-Cost Zero-Copy Ratchet
-        let finops_status = if finops_report.is_cost_optimal {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(finops_report.summary.clone())
-        };
+        let finops_status = finops_report.status.clone();
 
         // 21. Ghost DB Migration & Zero Exclusive Locks
         let ghost_migration_status = if ghost_migration_report.is_safe {

@@ -74,7 +74,7 @@
       "debt_note": "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)"
     },
     {
-      "path": "src/webhook/pipelines/review.rs",
+      "path": "src/webhook/pipelines/certify.rs",
       "stamp": "hyperscale",
       "occurrences": 1,
       "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"

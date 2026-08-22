@@ -86,15 +86,18 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
             *failures.entry(gate).or_insert(0) += count;
         }
     }
-    let corpus = crate::pre_merge_guard::report::PreMergeCertificationReport::unmeasured(
-        "dashboard: names only",
-    );
-    let gate_heatmap = corpus
-        .named_statuses()
-        .into_iter()
+    // The canonical gate names, taken from `GATE_LABELS` rather than from a
+    // report this file constructs. Only the names are wanted, and a report
+    // built here to read its keys is still a report a caller wrote --
+    // `enlist_authority_test` refuses those, and it is right to: the display
+    // path has no business producing the shape that carries evidence.
+    // `GATE_LABELS` is pinned to `named_statuses()` in order and to
+    // `TOTAL_GATES` in length by `pre_merge_guard::matrix` tests.
+    let gate_heatmap = crate::pre_merge_guard::matrix::GATE_LABELS
+        .iter()
         .enumerate()
-        .map(|(idx, (name, _))| {
-            let fail_count = failures.get(name).copied().unwrap_or(0);
+        .map(|(idx, (name, _, _))| {
+            let fail_count = failures.get(*name).copied().unwrap_or(0);
             GateHeatmapItem {
                 gate_number: idx + 1,
                 gate_name: name.to_string(),

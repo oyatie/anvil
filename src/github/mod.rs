@@ -11,6 +11,11 @@ use crate::exec::{ExecClass, run_bounded};
 use crate::reviewer::ReviewResponse;
 pub use graphql::{GitHubGraphQLClient, ReviewThreadNode};
 
+/// How long a caller waits for GitHub to agree about a head it has just pushed,
+/// and how often it asks. See `GitHubClient::fetch_pr_metadata_at`.
+const HEAD_AGREEMENT_ATTEMPTS: u32 = 6;
+const HEAD_AGREEMENT_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrMetadata {
     pub number: u64,
@@ -188,6 +193,66 @@ impl GitHubClient {
             is_cross_repository: raw.is_cross_repository,
             state: raw.state,
         })
+    }
+
+    /// The pull request's metadata, once GitHub reports `expected_head` as its
+    /// head.
+    ///
+    /// GitHub's view of a pull request head is eventually consistent
+    /// immediately after a push: `git push` returns, and a `gh pr view`
+    /// microseconds later can still name the pre-push commit. Any caller that
+    /// just pushed and then asks which commit the pull request is on -- the
+    /// queue healer does exactly this -- is racing that window, and a
+    /// single-shot comparison turns an ordinary, named race into a refusal.
+    ///
+    /// So the read is retried on a bounded backoff, and the mismatch is fatal
+    /// only once GitHub has had `HEAD_AGREEMENT_ATTEMPTS` chances to catch up.
+    /// Still fail-closed at the end: certifying whichever commit the API happens
+    /// to name would produce evidence about a commit nobody asked about.
+    ///
+    /// With `expected_head` `None` the caller holds no belief about the head and
+    /// the first read is the answer.
+    pub async fn fetch_pr_metadata_at(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        expected_head: Option<&str>,
+    ) -> Result<PrMetadata> {
+        let mut seen = String::new();
+        for attempt in 1..=HEAD_AGREEMENT_ATTEMPTS {
+            let meta = self.fetch_pr_metadata(repo, pr_number).await?;
+            let Some(expected) = expected_head else {
+                return Ok(meta);
+            };
+            if meta.head_ref_oid == expected {
+                return Ok(meta);
+            }
+            seen = meta.head_ref_oid;
+            if attempt < HEAD_AGREEMENT_ATTEMPTS {
+                info!(
+                    "GitHub still reports {} as the head of {}#{} and {} was expected; waiting {}s \
+                     for its view to catch up (attempt {} of {}).",
+                    seen,
+                    repo,
+                    pr_number,
+                    expected,
+                    HEAD_AGREEMENT_DELAY.as_secs(),
+                    attempt,
+                    HEAD_AGREEMENT_ATTEMPTS
+                );
+                tokio::time::sleep(HEAD_AGREEMENT_DELAY).await;
+            }
+        }
+        bail!(
+            "the head expected for {}#{} is {}, and GitHub still reports {} after {} attempts. \
+             Acting on the commit the API happens to name would act on a commit nobody asked \
+             about.",
+            repo,
+            pr_number,
+            expected_head.unwrap_or_default(),
+            seen,
+            HEAD_AGREEMENT_ATTEMPTS
+        )
     }
 
     pub async fn submit_pr_review(

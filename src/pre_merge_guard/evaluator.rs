@@ -2,7 +2,7 @@ use anyhow::Result;
 use tracing::info;
 
 use super::matrix::MatrixRenderer;
-use super::report::{GateStatus, PreMergeCertificationReport};
+use super::report::{CertifiedSubject, GateProvenance, GateStatus, PreMergeCertificationReport};
 use super::scanner::PreMergeScanner;
 use crate::adr_drift_ratchet::AdrReport;
 use crate::api_contract_guard::ApiContractReport;
@@ -616,6 +616,9 @@ impl PreMergeGuard {
             PreMergeScanner::scan_for_concurrency_and_flakes(&diff_ctx.diff_content);
 
         // 68. Test Suite Status
+        // `None` is a path on which no suite ran. Reporting a failure there would be
+        // an accusation nothing measured, and reporting a pass would be a claim
+        // nothing measured; both violate I1, in opposite directions.
         let test_suite_status = Self::test_suite_gate_status(test_suite_passed);
 
         // 69. AI Code Review & 16-Lens Invariant Gate
@@ -749,6 +752,19 @@ impl PreMergeGuard {
             test_suite_status,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
+            // This function is the certification run: these seventy-two
+            // statuses are what the gates above reported, not what a caller
+            // decided they would have said.
+            provenance: GateProvenance::certification_run(),
+            // ...and this is what they were reported about. A report with no
+            // subject proves "some run produced an all-passing report", never
+            // "...for this pull request at this commit", and those are the two
+            // claims the merge queue confuses when a head moves mid-run.
+            subject: Some(CertifiedSubject {
+                repo: diff_ctx.repo.clone(),
+                pr_number: diff_ctx.pr_number,
+                head_sha: diff_ctx.head_sha.clone(),
+            }),
         };
         // The verdict and the unmeasured list are derived from the statuses just
         // assigned — every field, including the two self-directed gates — so

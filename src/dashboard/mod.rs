@@ -170,9 +170,43 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
 mod published_values_are_measured_tests {
     /// Everything above the test module. Without this the scan matches the
     /// needles written in the tests themselves and can never fail.
-    fn production_source() -> &'static str {
+    /// This file's production code, with `//` comments removed.
+    ///
+    /// Stripping matters: `the_gate_table_is_derived_from_the_corpus` asserted
+    /// that `named_statuses()` appears here, and after the table moved to
+    /// `GATE_LABELS` the only remaining occurrence was in a comment explaining
+    /// the move -- so the test kept passing while no longer checking anything.
+    /// Prose is not evidence, the same rule `fidelity_registry_citations_test`
+    /// enforces for the registry.
+    fn production_source() -> String {
         let whole = include_str!("mod.rs");
-        &whole[..whole.find("#[cfg(test)]").unwrap_or(whole.len())]
+        let prod = &whole[..whole.find("#[cfg(test)]").unwrap_or(whole.len())];
+        prod.lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// `production_source` must hand back code, not commentary.
+    ///
+    /// Without this, `the_gate_table_is_derived_from_the_corpus` was satisfied
+    /// by a comment: after the table moved to `GATE_LABELS`, the only
+    /// `named_statuses()` left in this file was in a sentence explaining the
+    /// move, and the assertion kept passing while checking nothing.
+    #[test]
+    fn production_source_excludes_commentary() {
+        let src = production_source();
+        assert!(
+            src.contains("GATE_LABELS"),
+            "the code that reads the canonical list must survive stripping"
+        );
+        assert!(
+            !src.contains("enlist_authority_test"),
+            "that name appears only in a comment here, so stripping must remove it"
+        );
     }
 
     /// The dashboard is a published surface, so a constant on it is a claim.
@@ -204,8 +238,10 @@ mod published_values_are_measured_tests {
     fn the_gate_table_is_derived_from_the_corpus() {
         let src = production_source();
         assert!(
-            src.contains("named_statuses()"),
-            "the published gate table must take its names from the live corpus"
+            src.contains("GATE_LABELS"),
+            "the published gate table must take its names from the canonical \
+             list, which `pre_merge_guard::matrix` pins to `named_statuses()` \
+             in order and to `TOTAL_GATES` in length"
         );
         assert!(
             src.contains("get_gate_failure_heatmap"),

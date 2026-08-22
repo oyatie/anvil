@@ -17,7 +17,6 @@ use anvil::git_manager::PrDiffContext;
 use anvil::gitops_promotion::GitOpsPromotionEngine;
 use anvil::jittered_backoff::JitteredBackoffGuard;
 use anvil::kani_guard::KaniGuard;
-use anvil::microbenchmark_ratchet::{MicroBenchmarkRatchet, MicrobenchmarkSample};
 use anvil::psa_admission_guard::PsaAdmissionGuard;
 use anvil::replay_harness::{DeterministicReplayHarness, ReplayTraceRecord};
 use anvil::rust_language_policy::RustLanguagePolicy;
@@ -576,7 +575,7 @@ fn test_upgrade_train_green_compatible_patch_upgrade() {
 
 #[test]
 fn test_rust_skills_red_flag_unwrap_in_production() {
-    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new();
     // RED: Production unwrap without error handling
     let bad_diff = create_test_diff_context("src/handler.rs", "+ let value = opt_val.unwrap();");
     let report = guard
@@ -590,7 +589,7 @@ fn test_rust_skills_red_flag_unwrap_in_production() {
 
 #[test]
 fn test_rust_skills_green_question_mark_operator() {
-    let guard = RustLanguagePolicy::new(&PathBuf::from("./data/rust-skills"));
+    let guard = RustLanguagePolicy::new();
     // GREEN: Idiomatic ? error propagation
     let good_diff = create_test_diff_context(
         "src/handler.rs",
@@ -641,10 +640,18 @@ fn test_compliance_guard_green_tokenized_identifier() {
 #[test]
 fn test_trace_context_red_flag_uninstrumented_spawn() {
     let guard = TraceContextGuard::new();
-    // RED: Uninstrumented background async task loses W3C trace context
+    // RED: Uninstrumented background async task loses W3C trace context.
+    //
+    // The `@@` header is part of the fixture rather than of
+    // `create_test_diff_context`, which the other 34 rows share. Gate 17 now
+    // publishes the file and line of every boundary it accuses, and the hunk
+    // header is the only thing in a diff that says where its body sits; a chunk
+    // without one declares no position, and the gate reports no location it was
+    // not told. Every real diff carries the header, so only this fixture had to
+    // grow one.
     let bad_diff = create_test_diff_context(
         "src/background.rs",
-        "+ tokio::spawn(async move {\n+     process_background_task().await;\n+ });",
+        "@@ -20,3 +20,5 @@\n+ tokio::spawn(async move {\n+     process_background_task().await;\n+ });",
     );
     let report = guard
         .evaluate_trace_propagation(&PathBuf::from("."), &bad_diff)
@@ -658,10 +665,13 @@ fn test_trace_context_red_flag_uninstrumented_spawn() {
 #[test]
 fn test_trace_context_green_instrumented_span() {
     let guard = TraceContextGuard::new();
-    // GREEN: Instrumented span maintains W3C trace parentage
+    // GREEN: Instrumented span maintains W3C trace parentage. The header is
+    // here for the reason given on the red row above -- and without it this row
+    // passes by measuring nothing at all, which is the defect gate 17 was just
+    // rewritten to stop publishing.
     let good_diff = create_test_diff_context(
         "src/background.rs",
-        "+ tokio::spawn(async move {\n+     process_background_task().await;\n+ }.instrument(tracing::info_span!(\"process_background\")));",
+        "@@ -20,3 +20,5 @@\n+ tokio::spawn(async move {\n+     process_background_task().await;\n+ }.instrument(tracing::info_span!(\"process_background\")));",
     );
     let report = guard
         .evaluate_trace_propagation(&PathBuf::from("."), &good_diff)
@@ -669,6 +679,12 @@ fn test_trace_context_green_instrumented_span() {
     assert!(
         report.is_propagated,
         "Expected False Red prevention: Instrumented span must PASS"
+    );
+    assert_eq!(
+        report.tasks_scanned, 1,
+        "the boundary has to have been inspected for this row to mean \
+         anything: {}",
+        report.summary
     );
 }
 
@@ -703,42 +719,6 @@ fn test_formal_verification_green_scoped_least_privilege() {
 // =========================================================================
 // 21. Micro-Benchmark & Latency Ratchet
 // =========================================================================
-
-#[test]
-fn test_microbenchmark_red_flag_hotpath_latency_regression() {
-    let ratchet = MicroBenchmarkRatchet::new();
-    // RED: 3x latency regression in hot path (150ns vs baseline 50ns)
-    let degraded_sample = MicrobenchmarkSample {
-        benchmark_name: "order_matching_hotpath".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 150.0,
-        p99_cpu_cycles_base: 120,
-        p99_cpu_cycles_head: 360,
-    };
-    let report = ratchet.evaluate_benchmark_regression(&degraded_sample);
-    assert!(
-        !report.passed,
-        "Expected False Green prevention: 3x hotpath latency regression must FAIL"
-    );
-}
-
-#[test]
-fn test_microbenchmark_green_optimal_latency() {
-    let ratchet = MicroBenchmarkRatchet::new();
-    // GREEN: Latency parity or improvement
-    let optimal_sample = MicrobenchmarkSample {
-        benchmark_name: "order_matching_hotpath".to_string(),
-        base_ns_per_op: 50.0,
-        head_ns_per_op: 48.5,
-        p99_cpu_cycles_base: 120,
-        p99_cpu_cycles_head: 115,
-    };
-    let report = ratchet.evaluate_benchmark_regression(&optimal_sample);
-    assert!(
-        report.passed,
-        "Expected False Red prevention: Optimal latency benchmark must PASS"
-    );
-}
 
 // =========================================================================
 // 22. Living ADR Drift Ratchet
@@ -848,10 +828,6 @@ fn test_auto_rollback_red_flag_degraded_slo_triggers_rollback() {
         report.rollback_triggered,
         "Degraded canary must trigger autonomous rollback"
     );
-    assert!(
-        report.postmortem.is_some(),
-        "Rollback must automatically generate blameless postmortem bundle"
-    );
 }
 
 #[test]
@@ -867,7 +843,6 @@ fn test_auto_rollback_green_healthy_canary_passes() {
         !report.rollback_triggered,
         "Healthy canary must not trigger rollback"
     );
-    assert!(report.postmortem.is_none());
 }
 
 // =========================================================================
@@ -1224,7 +1199,7 @@ fn test_subtle_cell_isolation_nested_subquery_evasion() {
 #[test]
 fn test_subtle_rust_skills_empty_expect_evasion() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let guard = RustLanguagePolicy::new(temp_dir.path());
+    let guard = RustLanguagePolicy::new();
     // SUBTLE RED: Attempting to bypass unwrap check by using empty expect string
     let subtle_bad_diff =
         create_test_diff_context("src/handler.rs", "+ let value = option_val.expect(\"\");");

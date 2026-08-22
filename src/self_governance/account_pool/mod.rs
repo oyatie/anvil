@@ -5,6 +5,6 @@ pub mod types;
 
 pub use manager::AccountPoolManager;
 pub use types::{
-    AccountPoolMap, AccountQuotaView, AddAccountPayload, AffinityCacheMap, AuthType,
-    DrainAccountPayload, ManagedAccount, UsageRecord,
+    AccountPoolMap, AccountQuotaView, AddAccountPayload, AuthType, DrainAccountPayload,
+    ManagedAccount, UsageRecord,
 };

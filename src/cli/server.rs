@@ -146,14 +146,6 @@ pub async fn run_server(state: AppState) -> Result<()> {
         });
     }
 
-    // Spawn background upstream sync for rust-skills repository
-    let rsg_clone = state.rust_language_policy.clone();
-    tokio::spawn(async move {
-        if let Err(e) = rsg_clone.sync_upstream().await {
-            tracing::warn!("RustLanguagePolicy upstream background sync noticed: {}", e);
-        }
-    });
-
     // Spawn background GC heartbeat for abandoned git worktrees (crash recovery & leak prevention)
     let git_mgr_gc = state.git_mgr.clone();
     tokio::spawn(async move {

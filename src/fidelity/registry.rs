@@ -57,7 +57,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               no fix below removes that. It text-scans the added and retained lines of Rust chunks \
               for a call whose final path segment is `spawn`, `spawn_blocking` or `spawn_local` and \
               whose argument list is not empty (trace_context_guard/span_tracker.rs:28-30), then \
-              asks whether `.instrument(` or `.in_current_span(` appears anywhere inside the \
+              asks whether `instrument` or `in_current_span` appears anywhere inside the \
               parenthesised region that call opens, minus the regions the boundaries nested in it \
               own (trace_context_guard/span_tracker.rs:83-102); the published sentence carries that \
               qualifier rather than the stronger claim. Appearing in the region is not attachment: \
@@ -65,8 +65,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               value inside the body reads as clean, and the gate can tell neither that the span is \
               the right one nor that it is attached to this task at all. The published sentence \
               says what is measured rather than the word attaches. A task instrumented at its \
-              definition by `#[tracing::instrument]` has no such call at the spawn site and is \
-              reported detached (trace_context_guard/span_tracker.rs:32-44), and a boundary crossed \
+              definition by a tracing instrument attribute has no such call at the spawn site and is \
+              reported detached (trace_context_guard/span_tracker.rs:43-45), and a boundary crossed \
               by a call it cannot name that way -- a spawn imported under another name, or a task \
               started by code this diff does not touch -- it cannot see at all. \
               It errs in the other direction too, and that is the direction that blocks a merge. \
@@ -86,7 +86,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               parenthesis does not close inside its own hunk is `unresolved` -- seen and not \
               judged, not counted among the inspected, and not accused \
               (trace_context_guard/mod.rs:67-76). Every boundary on a line is inspected, not merely \
-              the first (trace_context_guard/span_tracker.rs:121-129). Lexing is a line scanner \
+              the first via `BOUNDARY_RE` (trace_context_guard/span_tracker.rs:128-132). Lexing is a line scanner \
               with state carried across lines, blanking string literals, raw strings, character \
               literals, line comments and block comments before anything counts a parenthesis \
               (trace_context_guard/span_tracker.rs:314-320); its state starts at code at the top of \
@@ -95,10 +95,10 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               literal nor a lifetime is read as a lifetime. The diff is cut into one chunk per file \
               at a line beginning `diff --git ` (trace_context_guard/mod.rs:263-276), and a chunk \
               carrying no `+++ ` header names no path and is not read. An accusation names \
-              post-image lines derived from the `@@ -a,b +c,d @@` header \
+              post-image lines derived from the a hunk header header \
               (trace_context_guard/mod.rs:298-333) -- a chunk with no such header declares no \
               position, a removed line is not numbered, and neither is the \
-              `\\ No newline at end of file` marker git writes mid-hunk -- and it covers retained \
+              a no-newline marker marker git writes mid-hunk -- and it covers retained \
               lines as well as added ones, because a region walk that skipped context lines could \
               bound nothing, so a named line may be one the change only carried past rather than \
               wrote; the failing sentence says so. \

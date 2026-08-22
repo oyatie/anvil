@@ -355,6 +355,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               (finops_ratchet/allocation_scanner.rs:30).",
         blocked_on: Some("a per-tenant hotpath declaration; the marker set is hardcoded"),
     },
+    GateFidelity {
+        gate_id: "sandbox_status",
+        aspiration: "Spin up a hermetic ephemeral sandbox per PR and prove zero host-state leakage.",
+        reference: "Bazel sandboxfs; Firecracker microVMs",
+        fidelity: Fidelity::Aspirational,
+        gap: "No sandbox runtime exists, so nothing is started, bound or timed. The allocator it \
+              used to call returned a struct literal, making the verdict a constant and publishing \
+              a spin-up time nothing had measured; that pool is deleted and \
+              `evaluate_without_sandbox_runtime` is now the only path \
+              (ephemeral_sandbox/mod.rs:37).",
+        blocked_on: Some("a container or microVM runtime the review pipeline can drive"),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

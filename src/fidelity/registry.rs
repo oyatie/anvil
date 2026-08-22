@@ -261,9 +261,11 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Replay recorded production traces and assert byte-for-byte state parity.",
         reference: "Deterministic record-and-replay; VMware ReTrace",
         fidelity: Fidelity::Aspirational,
-        gap: "No trace corpus is collected. The replayer answered an empty slice with (true, 5) and \
-              the scorecard published parity across five fixtures that never existed; the gate now \
-              reports NotMeasured (replay_harness/mod.rs:44).",
+        gap: "No trace corpus is collected, so the replayer is never given one. Its whole check is \
+              `traces.iter().all(|t| !t.input_payload.is_empty())`, which is vacuously true of an \
+              empty slice -- and it used to answer one with a hardcoded count of five replayed \
+              fixtures, which the scorecard published. Now reports NotMeasured \
+              (replay_harness/trace_replayer.rs:17).",
         blocked_on: Some("a production trace recorder, which does not exist yet"),
     },
     GateFidelity {
@@ -271,9 +273,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Schedule autonomous semver and CVE upgrade PRs from the dependency graph.",
         reference: "Dependabot; Renovate",
         fidelity: Fidelity::Aspirational,
-        gap: "The review pipeline supplied no candidates, and `breaking == 0` is trivially true of an \
-              empty list, so the train was certified without being read. Now reports NotMeasured \
-              (upgrade_train/mod.rs:41).",
+        gap: "The review pipeline supplied no candidates, and the verdict `let passed = breaking == 0;` \
+              is trivially true of an empty list, so the train was certified without being read. \
+              Now reports NotMeasured (upgrade_train/mod.rs:62).",
         blocked_on: Some("a dependency manifest reader and an advisory feed"),
     },
     GateFidelity {

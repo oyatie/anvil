@@ -39,7 +39,7 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
     let debt_guard = DebtShrinkGuard::new();
     let modular_guard = ModularizationGuard::new();
     let coverage_guard = CoverageGuard::new();
-    let rust_language_policy = RustLanguagePolicy::new(repo_dir);
+    let rust_language_policy = RustLanguagePolicy::new();
     let kani_guard = KaniGuard::new();
     let slo_guard = SloCanaryGuard::new();
     let ghost_guard = GhostMigrationHarness::new();

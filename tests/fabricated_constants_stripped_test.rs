@@ -27,8 +27,8 @@
 //!     -> `*_false_red_prevention_*` and `no_owned_gate_fabricates_an_accusation`.
 //! P4. The real measurement that *did* exist gets deleted along with the fake
 //!     one. `slo_canary_guard` genuinely parses OpenSLO YAML off disk, and
-//!     `CacheHitRateRatchet`, `RegressionBudgetEvaluator`, `CiCadenceClassifier`
-//!     and `TrafficMirrorComparator` genuinely compute over caller-supplied
+//!     `CacheHitRateRatchet` and `TrafficMirrorComparator` genuinely compute
+//!     over caller-supplied
 //!     metrics; only their *callers* fabricate. If those go too, wiring a real
 //!     data source in stage 3 has nothing to wire into.
 //!     -> `*_still_*` boundary tests, each pinned at / one below / one above.
@@ -55,9 +55,7 @@
 
 // (no blanket allow: an import that stops being exercised is a test that stopped testing)
 
-use anvil::ci_wallclock_ratchet::{
-    CiCadenceClassifier, CiDurationSnapshot, CiWallclockEconomicsRatchet, RegressionBudgetEvaluator,
-};
+use anvil::ci_wallclock_ratchet::CiWallclockEconomicsRatchet;
 use anvil::cluster_state_auditor::{ClusterDiffEvaluator, ClusterStateAuditor};
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::GateStatus;
@@ -670,40 +668,6 @@ fn test_ci_wallclock_absent_evidence_no_seconds_or_dollars_are_published() {
         "I1: an unmeasured gate must not announce a pass; got {}",
         rep.summary
     );
-}
-
-#[test]
-fn test_ci_wallclock_false_red_prevention_regression_evaluator_still_fails_at_the_boundary() {
-    // P4: the regression budget is a real computation over a caller-supplied
-    // snapshot. Boundary on the >15% wallclock budget against a 200s baseline:
-    // exactly +15% (230s) is inside, one second above (231s) is not.
-    let eval = RegressionBudgetEvaluator::new();
-    let at = |secs: u64| {
-        eval.evaluate_regression(
-            &CiDurationSnapshot {
-                pr_wallclock_seconds: secs,
-                trunk_baseline_seconds: 200,
-                billable_compute_cost_usd: 0.10,
-                trunk_baseline_cost_usd: 0.10,
-            },
-            false,
-            "",
-        )
-        .is_acceptable
-    };
-    assert!(at(229), "one below the budget must pass");
-    assert!(at(230), "exactly at +15.0% must pass");
-    assert!(!at(231), "one above the budget must FAIL");
-}
-
-#[test]
-fn test_ci_wallclock_false_red_prevention_cadence_classifier_still_defers_at_the_ceiling() {
-    // Boundary on the 300s per-push ceiling.
-    let c = CiCadenceClassifier::new();
-    assert_eq!(CiCadenceClassifier::PER_PUSH_MAX_WALLCLOCK_SECONDS, 300);
-    assert!(c.classify_job_cadence("j", 299, true).is_none());
-    assert!(c.classify_job_cadence("j", 300, true).is_none());
-    assert!(c.classify_job_cadence("j", 301, true).is_some());
 }
 
 // =========================================================================

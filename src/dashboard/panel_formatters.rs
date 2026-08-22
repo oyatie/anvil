@@ -97,13 +97,17 @@ pub fn build_gate_cells(state: &DashboardStateView) -> String {
                 "gate-cell gate-red"
             };
             format!(
-                r#"<div class="{}" title="Gate {}: {} | Failures: {} | Pass: {:.1}% | Mutation Kill Rate: {:.0}%">
+                r#"<div class="{}" title="Gate {}: {} | Failures recorded: {} | {}">
                     <span class="gate-num">G{:02}</span>
                     <span class="gate-name">{}</span>
-                    <span class="gate-mkr">MKR {:.0}%</span>
                 </div>"#,
-                cell_class, g.gate_number, g.gate_name, g.fail_count, g.pass_percentage, g.mutation_kill_rate,
-                g.gate_number, g.gate_name, g.mutation_kill_rate
+                cell_class,
+                g.gate_number,
+                g.gate_name,
+                g.fail_count,
+                g.status,
+                g.gate_number,
+                g.gate_name
             )
         })
         .collect::<Vec<_>>()
@@ -167,42 +171,6 @@ pub fn build_account_quota_rows(state: &DashboardStateView) -> String {
                 budget_html,
                 status_badge,
                 action_button
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-pub fn build_model_rows(state: &DashboardStateView) -> String {
-    state
-        .ai_bandit_models
-        .iter()
-        .map(|m| {
-            let sig_class = if m.is_statistically_significant {
-                "badge-healthy"
-            } else {
-                "badge-warning"
-            };
-            format!(
-                r#"<tr>
-                    <td><strong>{}</strong></td>
-                    <td>{}</td>
-                    <td><strong>{:.1}%</strong></td>
-                    <td><strong>{:.1}%</strong></td>
-                    <td>${:.3}</td>
-                    <td>{:.1}s</td>
-                    <td><code>{:.3}</code></td>
-                    <td><span class="badge {}">{}</span></td>
-                </tr>"#,
-                m.model_name,
-                m.empirical_trials,
-                m.empirical_pass_at_1 * 100.0,
-                m.bayesian_posterior_pass_at_1 * 100.0,
-                m.avg_cost_per_pr,
-                m.p99_latency_sec,
-                m.ucb1_score,
-                sig_class,
-                m.significance_badge
             )
         })
         .collect::<Vec<_>>()

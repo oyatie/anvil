@@ -391,10 +391,14 @@ pub async fn execute_pr_review(
     let carbon_report = state.carbon_aware.evaluate_compute_carbon(30.0, 12.0);
 
     // 60. DeterministicReplayHarness: Production Dark-Trace Record-and-Replay Gate
-    let replay_report = state.replay_harness.evaluate_replay_parity(&[]);
+    // No production trace corpus is collected, so there is nothing to replay.
+    // Reporting the absence beats certifying parity across fixtures that were
+    // never read; see the fidelity registry entry for this gate.
+    let replay_report = state.replay_harness.evaluate_without_trace_source();
 
     // 61. ProactiveUpgradeTrain: Proactive Dependency & Security Upgrade Train Gate
-    let upgrade_train_report = state.upgrade_train.evaluate_upgrade_train(&[]);
+    // As above: no dependency manifest or advisory feed is read here.
+    let upgrade_train_report = state.upgrade_train.evaluate_without_dependency_source();
 
     // 62. ChaosMutationGuard: AST Chaos Mutation Test Adequacy Gate
     let mutation_report = state

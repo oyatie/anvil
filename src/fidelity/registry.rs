@@ -90,8 +90,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Encode authorization policy into SMT and prove non-escalation with a solver.",
         reference: "AWS Zelkova; Z3",
         fidelity: Fidelity::Heuristic,
-        gap: "A file named smt_solver.rs whose logic is policy_content.contains(\"permit(\"). No solver \
-              exists (formal_verification/smt_solver.rs:24).",
+        gap: "A chain of policy_content.contains(..) tests. No solver exists. The file and its types \
+              were renamed from smt_solver.rs/SmtConstraintEngine to say so \
+              (formal_verification/policy_scanner.rs:28).",
         blocked_on: None,
     },
     GateFidelity {

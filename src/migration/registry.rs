@@ -490,7 +490,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         confidence: Confidence::Probable,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "120 lines. LockGraphAnalyzer scanning for lock-order inversions. grep -rilE \
+        evidence: "120 lines. LockOrderKeywordScanner scanning for lock-order inversions. grep -rilE \
                   'deadlock|lock order|lock_order' matched only incidental prose in ci/facade and os/core; \
                   no static lock-order analysis in oyatie.",
     },
@@ -676,7 +676,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         confidence: Confidence::Verified,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "142 lines, PURE. SmtConstraintEngine + verify_invariants. grep -rilE \
+        evidence: "142 lines, PURE. PolicyPatternScanner + scan_policy_text. grep -rilE \
                   'z3|smt.solver|satisfiab' over oyatie *.rs matched only incidental hits \
                   (os/core/init-app, image_cache); no SMT capability in oyatie.",
     },

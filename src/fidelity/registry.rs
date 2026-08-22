@@ -90,8 +90,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Encode authorization policy into SMT and prove non-escalation with a solver.",
         reference: "AWS Zelkova; Z3",
         fidelity: Fidelity::Heuristic,
-        gap: "A file named smt_solver.rs whose logic is policy_content.contains(\"permit(\"). No solver \
-              exists (formal_verification/smt_solver.rs:24).",
+        gap: "A chain of policy_content.contains(..) tests. No solver exists. The file and its types \
+              were renamed from smt_solver.rs/SmtConstraintEngine to say so \
+              (formal_verification/policy_scanner.rs:28).",
         blocked_on: None,
     },
     GateFidelity {
@@ -255,6 +256,116 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               ts-workspace gets NotMeasured for those rules. The adapter-naming rule is not implemented. \
               Contention metrics are not yet collected.",
         blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "replay_harness_status",
+        aspiration: "Replay recorded production traces and assert byte-for-byte state parity.",
+        reference: "Deterministic record-and-replay; VMware ReTrace",
+        fidelity: Fidelity::Aspirational,
+        gap: "No trace corpus is collected, so the replayer is never given one. Its whole check is \
+              `traces.iter().all(|t| !t.input_payload.is_empty())`, which is vacuously true of an \
+              empty slice -- and it used to answer one with a hardcoded count of five replayed \
+              fixtures, which the scorecard published. Now reports NotMeasured \
+              (replay_harness/trace_replayer.rs:17).",
+        blocked_on: Some("a production trace recorder, which does not exist yet"),
+    },
+    GateFidelity {
+        gate_id: "upgrade_train_status",
+        aspiration: "Schedule autonomous semver and CVE upgrade PRs from the dependency graph.",
+        reference: "Dependabot; Renovate",
+        fidelity: Fidelity::Aspirational,
+        gap: "The review pipeline supplied no candidates, and the verdict `let passed = breaking == 0;` \
+              is trivially true of an empty list, so the train was certified without being read. \
+              Now reports NotMeasured (upgrade_train/mod.rs:62).",
+        blocked_on: Some("a dependency manifest reader and an advisory feed"),
+    },
+    GateFidelity {
+        gate_id: "consistency_status",
+        aspiration: "Verify multi-region write ordering via vector clocks and CRDT convergence.",
+        reference: "Lamport clocks; Shapiro CRDTs",
+        fidelity: Fidelity::Heuristic,
+        gap: "Substring scan. A line naming a global table needs only to also contain \"version\" to \
+              be treated as safely ordered, and \"version\" appears in most schema and dependency \
+              diffs (consistency_guard/conflict_detector.rs:29).",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "jittered_backoff_status",
+        aspiration: "Prove full-jitter backoff and deadline propagation on every network retry.",
+        reference: "AWS Architecture Blog, exponential backoff and jitter",
+        fidelity: Fidelity::Heuristic,
+        gap: "Substring scan. The jitter test is contains(\"rand\"), which any longer word containing \
+              those four letters satisfies -- this repository's own brand-absence gate is one such \
+              word -- and the deadline test is contains(\"context\"). Most diffs clear it without any \
+              backoff at all (jittered_backoff/backoff_scanner.rs:31).",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "hermetic_build_status",
+        aspiration: "Build twice and compare the binaries byte for byte.",
+        reference: "Reproducible Builds; Bazel hermeticity",
+        fidelity: Fidelity::Heuristic,
+        gap: "Builds nothing. Checks the diff for the literals SystemTime::now() and env!(\"HOME\") \
+              (hermetic_build/reproducibility_checker.rs:29).",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "auto_rollback_status",
+        aspiration: "Watch canary error budget burn and roll back autonomously on degradation.",
+        reference: "SRE Workbook, error budget policy",
+        fidelity: Fidelity::Aspirational,
+        gap: "The engine itself is correct: above its thresholds it rolls back and writes a \
+              postmortem. Nothing measures error rate or latency, though -- the review pipeline \
+              passed hardcoded healthy readings, so the degraded branch was unreachable on every \
+              pull request. `is_degraded` is the whole decision, and nothing feeds it a reading \
+              (auto_rollback/mod.rs:63).",
+        blocked_on: Some("a canary telemetry source; there is none"),
+    },
+    GateFidelity {
+        gate_id: "carbon_compute_status",
+        aspiration: "Measure build energy cost and route heavy compute to low-carbon grid windows.",
+        reference: "Green Software Foundation SCI",
+        fidelity: Fidelity::Aspirational,
+        gap: "Nothing meters CPU time or grid intensity; the review pipeline passed hardcoded \
+              budget and actual figures, so the ratchet compared two constants and published a \
+              joules figure derived from them. `evaluate_carbon_intensity` receives no measurement \
+              (carbon_aware/mod.rs:62).",
+        blocked_on: Some("a CPU-time meter and a grid carbon-intensity feed"),
+    },
+    GateFidelity {
+        gate_id: "openvex_status",
+        aspiration: "Attest CVE exploitability by pruning advisories against the real call graph.",
+        reference: "OpenVEX; Google capslock",
+        fidelity: Fidelity::Aspirational,
+        gap: "No advisory feed or dependency inventory is read. The whole reachability decision is \
+              `!source_code.contains(vuln_symbol)`, and the review pipeline supplied placeholder \
+              CVE and symbol names, so every PR was attested NotAffected by an advisory that does \
+              not exist. Now reports NotMeasured (vex_scanner/callgraph_pruner.rs:36).",
+        blocked_on: Some("an advisory feed and a call graph; neither exists yet"),
+    },
+    GateFidelity {
+        gate_id: "finops_status",
+        aspiration: "Ratchet cost-per-outcome by budgeting heap allocations on hot paths.",
+        reference: "Zero-copy parsing; allocation budgets",
+        fidelity: Fidelity::Heuristic,
+        gap: "Scope is a fixed list of path fragments -- `is_hotpath` matches network/, codec/, \
+              engine/, hotpath, packet -- and no tracked file in this repository contains any of \
+              them, so nothing is ever scanned here. The gate used to report a clean hotpath \
+              budget from that empty scope; it now separates a clean scan from an empty one \
+              (finops_ratchet/allocation_scanner.rs:30).",
+        blocked_on: Some("a per-tenant hotpath declaration; the marker set is hardcoded"),
+    },
+    GateFidelity {
+        gate_id: "sandbox_status",
+        aspiration: "Spin up a hermetic ephemeral sandbox per PR and prove zero host-state leakage.",
+        reference: "Bazel sandboxfs; Firecracker microVMs",
+        fidelity: Fidelity::Aspirational,
+        gap: "No sandbox runtime exists, so nothing is started, bound or timed. The allocator it \
+              used to call returned a struct literal, making the verdict a constant and publishing \
+              a spin-up time nothing had measured; that pool is deleted and \
+              `evaluate_without_sandbox_runtime` is now the only path \
+              (ephemeral_sandbox/mod.rs:37).",
+        blocked_on: Some("a container or microVM runtime the review pipeline can drive"),
     },
 ];
 

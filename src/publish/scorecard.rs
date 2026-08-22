@@ -108,6 +108,21 @@ fn finding_line(gate_id: &str, kind: &str, detail: &str) -> String {
     s
 }
 
+/// The passing gates the fidelity registry records as below `Measured`.
+///
+/// A gate can pass on a keyword scan; the registry is where that is written
+/// down. Naming them next to the score is what stops "72/72" from being read
+/// as 72 measurements.
+fn low_fidelity_passing_gates(report: &PreMergeCertificationReport) -> Vec<String> {
+    report
+        .named_statuses()
+        .into_iter()
+        .filter(|(_, status)| matches!(status, GateStatus::Passed | GateStatus::AutoUpdated))
+        .filter(|(gate_id, _)| fidelity_for(gate_id).is_some_and(|f| f < Fidelity::Measured))
+        .map(|(gate_id, _)| gate_name(gate_id))
+        .collect()
+}
+
 /// Renders the scorecard body, signature included.
 pub fn render(report: &PreMergeCertificationReport) -> String {
     let (passed, failed) = report.gate_counts();
@@ -131,11 +146,25 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
 
     let mut s = String::new();
     if report.is_admissible() {
-        // Success is one line. Nothing further is load-bearing.
         s.push_str(&format!(
             "✅ Certified — {}/{} gates passed.\n",
             passed, total
         ));
+        // A passing gate produces no finding line, so it never carried the
+        // fidelity note that `finding_line` attaches. That put the disclosure
+        // only on the failure path -- and the green path is the one moment a
+        // reader decides whether to trust the score. What is behind the number
+        // is load-bearing precisely when the number is good.
+        let understated = low_fidelity_passing_gates(report);
+        if !understated.is_empty() {
+            s.push_str(&format!(
+                "\n⚠️ {} of the passing gates do not fully measure what their \
+                 names imply: {}. See `src/fidelity/registry.rs` for what each \
+                 one actually checks.\n",
+                understated.len(),
+                understated.join(", ")
+            ));
+        }
     } else {
         let unmeasured = report.unmeasured_gates.len();
         s.push_str(&format!(

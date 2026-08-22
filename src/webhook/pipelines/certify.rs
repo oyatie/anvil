@@ -18,6 +18,14 @@ use crate::pre_merge_guard::report::PreMergeCertificationReport;
 use crate::progressive_rollout::DeploymentRing;
 use crate::webhook::AppState;
 
+/// How long an enlist door waits behind another run of the corpus for the same
+/// pull request before it gives up and says so.
+///
+/// Sized to let one whole corpus run ahead of it finish -- a clone, the guards,
+/// a model turn under `ExecClass::Model` (600s) and a cold build under
+/// `ExecClass::Build` (1800s) -- rather than to any particular gate.
+const PR_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(3600);
+
 pub async fn execute_pr_certify(state: &AppState, repo: &str, pr_number: u64) -> Result<()> {
     info!(
         "Running Pre-Merge Certification for PR #{} on {}...",
@@ -594,13 +602,26 @@ pub async fn certify_pull_request(
 
 /// The repository's own verification gate, run against `head_sha` itself.
 ///
-/// `Some(true)`/`Some(false)` is a gate that ran on this commit; `None` is a
-/// gate that could not be attributed to it — the repository offers none, or no
-/// tree at `head_sha` could be produced — which the corpus records as
+/// `Some(true)`/`Some(false)` is a gate that ran to completion on this commit;
+/// `None` is a gate that could not be attributed to it — the repository offers
+/// none, no tree at `head_sha` could be produced, the tree that was produced is
+/// not at `head_sha`, or the gate never completed — which the corpus records as
 /// `NotMeasured` and which withholds the merge.
 ///
-/// The tree is an ephemeral worktree checked out at `head_sha`, which is the
-/// whole of the correctness here. Run in the shared clone that
+/// `Some(false)` is reserved for a gate that ran and reported failures, because
+/// it is published on the pull request as "Test suite reported failures during
+/// verification gate" and counted against the pull request in the approving
+/// review. Everything else is a failure to measure, and this function does not
+/// convert one into the other in either direction.
+///
+/// The tree is an ephemeral worktree at `head_sha`, which is the whole of the
+/// correctness here — and it is *checked*, with `EphemeralWorktree::verify_at`,
+/// rather than assumed from the argument that was passed in:
+/// `create_ephemeral_worktree` falls back to `FETCH_HEAD` when the object is
+/// not local, and `FETCH_HEAD` in the shared clone is whatever ref was fetched
+/// last.
+///
+/// Run in the shared clone that
 /// `ensure_repo_cloned` hands out, this gate builds whatever that clone is
 /// currently on: nothing on the review or the certify path ever checks a pull
 /// request head out into it (`ensure_repo_cloned` only fetches, and
@@ -638,6 +659,29 @@ pub async fn local_verification_gate(
         }
     };
 
+    // The tree is a tree; this is what makes it *this pull request's* tree.
+    // `create_ephemeral_worktree` falls back to `FETCH_HEAD` in the shared
+    // clone when the head object is not local, and `FETCH_HEAD` is whatever was
+    // fetched last -- another pull request's head from a concurrent
+    // `prepare_pr_diff`, or the base branch. Unchecked, the gate's answer would
+    // be a measurement of a different commit published as this one's, counted
+    // in the approving review and admitted by `admission_refusal`. `None`
+    // again, for the same reason as above: a tree Anvil cannot prove is the
+    // certified commit measures nothing about it.
+    if let Err(e) = worktree.verify_at(head_sha).await {
+        warn!(
+            "The local verification gate for {}#{} was not measured: {:#}",
+            repo, pr_number, e
+        );
+        if let Err(e) = worktree.cleanup().await {
+            warn!(
+                "Verification-gate worktree cleanup failed for {}#{}: {}",
+                repo, pr_number, e
+            );
+        }
+        return None;
+    }
+
     let outcome = match crate::queue_healer::QueueHealer::run_local_test_gate(
         &worktree.worktree_path,
     )
@@ -645,6 +689,21 @@ pub async fn local_verification_gate(
     {
         crate::queue_healer::TestGate::Passed(_) => Some(true),
         crate::queue_healer::TestGate::Failed(_) => Some(false),
+        // A gate that never completed is not a suite that failed, and this is
+        // the arm that reaches a GitHub comment: `Some(false)` becomes
+        // `GateStatus::Failed("Test suite reported failures during verification
+        // gate.")` on the scorecard, with a remediation telling the contributor
+        // to fix tests that were never run. `cargo` missing from the daemon's
+        // PATH, the `ExecClass::Build` deadline expiring on a cold check, and
+        // the worktree GC reaping this tree mid-build all arrive here.
+        crate::queue_healer::TestGate::Errored(label, cause) => {
+            warn!(
+                "The local verification gate `{}` for {}#{} did not complete, so it was not \
+                 measured: {}",
+                label, repo, pr_number, cause
+            );
+            None
+        }
         crate::queue_healer::TestGate::Unavailable => None,
     };
 
@@ -701,6 +760,35 @@ async fn certify_for_enlistment(
     pr_number: u64,
     expected_head: Option<&str>,
 ) -> Result<PreMergeCertificationReport> {
+    // Refused before the corpus is paid for, not after.
+    //
+    // A gate that cannot produce a measurement in this deployment makes every
+    // report this function can return inadmissible, for every input, whatever
+    // the pull request is -- and each of the three doors that calls it would
+    // otherwise pay a full clone, seventy-two guards, a model turn, a cold
+    // `cargo check` and a `git add -A` + `git commit` into the shared clone to
+    // arrive at a refusal the configuration had already determined. That is the
+    // objection this file makes to the previous hardcoded-verdict version a few
+    // hundred lines below -- "a door that runs the most expensive operation in
+    // the codebase to reach a constant is not a gate" -- and it applies to a
+    // constant whose cause is configuration just as well as to one welded into
+    // the source.
+    //
+    // The check is not a substitute for the gate: the review pipeline still
+    // runs the corpus and still publishes `NotMeasured` for these gates on the
+    // scorecard. This only stops the *enlist* doors, whose whole purpose is
+    // admission, from doing futile work to reach a foregone refusal.
+    if let Some(blockers) = crate::pre_merge_guard::unmeasurable_gates_in_this_build() {
+        anyhow::bail!(
+            "no report this deployment can produce would admit {}#{} to the merge queue, so the \
+             certification corpus was not run for it: {}. Nothing about the pull request was \
+             measured and nothing is claimed about it.",
+            repo,
+            pr_number,
+            blockers
+        );
+    }
+
     // The corpus mutates the one shared clone `ensure_repo_cloned` hands out
     // per repository: `git fetch origin pull/N/head --force`, then `git add -A`
     // and `git commit` in that working tree. `execute_pr_review` holds this
@@ -713,8 +801,27 @@ async fn certify_for_enlistment(
     //
     // Taken here rather than inside `certify_pull_request`: `execute_pr_review`
     // already holds it around that call and the mutex is not reentrant.
+    //
+    // Bounded. Everything else on this path has a deadline -- every child
+    // process through `run_bounded`, the model turn through `--print-timeout`
+    // -- and this acquisition was the one unbounded await in it, so a second
+    // request for the same pull request parked behind the first for as long as
+    // the first ran, with nothing to say why. The bound is generous enough to
+    // queue behind one whole corpus run and short enough that a caller gets an
+    // answer; expiring, it says what it was waiting for rather than reporting
+    // anything about the pull request.
     let pr_lock = state.state_mgr.acquire_pr_lock(repo, pr_number).await;
-    let _guard = pr_lock.lock().await;
+    let _guard = tokio::time::timeout(PR_LOCK_WAIT, pr_lock.lock())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "another run for {}#{} still held the per-pull-request lock after {}s, so this \
+                 one measured nothing and certified nothing",
+                repo,
+                pr_number,
+                PR_LOCK_WAIT.as_secs()
+            )
+        })?;
 
     info!(
         "Running pre-merge certification for {}#{} before merge queue admission...",

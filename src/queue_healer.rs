@@ -33,10 +33,22 @@ const ANVIL_OWNED_PATHS: &[&str] = &[ANVIL_RECEIPTS_DIR, ".cursor/receipts"];
 /// `Unavailable` is not a pass: a repository without a gate Anvil knows how to
 /// run gets no heal pushed, because the heal note would otherwise claim a
 /// verification that never happened.
+///
+/// `Errored` is not a failure. A gate that never completed -- `cargo` or `npm`
+/// missing from the daemon's PATH, the `ExecClass::Build` deadline expiring on
+/// a cold check in a fresh worktree, the worktree GC reaping the tree mid-build
+/// -- measured nothing about the pull request, and the corpus publishes this
+/// gate as `test_suite_status` on the pull request and counts it in the
+/// approving review. Collapsed into `Failed` it became the sentence "Test suite
+/// reported failures during verification gate", which is a specific, checkable
+/// accusation that nothing ran; the same code refuses to fabricate the opposite
+/// claim twelve lines away. It carries the cause, because "the gate did not
+/// complete" is only actionable with the reason it did not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TestGate {
     Passed(&'static str),
     Failed(&'static str),
+    Errored(&'static str, String),
     Unavailable,
 }
 
@@ -107,26 +119,59 @@ impl QueueHealer {
     }
 
     /// Comment body for a pushed heal; says only what was actually done.
-    pub fn heal_note(base_branch: &str, gate: &TestGate) -> String {
+    ///
+    /// `enlistment` is the outcome of the re-enlistment this note used to
+    /// announce in the future tense. "*Re-enlisting into GitHub Merge Queue…*"
+    /// was written onto the pull request before the certification and the
+    /// enlistment it named had run, and both of those now refuse whenever the
+    /// corpus cannot measure a gate -- so the sentence was permanent, published,
+    /// and in the ordinary configuration false. Derived from the outcome
+    /// instead, on the pattern `MergeEnlister::enlistment_note` already sets:
+    /// the text says what happened, and the reason when nothing did.
+    pub fn heal_note(base_branch: &str, gate: &TestGate, enlistment: &Result<()>) -> String {
         let gate_line = match gate {
             TestGate::Passed(label) => format!("- Local gate `{}` passed", label),
             // Unreachable for a pushed heal; spelled out so the note never lies
             // if the call site changes.
             TestGate::Failed(label) => format!("- Local gate `{}` FAILED", label),
+            TestGate::Errored(label, cause) => {
+                format!("- Local gate `{}` did not complete: {}", label, cause)
+            }
             TestGate::Unavailable => "- No local gate available (not verified)".to_string(),
+        };
+        let enlistment_line = match enlistment {
+            Ok(()) => "*Re-enlisted into the GitHub Merge Queue.*".to_string(),
+            Err(e) => format!("*Not re-enlisted into the GitHub Merge Queue:* {:#}", e),
         };
         format!(
             "🛠️ **Merge Queue Self-Healing Applied:**\n\n\
              - Re-synchronized against latest trunk `{}`\n\
              - Merge train divergence repaired by Antigravity\n\
              {}\n\n\
-             *Re-enlisting into GitHub Merge Queue...*\n\n---\n*🤖 [Healed] by Oyatie Anvil*",
-            base_branch, gate_line
+             {}\n\n---\n*🤖 [Healed] by Oyatie Anvil*",
+            base_branch, gate_line, enlistment_line
         )
     }
 
     /// Heals an ejected or failed merge queue PR
-    pub async fn heal_ejected_pr(&self, repo: &str, pr_number: u64) -> Result<()> {
+    ///
+    /// `state` is threaded through so the re-enlistment at the end can run the
+    /// certification corpus for the healed head. A local `cargo check` is not
+    /// certification, and re-enlisting on it was issue #17's fourth door.
+    ///
+    /// `Ok` carries what happened, because there are three of them and they are
+    /// not the same news: the pull request was not open and nothing ran, the
+    /// repair produced nothing to push, or a commit was pushed and re-enlisted.
+    /// `/api/heal-queue` answers with this string, and "healed and re-enlisted"
+    /// asserted over the first two would be the unmeasured claim this whole
+    /// change removes -- one layer up from the `let _ =` that used to swallow
+    /// the `Err`.
+    pub async fn heal_ejected_pr(
+        &self,
+        state: &crate::webhook::AppState,
+        repo: &str,
+        pr_number: u64,
+    ) -> Result<String> {
         info!("Starting Merge Queue Healer for {}#{}...", repo, pr_number);
 
         let meta = self
@@ -139,7 +184,10 @@ impl QueueHealer {
                 "Skipping queue heal for {}#{}: PR state is {}, not OPEN",
                 repo, pr_number, meta.state
             );
-            return Ok(());
+            return Ok(format!(
+                "{}#{} is {}, not OPEN: nothing was healed and nothing was enlisted",
+                repo, pr_number, meta.state
+            ));
         }
 
         let base_branch = if meta.base_ref_name.trim().is_empty() {
@@ -165,12 +213,28 @@ impl QueueHealer {
         // 2. Work in an isolated worktree at the PR head. The shared clone
         //    carries other stages' in-flight state (receipts, checked-out
         //    branches) that must not be swept into a heal commit.
+        //    Verified, not assumed: step 1 above just moved `FETCH_HEAD` in the
+        //    shared clone to the base branch tip, which is exactly what
+        //    `create_ephemeral_worktree` falls back to when the head object is
+        //    not local. Unchecked, a heal would then be computed, gated, and
+        //    force-pushed onto the pull request's branch from a tree checked out
+        //    on trunk.
         let worktree = self
             .git_mgr
             .create_ephemeral_worktree(repo, pr_number, &meta.head_ref_oid)
             .await?;
+        if let Err(e) = worktree.verify_at(&meta.head_ref_oid).await {
+            let _ = worktree.cleanup().await;
+            return Err(e).with_context(|| {
+                format!(
+                    "Queue heal for {}#{} was abandoned before anything was changed",
+                    repo, pr_number
+                )
+            });
+        }
         let result = self
             .heal_in_worktree(
+                state,
                 repo,
                 pr_number,
                 &meta,
@@ -189,12 +253,13 @@ impl QueueHealer {
 
     async fn heal_in_worktree(
         &self,
+        state: &crate::webhook::AppState,
         repo: &str,
         pr_number: u64,
         meta: &PrMetadata,
         base_branch: &str,
         work_dir: &Path,
-    ) -> Result<()> {
+    ) -> Result<String> {
         // 3. Speculatively merge origin/<base_branch> into the PR head
         info!(
             "Speculatively merging origin/{} into pr-{} for {}#{}...",
@@ -253,7 +318,7 @@ impl QueueHealer {
         self.run_agy_prompt(&prompt, work_dir).await?;
 
         // 5. Run the local gate; one self-correction turn on failure
-        let mut gate = self.run_local_test_gate(work_dir).await;
+        let mut gate = Self::run_local_test_gate(work_dir).await;
         if let TestGate::Failed(label) = gate {
             warn!(
                 "Gate `{}` failed after queue healing for {}#{}. Attempting self-correction...",
@@ -261,7 +326,7 @@ impl QueueHealer {
             );
             let retry_prompt = "Tests failed after merging trunk. Inspect test output, fix the errors, and ensure all tests pass. Do NOT commit.";
             self.run_agy_prompt(retry_prompt, work_dir).await?;
-            gate = self.run_local_test_gate(work_dir).await;
+            gate = Self::run_local_test_gate(work_dir).await;
         }
         match &gate {
             TestGate::Passed(label) => info!("Gate `{}` passed for {}#{}", label, repo, pr_number),
@@ -271,6 +336,19 @@ impl QueueHealer {
                     repo,
                     pr_number,
                     label
+                );
+            }
+            TestGate::Errored(label, cause) => {
+                // Not "still failing": nothing measured this tree. The heal is
+                // withheld either way, and the reason an operator is given is
+                // the one that is true.
+                bail!(
+                    "Queue heal for {}#{} not pushed: gate `{}` did not complete, so nothing \
+                     verified the repair: {}",
+                    repo,
+                    pr_number,
+                    label,
+                    cause
                 );
             }
             TestGate::Unavailable => {
@@ -315,7 +393,11 @@ impl QueueHealer {
                 "Queue heal for {}#{} produced no changes to push",
                 repo, pr_number
             );
-            return Ok(());
+            return Ok(format!(
+                "Queue heal for {}#{} produced no changes to push, so nothing was pushed and \
+                 nothing was re-enlisted",
+                repo, pr_number
+            ));
         }
 
         // A staged conflict marker means the repair did not finish.
@@ -400,8 +482,51 @@ impl QueueHealer {
             meta.head_ref_name
         );
 
-        // 9. Comment and re-enlist
-        let heal_note = Self::heal_note(base_branch, &gate);
+        // 9. Re-enlist, then comment.
+        //
+        // In that order, because the comment says whether the re-enlistment
+        // happened. Posted first it could only announce an intention, and
+        // "*Re-enlisting into GitHub Merge Queue...*" is a claim about an
+        // action -- written permanently onto the pull request, ahead of a
+        // certification that refuses whenever a gate cannot be measured, which
+        // in the shipped configuration is always. The note is now posted on
+        // every outcome and derived from it, so a reader of the pull request
+        // learns that the heal was pushed and the queue was not re-entered,
+        // instead of the opposite.
+        //
+        // The healed head is a different commit from the one any earlier
+        // certification judged, so the corpus is run again for it. The local
+        // test gate above is not certification and never was.
+        //
+        // Which commit "it" is comes from this worktree, not from the API.
+        // GitHub's view of a PR head is eventually consistent immediately after
+        // a push, so re-reading `head_ref_oid` can hand the corpus the pre-heal
+        // commit while the merge queue takes the healed one. The healer knows
+        // the OID it just pushed; certification is refused unless that is the
+        // commit being certified. `evidence_for_enlistment` waits a bounded
+        // while for GitHub's view to catch up before it refuses, so the race
+        // this comment names is tolerated rather than made fatal by the
+        // mitigation for it.
+        //
+        // Every outcome below is returned rather than logged. Warned and
+        // swallowed, a heal that certified nothing and re-enlisted nothing still
+        // returned `Ok(())`, so `anvil heal-queue` exited 0 and
+        // `POST /api/heal-queue` answered success about a pull request that was
+        // never put back in the queue. The push did happen and the error does
+        // not undo it; what the error says is that the re-enlistment did not.
+        let Some(healed_head) = Self::head_oid(work_dir).await else {
+            bail!(
+                "Queue heal for {}#{} pushed a commit and then could not read which commit it \
+                 was, so nothing was certified and nothing was re-enlisted.",
+                repo,
+                pr_number
+            );
+        };
+        let enlistment = self
+            .certify_and_reenlist(state, repo, pr_number, &healed_head)
+            .await;
+
+        let heal_note = Self::heal_note(base_branch, &gate, &enlistment);
         if let Err(e) = self
             .github_client
             .post_pr_comment(repo, pr_number, &heal_note)
@@ -409,23 +534,86 @@ impl QueueHealer {
         {
             warn!("Could not post heal note on {}#{}: {}", repo, pr_number, e);
         }
-        if let Err(e) = self
-            .merge_enlister
-            .enlist_into_merge_queue(repo, pr_number)
-            .await
-        {
-            warn!(
-                "Could not re-enlist {}#{} after heal: {}",
-                repo, pr_number, e
-            );
-        }
 
-        Ok(())
+        enlistment.map(|()| {
+            format!(
+                "Queue heal for {}#{} pushed {} and re-enlisted it in the merge queue",
+                repo, pr_number, healed_head
+            )
+        })
     }
 
-    /// Picks the gate from what the repository provides and runs it. A gate that
-    /// never completed (spawn failure or build timeout) is a failure, not a pass.
-    async fn run_local_test_gate(&self, repo_dir: &Path) -> TestGate {
+    /// Certifies the commit the heal just pushed and hands it back to the merge
+    /// queue.
+    ///
+    /// Split out so `heal_in_worktree` can hold the outcome as a value: the
+    /// heal note is derived from it and the caller is answered with it, and a
+    /// `?` in the middle of the push-comment-enlist sequence could do neither.
+    async fn certify_and_reenlist(
+        &self,
+        state: &crate::webhook::AppState,
+        repo: &str,
+        pr_number: u64,
+        healed_head: &str,
+    ) -> Result<()> {
+        let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
+            state,
+            repo,
+            pr_number,
+            Some(healed_head),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "Queue heal for {}#{} pushed {} and nothing was re-enlisted: no certification \
+                 could be obtained for it",
+                repo, pr_number, healed_head
+            )
+        })?;
+        self.merge_enlister
+            .enlist_into_merge_queue(repo, pr_number, Some(&evidence))
+            .await
+            .with_context(|| {
+                format!(
+                    "Queue heal for {}#{} pushed {} and it was not re-enlisted",
+                    repo, pr_number, healed_head
+                )
+            })
+    }
+
+    /// The commit at `HEAD` in a working tree, or `None` when git could not say.
+    ///
+    /// `None` withholds: a heal that cannot name the commit it pushed has no
+    /// commit to certify.
+    async fn head_oid(work_dir: &Path) -> Option<String> {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(work_dir).args(["rev-parse", "HEAD"]);
+        let out = crate::exec::run_bounded(
+            cmd,
+            crate::exec::ExecClass::Quick,
+            "git rev-parse HEAD (queue healer)",
+        )
+        .await
+        .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!sha.is_empty()).then_some(sha)
+    }
+
+    /// Picks the gate from what the repository provides and runs it.
+    ///
+    /// Three distinct answers, because the corpus publishes this one onto a
+    /// pull request: the gate ran and passed, the gate ran and reported
+    /// failures, or the gate never completed. Only the second is a statement
+    /// about the pull request.
+    ///
+    /// An associated function rather than a method: the certification corpus
+    /// reports the same gate as `test_suite_status`, and the alternative to
+    /// sharing it was the literal `Some(true)` the review pipeline used to pass
+    /// for a suite it never ran.
+    pub(crate) async fn run_local_test_gate(repo_dir: &Path) -> TestGate {
         let (label, mut cmd) = if repo_dir.join("Cargo.toml").exists() {
             let mut c = Command::new("cargo");
             c.arg("check");
@@ -450,8 +638,8 @@ impl QueueHealer {
                 TestGate::Failed(label)
             }
             Err(e) => {
-                warn!("{} did not complete in queue healer gate: {}", label, e);
-                TestGate::Failed(label)
+                warn!("{} did not complete in queue healer gate: {:#}", label, e);
+                TestGate::Errored(label, format!("{e:#}"))
             }
         }
     }
@@ -564,13 +752,51 @@ mod tests {
 
     #[test]
     fn heal_note_reports_the_gate_that_ran() {
-        let note = QueueHealer::heal_note("main", &TestGate::Passed("cargo check"));
+        let note = QueueHealer::heal_note("main", &TestGate::Passed("cargo check"), &Ok(()));
         assert!(note.contains("Local gate `cargo check` passed"));
         assert!(note.contains("trunk `main`"));
         assert!(!note.contains("Passed local test verification gate"));
 
-        let note = QueueHealer::heal_note("dev", &TestGate::Unavailable);
+        let note = QueueHealer::heal_note("dev", &TestGate::Unavailable, &Ok(()));
         assert!(note.contains("not verified"));
+    }
+
+    /// The note reports the re-enlistment that happened, not the one that was
+    /// about to be attempted.
+    #[test]
+    fn heal_note_reports_the_re_enlistment_outcome() {
+        let enlisted = QueueHealer::heal_note("main", &TestGate::Passed("cargo check"), &Ok(()));
+        let withheld = QueueHealer::heal_note(
+            "main",
+            &TestGate::Passed("cargo check"),
+            &Err(anyhow::anyhow!("slo_status produced no measurement")),
+        );
+        assert_ne!(
+            enlisted, withheld,
+            "the same note was published for a heal that was re-enlisted and one that was not"
+        );
+        assert!(!enlisted.contains("Re-enlisting"));
+        assert!(!withheld.contains("Re-enlisting"));
+        assert!(withheld.contains("Not re-enlisted"));
+        assert!(withheld.contains("slo_status produced no measurement"));
+    }
+
+    /// A gate that never completed is not a gate that reported failures.
+    #[test]
+    fn heal_note_separates_a_gate_that_did_not_complete_from_one_that_failed() {
+        let failed = QueueHealer::heal_note("main", &TestGate::Failed("cargo check"), &Ok(()));
+        let errored = QueueHealer::heal_note(
+            "main",
+            &TestGate::Errored(
+                "cargo check",
+                "No such file or directory (os error 2)".into(),
+            ),
+            &Ok(()),
+        );
+        assert!(failed.contains("FAILED"));
+        assert!(!errored.contains("FAILED"));
+        assert!(errored.contains("did not complete"));
+        assert!(errored.contains("No such file or directory"));
     }
 
     #[test]

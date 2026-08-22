@@ -104,6 +104,83 @@ pub struct PreMergeCertificationReport {
     /// must fail to parse, not arrive looking measured.
     pub unmeasured_gates: Vec<String>,
     pub summary_markdown: String,
+    /// Where the seventy-two statuses above came from.
+    ///
+    /// A report that a certification run produced and a report a caller wrote
+    /// are the same fields: `is_admissible()` says yes to both and
+    /// `gate_counts()` scores both at the whole corpus. Only this says which
+    /// one is in hand, and it is deliberately not serialisable -- a report that
+    /// arrived over a wire or out of a cache is a copy of a measurement, not
+    /// one.
+    ///
+    /// Not `pub`: a `Copy` field readable and writable from anywhere is a mark
+    /// that can be lifted off a genuine report and dropped onto a struct
+    /// literal. It has no public reader either — `admission_refusal` below is
+    /// the only thing that asks, and a report has exactly one door, so an
+    /// accessor would be public surface with nothing on the other side of it.
+    #[serde(skip)]
+    pub(super) provenance: GateProvenance,
+    /// The pull request and the commit this run measured, or `None` for a
+    /// report that was not produced against one.
+    ///
+    /// Without it a report proves "some certification run produced an
+    /// all-passing report" and never "...for this pull request at the commit
+    /// about to be queued", and the two are not the same claim: the healer
+    /// pushes a healed commit and then certifies whatever GitHub reports as
+    /// head, and a contributor can push while the corpus is running.
+    /// `enlist_into_merge_queue` re-reads the head and refuses when it has
+    /// moved.
+    #[serde(default)]
+    /// `pub(crate)` rather than `pub(super)`: the door that acts on this lives
+    /// in `merge_enlister`, and while only the evaluator may set it, the check
+    /// that reads it was untestable from outside `pre_merge_guard` — which is
+    /// why it went unpinned.
+    pub(crate) subject: Option<CertifiedSubject>,
+}
+
+/// The pull request and commit a certification run was performed against.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertifiedSubject {
+    pub repo: String,
+    pub pr_number: u64,
+    pub head_sha: String,
+}
+
+/// Whether a report's gate statuses were handed to it by a certification run.
+///
+/// What this actually establishes, and what it does not:
+///
+/// - `Default` -- what a **deserialised** report gets, because the field is
+///   `#[serde(skip)]` -- is "no run produced this". So a report reloaded from
+///   state, read out of a cache, or round-tripped through serde with its
+///   statuses overwritten carries no mark, and `admission_refusal` refuses it.
+///   That is the forgery this design stops.
+/// - It does **not** stop an outcome list. `from_gate_outcomes` is a `pub`
+///   constructor -- the spec suite calls it from outside the crate -- and it
+///   confers this mark on whatever seventy-two statuses it is handed. A caller
+///   who can write `(name, GateStatus::Passed)` seventy-two times gets a
+///   genuinely marked, fully admissible report. The mark means "these statuses
+///   arrived as gate outcomes", not "a gate produced them".
+///
+/// The inner flag is private to this module and `certification_run()` is
+/// `pub(super)`, so the mark cannot be minted outside `pre_merge_guard` --
+/// but `from_gate_outcomes` is the public door through it, and the forgery
+/// scan in `tests/enlist_authority_test.rs` is what keeps production code
+/// from walking through that door instead of running the corpus.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GateProvenance(bool);
+
+impl GateProvenance {
+    /// Minted only where gate outcomes become a report: `from_gate_outcomes`
+    /// and the evaluator that runs the corpus.
+    pub(super) fn certification_run() -> Self {
+        Self(true)
+    }
+
+    /// Whether the statuses on this report were produced by a certification run.
+    pub fn is_from_a_certification_run(self) -> bool {
+        self.0
+    }
 }
 
 /// Size of the gate corpus.
@@ -312,101 +389,281 @@ impl PreMergeCertificationReport {
             .collect();
     }
 
-    /// Whether this PR may be admitted to the merge queue.
+    /// The pull request and commit this report was measured against, if it was
+    /// measured against one.
+    pub fn subject(&self) -> Option<&CertifiedSubject> {
+        self.subject.as_ref()
+    }
+
+    /// Whether the evidence in this report admits a pull request to the merge
+    /// queue. `Ok(())` admits; `Err` refuses and says why.
     ///
-    /// Deliberately stricter than `is_certified_ready`: a report may certify on
-    /// every measured gate while some gate produced no measurement at all.
-    /// Invariant I1 — absent evidence must not merge.
+    /// This is the single definition of admissibility.
+    /// `MergeEnlister::admission_refusal` is a one-line delegation to it, so
+    /// the door and the two publishers ask the same question of the same value.
+    ///
+    /// Three ways evidence can be absent, and all three withhold the merge
+    /// (invariant I1):
+    ///
+    /// 1. the report did not come from a certification run, so its statuses are
+    ///    somebody's opinion in the shape of a measurement;
+    /// 2. a gate produced no measurement — `NotMeasured`, which is individually
+    ///    acceptable and still absent evidence, or `Errored`, which
+    ///    `unmeasured_gates` does not record at all;
+    /// 3. the report does not certify.
+    ///
+    /// The refusal names the gates, because an operator watching a pull request
+    /// sit in the queue has nothing else to act on.
+    ///
+    /// Deliberately not a check on the *subject*: whether this report is about
+    /// the commit being queued is a question about the pull request as it is
+    /// now, not about the report, and it is asked at the entry point where the
+    /// head can be re-read. See `MergeEnlister::enlist_into_merge_queue`.
+    pub fn admission_refusal(&self) -> anyhow::Result<()> {
+        if !self.provenance.is_from_a_certification_run() {
+            anyhow::bail!(
+                "merge queue admission withheld: this certification report was not produced \
+                 by a certification run, so nothing in it was measured."
+            );
+        }
+
+        let without_a_measurement: Vec<&str> = self
+            .named_statuses()
+            .into_iter()
+            .filter(|(_, status)| {
+                matches!(
+                    status,
+                    GateStatus::Errored(_) | GateStatus::NotMeasured { .. }
+                )
+            })
+            .map(|(gate, _)| gate)
+            .collect();
+        if !without_a_measurement.is_empty() {
+            anyhow::bail!(
+                "merge queue admission withheld: {} gate(s) produced no measurement: {}",
+                without_a_measurement.len(),
+                without_a_measurement.join(", ")
+            );
+        }
+
+        if !self.is_certified_ready {
+            let blocking: Vec<&str> = self
+                .named_statuses()
+                .into_iter()
+                .filter(|(_, status)| !status.is_acceptable())
+                .map(|(gate, _)| gate)
+                .collect();
+            anyhow::bail!(
+                "merge queue admission withheld: the pull request is not certified; {} gate(s) \
+                 did not pass: {}",
+                blocking.len(),
+                blocking.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
+    /// A weaker, diagnostic reading of the same fields: certified, and no gate
+    /// reported `NotMeasured`.
+    ///
+    /// **This is not the admission decision** — `admission_refusal()` is, and
+    /// nothing in production gates a merge on this predicate. It is
+    /// deliberately weaker in two ways the spec suite pins and depends on
+    /// (`nothing_is_endorsed_on_evidence_that_cannot_admit_the_pull_request`
+    /// requires the two to disagree): it does not see `Errored`, which
+    /// `recompute_unmeasured` never records, and it does not see provenance, so
+    /// it says yes to a report no run produced. Use it to describe a report — a
+    /// receipt verdict, a scorecard line — never to let one through a door.
     pub fn is_admissible(&self) -> bool {
         self.is_certified_ready && self.unmeasured_gates.is_empty()
+    }
+
+    /// A report built from what the gates actually measured: every gate in the
+    /// corpus named with the status it produced. `Err` when the outcomes do
+    /// not cover the corpus, because a report missing a gate is a report with
+    /// a hole in it.
+    ///
+    /// This is the only way gate outcomes enter a report, and a report that
+    /// did not come through here did not come from a measurement — it was
+    /// deserialised, cloned from `unmeasured`, or assembled by a caller who
+    /// decided what the gates would have said. `admission_refusal` has to be
+    /// able to tell those apart, so the difference is carried by the value and
+    /// not by the spelling of whatever produced it: a report knows whether its
+    /// statuses were handed to it as gate outcomes.
+    ///
+    /// What this constructor does and does not establish. It confers the
+    /// provenance mark on whatever statuses it is handed, and it is `pub`
+    /// because the spec suite builds its fixtures through it from outside the
+    /// crate. So it is a public door onto the mark: a caller who writes out
+    /// seventy-two `(name, GateStatus::Passed)` pairs gets a fully admissible
+    /// report, and `admission_refusal` cannot tell it from one the corpus
+    /// produced. What the mark does rule out is the *deserialised* report — the
+    /// field is `#[serde(skip)]`, so anything that arrived over a wire, out of
+    /// a cache, or through a serde round-trip carries no mark at all. Keeping
+    /// production code off this door is the forgery scan's job, not the type's:
+    /// see `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`.
+    ///
+    /// It confers no subject: a report built from an outcome list was not
+    /// measured against a pull request, so it names none, and the entry point
+    /// refuses to queue a commit no report was measured against.
+    pub fn from_gate_outcomes(outcomes: &[(&str, GateStatus)]) -> anyhow::Result<Self> {
+        let mut by_gate: std::collections::HashMap<&str, GateStatus> =
+            std::collections::HashMap::with_capacity(outcomes.len());
+        let mut named_twice: Vec<&str> = Vec::new();
+        for (gate, status) in outcomes {
+            if by_gate.insert(gate, status.clone()).is_some() {
+                named_twice.push(gate);
+            }
+        }
+
+        // Every field asks for its own outcome, so a gate nobody reported is
+        // discovered by the construction rather than by a length check: the
+        // right *number* of outcomes naming one gate twice is still a corpus
+        // with a hole in it.
+        let mut unreported: Vec<&'static str> = Vec::new();
+        let mut report = Self::build(&mut |gate| match by_gate.remove(gate) {
+            Some(status) => status,
+            None => {
+                unreported.push(gate);
+                GateStatus::Errored(format!("no gate outcome was reported for `{gate}`"))
+            }
+        });
+        let mut not_in_the_corpus: Vec<&str> = by_gate.keys().copied().collect();
+        not_in_the_corpus.sort_unstable();
+
+        if !unreported.is_empty() || !not_in_the_corpus.is_empty() || !named_twice.is_empty() {
+            let mut why: Vec<String> = Vec::new();
+            if !unreported.is_empty() {
+                why.push(format!(
+                    "{} gate(s) reported no outcome: {}",
+                    unreported.len(),
+                    unreported.join(", ")
+                ));
+            }
+            if !named_twice.is_empty() {
+                why.push(format!("named more than once: {}", named_twice.join(", ")));
+            }
+            if !not_in_the_corpus.is_empty() {
+                why.push(format!(
+                    "not gates in this corpus: {}",
+                    not_in_the_corpus.join(", ")
+                ));
+            }
+            anyhow::bail!(
+                "a certification report covers every one of the {} gates in the corpus, and \
+                 these outcomes do not: {}",
+                TOTAL_GATES,
+                why.join("; ")
+            );
+        }
+
+        report.provenance = GateProvenance::certification_run();
+        report.seal();
+        report.summary_markdown = super::matrix::MatrixRenderer::render(&report);
+        Ok(report)
+    }
+
+    /// The one place the seventy-two gate fields are written down as a
+    /// construction, so a gate added to the struct has to be given a value here
+    /// or the build fails. `status_for` is asked for each gate by its field
+    /// name, in declaration order.
+    ///
+    /// The report it returns carries no provenance and no verdict: sealing and
+    /// the provenance mark belong to the constructors that know where the
+    /// statuses came from.
+    fn build(status_for: &mut dyn FnMut(&'static str) -> GateStatus) -> Self {
+        PreMergeCertificationReport {
+            is_certified_ready: false,
+            doc_parity_status: status_for("doc_parity_status"),
+            cedar_status: status_for("cedar_status"),
+            compliance_status: status_for("compliance_status"),
+            api_contract_status: status_for("api_contract_status"),
+            cell_isolation_status: status_for("cell_isolation_status"),
+            supply_chain_status: status_for("supply_chain_status"),
+            clean_arch_status: status_for("clean_arch_status"),
+            monorepo_status: status_for("monorepo_status"),
+            debt_shrink_status: status_for("debt_shrink_status"),
+            modularization_status: status_for("modularization_status"),
+            coverage_status: status_for("coverage_status"),
+            rust_skills_status: status_for("rust_skills_status"),
+            kani_status: status_for("kani_status"),
+            slo_status: status_for("slo_status"),
+            adr_status: status_for("adr_status"),
+            shuffle_status: status_for("shuffle_status"),
+            trace_status: status_for("trace_status"),
+            constant_work_status: status_for("constant_work_status"),
+            idempotency_status: status_for("idempotency_status"),
+            finops_status: status_for("finops_status"),
+            ghost_migration_status: status_for("ghost_migration_status"),
+            gitops_promo_status: status_for("gitops_promo_status"),
+            gitops_drift_status: status_for("gitops_drift_status"),
+            canary_status: status_for("canary_status"),
+            cluster_audit_status: status_for("cluster_audit_status"),
+            migration_orch_status: status_for("migration_orch_status"),
+            ci_wallclock_status: status_for("ci_wallclock_status"),
+            predictive_test_status: status_for("predictive_test_status"),
+            compile_profile_status: status_for("compile_profile_status"),
+            remote_cache_status: status_for("remote_cache_status"),
+            runner_economics_status: status_for("runner_economics_status"),
+            sandbox_status: status_for("sandbox_status"),
+            cross_service_status: status_for("cross_service_status"),
+            ephemeral_secret_status: status_for("ephemeral_secret_status"),
+            psa_status: status_for("psa_status"),
+            shadow_traffic_status: status_for("shadow_traffic_status"),
+            unresolved_review_status: status_for("unresolved_review_status"),
+            local_probe_status: status_for("local_probe_status"),
+            semantic_abi_status: status_for("semantic_abi_status"),
+            zero_day_status: status_for("zero_day_status"),
+            formal_verification_status: status_for("formal_verification_status"),
+            deadlock_status: status_for("deadlock_status"),
+            review_verdict_status: status_for("review_verdict_status"),
+            brand_absence_status: status_for("brand_absence_status"),
+            migration_boundary_status: status_for("migration_boundary_status"),
+            shape_status: status_for("shape_status"),
+            automated_canary_status: status_for("automated_canary_status"),
+            progressive_ring_status: status_for("progressive_ring_status"),
+            hermetic_build_status: status_for("hermetic_build_status"),
+            openvex_status: status_for("openvex_status"),
+            cosign_status: status_for("cosign_status"),
+            chaos_injection_status: status_for("chaos_injection_status"),
+            stacked_diffs_status: status_for("stacked_diffs_status"),
+            microbench_status: status_for("microbench_status"),
+            jittered_backoff_status: status_for("jittered_backoff_status"),
+            schema_evolution_status: status_for("schema_evolution_status"),
+            auto_rollback_status: status_for("auto_rollback_status"),
+            wasm_sandbox_status: status_for("wasm_sandbox_status"),
+            consistency_status: status_for("consistency_status"),
+            flake_quarantine_status: status_for("flake_quarantine_status"),
+            zero_trust_workload_status: status_for("zero_trust_workload_status"),
+            carbon_compute_status: status_for("carbon_compute_status"),
+            replay_harness_status: status_for("replay_harness_status"),
+            upgrade_train_status: status_for("upgrade_train_status"),
+            mutation_status: status_for("mutation_status"),
+            feature_flag_status: status_for("feature_flag_status"),
+            bench_status: status_for("bench_status"),
+            attestation_status: status_for("attestation_status"),
+            security_scan_status: status_for("security_scan_status"),
+            schema_compat_status: status_for("schema_compat_status"),
+            performance_concurrency_status: status_for("performance_concurrency_status"),
+            test_suite_status: status_for("test_suite_status"),
+            unmeasured_gates: Vec::new(),
+            summary_markdown: String::new(),
+            provenance: GateProvenance::default(),
+            subject: None,
+        }
     }
 
     /// A report in which nothing has been measured: every gate is
     /// `NotMeasured` with `reason`, nothing is certified, nothing is
     /// admissible. The honest starting point for a fixture or a preview —
-    /// there is deliberately no "all passed" constructor (I2).
+    /// there is deliberately no "all passed" constructor (I2), and this one
+    /// confers no provenance: nothing ran.
     pub fn unmeasured(reason: &str) -> Self {
-        let nm = |gate_id: &str| GateStatus::NotMeasured {
+        let mut r = Self::build(&mut |gate_id| GateStatus::NotMeasured {
             gate_id: gate_id.to_string(),
             reason: reason.to_string(),
-        };
-        let mut r = PreMergeCertificationReport {
-            is_certified_ready: false,
-            doc_parity_status: nm("doc_parity_status"),
-            cedar_status: nm("cedar_status"),
-            compliance_status: nm("compliance_status"),
-            api_contract_status: nm("api_contract_status"),
-            cell_isolation_status: nm("cell_isolation_status"),
-            supply_chain_status: nm("supply_chain_status"),
-            clean_arch_status: nm("clean_arch_status"),
-            monorepo_status: nm("monorepo_status"),
-            debt_shrink_status: nm("debt_shrink_status"),
-            modularization_status: nm("modularization_status"),
-            coverage_status: nm("coverage_status"),
-            rust_skills_status: nm("rust_skills_status"),
-            kani_status: nm("kani_status"),
-            slo_status: nm("slo_status"),
-            adr_status: nm("adr_status"),
-            shuffle_status: nm("shuffle_status"),
-            trace_status: nm("trace_status"),
-            constant_work_status: nm("constant_work_status"),
-            idempotency_status: nm("idempotency_status"),
-            finops_status: nm("finops_status"),
-            ghost_migration_status: nm("ghost_migration_status"),
-            gitops_promo_status: nm("gitops_promo_status"),
-            gitops_drift_status: nm("gitops_drift_status"),
-            canary_status: nm("canary_status"),
-            cluster_audit_status: nm("cluster_audit_status"),
-            migration_orch_status: nm("migration_orch_status"),
-            ci_wallclock_status: nm("ci_wallclock_status"),
-            predictive_test_status: nm("predictive_test_status"),
-            compile_profile_status: nm("compile_profile_status"),
-            remote_cache_status: nm("remote_cache_status"),
-            runner_economics_status: nm("runner_economics_status"),
-            sandbox_status: nm("sandbox_status"),
-            cross_service_status: nm("cross_service_status"),
-            ephemeral_secret_status: nm("ephemeral_secret_status"),
-            psa_status: nm("psa_status"),
-            shadow_traffic_status: nm("shadow_traffic_status"),
-            unresolved_review_status: nm("unresolved_review_status"),
-            local_probe_status: nm("local_probe_status"),
-            semantic_abi_status: nm("semantic_abi_status"),
-            zero_day_status: nm("zero_day_status"),
-            formal_verification_status: nm("formal_verification_status"),
-            deadlock_status: nm("deadlock_status"),
-            review_verdict_status: nm("review_verdict_status"),
-            brand_absence_status: nm("brand_absence_status"),
-            migration_boundary_status: nm("migration_boundary_status"),
-            shape_status: nm("shape_status"),
-            automated_canary_status: nm("automated_canary_status"),
-            progressive_ring_status: nm("progressive_ring_status"),
-            hermetic_build_status: nm("hermetic_build_status"),
-            openvex_status: nm("openvex_status"),
-            cosign_status: nm("cosign_status"),
-            chaos_injection_status: nm("chaos_injection_status"),
-            stacked_diffs_status: nm("stacked_diffs_status"),
-            microbench_status: nm("microbench_status"),
-            jittered_backoff_status: nm("jittered_backoff_status"),
-            schema_evolution_status: nm("schema_evolution_status"),
-            auto_rollback_status: nm("auto_rollback_status"),
-            wasm_sandbox_status: nm("wasm_sandbox_status"),
-            consistency_status: nm("consistency_status"),
-            flake_quarantine_status: nm("flake_quarantine_status"),
-            zero_trust_workload_status: nm("zero_trust_workload_status"),
-            carbon_compute_status: nm("carbon_compute_status"),
-            replay_harness_status: nm("replay_harness_status"),
-            upgrade_train_status: nm("upgrade_train_status"),
-            mutation_status: nm("mutation_status"),
-            feature_flag_status: nm("feature_flag_status"),
-            bench_status: nm("bench_status"),
-            attestation_status: nm("attestation_status"),
-            security_scan_status: nm("security_scan_status"),
-            schema_compat_status: nm("schema_compat_status"),
-            performance_concurrency_status: nm("performance_concurrency_status"),
-            test_suite_status: nm("test_suite_status"),
-            unmeasured_gates: Vec::new(),
-            summary_markdown: String::new(),
-        };
+        });
         r.seal();
         r
     }
@@ -589,6 +846,8 @@ mod tests {
             test_suite_status: GateStatus::Passed,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
+            provenance: GateProvenance::default(),
+            subject: None,
         }
     }
 

@@ -1,6 +1,5 @@
 pub mod account_pool;
 pub mod deathloop_detector;
-pub mod process_registry;
 pub mod quota_enforcer;
 pub mod resource_reaper;
 pub mod worktree_lease;
@@ -10,18 +9,16 @@ pub use account_pool::{
     ManagedAccount, UsageRecord,
 };
 pub use deathloop_detector::{DeathloopDetector, DeathloopVerdict};
-pub use process_registry::{ProcessRecord, ProcessRegistry};
 pub use quota_enforcer::{QuotaBudgetReport, QuotaEnforcer};
 pub use resource_reaper::{AutonomousResourceReaper, GarbageCollectionReport};
 pub use worktree_lease::{LeaseStore, LeaseVerdict, WorktreeLease};
 
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::info;
 
 #[derive(Clone)]
 pub struct SelfGovernor {
-    pub registry: Arc<ProcessRegistry>,
     pub quota: Arc<QuotaEnforcer>,
     pub reaper: Arc<AutonomousResourceReaper>,
     pub deathloop: Arc<DeathloopDetector>,
@@ -36,7 +33,6 @@ impl Default for SelfGovernor {
 impl SelfGovernor {
     pub fn new() -> Self {
         Self {
-            registry: Arc::new(ProcessRegistry::new()),
             quota: Arc::new(QuotaEnforcer::default()),
             reaper: Arc::new(AutonomousResourceReaper::default()),
             deathloop: Arc::new(DeathloopDetector::default()),
@@ -54,17 +50,7 @@ impl SelfGovernor {
             loop {
                 interval.tick().await;
 
-                // 1. Check for stalled or SLA-breaching tasks
-                let stalled = governor.registry.scan_stalled_tasks().await;
-                for task in stalled {
-                    error!(
-                        "🚨 [Self-Governor Action] Auto-reaping stalled task '{}' ({}) on {} to prevent quota drain!",
-                        task.task_id, task.task_name, task.target_entity
-                    );
-                    governor.registry.complete_task(&task.task_id).await;
-                }
-
-                // 2. Perform periodic resource garbage collection.
+                // Perform periodic resource garbage collection.
                 //
                 // `run_sweep` takes no repo argument: the previous signature
                 // was `run_sweep(Option<&Path>)` and this call site passed

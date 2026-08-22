@@ -11,7 +11,6 @@ pub struct DashboardStateView {
     pub merge_queue_depth: usize,
     pub quota_spent_usd: f64,
     pub quota_budget_usd: f64,
-    pub active_processes_count: usize,
     pub fleet_repos: Vec<FleetRepoView>,
     pub gate_heatmap: Vec<GateHeatmapItem>,
     pub ai_bandit_models: Vec<ModelBanditView>,

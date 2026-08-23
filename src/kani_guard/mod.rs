@@ -63,7 +63,7 @@ impl KaniGuard {
 
     /// Reports which `unsafe` items added by this diff carry a `// SAFETY:`
     /// comment. Runs no model checker; see the module docs for the limits.
-    pub fn evaluate_unsafe_invariants(
+    pub fn lint_unsafe_safety_comments(
         &self,
         _repo_dir: &Path,
         diff_ctx: &PrDiffContext,
@@ -156,7 +156,7 @@ mod tests {
         };
 
         let rep = guard
-            .evaluate_unsafe_invariants(Path::new("."), &diff_ctx)
+            .lint_unsafe_safety_comments(Path::new("."), &diff_ctx)
             .unwrap();
         assert!(rep.all_unsafe_blocks_documented);
         assert_eq!(rep.unsafe_blocks_found, 0);
@@ -179,7 +179,7 @@ mod tests {
         };
 
         let rep = guard
-            .evaluate_unsafe_invariants(Path::new("."), &diff_ctx)
+            .lint_unsafe_safety_comments(Path::new("."), &diff_ctx)
             .unwrap();
         assert!(!rep.all_unsafe_blocks_documented);
         assert_eq!(rep.violations.len(), 1);
@@ -202,7 +202,7 @@ mod tests {
         };
 
         let rep = guard
-            .evaluate_unsafe_invariants(Path::new("."), &diff_ctx)
+            .lint_unsafe_safety_comments(Path::new("."), &diff_ctx)
             .unwrap();
         assert!(rep.all_unsafe_blocks_documented);
         assert_eq!(rep.unsafe_blocks_found, 1);

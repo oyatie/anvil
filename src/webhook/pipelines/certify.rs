@@ -141,7 +141,7 @@ pub async fn certify_pull_request(
     // 14. KaniGuard: `// SAFETY:` comment lint over added unsafe blocks
     let kani_report = state
         .kani_guard
-        .evaluate_unsafe_invariants(repo_dir, diff_ctx)?;
+        .lint_unsafe_safety_comments(repo_dir, diff_ctx)?;
 
     // 15. SloCanaryGuard: OpenSLO Error Budget Burn-Rate Gate
     let slo_report = state

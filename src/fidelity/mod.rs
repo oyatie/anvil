@@ -350,12 +350,23 @@ mod tests {
 
     #[test]
     fn the_report_admits_how_much_is_unaudited() {
-        let r = gap_report(68);
+        let total = crate::pre_merge_guard::report::TOTAL_GATES;
+        let r = gap_report(total);
         assert_eq!(r.audited, registry::AUDITED_GATES.len());
-        assert_eq!(r.audited + r.unaudited, 68);
+        assert_eq!(
+            r.audited + r.unaudited,
+            total,
+            "every gate is either audited or counted as unaudited; neither may be lost"
+        );
+        // Three gates are unaudited today, and that number is not asserted --
+        // it moves with every audit and with every gate added. What must hold
+        // either way is that the summary publishes the real number rather than
+        // a stale one, including when it reaches zero.
         assert!(
-            r.unaudited > 0,
-            "the audit is not yet complete and must say so"
+            r.summary()
+                .contains(&format!("{} not yet audited", r.unaudited)),
+            "the published summary must state the real unaudited count: {}",
+            r.summary()
         );
         // Nothing has been made real yet; the honest ratio is zero.
         assert_eq!(r.measured, 0);

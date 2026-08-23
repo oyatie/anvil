@@ -100,13 +100,23 @@ fn finding_line(gate_id: &str, kind: &str, detail: &str) -> String {
     if let Some(f) = fidelity_for(gate_id)
         && f < Fidelity::Measured
     {
+        // The label only. What the label MEANS is stated once, by
+        // `FIDELITY_FOOTNOTE`, rather than repeated verbatim beside every
+        // finding: the registry now covers sixty-nine of the seventy-two
+        // gates, so the sentence that used to sit here rendered on nearly
+        // every line of a blocked scorecard and pushed the terse rendering
+        // past the size of the matrix it exists to replace.
         s.push_str(&format!(
-            "\n  - note: this gate is {} fidelity and does not fully measure what its name implies",
+            "\n  - note: {} fidelity",
             f.label().to_lowercase()
         ));
     }
     s
 }
+
+/// What a `- note: <level> fidelity` line means, said once per scorecard.
+const FIDELITY_FOOTNOTE: &str = "\nA gate carrying a fidelity note does not fully measure what its name implies. \
+     See `src/fidelity/registry.rs` for what each one actually checks.\n";
 
 /// The passing gates the fidelity registry records as `Heuristic` or `Partial`.
 ///
@@ -188,6 +198,9 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         ));
         s.push_str(&findings.join("\n"));
         s.push('\n');
+        if findings.iter().any(|f| f.contains("\n  - note: ")) {
+            s.push_str(FIDELITY_FOOTNOTE);
+        }
     }
 
     let action = if report.is_admissible() {

@@ -285,8 +285,8 @@ impl PreMergeGuard {
             GateStatus::Failed(rust_skills_report.summary.clone())
         };
 
-        // 13. Kani Formal Verification
-        let kani_status = if kani_report.is_verified {
+        // 13. `// SAFETY:` comment lint over added unsafe blocks
+        let kani_status = if kani_report.all_unsafe_blocks_documented {
             GateStatus::Passed
         } else {
             GateStatus::Failed(kani_report.summary.clone())

@@ -319,7 +319,7 @@ fn report_from_the_corpus(
         .evaluate_rust_quality(dir, d)
         .expect("the rust language policy reads the diff");
     let kani_report = anvil::kani_guard::KaniGuard::new()
-        .evaluate_unsafe_invariants(dir, d)
+        .lint_unsafe_safety_comments(dir, d)
         .expect("the kani guard reads the diff");
     let slo_report = anvil::slo_canary_guard::SloCanaryGuard::new()
         .evaluate_slo_canary_health(dir, d)

@@ -85,7 +85,7 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
     };
 
     let kani_rep = kani_guard
-        .evaluate_unsafe_invariants(repo_dir, &bad_unsafe_diff)
+        .lint_unsafe_safety_comments(repo_dir, &bad_unsafe_diff)
         .unwrap();
-    assert!(!kani_rep.is_verified);
+    assert!(!kani_rep.all_unsafe_blocks_documented);
 }

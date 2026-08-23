@@ -2943,9 +2943,8 @@ fn neutral_guard_reports() -> NeutralGuardReports {
         },
         zero_trust: anvil::zero_trust_workload::ZeroTrustWorkloadReport {
             passed: true,
-            spiffe_id_verified: true,
-            mtls_enforced: true,
-            unauthenticated_endpoints: 0,
+            cleartext_transport_findings: 0,
+            violations: Vec::new(),
             summary: n(),
         },
         carbon: anvil::carbon_aware::CarbonComputeReport {

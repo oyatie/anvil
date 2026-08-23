@@ -248,7 +248,7 @@ fn test_zero_trust_red_flag_plaintext_internal_http() {
     let gate = ZeroTrustWorkloadGate::new();
     // RED: Plaintext internal HTTP connection without mTLS
     let bad_diff = "+ let client = reqwest::Client::new();\n+ let resp = client.get(\"http://payment-service.internal:8080/charge\").send().await?;";
-    let report = gate.evaluate_workload_identity(bad_diff);
+    let report = gate.evaluate_cleartext_transport(bad_diff);
     assert!(
         !report.passed,
         "Expected False Green prevention: Plaintext internal HTTP must FAIL"
@@ -260,7 +260,7 @@ fn test_zero_trust_green_spiffe_mtls_transport() {
     let gate = ZeroTrustWorkloadGate::new();
     // GREEN: SPIFFE ID SAN validation over encrypted TLS
     let good_diff = "+ let tls_config = spiffe::load_spiffe_tls_client_config(\"spiffe://oyatie.internal/ns/prod/sa/payment\").await?;\n+ let client = reqwest::Client::builder().use_preconfigured_tls(tls_config).build()?;";
-    let report = gate.evaluate_workload_identity(good_diff);
+    let report = gate.evaluate_cleartext_transport(good_diff);
     assert!(
         report.passed,
         "Expected False Red prevention: SPIFFE mTLS connection must PASS"

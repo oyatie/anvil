@@ -23,6 +23,8 @@
 //! outside a hunk is invisible. It is not `buf breaking`, and the fidelity
 //! registry records the distance.
 
+use std::ops::RangeInclusive;
+
 /// Which wire schema language a changed file is written in, if any.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SchemaKind {
@@ -32,9 +34,9 @@ pub enum SchemaKind {
     OpenApi,
 }
 
-/// Marks a finding as field-number reuse, so `SchemaEvolutionReport` can report
-/// tag renumbering without re-deciding what the checker already decided.
-pub const RENUMBERING_MARKER: &str = "reuses field number";
+/// Protobuf's largest assignable field number, and the value `max` stands for
+/// in `reserved 2 to max;`.
+const MAX_FIELD_NUMBER: u32 = 536_870_911;
 
 /// The wire schema language of `path`, or `None` if it carries no wire schema.
 ///
@@ -57,19 +59,43 @@ pub fn classify(path: &str) -> Option<SchemaKind> {
     None
 }
 
+/// Everything before a `//` (protobuf) or ` #` (YAML) comment marker.
+///
+/// Without this, `- string customer_id = 3; // legacy` carries the comment into
+/// the right-hand side, `field_declaration` finds no bare number, and the most
+/// ordinary shape of a deleted field is silently missed. YAML only starts a
+/// comment at a `#` opening the line or following whitespace, so `a#b` stays a
+/// scalar.
+///
+/// A marker inside a quoted string truncates the line -- `option (base) =
+/// "http://x";` becomes `option (base) =`. Tracking quote state to avoid that
+/// was tried and removed: nothing this module reads lives to the right of the
+/// `=`, so no assertion could tell the two apart, and code no test can kill is
+/// the thing this campaign is deleting. Ceiling recorded rather than coded
+/// around; revisit if a check ever reads a field's options.
+fn strip_comment(content: &str) -> &str {
+    let slashes = content.find("//");
+    let hash = if content.starts_with('#') {
+        Some(0)
+    } else {
+        content.find(" #").map(|i| i + 1)
+    };
+    match slashes.into_iter().chain(hash).min() {
+        Some(cut) => content[..cut].trim_end(),
+        None => content,
+    }
+}
+
 /// A line of schema content the diff removed or added, with its diff marker
 /// stripped. `None` for the diff's own `---`/`+++` header lines, for context
-/// lines, and for comments.
+/// lines, and for comments -- a whole-line comment strips to nothing.
 fn schema_line(line: &str, marker: char) -> Option<&str> {
     let doubled = if marker == '-' { "---" } else { "+++" };
     if !line.starts_with(marker) || line.starts_with(doubled) {
         return None;
     }
-    let content = line[1..].trim();
-    if content.is_empty() || content.starts_with("//") || content.starts_with('#') {
-        return None;
-    }
-    Some(content)
+    let content = strip_comment(line[1..].trim());
+    (!content.is_empty()).then_some(content)
 }
 
 /// A protobuf field declaration: `optional string customer_id = 3;` parses to
@@ -92,23 +118,32 @@ fn field_declaration(content: &str) -> Option<(&str, u32)> {
 }
 
 /// The field numbers and names an added `reserved` statement withdraws:
-/// `reserved 2, 15;` and `reserved "customer_id";` are how protobuf says a
-/// deletion is deliberate and the number will never be handed out again.
-fn reserved_tokens(content: &str) -> Option<(Vec<u32>, Vec<String>)> {
+/// `reserved 2, 15;`, `reserved 9 to 11;`, `reserved 2 to max;` and
+/// `reserved "customer_id";` are how protobuf says a deletion is deliberate and
+/// the number will never be handed out again.
+///
+/// Ranges stay ranges. Materialising them meant `reserved 2 to max;` -- the
+/// canonical open-ended form -- had to be capped, and the cap made the token
+/// parse fail outright, so the deletion it authorises was published as a wire
+/// break: a blocking false positive of the class this module exists to remove.
+fn reserved_tokens(content: &str) -> Option<(Vec<RangeInclusive<u32>>, Vec<String>)> {
     let rest = content.strip_prefix("reserved ")?;
     let mut numbers = Vec::new();
     let mut names = Vec::new();
     for token in rest.trim_end_matches(';').split(',') {
         let token = token.trim();
-        // `reserved 2 to 15;` -- take both ends and everything between.
-        if let Some((lo, hi)) = token.split_once(" to ")
-            && let (Ok(lo), Ok(hi)) = (lo.trim().parse::<u32>(), hi.trim().parse::<u32>())
-        {
-            numbers.extend(lo..=hi.min(lo.saturating_add(512)));
-            continue;
+        if let Some((lo, hi)) = token.split_once(" to ") {
+            let hi = match hi.trim() {
+                "max" => Ok(MAX_FIELD_NUMBER),
+                other => other.parse::<u32>(),
+            };
+            if let (Ok(lo), Ok(hi)) = (lo.trim().parse::<u32>(), hi) {
+                numbers.push(lo..=hi);
+                continue;
+            }
         }
         if let Ok(n) = token.parse::<u32>() {
-            numbers.push(n);
+            numbers.push(n..=n);
         } else if let Some(name) = token.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
             names.push(name.to_string());
         }
@@ -144,7 +179,7 @@ impl CompatibilityChecker {
     fn check_proto(&self, path: &str, file_diff: &str) -> Vec<String> {
         let mut removed: Vec<(&str, u32)> = Vec::new();
         let mut added: Vec<(&str, u32)> = Vec::new();
-        let mut reserved_numbers: Vec<u32> = Vec::new();
+        let mut reserved_numbers: Vec<RangeInclusive<u32>> = Vec::new();
         let mut reserved_names: Vec<String> = Vec::new();
         let mut violations = Vec::new();
 
@@ -179,10 +214,10 @@ impl CompatibilityChecker {
             }
             if let Some((reused_by, _)) = added.iter().find(|(_, num)| *num == number) {
                 violations.push(format!(
-                    "{path}: field `{reused_by}` {RENUMBERING_MARKER} {number}, previously \
+                    "{path}: field `{reused_by}` reuses field number {number}, previously \
                      `{name}`; an old reader decodes the new field into the old one"
                 ));
-            } else if !reserved_numbers.contains(&number)
+            } else if !reserved_numbers.iter().any(|r| r.contains(&number))
                 && !reserved_names.iter().any(|n| n == name)
             {
                 violations.push(format!(
@@ -268,28 +303,54 @@ mod tests {
         assert_eq!(schema_line("-  string x = 1;", '-'), Some("string x = 1;"));
     }
 
+    /// Catches: a `reserved` form parsed into the wrong numbers, and `max`
+    /// treated as an unparseable token so the whole range is dropped.
     #[test]
-    fn reserved_covers_numbers_ranges_and_names() {
+    fn reserved_covers_numbers_ranges_names_and_max() {
         assert_eq!(
             reserved_tokens("reserved 2, 15;"),
-            Some((vec![2, 15], vec![]))
+            Some((vec![2..=2, 15..=15], vec![]))
         );
         assert_eq!(
             reserved_tokens("reserved 9 to 11;"),
-            Some((vec![9, 10, 11], vec![]))
+            Some((vec![9..=11], vec![]))
+        );
+        assert_eq!(
+            reserved_tokens("reserved 2 to max;"),
+            Some((vec![2..=MAX_FIELD_NUMBER], vec![]))
         );
         assert_eq!(
             reserved_tokens(r#"reserved "customer_id";"#),
             Some((vec![], vec!["customer_id".to_string()]))
         );
         assert_eq!(reserved_tokens("string x = 1;"), None);
+        // A range whose upper bound is neither a number nor `max` is not a
+        // range; dropping it silently is what made `to max` block.
+        assert_eq!(
+            reserved_tokens("reserved 1 to nope;"),
+            Some((vec![], vec![]))
+        );
+    }
 
-        // `reserved 1 to max;` spans half a billion numbers. Materialising the
-        // range would allocate 2GB from one line of someone else's diff, so it
-        // is capped -- a deletion above the cap reports as unreserved, which is
-        // the safe direction for a gate that blocks.
-        let (numbers, _) = reserved_tokens("reserved 1 to 536870911;").expect("a reserved range");
-        assert_eq!(numbers.len(), 513);
+    /// Catches: a trailing comment carried into the right-hand side, a
+    /// whole-line comment read as content, and YAML's `#` rule widened to any
+    /// position so `a#b` loses its tail.
+    #[test]
+    fn a_trailing_comment_is_not_part_of_the_declaration() {
+        assert_eq!(
+            schema_line("-  string customer_id = 3; // legacy", '-'),
+            Some("string customer_id = 3;")
+        );
+        assert_eq!(
+            schema_line("-  /healthz:  # liveness", '-'),
+            Some("/healthz:")
+        );
+        assert_eq!(schema_line("-  // just a comment", '-'), None);
+        assert_eq!(schema_line("-  # just a comment", '-'), None);
+        assert_eq!(
+            schema_line("-  string a#b = 1;", '-'),
+            Some("string a#b = 1;")
+        );
     }
 
     #[test]
@@ -308,6 +369,15 @@ mod tests {
                     "-  string user_id = 1;\n+  reserved 1;"
                 )
                 .is_empty()
+        );
+        assert!(
+            checker
+                .check_file_diff(
+                    "proto/order.proto",
+                    "-  string customer_id = 3;\n+  reserved 2 to max;"
+                )
+                .is_empty(),
+            "`reserved 2 to max;` withdraws field 3"
         );
     }
 

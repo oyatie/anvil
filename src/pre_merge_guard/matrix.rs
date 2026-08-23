@@ -26,7 +26,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "cedar_status",
         "🛡️ Cedar Policy & IAM Boundaries",
-        "AWS Cedar policy coverage & offline PDP verification",
+        "Cedar policy files parsed by the reference checker; coverage needs a schema",
     ),
     (
         "compliance_status",

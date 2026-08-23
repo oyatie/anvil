@@ -631,14 +631,16 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               table, whose two shards shared exactly as many cells as the bound permitted, on \
               every pull request forever. That table is deleted and \
               evaluate_without_topology_source is the only path the pipeline takes \
-              (shuffle_shard_simulator/mod.rs:124-126). The combinatorics survive as the seam a \
+              (shuffle_shard_simulator/mod.rs:122). The combinatorics survive as the seam a \
               real table plugs into -- calculate_combinations and evaluate_overlap are honest \
-              (shuffle_shard_simulator/math.rs:34,50). What the gate published was also the wrong \
+              (shuffle_shard_simulator/math.rs:41,57). What the gate published was also the wrong \
               quantity: cells per tenant over total cells is one tenant's infrastructure \
               footprint, and it rises as isolation improves. It is now \
-              full_shard_overlap_ratio, the reciprocal of the number of possible shards that the \
-              infima javadoc defines as blast radius \
-              (shuffle_shard_simulator/math.rs:74-77). Checking a finished table is still weaker \
+              uniform_random_shard_collision_ratio, the reciprocal of the number of possible \
+              shards that the infima javadoc defines as blast radius, and the name says \
+              uniform_random because compute_metrics derives it from the two integers without \
+              reading allocations at all \
+              (shuffle_shard_simulator/math.rs:81). Checking a finished table is still weaker \
               than the oracle, which enforces the bound at assignment time with a sharder that \
               backtracks against every shard already handed out.",
         blocked_on: Some(
@@ -655,15 +657,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         fidelity: Fidelity::Aspirational,
         gap: "Deploys nothing and reads no cloud control plane, so the elapsed bake time and the \
               live region set are both unknown and evaluate_without_rollout_state is the path the \
-              pipeline takes (progressive_rollout/mod.rs:129-133). The health verdict used to be a \
+              pipeline takes (progressive_rollout/mod.rs:138). The health verdict used to be a \
               constant threaded through three calls and answered with the same literal in all four \
               arms of the scheduler; the field that carried it is gone, and the two validators \
               that check something real -- which had zero production callers -- are now reached \
               only through evaluate_ring_advance, which runs both \
-              (progressive_rollout/mod.rs:95,105). validate_bake_window compares \
+              (progressive_rollout/mod.rs:103,114). validate_bake_window compares \
               elapsed_bake_minutes against the manifest's own min_bake_minutes, and an undeclared \
               ring is no longer treated as satisfied \
-              (progressive_rollout/ring_scheduler.rs:121,131). AZURE_REGION_PAIRS held region codes \
+              (progressive_rollout/ring_scheduler.rs:127,137). compute_next_ring returns an \
+              Option and holds the advance rather than reading an undeclared ring as \
+              traffic_percentage zero, which was the same inversion one level up \
+              (progressive_rollout/ring_scheduler.rs:103). AZURE_REGION_PAIRS held region codes \
               lifted from a different cloud, paired by a rule Azure does not use -- it \
               pairs East US with West US, not with East US 2 -- and now holds the published table \
               (progressive_rollout/ring_scheduler.rs:20-27). It stays partial: asymmetric pairs \

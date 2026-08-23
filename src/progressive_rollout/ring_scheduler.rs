@@ -87,30 +87,36 @@ impl RingScheduler {
         Self
     }
 
-    /// The step the manifest schedules after `current`.
+    /// The step the manifest schedules after `current`, or `None` when the
+    /// manifest declares no config for that step.
     ///
     /// The traffic percentage is read from the manifest's own `RingConfig`.
     /// It used to be a literal beside each match arm, which meant two schedules
     /// existed and disagreed: the manifest declared one ring at a quarter of
     /// traffic while the scheduler published a fifth for the same ring.
+    ///
+    /// A target ring the manifest never declares returns `None`. It used to
+    /// fall back to `unwrap_or_default()`, publishing a permitted advance to an
+    /// unscheduled ring at `traffic_pct: 0` -- the absence of a rule read as
+    /// compliance with it, which is the same inversion `validate_bake_window`
+    /// below was rewritten to remove.
     pub fn compute_next_ring(
         &self,
         current: &DeploymentRing,
         manifest: &RolloutManifest,
-    ) -> RingRolloutState {
+    ) -> Option<RingRolloutState> {
         let target_ring = current.next();
         let traffic_pct = manifest
             .rings
             .iter()
             .find(|r| r.ring == target_ring)
-            .map(|r| r.traffic_percentage)
-            .unwrap_or_default();
+            .map(|r| r.traffic_percentage)?;
 
-        RingRolloutState {
+        Some(RingRolloutState {
             current_ring: current.clone(),
             target_ring,
             traffic_pct,
-        }
+        })
     }
 
     /// Whether the ring has baked for at least as long as its manifest demands.
@@ -174,10 +180,23 @@ mod tests {
 
     #[test]
     fn the_advance_reads_its_traffic_percentage_from_the_manifest() {
-        let next =
-            RingScheduler::new().compute_next_ring(&DeploymentRing::Ring0Canary, &manifest());
+        let next = RingScheduler::new()
+            .compute_next_ring(&DeploymentRing::Ring0Canary, &manifest())
+            .expect("the manifest declares Ring1Dogfood");
         assert_eq!(next.target_ring, DeploymentRing::Ring1Dogfood);
         assert_eq!(next.traffic_pct, 5);
+    }
+
+    #[test]
+    fn a_ring_the_manifest_does_not_declare_is_not_a_step_it_schedules() {
+        // Ring1Dogfood is the last ring `manifest()` declares, so the step out
+        // of it has no config. An advance to it at `traffic_pct: 0` would be
+        // the absence of a rule read as compliance with it.
+        assert!(
+            RingScheduler::new()
+                .compute_next_ring(&DeploymentRing::Ring1Dogfood, &manifest())
+                .is_none()
+        );
     }
 
     #[test]
@@ -203,8 +222,16 @@ mod tests {
 
     #[test]
     fn the_broadest_ring_is_terminal() {
-        let next =
-            RingScheduler::new().compute_next_ring(&DeploymentRing::Ring3GlobalProd, &manifest());
+        let mut m = manifest();
+        m.rings.push(RingConfig {
+            ring: DeploymentRing::Ring3GlobalProd,
+            traffic_percentage: 100,
+            min_bake_minutes: 1440,
+            regions: vec!["westus".to_string()],
+        });
+        let next = RingScheduler::new()
+            .compute_next_ring(&DeploymentRing::Ring3GlobalProd, &m)
+            .expect("the manifest declares Ring3GlobalProd");
         assert_eq!(next.target_ring, DeploymentRing::Ring3GlobalProd);
     }
 

@@ -116,7 +116,7 @@ impl PreMergeGuard {
         supply_chain_report: &SupplyChainReport,
         clean_arch_report: &CleanArchitectureReport,
         monorepo_report: &MonorepoGuardReport,
-        debt_report: &DebtShrinkReport,
+        debt_shrink_report: &DebtShrinkReport,
         modular_report: &ModularizationReport,
         coverage_report: &CoverageReport,
         rust_skills_report: &RustSkillsReport,
@@ -258,7 +258,7 @@ impl PreMergeGuard {
         };
 
         // 9. Debt Shrink Guard
-        let debt_shrink_status = debt_report.status.clone();
+        let debt_shrink_status = debt_shrink_report.status.clone();
 
         // 10. Modularization Guard
         let modularization_status = if modular_report.is_modular {

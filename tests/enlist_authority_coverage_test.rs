@@ -55,10 +55,10 @@
 //! # What the corpus can and cannot produce in this build
 //!
 //! A report the corpus produces is not admissible in this tree, for reasons
-//! that are facts about the deployment rather than about any pull request: a
-//! number of gates have no data source configured and report `NotMeasured`
-//! -- four more since the empty-scope gates stopped certifying corpora they
-//! never had -- and
+//! that are facts about the deployment rather than about any pull request:
+//! eighteen gates at this commit have no data source configured and report
+//! `NotMeasured` -- four more than before, since the empty-scope gates stopped
+//! certifying corpora they never had -- and
 //! `brand_absence_status` scans Anvil's own `src/` and reports `Failed` on the
 //! naming debt recorded there. So a corpus run is always refused here, whatever
 //! the pull request is, and the integration tests below assert the refusal
@@ -606,13 +606,18 @@ fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
     // A corpus run in this tree is always refused (module docs), so this is
     // asserted rather than branched on: a branch whose other arm cannot execute
     // reads as coverage and runs never.
+    // The count is interpolated rather than written out: a number in a panic
+    // message goes stale the moment a gate changes verdict, and this suite's
+    // whole subject is claims outliving the thing they describe.
+    let why_refused = format!(
+        "{} gates in this build have no data source and `brand_absence_status` \
+         reports Anvil's own naming debt, so no corpus run here can admit a \
+         pull request. If that changed, this test is now asserting the wrong \
+         half of the wiring",
+        recorded.len()
+    );
     let refusal = MergeEnlister::admission_refusal(Some(&report))
-        .expect_err(
-            "gates in this build have no data source and `brand_absence_status` \
-             reports Anvil's own naming debt, so no corpus run here can admit a \
-             pull request. If that changed, this test is now asserting the wrong \
-             half of the wiring",
-        )
+        .expect_err(&why_refused)
         .to_string();
     let absent_or_failing: Vec<&str> = report
         .named_statuses()

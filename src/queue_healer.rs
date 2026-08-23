@@ -9,7 +9,6 @@ use tracing::{error, info, warn};
 pub mod bisector;
 pub use bisector::{BisectionResult, MergeTrainBisector};
 
-use crate::attestation_guard::ANVIL_RECEIPTS_DIR;
 use crate::exec::ExecClass;
 use crate::git_manager::GitManager;
 use crate::github::{GitHubClient, PrMetadata};
@@ -23,11 +22,6 @@ use crate::merge_enlister::MergeEnlister;
 /// a little under its own kill so the two deadlines agree and agy's default
 /// never silently wins.
 const AGY_TURN_LIMIT: Duration = crate::exec::ExecClass::Model.timeout();
-
-/// Receipts Anvil writes into a checkout. A heal commit carries what the repair
-/// produced, never Anvil's own provenance artifacts (`.cursor/receipts` is the
-/// legacy location, still present in older checkouts).
-const ANVIL_OWNED_PATHS: &[&str] = &[ANVIL_RECEIPTS_DIR, ".cursor/receipts"];
 
 /// Outcome of the local verification gate.
 ///
@@ -102,21 +96,6 @@ impl QueueHealer {
     /// trust the trigger.
     pub fn pr_is_healable(state: &str) -> bool {
         state.trim().eq_ignore_ascii_case("open")
-    }
-
-    /// Arguments for `git add` that stage the repair but exclude Anvil's own
-    /// receipts, so a stray attestation never becomes a "healed" commit.
-    pub fn heal_add_args() -> Vec<String> {
-        let mut args = vec![
-            "add".to_string(),
-            "-A".to_string(),
-            "--".to_string(),
-            ".".to_string(),
-        ];
-        for p in ANVIL_OWNED_PATHS {
-            args.push(format!(":(exclude){}", p));
-        }
-        args
     }
 
     /// Comment body for a pushed heal; says only what was actually done.
@@ -362,8 +341,7 @@ impl QueueHealer {
         }
 
         // 6. Stage the repair, excluding Anvil's own receipts
-        let mut add_cmd = Command::new("git");
-        add_cmd.current_dir(work_dir).args(Self::heal_add_args());
+        let add_cmd = crate::git_manager::stage_excluding_receipts(work_dir);
         let add_out = crate::exec::run_bounded(
             add_cmd,
             crate::exec::ExecClass::Quick,
@@ -878,14 +856,6 @@ mod tests {
         assert!(!QueueHealer::pr_is_healable("MERGED"));
         assert!(!QueueHealer::pr_is_healable("CLOSED"));
         assert!(!QueueHealer::pr_is_healable(""));
-    }
-
-    #[test]
-    fn heal_commit_excludes_anvil_receipts() {
-        let args = QueueHealer::heal_add_args();
-        assert_eq!(&args[..4], &["add", "-A", "--", "."]);
-        assert!(args.contains(&format!(":(exclude){}", ANVIL_RECEIPTS_DIR)));
-        assert!(args.contains(&":(exclude).cursor/receipts".to_string()));
     }
 
     #[test]

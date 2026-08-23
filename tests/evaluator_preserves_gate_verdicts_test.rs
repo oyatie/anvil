@@ -49,6 +49,12 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     // compliant" over zero Rust files. The guard now tells the two apart and
     // the evaluator must carry its answer through.
     "rust_skills_report",
+    // The receipt stamper. Its verdict was rebuilt here from an `is_attested`
+    // boolean whose only production value was the literal `true`, so the gate
+    // passed on every pull request and the `Failed` arm the evaluator wrote for
+    // it could not be reached. Without this entry, restoring that rebuild
+    // passes CI.
+    "attestation_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

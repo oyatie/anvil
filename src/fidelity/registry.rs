@@ -601,8 +601,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         gap: "It runs the suite now, and only now: for a Cargo tree the gate ran a type-check, which \
               builds no test binary and executes no test, so a tree in which every test was red \
               passed the gate named Automated Test Suite. What runs is the repository's own suite -- \
-              `cargo test --no-run` then `--no-fail-fast` (queue_healer.rs:720,755), or `npm test` \
-              where a `package.json` names a test script (queue_healer.rs:688). Three ceilings \
+              `cargo test --no-run` then `--no-fail-fast` (queue_healer.rs:698,733), or `npm test` \
+              where a `package.json` names a test script (queue_healer.rs:666). Three ceilings \
               remain. It is Anvil's own run on one host against one toolchain, not the project's CI \
               matrix, so a platform-specific failure is invisible to it. It knows exactly two \
               ecosystems, and a Go, Python or Gradle repository offers it nothing. And a Cargo \
@@ -610,14 +610,14 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               has no distinct signal for an empty run. The build is a separate invocation because \
               cargo exits 101 for a compile error and libtest exits 101 for a failing test: a tree \
               that did not build ran no test, so it is `Errored` and not an accusation \
-              (queue_healer.rs:736). The child environment is scrubbed of `CARGO_TARGET_DIR` and \
-              `CARGO_BUILD_TARGET_DIR` (queue_healer.rs:722,757), because a target directory shared \
+              (queue_healer.rs:714). The child environment is scrubbed of `CARGO_TARGET_DIR` and \
+              `CARGO_BUILD_TARGET_DIR` (queue_healer.rs:700,735), because a target directory shared \
               between two ephemeral worktrees of one repository collapses the two steps back into \
               one and restores exactly the behaviour above; a cargo config file inside the \
               tenant tree can still redirect the target directory and is not defended against. Two further \
               ceilings. The `ExecClass::Build` bound of 1800s was sized for a type-check and now \
               has to cover a build and a run, and `heal_ejected_pr` calls `run_local_test_gate` twice \
-              (queue_healer.rs:322,330), so one heal can spend an hour before reporting that it \
+              (queue_healer.rs:301,309), so one heal can spend an hour before reporting that it \
               measured nothing. And the run executes every `#[test]` in a contributor's branch inside \
               the daemon's own process environment, which holds `GITHUB_WEBHOOK_SECRET` \
               (config.rs:131) -- a type-check never ran that code. The cost is a cold build per \
@@ -644,6 +644,34 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               is added lines, so Rust this pull request does not touch is never examined and a \
               clean verdict here is not a statement about the repository.",
         blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "attestation_status",
+        aspiration: "Emit a signed provenance statement binding this artefact, by digest, to how it \
+                     was produced, and record it where a third party who does not trust the \
+                     producer can verify it.",
+        reference: "in-toto attestation v1 (subject digest, predicateType); DSSE PAE envelopes; \
+                    cosign attest with Fulcio and Rekor; SLSA v1.0 build levels; RFC 6962 \
+                    transparency logs",
+        fidelity: Fidelity::Aspirational,
+        gap: "Attests nothing. No digest is computed over any artefact, no DSSE envelope is built, \
+              no signature is produced -- the crate holds no signing key and no X.509 or ECDSA \
+              dependency -- and no transparency log is written or read, so there is no verifier \
+              here and nothing for one to check. What runs is `serde_json::to_string_pretty` and \
+              `fs::write`, and the gate's pass used to be rebuilt in the wiring from a boolean \
+              whose one production value was a literal, which made the failure arm unreachable. \
+              The guard now owns the verdict and publishes `NO_PROVENANCE_BACKEND` \
+              (attestation_guard.rs:116,209-211). A hash-chained receipt log was considered and \
+              rejected rather than shipped: the chain would be unkeyed, so recomputing it after \
+              an edit is the write path rather than an attack on it, and receipts are per-pull-\
+              request files overwritten in place inside a per-run clone, so there is no \
+              append-only log to chain in the first place. The receipt was also swept onto the \
+              pull request by the certification pipeline's own staging sweep; all four staging \
+              sites now share `stage_excluding_receipts` (git_manager/mod.rs:32).",
+        blocked_on: Some(
+            "a signing identity and a log to publish to -- a key or an OIDC issuer plus Fulcio, \
+             and a transparency log; none is reachable from here",
+        ),
     },
 ];
 

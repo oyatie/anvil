@@ -601,8 +601,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         gap: "It runs the suite now, and only now: for a Cargo tree the gate ran a type-check, which \
               builds no test binary and executes no test, so a tree in which every test was red \
               passed the gate named Automated Test Suite. What runs is the repository's own suite -- \
-              `cargo test --no-run` then `--no-fail-fast` (queue_healer.rs:679,707), or `npm test` \
-              where a `package.json` names a test script (queue_healer.rs:662). Three ceilings \
+              `cargo test --no-run` then `--no-fail-fast` (queue_healer.rs:720,755), or `npm test` \
+              where a `package.json` names a test script (queue_healer.rs:688). Three ceilings \
               remain. It is Anvil's own run on one host against one toolchain, not the project's CI \
               matrix, so a platform-specific failure is invisible to it. It knows exactly two \
               ecosystems, and a Go, Python or Gradle repository offers it nothing. And a Cargo \
@@ -610,8 +610,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               has no distinct signal for an empty run. The build is a separate invocation because \
               cargo exits 101 for a compile error and libtest exits 101 for a failing test: a tree \
               that did not build ran no test, so it is `Errored` and not an accusation \
-              (queue_healer.rs:691). The cost is a cold build per pull request, in an ephemeral \
-              worktree with no shared target directory.",
+              (queue_healer.rs:736). The child environment is scrubbed of `CARGO_TARGET_DIR` and \
+              `CARGO_BUILD_TARGET_DIR` (queue_healer.rs:722,757), because a target directory shared \
+              between two ephemeral worktrees of one repository collapses the two steps back into \
+              one and restores exactly the behaviour above; a cargo config file inside the \
+              tenant tree can still redirect the target directory and is not defended against. Two further \
+              ceilings. The `ExecClass::Build` bound of 1800s was sized for a type-check and now \
+              has to cover a build and a run, and `heal_ejected_pr` calls `run_local_test_gate` twice \
+              (queue_healer.rs:322,330), so one heal can spend an hour before reporting that it \
+              measured nothing. And the run executes every `#[test]` in a contributor's branch inside \
+              the daemon's own process environment, which holds `GITHUB_WEBHOOK_SECRET` \
+              (config.rs:131) -- a type-check never ran that code. The cost is a cold build per \
+              pull request, in an ephemeral worktree with no shared target directory.",
         blocked_on: None,
     },
     GateFidelity {
@@ -622,7 +632,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                     rust-skills corpus",
         fidelity: Fidelity::Heuristic,
         gap: "No clippy run, no rustc lint, no parser: seven regexes over the lines a diff adds \
-              (rust_language_policy/engine.rs:47-83), four of which can block. `err-no-unwrap-prod` is a text match for \
+              (rust_language_policy/engine.rs:88-125), four of which can block. `err-no-unwrap-prod` is a text match for \
               `.unwrap()` on any line whose path does not contain the word test, so it sees neither \
               the receiver's type nor whether the call is reachable; `unsafe-safety-comment` asks \
               only whether the preceding line carried a marker. The upstream corpus the gate is \
@@ -630,7 +640,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               was published on every pull request as a literal -- including on pull requests \
               changing no Rust at all, where the same literal was published beside the sentence \
               that the check had passed. `rules_evaluated_count` is now the length of the ruleset \
-              that actually ran (rust_language_policy/mod.rs:174), and zero when nothing was scanned (rust_language_policy/mod.rs:123). Scope \
+              that actually ran (rust_language_policy/mod.rs:172), and zero when nothing was scanned (rust_language_policy/mod.rs:121). Scope \
               is added lines, so Rust this pull request does not touch is never examined and a \
               clean verdict here is not a statement about the repository.",
         blocked_on: None,

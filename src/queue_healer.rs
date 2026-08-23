@@ -642,15 +642,41 @@ impl QueueHealer {
     /// # Cost
     ///
     /// The tree is an ephemeral worktree with no `target/`, so both steps are
-    /// cold. Measured on this repository (10-core, 984 tests): `cargo check`
-    /// 37s, against `cargo test --no-run` 45s plus the run 35s — roughly +43s
-    /// per pull request, and it is a build, not a rounding error. The whole
-    /// gate shares one `ExecClass::Build` deadline rather than taking one per
-    /// step, so its worst case is the class bound and not twice it.
+    /// cold. Measured on this repository (18 cores, ~1000 tests, a fresh target
+    /// directory and a warm registry): `cargo check` 15.7s, `cargo test
+    /// --no-run` 24.6s, the run after it 37.0s.
     ///
-    /// Known ceiling: a Cargo repository with no tests at all exits `0` and is
-    /// reported as a pass. `cargo` has no distinct signal for it; nextest's
-    /// `NO_TESTS_RUN = 4` does, and would be the way to close it.
+    /// The multiplier is the part that carries to another repository; the
+    /// seconds are this host's. Building every test binary costs **1.6×** a
+    /// type-check of the library, and the whole gate costs **~3.9×** the
+    /// command it replaced. A reader sizing this for a monorepo should scale
+    /// that ratio, not add a fixed delta.
+    ///
+    /// The whole gate shares one `ExecClass::Build` deadline rather than taking
+    /// one per step, so its worst case is the class bound and not twice it.
+    /// That bound is 1800s and was sized for a type-check; `heal_ejected_pr`
+    /// calls this gate twice, so one heal can spend an hour. Hitting it is
+    /// `Errored` → `NotMeasured` → merge withheld with no accusation, which is
+    /// the right failure, but it is a fleet-wide stall rather than a rounding
+    /// error.
+    ///
+    /// # Known ceilings
+    ///
+    /// A Cargo repository with no tests at all exits `0` and is reported as a
+    /// pass. `cargo` has no distinct signal for it; nextest's `NO_TESTS_RUN =
+    /// 4` does, and would be the way to close it.
+    ///
+    /// `cargo test --no-run` does not build doctests. A doctest that fails to
+    /// *compile* therefore survives the build step and reaches the run, where
+    /// it is classified `Failed` — the one compile error this gate still
+    /// reports as a failing suite. Defensible, because rustdoc reports it as a
+    /// failed test, but it is the exception to the split above. Doctests cost
+    /// 1.0s of the 37.0s run here.
+    ///
+    /// The run executes every `#[test]` in a contributor's branch inside the
+    /// daemon's process environment, which holds `GITHUB_WEBHOOK_SECRET`. A
+    /// type-check never ran that code. The child environment is not otherwise
+    /// scrubbed.
     pub async fn run_local_test_gate(repo_dir: &Path) -> TestGate {
         if repo_dir.join("Cargo.toml").exists() {
             return Self::run_cargo_test_gate(repo_dir).await;
@@ -670,13 +696,32 @@ impl QueueHealer {
 
     /// Build, then run. See `run_local_test_gate` for why the two are separate
     /// invocations and why they share one deadline.
+    ///
+    /// Both spawns drop `CARGO_TARGET_DIR` and `CARGO_BUILD_TARGET_DIR` from
+    /// the inherited environment. The two steps only discriminate a compile
+    /// error from a test failure because the second finds the artefacts the
+    /// first built; a target directory shared with anything else breaks that.
+    /// Every ephemeral worktree of a repository carries the same package name
+    /// and version, so concurrent certifications of the same repository resolve
+    /// to the same artefact path, and the observed result is the pre-fix
+    /// behaviour exactly: `Passed` on a red suite, `Failed` on a tree that does
+    /// not compile. `tests/test_suite_gate_shared_target_test.rs` runs the gate
+    /// with that variable set and pins all three answers.
     async fn run_cargo_test_gate(repo_dir: &Path) -> TestGate {
+        // Two labels, because a reader of `Errored("cargo test", ...)` on a
+        // tree that did not build is told a command failed that was never the
+        // one that failed.
+        const BUILD_LABEL: &str = "cargo test --no-run";
         let label = "cargo test";
         let deadline = Instant::now() + ExecClass::Build.timeout();
 
         let mut build = Command::new("cargo");
-        build.args(["test", "--no-run"]).current_dir(repo_dir);
-        match crate::exec::run_bounded(build, ExecClass::Build, "cargo test --no-run").await {
+        build
+            .args(["test", "--no-run"])
+            .current_dir(repo_dir)
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_BUILD_TARGET_DIR");
+        match crate::exec::run_bounded(build, ExecClass::Build, BUILD_LABEL).await {
             Ok(out) if out.status.success() => {}
             // Not `Failed`. A tree that does not build ran no test, so it is a
             // gate that did not complete, which `local_verification_gate` maps
@@ -688,14 +733,17 @@ impl QueueHealer {
                     "the test suite could not be built in the local gate: {}",
                     why
                 );
-                return TestGate::Errored(label, format!("the test suite did not build: {why}"));
+                return TestGate::Errored(
+                    BUILD_LABEL,
+                    format!("the test suite did not build: {why}"),
+                );
             }
             Err(e) => {
                 warn!(
                     "cargo test --no-run did not complete in the local gate: {:#}",
                     e
                 );
-                return TestGate::Errored(label, format!("{e:#}"));
+                return TestGate::Errored(BUILD_LABEL, format!("{e:#}"));
             }
         }
 
@@ -704,7 +752,10 @@ impl QueueHealer {
         // correctly, because no test ran.
         let remaining = deadline.saturating_duration_since(Instant::now());
         let mut run = Command::new("cargo");
-        run.args(["test", "--no-fail-fast"]).current_dir(repo_dir);
+        run.args(["test", "--no-fail-fast"])
+            .current_dir(repo_dir)
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_BUILD_TARGET_DIR");
         Self::classify(
             label,
             crate::exec::run_bounded_for(run, remaining, label).await,

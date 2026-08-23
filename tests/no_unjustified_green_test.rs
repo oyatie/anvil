@@ -208,43 +208,122 @@ fn the_published_rule_count_is_the_ruleset_the_engine_actually_evaluates() {
         report.measurement
     );
 
-    let mut categories: Vec<&str> = engine::RULES.iter().map(|r| r.category).collect();
-    categories.sort_unstable();
-    categories.dedup();
     assert_eq!(
-        report.categories_evaluated.len(),
-        categories.len(),
+        report.categories_evaluated, PUBLISHED_CATEGORIES,
         "the categories published must be the categories the ruleset covers, \
          not a hand-written list with its own invented per-category totals"
     );
 }
 
-/// Catches: `RULES` and the scan drifting apart -- a rule deleted from the scan
-/// while its entry stays in the table, or a rule added to the scan and never
-/// counted. The count is only honest while the table is the scan's inventory.
+/// The categories this gate publishes, written here rather than derived.
 ///
-/// A mechanism over source text, because nothing in the compiler relates a
-/// `rule_id` string constructed in one place to a table in another.
+/// The assertion above used to compare `categories()` against the very table
+/// `categories()` is computed from, so it could not fail for any implementation
+/// that did what its name said -- and a rule whose `category` was mutated to a
+/// fabricated string was published on every Rust pull request with the whole
+/// suite green. A published value needs a pin outside the thing that publishes
+/// it, so this list is a literal in the test and changing a category in
+/// `RULES` has to be a decision taken twice.
+///
+/// In `RULES` order, deduplicated, which is what `engine::categories()`
+/// returns.
+const PUBLISHED_CATEGORIES: &[&str] = &[
+    "Error Handling",
+    "Ownership & Borrowing",
+    "Async/Await",
+    "Memory Optimization",
+    "Unsafe Code",
+];
+
+/// Catches: `RULES` and the scan drifting apart -- a rule deleted from the scan
+/// while its entry stays in the table, a rule added to the scan and never
+/// counted, or a severity in the table that does not match what the gate
+/// actually does with that rule. The count and the sentence "N rule(s), M of
+/// which can block" are only honest while the table is the scan's inventory.
+///
+/// One fixture diff per rule, each tripping exactly that rule, run through the
+/// real gate. This used to be a scan for `rule_id: "` literals in `engine.rs`,
+/// which was the best available check while every finding site wrote its own
+/// copy of the rule's id, category and severity. Those literals are gone --
+/// each site now names the `RustRule` constant, so the compiler relates them --
+/// and a text scan would find nothing to compare. Running the rules is a
+/// stronger check than reading them: it proves each tabled rule is reachable,
+/// which the scan never did.
+///
+/// `BLOCKING_RULES` is written out here rather than derived from `RULES`. That
+/// is the whole point: the severity column is published, and an assertion that
+/// reads it back out of the table it is testing cannot fail.
 #[test]
 fn every_rule_the_engine_reports_is_in_the_table_the_count_comes_from() {
-    let src = std::fs::read_to_string("src/rust_language_policy/engine.rs")
-        .expect("engine.rs must exist");
+    /// The rules that block a merge, as a decision recorded outside the table
+    /// that implements it.
+    const BLOCKING_RULES: &[&str] = &[
+        "err-no-unwrap-prod",
+        "async-spawn-blocking",
+        "async-no-lock-await",
+        "unsafe-safety-comment",
+    ];
 
+    /// A line that trips exactly one rule, and the rule it trips.
+    const FIXTURES: &[(&str, &str)] = &[
+        ("err-no-unwrap-prod", "let token = parse_header().unwrap();"),
+        (
+            "own-slice-over-vec",
+            "pub fn takes(s: &String) -> u32 { 0 }",
+        ),
+        ("async-spawn-blocking", "std::thread::sleep(backoff);"),
+        ("async-no-lock-await", "let g = std::sync::Mutex::lock(&m);"),
+        ("mem-avoid-format", "let s = format!(\"literal\");"),
+        ("unsafe-safety-comment", "unsafe { *raw }"),
+        (
+            "own-borrow-over-clone",
+            "let n = count.clone(); // primitive",
+        ),
+    ];
+
+    let policy = RustLanguagePolicy::new();
     let mut emitted: Vec<String> = Vec::new();
-    for (idx, _) in src.match_indices("rule_id: \"") {
-        let rest = &src[idx + "rule_id: \"".len()..];
-        let Some(close) = rest.find('"') else {
-            continue;
-        };
-        emitted.push(rest[..close].to_string());
+
+    for (rule_id, line) in FIXTURES {
+        let report = policy
+            .evaluate_rust_quality(
+                std::path::Path::new("."),
+                &rust_diff_ctx(&["src/prod.rs"], &format!("+++ b/src/prod.rs\n+{line}\n")),
+            )
+            .expect("evaluates");
+
+        let ids: Vec<&str> = report.findings.iter().map(|f| f.rule_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![*rule_id],
+            "the fixture for `{rule_id}` must trip that rule and only that rule"
+        );
+
+        let rule = engine::RULES
+            .iter()
+            .find(|r| r.id == *rule_id)
+            .unwrap_or_else(|| panic!("`{rule_id}` is emitted by the scan but absent from RULES"));
+        assert_eq!(
+            report.findings[0].category, rule.category,
+            "a finding must publish the category the table lists for its rule"
+        );
+        assert_eq!(
+            report.findings[0].severity, rule.severity,
+            "a finding must publish the severity the table lists for its rule"
+        );
+
+        let blocks = BLOCKING_RULES.contains(rule_id);
+        assert_eq!(
+            report.is_idiomatic, !blocks,
+            "`{rule_id}` blocks the gate exactly when it is a blocking rule; \
+             a severity that does not change the verdict is a label, not a policy"
+        );
+
+        emitted.push((*rule_id).to_string());
     }
+
     emitted.sort();
     emitted.dedup();
-    assert!(
-        !emitted.is_empty(),
-        "no `rule_id` literal was found in engine.rs, so this check scanned nothing"
-    );
-
     let mut tabled: Vec<String> = engine::RULES.iter().map(|r| r.id.to_string()).collect();
     tabled.sort();
     tabled.dedup();
@@ -253,6 +332,20 @@ fn every_rule_the_engine_reports_is_in_the_table_the_count_comes_from() {
         emitted, tabled,
         "the rules the engine emits findings for and the table `rules_evaluated_count` \
          is derived from must be the same set"
+    );
+
+    let mut blocking: Vec<&str> = BLOCKING_RULES.to_vec();
+    blocking.sort_unstable();
+    let mut tabled_blocking: Vec<&str> = engine::RULES
+        .iter()
+        .filter(|r| r.blocks())
+        .map(|r| r.id)
+        .collect();
+    tabled_blocking.sort_unstable();
+    assert_eq!(
+        blocking, tabled_blocking,
+        "the sentence the gate publishes counts the blocking rules in the table, \
+         so the table must block exactly the rules this test pins"
     );
 }
 

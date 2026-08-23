@@ -272,16 +272,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: Some("a SPIFFE/SPIRE control plane"),
     },
     GateFidelity {
-        gate_id: "ghost_migration_status",
-        aspiration: "Validate schema migrations against a shadow database for lock-free application and \
-                     rollback parity.",
-        reference: "gh-ost; pt-online-schema-change",
-        fidelity: Fidelity::Heuristic,
-        gap: "Regex scan for CONCURRENTLY, DROP COLUMN and NOT NULL. Connects to no database and runs no \
-              migration.",
-        blocked_on: Some("a shadow database"),
-    },
-    GateFidelity {
         gate_id: "doc_parity_status",
         aspiration: "Verify documentation parity with the change, and amend affected documents.",
         reference: "docs-as-code; Google g3doc",
@@ -509,6 +499,73 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
             "a Sigstore signing backend -- an OIDC identity source, Fulcio and Rekor; none is reachable \
              from here",
         ),
+    },
+    GateFidelity {
+        gate_id: "debt_shrink_status",
+        aspiration: "Ratchet deprecation and reorganisation debt down: only shrinkage permitted on \
+                     targets the organisation has decided to drain.",
+        reference: "SonarQube Clean as You Code -- new-code quality gate",
+        fidelity: Fidelity::Heuristic,
+        gap: "Scope is three path fragments -- `is_deprecating_target` matches `deprecated`, `legacy`, \
+              `/old/` -- plus any path named in a `REORG-DRAIN.md` drain ledger, and no tracked file in \
+              this repository matches a fragment while the ledger does not exist, so nothing is ever \
+              in scope here. The gate used to publish a drained ratchet from that empty scope; it now \
+              separates a scanned target from an absent one \
+              (debt_shrink_guard.rs:57-60). The ledger is the only authoritative half: deprecation is \
+              a decision somebody recorded, not a substring somebody typed into a path.",
+        blocked_on: Some("a drain ledger; the marker set is hardcoded and unconfigurable"),
+    },
+    GateFidelity {
+        gate_id: "gitops_drift_status",
+        aspiration: "Reconcile desired state against the cluster and refuse orphaning cascade \
+                     deletions.",
+        reference: "ArgoCD sync status and self-heal; `resources-finalizer.argocd.argoproj.io`",
+        fidelity: Fidelity::Heuristic,
+        gap: "Reads no cluster and computes no diff against live state, so it detects no drift at all; \
+              what it checks is a deletion marker in the diff text. Scope is two path fragments -- \
+              `is_gitops_manifest` matches `applicationset` and `application.yaml` \
+              (gitops_drift_reconciler/orphan_sweeper.rs:34-35) -- and no tracked file in this \
+              repository matches either, so nothing is ever in scope. ArgoCD is not the precedent \
+              at its reporting layer -- it starts at Synced and downgrades only inside the loop over \
+              target resources, so an Application with no targets displays green -- but it is at its \
+              action layer, where auto-sync refuses to run when every managed resource would be \
+              pruned unless allowEmpty is set. The gate used to publish declarative integrity from an \
+              empty scope; it now reports that nothing was scanned, which is acceptable to the badge \
+              and withheld by merge admission.",
+        blocked_on: Some("a cluster the reconciler can read; nothing here talks to one"),
+    },
+    GateFidelity {
+        gate_id: "migration_orch_status",
+        aspiration: "Enforce Expand-Contract phase ordering across releases so a contract step cannot \
+                     ship before its expand has baked.",
+        reference: "Parallel Change (expand/contract); Flyway and Liquibase validate; squawk",
+        fidelity: Fidelity::Aspirational,
+        gap: "Nothing spans releases: it reads one diff and asks whether the literal `-- PHASE: \
+              CONTRACT` appears in the same file as a `DROP COLUMN`, so the phase order it is named \
+              for is never checked and the annotation is self-attested by the author dropping the \
+              column. Scope was `.sql` matched against the hunk *text*, which put a Rust file \
+              mentioning a SQL filename into SQL scope and defaulted a header-less chunk to a \
+              hardcoded migration filename that ended in that extension; it is now the path \
+              (migration_orchestrator/phase_validator.rs:43-44), and no tracked file in this \
+              repository ends in that extension, so nothing is ever in scope. The gate used to publish \
+              lifecycle conformance from that empty scope and now reports that nothing was parsed.",
+        blocked_on: Some("release-spanning migration history; one diff cannot show phase order"),
+    },
+    GateFidelity {
+        gate_id: "ghost_migration_status",
+        aspiration: "Validate schema migrations against a shadow database for lock-free application and \
+                     rollback parity.",
+        reference: "gh-ost, which refuses an empty --alter outright; pt-online-schema-change",
+        fidelity: Fidelity::Heuristic,
+        gap: "Regex scan for CONCURRENTLY, DROP COLUMN and NOT NULL. Connects to no database and runs \
+              no migration, so no lock is ever observed. Scope is the changed-file list filtered by \
+              `is_migration_file`, which matches `migration` in the path or a `.sql` extension \
+              (ghost_migration_harness.rs:56-57) and so misses the directory Rails files its \
+              migrations under, which spells the word differently; an empty result also cannot be \
+              told apart from a changed-file list that never arrived. Both used to return early with \
+              a pass declaring the ghost migration check clean; both now report that nothing was \
+              scanned.",
+        blocked_on: Some("a shadow database"),
     },
 ];
 

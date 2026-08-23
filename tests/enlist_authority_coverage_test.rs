@@ -55,8 +55,10 @@
 //! # What the corpus can and cannot produce in this build
 //!
 //! A report the corpus produces is not admissible in this tree, for reasons
-//! that are facts about the deployment rather than about any pull request: ten
-//! gates have no data source configured and report `NotMeasured`, and
+//! that are facts about the deployment rather than about any pull request: a
+//! number of gates have no data source configured and report `NotMeasured`
+//! -- four more since the empty-scope gates stopped certifying corpora they
+//! never had -- and
 //! `brand_absence_status` scans Anvil's own `src/` and reports `Failed` on the
 //! naming debt recorded there. So a corpus run is always refused here, whatever
 //! the pull request is, and the integration tests below assert the refusal
@@ -606,7 +608,7 @@ fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
     // reads as coverage and runs never.
     let refusal = MergeEnlister::admission_refusal(Some(&report))
         .expect_err(
-            "ten gates in this build have no data source and `brand_absence_status` \
+            "gates in this build have no data source and `brand_absence_status` \
              reports Anvil's own naming debt, so no corpus run here can admit a \
              pull request. If that changed, this test is now asserting the wrong \
              half of the wiring",

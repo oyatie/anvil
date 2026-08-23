@@ -742,7 +742,12 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
         .split_once("do not fully measure")
         .expect("disclosure line")
         .1;
-    for gate in ["cell-isolation", "monorepo", "debt-shrink"] {
+    // `debt-shrink` used to stand here as a gate the registry did not record.
+    // It does now: this pull request audited it and entered it as Heuristic,
+    // so naming it in the disclosure became correct and it is no longer a
+    // negative example. `idempotency` replaces it -- still unaudited, so the
+    // list keeps exactly as many gates that must NOT appear.
+    for gate in ["cell-isolation", "monorepo", "idempotency"] {
         assert!(
             !disclosure.contains(gate),
             "gate {gate} is not recorded below Measured fidelity, so naming it \

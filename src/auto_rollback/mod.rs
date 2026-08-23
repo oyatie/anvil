@@ -1,7 +1,3 @@
-pub mod postmortem_generator;
-
-use postmortem_generator::{PostmortemBundle, PostmortemGenerator};
-
 use crate::pre_merge_guard::report::GateStatus;
 
 const GATE_ID: &str = "auto_rollback_status";
@@ -14,26 +10,15 @@ pub struct AutoRollbackReport {
     pub status: GateStatus,
     pub passed: bool,
     pub rollback_triggered: bool,
-    pub postmortem: Option<PostmortemBundle>,
     pub summary: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct AutoRollbackPostmortemEngine {
-    generator: PostmortemGenerator,
-}
-
-impl Default for AutoRollbackPostmortemEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[derive(Clone, Debug, Default)]
+pub struct AutoRollbackPostmortemEngine;
 
 impl AutoRollbackPostmortemEngine {
     pub fn new() -> Self {
-        Self {
-            generator: PostmortemGenerator::new(),
-        }
+        Self
     }
 
     /// The gate's answer when no telemetry was read.
@@ -49,7 +34,6 @@ impl AutoRollbackPostmortemEngine {
             },
             passed: false,
             rollback_triggered: false,
-            postmortem: None,
             summary: MISSING_TELEMETRY_SOURCE.to_string(),
         }
     }
@@ -63,13 +47,6 @@ impl AutoRollbackPostmortemEngine {
         let is_degraded = error_rate_percentage > 5.0 || latency_p99_ms > 500.0;
 
         if is_degraded {
-            let bundle = self.generator.generate_postmortem(
-                service,
-                "Canary error budget burn rate exceeded critical threshold (>5%)",
-                error_rate_percentage,
-                latency_p99_ms,
-            );
-
             let summary = format!(
                 "Service {} degraded (Err: {:.1}%, P99: {:.1}ms). Triggered auto-rollback & generated postmortem.",
                 service, error_rate_percentage, latency_p99_ms
@@ -79,7 +56,6 @@ impl AutoRollbackPostmortemEngine {
                 status: GateStatus::Warning(summary.clone()),
                 passed: false,
                 rollback_triggered: true,
-                postmortem: Some(bundle),
                 summary,
             }
         } else {
@@ -87,7 +63,6 @@ impl AutoRollbackPostmortemEngine {
                 status: GateStatus::Passed,
                 passed: true,
                 rollback_triggered: false,
-                postmortem: None,
                 summary: format!(
                     "Service {} healthy (Err: {:.1}%, P99: {:.1}ms). Zero rollback necessary.",
                     service, error_rate_percentage, latency_p99_ms
@@ -127,7 +102,6 @@ mod no_telemetry_source_tests {
         assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
         assert!(!report.passed, "an unobserved service is not a healthy one");
         assert!(!report.rollback_triggered);
-        assert!(report.postmortem.is_none());
     }
 
     /// The measuring path must still fire on a degraded reading.

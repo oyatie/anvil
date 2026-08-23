@@ -49,8 +49,7 @@ impl IssueAuditor {
         }
 
         // Check 1b: Contradicted or obsolete surface outside live masterplan (specs/masterplan.json)
-        let reconciler = crate::roadmap_guard::RoadmapReconciler::new();
-        if !reconciler.verify_issue_roadmap_alignment(repo_dir, title, body) {
+        if !crate::roadmap_guard::verify_issue_roadmap_alignment(repo_dir, title, body) {
             return IssueAuditFinding {
                 issue_number,
                 title: title.to_string(),

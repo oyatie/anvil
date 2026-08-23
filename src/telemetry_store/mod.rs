@@ -1,5 +1,3 @@
-pub mod dora_calculator;
-
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,7 +7,17 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-pub use dora_calculator::{DeploymentEvent, DoraCalculator, DoraMetricSnapshot, IncidentEvent};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoraMetricSnapshot {
+    pub repo: String,
+    pub timestamp: DateTime<Utc>,
+    pub lead_time_for_changes_hours: f64,
+    pub deployment_frequency_per_day: f64,
+    pub change_failure_rate_percent: f64,
+    pub mean_time_to_restore_mins: f64,
+    pub total_deployments_30d: usize,
+    pub total_incidents_30d: usize,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FleetPrRecord {
@@ -55,8 +63,6 @@ pub struct ShapeMeasurementRecord {
 pub struct TelemetryStoreData {
     pub pr_history: Vec<FleetPrRecord>,
     pub gate_failures: Vec<GateFailureRecord>,
-    pub deployments: Vec<DeploymentEvent>,
-    pub incidents: Vec<IncidentEvent>,
     #[serde(default)]
     pub shape_measurements: Vec<ShapeMeasurementRecord>,
 }
@@ -128,18 +134,6 @@ impl TelemetryStore {
             }
         }
         out
-    }
-
-    pub async fn record_deployment(&self, dep: DeploymentEvent) {
-        let mut d = self.data.write().await;
-        d.deployments.push(dep);
-        drop(d);
-        let _ = self.persist_to_disk().await;
-    }
-
-    pub async fn get_dora_metrics(&self, repo: &str, window_days: u32) -> DoraMetricSnapshot {
-        let d = self.data.read().await;
-        DoraCalculator::compute_dora(repo, &d.deployments, &d.incidents, window_days)
     }
 
     pub async fn get_gate_failure_heatmap(&self, repo: &str) -> HashMap<String, usize> {

@@ -18,19 +18,27 @@
 //! source. It does not report `Failed` — there is no evidence of a regression,
 //! only an absence of timings.
 //!
-//! `CriterionDiffAnalyzer` is retained and still exported. It is honest
-//! arithmetic over a caller-supplied sample and is the seam a real criterion
-//! baseline plugs into; its verdict is still computed and published on the
-//! report, but it is not what the scorecard reads. Until a benchmark actually
-//! runs, a verdict derived from caller-supplied numbers is not a measurement of
-//! this pull request, and `status` says so.
+//! The analyzer that did that arithmetic over a caller-supplied sample is
+//! deleted along with the sample: until a benchmark actually runs there is
+//! nothing for it to read.
 
 use serde::{Deserialize, Serialize};
 
 use crate::pre_merge_guard::report::GateStatus;
 
-pub mod criterion_diff;
-pub use criterion_diff::{BenchmarkRegressionVerdict, CriterionDiffAnalyzer, MicrobenchmarkSample};
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BenchmarkRegressionVerdict {
+    /// No benchmark was executed, so there is no base or head figure to
+    /// compare. Deliberately distinct from `Optimal`: an unrun benchmark is not
+    /// a fast one.
+    NotMeasured,
+    Optimal,
+    Regression {
+        benchmark: String,
+        ns_increase_pct: f64,
+        explanation: String,
+    },
+}
 
 /// Matches the `PreMergeCertificationReport` field name.
 const GATE_ID: &str = "microbench_status";
@@ -49,32 +57,11 @@ pub struct MicrobenchmarkReport {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct MicroBenchmarkRatchet {
-    analyzer: CriterionDiffAnalyzer,
-}
+pub struct MicroBenchmarkRatchet;
 
 impl MicroBenchmarkRatchet {
     pub fn new() -> Self {
-        Self {
-            analyzer: CriterionDiffAnalyzer::new(),
-        }
-    }
-
-    /// Runs the analyzer over a caller-supplied sample and publishes the
-    /// verdict, while reporting the gate itself as unmeasured: no benchmark was
-    /// executed to produce that sample. See the module docs.
-    pub fn evaluate_benchmark_regression(
-        &self,
-        sample: &MicrobenchmarkSample,
-    ) -> MicrobenchmarkReport {
-        let verdict = self.analyzer.evaluate_benchmark_diff(sample);
-        let passed = matches!(verdict, BenchmarkRegressionVerdict::Optimal);
-
-        MicrobenchmarkReport {
-            status: Self::not_measured(),
-            passed,
-            verdict,
-        }
+        Self
     }
 
     /// The review pipeline's entry point: no benchmark is run, so no sample is
@@ -98,23 +85,6 @@ impl MicroBenchmarkRatchet {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_microbenchmark_ratchet_nominal() {
-        let ratchet = MicroBenchmarkRatchet::new();
-        let sample = MicrobenchmarkSample {
-            benchmark_name: "sha256_hashing".to_string(),
-            base_ns_per_op: 50.0,
-            head_ns_per_op: 50.0,
-            p99_cpu_cycles_base: 100,
-            p99_cpu_cycles_head: 100,
-        };
-        let rep = ratchet.evaluate_benchmark_regression(&sample);
-        assert!(rep.passed);
-        // ...and the gate still reports that it measured nothing: the sample
-        // above was written by the caller, not read off a benchmark run.
-        assert_eq!(rep.status.unmeasured_gate_id(), Some(GATE_ID));
-    }
 
     #[test]
     fn no_criterion_baseline_means_no_hotpath_claim() {

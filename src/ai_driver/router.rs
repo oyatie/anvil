@@ -5,7 +5,6 @@ use std::time::Duration;
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
-use super::executor_port::{ConfiguredPromptExecutor, PromptExecutor};
 use super::provider::{ModelExecutionConfig, ModelProvider};
 use crate::self_governance::account_pool::AccountPoolManager;
 
@@ -631,48 +630,6 @@ impl SubscriptionExecutor {
         );
         self.run_claude_subscription(prompt, working_dir, config)
             .await
-    }
-}
-
-/// Timeout applied when a caller reaches the executor through [`PromptExecutor`],
-/// which carries a model name and nothing else.
-///
-/// 420s, preserving the budget `CrossModelDualValidator` used when it built its own
-/// `ModelExecutionConfig` before the port existed. Callers that need a different
-/// budget go through [`ConfiguredPromptExecutor`], which carries one.
-const PORT_EXECUTION_TIMEOUT_SECS: u64 = 420;
-
-/// The live adapter behind the opaque-model-name port.
-///
-/// Resolving a model name to a provider is the adapter's job, and it uses the
-/// crate's one resolution rule, [`ModelProvider::from_str_name`] — including its
-/// fallback for a name it does not recognise. Nothing about this executor changed
-/// to satisfy the port; the port is a second door onto `execute_prompt`.
-impl PromptExecutor for SubscriptionExecutor {
-    async fn execute(&self, model: &str, prompt: &str, working_dir: &Path) -> Result<String> {
-        let provider = ModelProvider::from_str_name(model);
-        let reasoning_effort = provider.default_reasoning_effort().to_string();
-        let config = ModelExecutionConfig {
-            provider,
-            specific_model: Some(model.to_string()),
-            reasoning_effort,
-            print_timeout_secs: PORT_EXECUTION_TIMEOUT_SECS,
-        };
-        self.execute_prompt(prompt, working_dir, &config).await
-    }
-}
-
-/// The live adapter behind the resolved-config port, used by the per-stage
-/// fallback chain, which has already chosen provider, model, effort and timeout.
-#[async_trait::async_trait]
-impl ConfiguredPromptExecutor for SubscriptionExecutor {
-    async fn execute_configured(
-        &self,
-        prompt: &str,
-        working_dir: &Path,
-        config: &ModelExecutionConfig,
-    ) -> Result<String> {
-        self.execute_prompt(prompt, working_dir, config).await
     }
 }
 

@@ -45,11 +45,13 @@ pub const OSV_ECOSYSTEM: &str = "crates.io";
 
 /// Packages per request.
 ///
-/// OSV documents pagination thresholds for batches (>1,000 vulnerabilities in
-/// one query, >3,000 across a batch) but publishes no maximum query count, so
-/// this is chosen to stay well inside the documented limits rather than to
-/// match a stated one. A 162-package lockfile is one request; a 1,500-package
-/// monorepo is three.
+/// OSV publishes no maximum query count, so this is a self-imposed bound on
+/// request size, nothing more. It is deliberately *not* justified by OSV's
+/// pagination thresholds (>1,000 vulnerabilities in one query, >3,000 across a
+/// batch): those count vulnerabilities, not queries, so no choice of chunk size
+/// controls them. Pagination is handled where it happens, in
+/// `parse_batch_response`. A 162-package lockfile is one request; a
+/// 1,500-package monorepo is three.
 pub const OSV_BATCH_SIZE: usize = 500;
 
 /// Anvil's kill deadline for one batch request.
@@ -93,6 +95,12 @@ struct OsvResult {
     /// Absent entirely for a clean package; OSV sends `{}`, not `{"vulns":[]}`.
     #[serde(default)]
     vulns: Vec<OsvVulnerability>,
+    /// Present when OSV truncated this result and holds the rest behind another
+    /// request. Deserialised so the truncation is visible: serde would
+    /// otherwise ignore the field and the advisory list would be short with no
+    /// signal at all.
+    #[serde(default)]
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -137,7 +145,10 @@ impl OsvAdvisoryStream {
                 })
                 .collect(),
         };
-        serde_json::to_string(&batch).unwrap_or_default()
+        // Not `unwrap_or_default`: that turned a serialisation failure into an
+        // empty POST body and a wrong request. This payload is Strings only and
+        // cannot fail to serialise; if it ever can, the panic names the day.
+        serde_json::to_string(&batch).expect("an OSV batch query of owned Strings serialises")
     }
 
     /// Pairs a batch response back onto the packages it was asked about.
@@ -151,6 +162,24 @@ impl OsvAdvisoryStream {
         let parsed: OsvBatchResponse = serde_json::from_str(body).map_err(|e| {
             format!("the OSV advisory database returned a body this gate could not parse: {e}")
         })?;
+
+        // A paginated result is a partial one, and this gate's whole value is
+        // naming which advisories to fix. Publishing the first page as though
+        // it were the answer is a claim past the evidence, so the audit
+        // abstains instead (invariant I1). This gate does not follow the token:
+        // paging is a second request shape with its own failure modes, and
+        // nothing in this fleet has reached the threshold.
+        if parsed
+            .results
+            .iter()
+            .any(|r| r.next_page_token.as_deref().is_some_and(|t| !t.is_empty()))
+        {
+            return Err(
+                "the OSV advisory database paginated this batch, so the advisory list \
+                 is incomplete and no complete verdict can be published"
+                    .to_string(),
+            );
+        }
 
         if parsed.results.len() != packages.len() {
             return Err(format!(
@@ -176,7 +205,9 @@ impl OsvAdvisoryStream {
     /// Every advisory OSV holds against the locked versions in `packages`.
     ///
     /// Cost, per pull request: `ceil(len / OSV_BATCH_SIZE)` POSTs, each bounded
-    /// at `OSV_BUDGET`. Anvil's own lockfile is one.
+    /// at `OSV_BUDGET`. Anvil's own lockfile is one. The budget is per chunk and
+    /// there is no aggregate deadline, so a 1,500-package lockfile is three
+    /// requests and up to 60s worst case added to a certification.
     pub async fn query_batch(packages: &[LockedPackage]) -> Result<Vec<VulnerablePackage>, String> {
         info!(
             "Querying the OSV advisory database for {} locked packages...",

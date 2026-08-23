@@ -80,8 +80,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "kani_status",
-        "🔬 Kani Formal Verification & Unsafe Proofs",
-        "Mathematical memory safety & SAFETY: invariant proofs",
+        "🔬 Unsafe Block `// SAFETY:` Comment Lint",
+        "Added unsafe blocks carry a `// SAFETY:` comment; no model checker runs",
     ),
     (
         "slo_status",

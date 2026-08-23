@@ -30,8 +30,19 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      checker.",
         reference: "Kani / CBMC; AWS Automated Reasoning Group",
         fidelity: Fidelity::Heuristic,
-        gap: "Checks whether a `SAFETY:` documentation comment appears near `unsafe` \
-              (kani_guard/mod.rs:47-48). No bounded model checker is invoked at any point.",
+        gap: "No bounded model checker is invoked at any point: no Kani, no CBMC, no Miri. What runs \
+              is a comment-presence lint over the diff. It matches an added line whose first non-space \
+              token opens an `unsafe` item and asks whether a `// SAFETY:` comment sits on that line or \
+              the five above it (kani_guard/mod.rs:80-81,102), and publishes the tally as \
+              `unsafe_blocks_with_safety_comment` (kani_guard/mod.rs:46). Presence is the whole \
+              property. Nothing here reads the comment: whether it is true, whether it describes the \
+              block beneath it, and whether the obligations it names are discharged are all outside \
+              what this gate can see. It is a reimplementation of clippy's undocumented-unsafe-blocks \
+              lint, which upstream files under the opt-in restriction group rather than correctness. \
+              The scan is narrower than the sentence it publishes, too: an `unsafe` block opened \
+              mid-line is matched by no pattern here, as is any `unsafe` code this pull request leaves \
+              untouched, so a clean verdict from this gate is not a statement that the change added no \
+              unsafe code.",
         blocked_on: None,
     },
     GateFidelity {

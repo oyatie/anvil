@@ -1094,7 +1094,7 @@ fn test_kani_red_flag_undocumented_unsafe_block() {
         .evaluate_unsafe_invariants(std::path::Path::new("."), &bad_diff)
         .unwrap();
     assert!(
-        !report.is_verified,
+        !report.all_unsafe_blocks_documented,
         "Expected False Green prevention: Undocumented unsafe must FAIL"
     );
 }
@@ -1110,8 +1110,8 @@ fn test_kani_green_safe_rust_or_documented_safety() {
         .evaluate_unsafe_invariants(std::path::Path::new("."), &good_diff)
         .unwrap();
     assert!(
-        report.is_verified,
-        "Expected False Red prevention: Formally documented unsafe must PASS"
+        report.all_unsafe_blocks_documented,
+        "Expected False Red prevention: a documented unsafe block must PASS"
     );
 }
 

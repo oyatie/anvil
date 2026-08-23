@@ -2991,7 +2991,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         attestation: anvil::attestation_guard::AttestationReport {
-            is_attested: true,
+            status: anvil::pre_merge_guard::GateStatus::Passed,
             stamped_receipt_path: None,
             summary: n(),
         },

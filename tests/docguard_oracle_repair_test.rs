@@ -2659,6 +2659,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         debt: anvil::debt_shrink_guard::DebtShrinkReport {
+            status: GateStatus::Passed,
             is_acceptable: true,
             total_debt_shrunk: 0,
             violations: Vec::new(),
@@ -2686,10 +2687,9 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         kani: anvil::kani_guard::KaniGuardReport {
-            is_verified: true,
+            all_unsafe_blocks_documented: true,
             unsafe_blocks_found: 0,
-            safety_proofs_valid: 0,
-            kani_proofs_passed: 0,
+            unsafe_blocks_with_safety_comment: 0,
             violations: Vec::new(),
             summary: n(),
         },
@@ -2740,6 +2740,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         ghost_migration: anvil::ghost_migration_harness::GhostMigrationReport {
+            status: GateStatus::Passed,
             is_safe: true,
             migrations_evaluated: 0,
             violations: Vec::new(),
@@ -2751,6 +2752,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         gitops_drift: anvil::gitops_drift_reconciler::GitOpsDriftReport {
+            status: GateStatus::Passed,
             is_safe: true,
             orphan_findings: Vec::new(),
             summary: n(),
@@ -2768,6 +2770,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         migration_orch: anvil::migration_orchestrator::MigrationLifecycleReport {
+            status: GateStatus::Passed,
             is_ordered: true,
             findings: Vec::new(),
             summary: n(),
@@ -2839,6 +2842,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         semantic_abi: anvil::semantic_abi_ratchet::SemanticAbiReport {
+            status: GateStatus::Passed,
             is_abi_stable: true,
             breaking_findings: Vec::new(),
             summary: n(),
@@ -2880,16 +2884,8 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             passed: true,
             statements: Vec::new(),
         },
-        cosign: anvil::cosign_signer::CosignReport {
-            passed: true,
-            bundle: anvil::cosign_signer::CosignSignatureBundle {
-                artifact_digest: "sha256:0".to_string(),
-                oidc_issuer: n(),
-                certificate_chain: Vec::new(),
-                rekor_entry_uuid: "0".to_string(),
-                is_valid: true,
-            },
-        },
+        cosign: anvil::cosign_signer::CosignProvenanceSigner::new()
+            .evaluate_without_signing_backend(),
         chaos_inj: anvil::chaos_injector::ChaosInjectorReport {
             passed: true,
             trials: Vec::new(),

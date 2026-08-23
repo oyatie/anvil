@@ -282,7 +282,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: None,
     },
     GateFidelity {
-        gate_id: "zero_trust_workload_status",
+        gate_id: "cleartext_transport_status",
         aspiration: "Verify workload identity via SPIFFE/SPIRE issued mTLS certificates.",
         reference: "SPIFFE/SPIRE; Istio PeerAuthentication STRICT. For the lint this actually is: \
                     CWE-319, gosec G107, semgrep insecure-transport",
@@ -295,15 +295,17 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               PERMISSIVE mode with no workload identity at all. What runs is a CWE-319 \
               cleartext-transport lint over added lines. It was the substring \"http://\", which \
               failed a merge for a licence URL in a doc comment; it now drops the comment tail in \
-              code_before_comment (identity_auditor.rs:109), skips prose and fixture paths in \
+              code_before_comment (identity_auditor.rs:118), skips prose and fixture paths in \
               path_is_out_of_scope (identity_auditor.rs:98), and requires the authority after the \
               scheme to open with is_ascii_alphanumeric and not be one of the LOOPBACK_HOSTS \
-              (identity_auditor.rs:147-148). Unlike the lints of that class it names, it is not \
+              (identity_auditor.rs:159-160). Unlike the lints of that class it names, it is not \
               sink-anchored: there is no parser here, so it cannot tell a URL that reaches an HTTP \
               client from one that does not, and a URL assembled across lines or read from \
-              configuration this diff does not touch is invisible to it. The scorecard name and \
-              the published summary no longer claim otherwise; the gate id is unchanged, so the \
-              id alone still reads as a stronger claim than the check supports.",
+              configuration this diff does not touch is invisible to it. Comment stripping is \
+              positional rather than lexical, so a `#` or a `//` inside a string that is not a URL \
+              still truncates the line. The scorecard name, the published summary and the gate id \
+              were all renamed to the lint this is, so nothing published still claims SPIFFE or \
+              mTLS.",
         blocked_on: Some("a SPIFFE/SPIRE control plane"),
     },
     GateFidelity {
@@ -624,12 +626,12 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               min_entropy: 0.0 and no filtering (scanner.rs:63). Two had no anchor and were the \
               two that produced this gate's false merge blocks; each now captures the candidate \
               rather than the line and filters it -- `sk-[A-Za-z0-9]{24,}` at min_entropy: 3.5 \
-              (scanner.rs:97,99) and a quoted value of eight or more characters after the word \
-              password at min_entropy: 3.0 (scanner.rs:118,120). shannon_entropy is a real \
-              logarithm (scanner.rs:136) and the file had none before, but it is the last filter \
+              (scanner.rs:102,104) and a quoted value of eight or more characters after the word \
+              password at min_entropy: 3.0 (scanner.rs:123,125). shannon_entropy is a real \
+              logarithm (scanner.rs:141) and the file had none before, but it is the last filter \
               and not the decision: is_credential_shaped rejects a candidate made only of \
               is_ascii_alphabetic characters and identifier punctuation before entropy is ever \
-              consulted (scanner.rs:161,170), because entropy alone cannot reject a \
+              consulted (scanner.rs:166,175), because entropy alone cannot reject a \
               kebab-case identifier. The reference config additionally anchors its own key rule on \
               the literal marker T3BlbkFJ that every issued key of that vendor embeds; this rule \
               does not, so a long enough base62 run behind the prefix is a finding whoever issued \

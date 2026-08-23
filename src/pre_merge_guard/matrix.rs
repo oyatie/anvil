@@ -319,7 +319,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
         "Isolated quarantine lane & autonomous 100x stress rehabilitation",
     ),
     (
-        "zero_trust_workload_status",
+        "cleartext_transport_status",
         "🔓 Cleartext Transport Lint (CWE-319)",
         "Added lines free of plaintext endpoints; no SPIFFE or mTLS is observed",
     ),

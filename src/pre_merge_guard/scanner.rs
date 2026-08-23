@@ -87,6 +87,11 @@ const SECRET_RULES: &[SecretRule] = &[
     //     characters. `task-scheduler-...` offers `scheduler`, nine.
     //  3. the prefixed branch requires one of OpenAI's three literal segment
     //     keywords before the hyphen-bearing body.
+    //  4. the candidate must open at a non-word boundary. Without it a word
+    //     ending in `sk` followed by a hex or base62 run -- a content-hashed
+    //     asset path, a digest-suffixed cache key -- clears every filter:
+    //     high entropy, not purely alphabetic, no stopword. gitleaks anchors
+    //     the same way for the same reason.
     //
     // gitleaks additionally anchors on `T3BlbkFJ`, the base64 of `OpenAI`
     // embedded in every issued key. That is strictly better and is what the
@@ -94,7 +99,7 @@ const SECRET_RULES: &[SecretRule] = &[
     // this rule is the fleet's only `sk-` rule and other vendors issue `sk-`
     // keys without that marker.
     SecretRule {
-        pattern: r"(sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{24,})",
+        pattern: r"(?:^|[^A-Za-z0-9_])(sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{24,})",
         desc: "API Secret Key",
         min_entropy: 3.5,
     },

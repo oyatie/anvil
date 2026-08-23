@@ -17,7 +17,8 @@
 //!     `password: "<redacted>"`, on `${DB_PASSWORD}`, and on commented-out
 //!     placeholders.
 //!
-//! `zero_trust_workload_status` was published as cryptographic SPIFFE ID
+//! `cleartext_transport_status` -- then named `zero_trust_workload_status` --
+//! was published as cryptographic SPIFFE ID
 //! workload attestation and mTLS encryption, and decided on a case-folded
 //! substring test for the plaintext scheme, excluding loopback. Any added line carrying a non-loopback `http://` -- a
 //! licence URL in a doc comment, a link in a markdown file, a `format!` template
@@ -142,6 +143,23 @@ fn no_english_word_ending_in_sk_makes_the_rest_of_an_identifier_a_credential() {
     ] {
         assert_eq!(secret_finding(line), None, "false positive on: {line}");
     }
+
+    // A kebab-case tail is only half the class. A word ending in `sk` followed
+    // by a *digest* -- a content-hashed asset path, a digest-suffixed cache key
+    // -- clears every false-positive filter the rule has: high entropy, not
+    // purely alphabetic, no stopword. Only requiring the candidate to open at a
+    // non-word boundary rejects these, which is why the fixtures live in the
+    // test named for not special-casing the one reported string.
+    for line in [
+        format!(
+            "  <script src=\"/assets/di{}k-{}.js\"></script>",
+            "s",
+            base62(26)
+        ),
+        format!("  let cache_key = \"ta{}k-{}\";", "s", base62(32)),
+    ] {
+        assert_eq!(secret_finding(&line), None, "false positive on: {line}");
+    }
 }
 
 /// Catches: the redaction placeholder that the password rule fired on. A
@@ -186,7 +204,8 @@ fn each_false_positive_filter_carries_a_case_only_it_rejects() {
         ("stopword", "  password = \"changeme7413926\""),
         // Entropy floor. No stopword, no template syntax, not purely alphabetic.
         ("entropy floor", "  password = \"aaaa1111\""),
-        // Alphabetic allowlist. Entropy 4.7, no stopword, no template syntax.
+        // Alphabetic allowlist. Entropy 4.087 over 17 distinct characters, no
+        // stopword, no template syntax.
         ("alphabetic allowlist", "  password = \"jklmnopqrstuvwxyz\""),
     ] {
         assert_eq!(
@@ -357,6 +376,36 @@ fn a_documentation_url_in_a_comment_is_not_an_insecure_transport() {
     }
 }
 
+/// Catches: a comment stripper that treats `#` as a comment opener anywhere on
+/// the line, and a leading `*` as a block-comment continuation regardless of
+/// what follows it. A raw string is the ordinary way to write a URL in Rust,
+/// `#` also opens a URL fragment, and `*x = ...` is a dereference -- so both
+/// over-broad rules were one-character bypasses of the whole lint.
+#[test]
+fn a_raw_string_or_a_dereference_does_not_hide_a_cleartext_endpoint() {
+    let scheme = format!("ht{}://", "tp");
+    let h = "#";
+    for line in [
+        format!("    let url = r{h}\"{scheme}billing.internal:8080/charge\"{h};"),
+        format!("    *endpoint = \"{scheme}billing.internal:8080\".into();"),
+        format!("    let doc = \"{scheme}billing.internal/guide{h}intro\";"),
+    ] {
+        let diff = format!("+++ b/src/thing.rs\n{}", added(&line));
+        assert_eq!(cleartext_findings(&diff), 1, "hidden from the lint: {line}");
+    }
+}
+
+/// Catches: an opt-in check that stops at the identifier's first occurrence. A
+/// line that names the call before making it cleared the check on the mention.
+#[test]
+fn an_opt_in_named_before_it_is_called_still_fires() {
+    let diff = format!(
+        "+++ b/src/thing.rs\n{}",
+        added("    let f = allow_insecure; f(true); builder.allow_insecure(true);")
+    );
+    assert_eq!(cleartext_findings(&diff), 1);
+}
+
 /// Catches: scanning prose files. A markdown link is a link, and no comment
 /// marker precedes it.
 #[test]
@@ -467,12 +516,33 @@ fn a_diff_with_no_file_header_is_still_scanned() {
 // 4. The evidence that decides whether either gate is shippable
 // ---------------------------------------------------------------------------
 
+/// The last `n` commits as `(sha, diff)`, or a panic.
+///
+/// It fails closed on a checkout that cannot supply the corpus, because the
+/// alternative is silently measuring a different one and reporting it under
+/// this name. `actions/checkout` clones at depth 1 by default; in such a clone
+/// `git log -20` returns the single grafted commit, and `git show` on a graft
+/// emits the entire tree as one all-additions diff -- 90k lines, which is both
+/// a different corpus and eight minutes of scanning. `.github/workflows/ci.yml`
+/// therefore sets `fetch-depth: 0` on the job that runs this test.
 fn recent_commit_diffs(n: usize) -> Vec<(String, String)> {
+    let shallow = Command::new("git")
+        .args(["rev-parse", "--is-shallow-repository"])
+        .output()
+        .expect("git rev-parse runs inside the repository");
+    assert_eq!(
+        String::from_utf8_lossy(&shallow.stdout).trim(),
+        "false",
+        "shallow checkout: this repository's history is not present, so this \
+         corpus cannot be measured. Set `fetch-depth: 0` on the checkout step \
+         in .github/workflows/ci.yml."
+    );
+
     let log = Command::new("git")
         .args(["log", &format!("-{n}"), "--format=%H"])
         .output()
         .expect("git log runs inside the repository");
-    String::from_utf8_lossy(&log.stdout)
+    let diffs: Vec<(String, String)> = String::from_utf8_lossy(&log.stdout)
         .lines()
         .map(|sha| {
             let show = Command::new("git")
@@ -484,7 +554,15 @@ fn recent_commit_diffs(n: usize) -> Vec<(String, String)> {
                 String::from_utf8_lossy(&show.stdout).to_string(),
             )
         })
-        .collect()
+        .collect();
+    assert_eq!(
+        diffs.len(),
+        n,
+        "asked for {n} commits and got {}: the corpus this test names is not \
+         the corpus it measured",
+        diffs.len()
+    );
+    diffs
 }
 
 /// Catches: the failure mode that kills honest checks. A gate that blocks on
@@ -500,13 +578,27 @@ fn neither_gate_fires_on_this_repositorys_own_history() {
     let mut findings: Vec<String> = Vec::new();
 
     for (sha, diff) in recent_commit_diffs(20) {
-        if let GateStatus::Failed(m) = PreMergeScanner::scan_for_secrets(&diff) {
+        if let GateStatus::Failed(whole) = PreMergeScanner::scan_for_secrets(&diff) {
             // Re-scan line by line only once something has already fired, so
             // the common case costs one regex compilation per rule per commit.
+            // The message reported is the *line's* own rule: interpolating the
+            // whole-diff message here labelled every finding with whichever
+            // rule happened to fire first across the commit.
+            let before = findings.len();
             for line in diff.lines() {
-                if PreMergeScanner::scan_for_secrets(&format!("{line}\n")) != GateStatus::Passed {
-                    findings.push(format!("{} secret: {m} :: {line}", &sha[..8]));
+                if let GateStatus::Failed(per_line) =
+                    PreMergeScanner::scan_for_secrets(&format!("{line}\n"))
+                {
+                    findings.push(format!("{} secret: {per_line} :: {line}", &sha[..8]));
                 }
+            }
+            // A whole-diff finding that no single line reproduces is still a
+            // finding. Reporting nothing here would make the commit invisible.
+            if findings.len() == before {
+                findings.push(format!(
+                    "{} secret: {whole} :: (whole diff; no single line reproduces it)",
+                    &sha[..8]
+                ));
             }
         }
         for v in gate.evaluate_cleartext_transport(&diff).violations {

@@ -491,9 +491,9 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         confidence: Confidence::Probable,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "120 lines. LockOrderKeywordScanner scanning for lock-order inversions. grep -rilE \
-                  'deadlock|lock order|lock_order' matched only incidental prose in ci/facade and os/core; \
-                  no static lock-order analysis in oyatie.",
+        evidence: "LockOrderGraph: a lock-order graph over diff text, cycles reported via reachability. \
+                  grep -rilE 'deadlock|lock order|lock_order' matched only incidental prose in ci/facade \
+                  and os/core; no static lock-order analysis in oyatie.",
     },
     MigrationEntry {
         component: "debt_shrink_guard.rs",

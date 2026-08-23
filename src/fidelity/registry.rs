@@ -174,12 +174,29 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
     GateFidelity {
         gate_id: "deadlock_status",
         aspiration: "Build an inter-procedural lock-acquisition graph and detect cycles.",
-        reference: "Tarjan strongly connected components; Meta Infer",
-        fidelity: Fidelity::Aspirational,
-        gap: "Matches four literal identifiers -- session_lock, user_mutex, global_state, cluster_mutex -- \
-              which occur ZERO times in this repository outside the analyzer's own test fixture. It cannot \
-              fire on any real code (deadlock_analyzer/lock_graph.rs:27-36).",
-        blocked_on: Some("the Phase G L1 code graph, for real call edges"),
+        reference: "Tarjan strongly connected components; Meta Infer Starvation; lockbud",
+        fidelity: Fidelity::Heuristic,
+        gap: "A graph is built and its cycles are reported, but the nodes are receiver expressions \
+              spelled as the source spells them, not lock instances: no type is resolved and nothing is \
+              aliased, so two spellings of one lock are two nodes and one spelling of two locks is one \
+              node. An acquisition is any zero-argument `.lock()`, `.read()` or `.write()` matched by \
+              name (lock_graph.rs:75), and a guard counts as held only where a plain `let` binds it, \
+              with its scope approximated by brace depth (`guard_binding`, lock_graph.rs:334) and \
+              ended early by an explicit `dropped_bindings` (lock_graph.rs:263) -- without that, the \
+              idiomatic release-then-reacquire read as a self-deadlock. Braces are counted after \
+              string and character literals are blanked (`without_literals`, lock_graph.rs:211), \
+              because an unbalanced brace inside a literal corrupted the depth and could leak a \
+              guard into the next function. Edges come from the text of the diff alone \
+              (`acquisition_edges`, lock_graph.rs:113), so an inversion split across a call this \
+              change does not touch is invisible -- that is the missing call graph, not a tuning \
+              problem. Only cycles are reported (`find_lock_order_cycles`, lock_graph.rs:100), never \
+              nestings, because holding two locks at once is how correct code works. What is \
+              reported is a strongly connected component and the field carrying it is named `locks`, \
+              not a sequence: no witness path through the cycle is reconstructed.",
+        blocked_on: Some(
+            "MIR-level guard liveness and points-to analysis, for lock identity across \
+                          aliases and call edges",
+        ),
     },
     GateFidelity {
         gate_id: "semantic_abi_status",

@@ -462,11 +462,19 @@ impl PreMergeGuard {
         };
 
         // 42. Lock Graph & Deadlock Prevention
+        // The message carries the cycle the scanner actually found. A fixed
+        // sentence would name locks it never looked at, and an author cannot
+        // act on an accusation that does not say which locks it is about.
         let deadlock_status = if deadlock_report.passed {
             GateStatus::Passed
         } else {
             GateStatus::Failed(
-                "Lock graph analyzer detected circular lock order inversion.".to_string(),
+                deadlock_report
+                    .findings
+                    .iter()
+                    .map(|f| f.description.clone())
+                    .collect::<Vec<_>>()
+                    .join(" "),
             )
         };
 

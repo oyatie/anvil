@@ -53,6 +53,8 @@ const EXEMPTIONS: &[(&str, &[&str])] = &[
         "src/change_delivery/facade/deliver.rs",
         &[".anvil/landing.json", ".anvil-lanes"],
     ),
+    // Anvil's own crate hubs, not a tenant layout.
+    ("src/change_delivery/core/occupancy.rs", &["Cargo.toml"]),
 ];
 
 fn repo_root() -> PathBuf {

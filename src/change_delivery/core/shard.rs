@@ -6,6 +6,13 @@ use super::model::{Move, MoveKind, ShapeMovePlan, Shard};
 use super::naming::shard_key;
 use super::owners::OwnerMap;
 use super::policy::LandingPolicy;
+
+#[path = "occupancy.rs"]
+pub mod occupancy;
+pub use occupancy::{
+    SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, is_open_test_crate, occupy_move,
+    path_sets_disjoint,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Paths the rewrite is predicted to touch besides the moved ones: the

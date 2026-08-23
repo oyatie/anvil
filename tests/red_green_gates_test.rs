@@ -853,33 +853,51 @@ fn test_auto_rollback_green_healthy_canary_passes() {
 async fn test_git_hook_provisioning_and_permissions() {
     let temp_dir = tempfile::tempdir().unwrap();
     let repo_path = temp_dir.path();
+    let init = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "git init: {init:?}");
 
     anvil::git_manager::GitManager::install_repo_hooks(repo_path)
         .await
         .unwrap();
 
-    let pre_commit = repo_path.join(".git").join("hooks").join("pre-commit");
-    let commit_msg = repo_path.join(".git").join("hooks").join("commit-msg");
-    let pre_push = repo_path.join(".git").join("hooks").join("pre-push");
-    let post_merge = repo_path.join(".git").join("hooks").join("post-merge");
+    let common = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(repo_path)
+        .args(["rev-parse", "--git-common-dir"])
+        .output()
+        .unwrap();
+    let common = String::from_utf8_lossy(&common.stdout).trim().to_string();
+    let hooks = if std::path::Path::new(&common).is_absolute() {
+        std::path::PathBuf::from(&common).join("hooks")
+    } else {
+        repo_path.join(&common).join("hooks")
+    };
+
+    let pre_commit = hooks.join("pre-commit");
+    let commit_msg = hooks.join("commit-msg");
+    let pre_push = hooks.join("pre-push");
 
     assert!(pre_commit.exists(), "pre-commit hook must be created");
     assert!(commit_msg.exists(), "commit-msg hook must be created");
     assert!(pre_push.exists(), "pre-push hook must be created");
-    assert!(post_merge.exists(), "post-merge hook must be created");
+    assert!(
+        !hooks.join("post-merge").exists(),
+        "post-merge is not a native hook; rustfmt-on-file-list is pre-commit/pre-push"
+    );
 
     let pre_commit_content = tokio::fs::read_to_string(&pre_commit).await.unwrap();
-    assert!(pre_commit_content.contains("cargo fmt"));
-    assert!(pre_commit_content.contains("cargo clippy"));
+    assert!(pre_commit_content.contains("rustfmt --check"));
+    assert!(!pre_commit_content.contains("cargo fmt"));
 
     let commit_msg_content = tokio::fs::read_to_string(&commit_msg).await.unwrap();
-    assert!(commit_msg_content.contains("CONVENTIONAL_REGEX"));
+    assert!(commit_msg_content.contains("type(scope): summary"));
 
     let pre_push_content = tokio::fs::read_to_string(&pre_push).await.unwrap();
-    assert!(pre_push_content.contains("red_green_gates_test"));
-
-    let post_merge_content = tokio::fs::read_to_string(&post_merge).await.unwrap();
-    assert!(post_merge_content.contains("Cargo.lock"));
+    assert!(pre_push_content.contains("rustfmt --check"));
 }
 
 // =========================================================================

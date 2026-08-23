@@ -441,15 +441,11 @@ pub async fn certify_pull_request(
         // exit aborts the review instead of letting the pipeline certify a PR whose
         // auto-synced governance files were never actually committed.
         //
-        // The pathspec is shared with `QueueHealer::heal_add_args`. This site
-        // swept the whole tree, so the lane receipt written into `repo_dir`
-        // sixteen lines above was staged and committed onto the pull request --
-        // the exact loop the comment above forbids. The healer had the
-        // exclusion; this site did not, because each spelled its own arguments.
-        let mut add_cmd = Command::new("git");
-        add_cmd
-            .current_dir(repo_dir)
-            .args(crate::attestation_guard::git_add_args_excluding_receipts());
+        // The staging command is shared with every other site that stages a
+        // clone. This one swept the whole tree, so the lane receipt written
+        // into `repo_dir` just above was staged and committed onto the pull
+        // request -- the exact loop the comment above forbids.
+        let add_cmd = crate::git_manager::stage_excluding_receipts(repo_dir);
         let add_out = crate::exec::run_bounded(
             add_cmd,
             crate::exec::ExecClass::Quick,

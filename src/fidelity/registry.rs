@@ -673,9 +673,12 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               of oasdiff's 219 checks -- `api-path-removed`, read off removed path keys rather than \
               off two documents (compatibility_checker.rs:205-224). A narrowed response type, a newly \
               required request property, a removed operation under a surviving path, and any schema \
-              change outside a diff hunk are all invisible to it. No tracked file in this repository \
-              is a protobuf definition, so its ordinary verdict here is `NO_SCHEMA_IN_SCOPE` rather \
-              than a pass.",
+              change outside a diff hunk are all invisible to it. A deleted enum value it does \
+              report, which is the right verdict under buf's enum-deletion rule and the wrong noun: \
+              it is published as a field. No tracked file in this repository is a protobuf \
+              definition, so `NO_SCHEMA_IN_SCOPE` rather than a pass is its ordinary verdict on a \
+              Rust change; the one OpenAPI description here does put it in scope, and reverting the \
+              commit that published this repository's health endpoint is caught.",
         blocked_on: Some(
             "a descriptor set or registry baseline; one diff is not a published schema",
         ),

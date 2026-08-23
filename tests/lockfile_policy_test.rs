@@ -87,7 +87,7 @@ fn ci_and_hooks_build_with_locked_dependencies() {
     let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
     // Cheap local: pre-push `cargo check --locked`.
     // Pre-merge: clippy + nextest, both --locked.
-    // Post-submit: `cargo build --release --locked` (the start.sh artifact).
+    // Post-submit: `cargo build --release --locked` (release-profile compile check).
     for step in ["cargo clippy", "cargo nextest run", "cargo build --release"] {
         let line = ci
             .lines()
@@ -98,9 +98,22 @@ fn ci_and_hooks_build_with_locked_dependencies() {
             "`{step}` in ci.yml must pass --locked: {line}"
         );
     }
+    // Parsed, not substring-matched: `ci.contains("if: github.event_name ==
+    // 'push'")` passes with that string in a comment or on any other job. The
+    // property is that the *release* job is the gated one.
+    let workflow: serde_yaml::Value = serde_yaml::from_str(&ci).expect("ci.yml must be valid YAML");
+    let release = &workflow["jobs"]["release"];
     assert!(
-        ci.contains("if: github.event_name == 'push'"),
-        "release build must be post-submit (push to trunk), not a PR merge gate"
+        !release.is_null(),
+        "ci.yml must define a `release` job; found jobs: {:?}",
+        workflow["jobs"]
+            .as_mapping()
+            .map(|m| m.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        release["if"].as_str(),
+        Some("github.event_name == 'push'"),
+        "the release job must be post-submit (push to trunk), not a PR merge gate"
     );
     let pre_push = fs::read_to_string(repo_root().join(".githooks/pre-push")).expect("pre-push");
     assert!(

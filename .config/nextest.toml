@@ -1,6 +1,4 @@
 # CI profile is the SSOT for hosted nextest (fail-slow, no flake retries).
-[profile.default]
-
 [profile.ci]
 fail-fast = false
 retries = 0

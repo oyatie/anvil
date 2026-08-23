@@ -185,9 +185,17 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      breaking changes.",
         reference: "cargo-semver-checks over rustdoc JSON",
         fidelity: Fidelity::Heuristic,
-        gap: "Whole-diff predicate: contains(\"-pub fn \") && !contains(\"+pub fn \"). Removing a public \
-              function goes undetected if the same PR adds any other one, and a signature change emits both \
-              lines so it can never be detected (semantic_abi_ratchet/signature_scanner.rs:33).",
+        gap: "Compares the `pub fn` declarations a diff removes against the ones it adds, by name over the \
+              whole diff rather than by two substring tests on it. A removal is reported only when the name \
+              is added nowhere in the diff -- `added.get(name)` (signature_scanner.rs:148) -- and a \
+              signature only when the name occurs once on each side and both lines close their parameter \
+              list, so a move and a rustfmt reflow both clear it while `unpaired_names` counts the pairs it \
+              declined to compare (signature_scanner.rs:161-162). It builds no rustdoc JSON, resolves no \
+              module path and reads no baseline revision, so a function moved between modules reads as \
+              clean and a major version bump is not read. The memory-layout half of the old claim is \
+              withdrawn: nothing computes a layout, and a diff whose `#[repr(` attribute changed is \
+              reported `NotMeasured` rather than passed -- `layout_files` \
+              (semantic_abi_ratchet/mod.rs:104,115).",
         blocked_on: None,
     },
     GateFidelity {

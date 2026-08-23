@@ -341,7 +341,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "mutation_status",
         "💥 Mutation Adequacy of the Changed Lines",
-        "cargo-mutants runs the suite against each mutant on the changed lines",
+        "Runs cargo-mutants over the changed lines; blocks on a mutant the suite fails to kill",
     ),
     (
         "feature_flag_status",

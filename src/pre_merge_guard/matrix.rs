@@ -225,8 +225,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "deadlock_status",
-        "🔒 Lock Order Keyword Scan",
-        "Scans for a fixed set of known lock-name inversions; not a graph analysis",
+        "🔒 Lock Order Cycle Scan",
+        "Cycles in a lock-order graph keyed on receiver text; no types, no call edges",
     ),
     (
         "review_verdict_status",

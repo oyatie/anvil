@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod lock_graph;
-pub use lock_graph::{LockOrderFinding, LockOrderKeywordScanner};
+pub use lock_graph::{LockOrderFinding, LockOrderGraph};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadlockReport {
@@ -11,13 +11,13 @@ pub struct DeadlockReport {
 
 #[derive(Debug, Clone, Default)]
 pub struct DeadlockStaticAnalyzer {
-    analyzer: LockOrderKeywordScanner,
+    analyzer: LockOrderGraph,
 }
 
 impl DeadlockStaticAnalyzer {
     pub fn new() -> Self {
         Self {
-            analyzer: LockOrderKeywordScanner::new(),
+            analyzer: LockOrderGraph::new(),
         }
     }
 
@@ -28,7 +28,7 @@ impl DeadlockStaticAnalyzer {
     ) -> DeadlockReport {
         let findings = self
             .analyzer
-            .scan_known_lock_order_pairs(file_path, diff_content);
+            .find_lock_order_cycles(file_path, diff_content);
         DeadlockReport {
             passed: findings.is_empty(),
             findings,

@@ -255,6 +255,17 @@ mod tests {
             field_declaration(r#"let f = "migration.sql".to_string();"#),
             None
         );
+        // Nothing to the left of the `=`, so there is no field name to report.
+        assert_eq!(field_declaration("  = 3;"), None);
+    }
+
+    #[test]
+    fn a_blank_or_header_line_carries_no_schema_content() {
+        assert_eq!(schema_line("-", '-'), None);
+        assert_eq!(schema_line("--- a/proto/order.proto", '-'), None);
+        assert_eq!(schema_line("+++ b/proto/order.proto", '+'), None);
+        assert_eq!(schema_line("   string x = 1;", '-'), None);
+        assert_eq!(schema_line("-  string x = 1;", '-'), Some("string x = 1;"));
     }
 
     #[test]
@@ -272,6 +283,13 @@ mod tests {
             Some((vec![], vec!["customer_id".to_string()]))
         );
         assert_eq!(reserved_tokens("string x = 1;"), None);
+
+        // `reserved 1 to max;` spans half a billion numbers. Materialising the
+        // range would allocate 2GB from one line of someone else's diff, so it
+        // is capped -- a deletion above the cap reports as unreserved, which is
+        // the safe direction for a gate that blocks.
+        let (numbers, _) = reserved_tokens("reserved 1 to 536870911;").expect("a reserved range");
+        assert_eq!(numbers.len(), 513);
     }
 
     #[test]

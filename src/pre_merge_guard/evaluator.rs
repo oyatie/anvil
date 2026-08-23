@@ -438,12 +438,12 @@ impl PreMergeGuard {
             GateStatus::Failed(local_probe_report.summary.clone())
         };
 
-        // 39. Semantic ABI & Interface Stability
-        let semantic_abi_status = if semantic_abi_report.is_abi_stable {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(semantic_abi_report.summary.clone())
-        };
+        // 39. Public Function Signature Stability
+        // Published unchanged: the ratchet distinguishes "compared and clean"
+        // from "the change touches a layout this gate cannot compute", and a
+        // status rebuilt from `is_abi_stable` here would collapse the second
+        // into a pass.
+        let semantic_abi_status = semantic_abi_report.status.clone();
 
         // 40. Zero-Day Vulnerability Auto-Patcher
         let zero_day_status = if zero_day_report.is_clean {

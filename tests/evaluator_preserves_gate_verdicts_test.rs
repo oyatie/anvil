@@ -30,22 +30,78 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "ci_wallclock_report",
     "remote_cache_report",
     "shadow_traffic_report",
+    "cosign_report",
 ];
 
+/// The gate id a report's verdict is published under: `cosign_report` ->
+/// `cosign_status` for all but one, where the report and the gate are not
+/// named the same thing. The exception is listed, not derived: a gate whose id
+/// diverges and is *not* listed here makes both checks below look for a line
+/// that cannot exist, which is red, not silence.
+fn gate_id_of(report: &str) -> String {
+    match report {
+        "debt_report" => "debt_shrink_status".to_string(),
+        _ => report.replace("_report", "_status"),
+    }
+}
+
+/// The two ways an evaluator may obtain a gate's verdict, neither of which
+/// authors one: `status.clone()` copies the field the guard set, and
+/// `gate_status()` calls a method the guard's own crate implements. A gate that
+/// must tell three outcomes apart -- measured-pass, measured-failure, and
+/// nothing measured -- has no single `status` field to clone, so it publishes
+/// the method instead; the decision is the gate's either way. Anything else, a
+/// boolean widened by an `if` or a `match` written in the wiring, is the
+/// evaluator deciding, which is what this file exists to forbid.
+fn reads_the_gates_verdict(src: &str, report: &str) -> bool {
+    let id = gate_id_of(report);
+    src.contains(&format!("let {id} = {report}.status.clone();"))
+        || src.contains(&format!("let {id} = {report}.gate_status();"))
+}
+
+/// Catches: every rebuild shape, not the two that happened to be written first.
+///
+/// This was a *negative* check for `= if {report}.is_`, and a verdict rebuilt as
+/// `= if cosign_report.status.is_acceptable()` walks straight through that -- a
+/// hole demonstrated by exploitation, with all six gates exposed and only the
+/// gate whose author noticed protected by a bespoke assertion. Requiring one of
+/// the two lines that are correct closes it for every shape at once: any
+/// rebuild, from a boolean or from the status itself, leaves both absent.
 #[test]
 fn gates_that_own_a_verdict_have_it_read_not_rebuilt() {
     let src = evaluator_source();
-    let rebuilt: Vec<&str> = GATES_OWNING_A_VERDICT
+    let missing: Vec<&&str> = GATES_OWNING_A_VERDICT
         .iter()
-        .copied()
-        .filter(|g| src.contains(&format!("= if {}.is_", g)))
+        .filter(|g| !reads_the_gates_verdict(&src, g))
         .collect();
 
     assert!(
-        rebuilt.is_empty(),
-        "these reports carry their own GateStatus but the evaluator rebuilds it \
-         from a boolean, discarding NotMeasured: {:?}. Use `report.status.clone()`.",
-        rebuilt
+        missing.is_empty(),
+        "these gates own their GateStatus and the evaluator must carry it \
+         through verbatim; neither `let <id> = <report>.status.clone();` nor \
+         `let <id> = <report>.gate_status();` is in evaluator.rs, so the \
+         verdict is being rebuilt from something else and NotMeasured is \
+         discarded: {missing:?}"
+    );
+}
+
+/// Catches: the other end of the same wire. An evaluator that mints a gate's
+/// `NotMeasured` itself publishes absence for ever, including after the guard
+/// starts producing a real verdict. Absence is the guard's finding, not the
+/// wiring's opinion.
+#[test]
+fn the_evaluator_mints_no_verdict_for_a_gate_that_owns_one() {
+    let src = evaluator_source();
+    let minted: Vec<String> = GATES_OWNING_A_VERDICT
+        .iter()
+        .map(|g| format!("gate_id: \"{}\"", gate_id_of(g)))
+        .filter(|needle| src.contains(needle))
+        .collect();
+
+    assert!(
+        minted.is_empty(),
+        "the evaluator mints a status for a gate whose guard owns one, so a \
+         real measurement can never reach the report: {minted:?}"
     );
 }
 

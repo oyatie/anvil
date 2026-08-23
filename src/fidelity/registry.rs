@@ -162,15 +162,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: None,
     },
     GateFidelity {
-        gate_id: "cosign_status",
-        aspiration: "Sign artefacts through Fulcio OIDC and record inclusion in the Rekor transparency log.",
-        reference: "Sigstore; SLSA provenance levels",
-        fidelity: Fidelity::Aspirational,
-        gap: "Emits the literal string \"-----BEGIN CERTIFICATE-----\\nMIIC...\" as a certificate chain and \
-              formats a fake Rekor uuid from the digest prefix (cosign_signer/sigstore_attestor.rs:26).",
-        blocked_on: None,
-    },
-    GateFidelity {
         gate_id: "formal_verification_status",
         aspiration: "Encode authorization policy into SMT and prove non-escalation with a solver.",
         reference: "AWS Zelkova; Z3",
@@ -463,6 +454,25 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               none; the verdict is now `let is_optimized = skipped > 0;` \
               (predictive_test_selector/mod.rs:84).",
         blocked_on: Some("a timed test run to measure the wall-clock budget against"),
+    },
+    GateFidelity {
+        gate_id: "cosign_status",
+        aspiration: "Sign the artefact through the Fulcio OIDC keyless flow, record it in the Rekor \
+                     transparency log, and verify the certificate identity and the inclusion proof \
+                     before publishing provenance.",
+        reference: "Sigstore keyless signing (Fulcio, Rekor); SLSA provenance levels; in-toto attestations",
+        fidelity: Fidelity::Aspirational,
+        gap: "Signs nothing: no OIDC identity token is requested, no Fulcio certificate is issued, no \
+              signature is computed and no transparency-log inclusion proof is fetched -- the crate \
+              carries no signing key and no X.509 or ECDSA dependency to do any of it with. The \
+              fabricated bundle it used to publish, an elided PEM certificate literal and a log id \
+              derived from the artefact digest prefix, is deleted along with the attestor that built \
+              it; `evaluate_without_signing_backend` publishing `MISSING_SIGNING_BACKEND` is now the \
+              only path (cosign_signer/mod.rs:63,82-87).",
+        blocked_on: Some(
+            "a Sigstore signing backend -- an OIDC identity source, Fulcio and Rekor; none is reachable \
+             from here",
+        ),
     },
 ];
 

@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use regex::Regex;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
@@ -10,6 +10,7 @@ pub mod bisector;
 pub use bisector::{BisectionResult, MergeTrainBisector};
 
 use crate::attestation_guard::ANVIL_RECEIPTS_DIR;
+use crate::exec::ExecClass;
 use crate::git_manager::GitManager;
 use crate::github::{GitHubClient, PrMetadata};
 use crate::merge_enlister::MergeEnlister;
@@ -36,7 +37,7 @@ const ANVIL_OWNED_PATHS: &[&str] = &[ANVIL_RECEIPTS_DIR, ".cursor/receipts"];
 ///
 /// `Errored` is not a failure. A gate that never completed -- `cargo` or `npm`
 /// missing from the daemon's PATH, the `ExecClass::Build` deadline expiring on
-/// a cold check in a fresh worktree, the worktree GC reaping the tree mid-build
+/// a cold build in a fresh worktree, the worktree GC reaping the tree mid-build
 /// -- measured nothing about the pull request, and the corpus publishes this
 /// gate as `test_suite_status` on the pull request and counts it in the
 /// approving review. Collapsed into `Failed` it became the sentence "Test suite
@@ -156,7 +157,7 @@ impl QueueHealer {
     /// Heals an ejected or failed merge queue PR
     ///
     /// `state` is threaded through so the re-enlistment at the end can run the
-    /// certification corpus for the healed head. A local `cargo check` is not
+    /// certification corpus for the healed head. A local gate is not
     /// certification, and re-enlisting on it was issue #17's fourth door.
     ///
     /// `Ok` carries what happened, because there are three of them and they are
@@ -613,32 +614,118 @@ impl QueueHealer {
     /// reports the same gate as `test_suite_status`, and the alternative to
     /// sharing it was the literal `Some(true)` the review pipeline used to pass
     /// for a suite it never ran.
-    pub(crate) async fn run_local_test_gate(repo_dir: &Path) -> TestGate {
-        let (label, mut cmd) = if repo_dir.join("Cargo.toml").exists() {
-            let mut c = Command::new("cargo");
-            c.arg("check");
-            ("cargo check", c)
-        } else if Self::has_npm_test_script(repo_dir).await {
-            let mut c = Command::new("npm");
-            c.args(["test", "--silent"]);
-            ("npm test", c)
-        } else {
+    ///
+    /// # What it runs, and why the Cargo arm takes two steps
+    ///
+    /// For a Cargo repository this ran `cargo check`, which type-checks the
+    /// crate, builds no test binary and executes no test. Publishing that as
+    /// `test_suite_status` meant the gate named "Automated Test Suite" reported
+    /// a pass on every Rust pull request whose code merely compiled, including
+    /// trees in which every test was red — and reported "Test suite reported
+    /// failures during verification gate" for a tree that did not compile,
+    /// which is a failure of a different suite than the one named.
+    ///
+    /// It now runs the suite. In two invocations, because `cargo`'s documented
+    /// exit statuses are `0` and `101` only, and libtest also exits `101` when
+    /// tests fail: one `cargo test` cannot tell "did not compile" from "tests
+    /// failed", and those are `Errored` and `Failed` here — absent evidence
+    /// versus an accusation published on a contributor's pull request. Building
+    /// as its own step makes the distinction unambiguous with nothing installed
+    /// beyond `cargo`. `cargo nextest` reports the two as exit 101 and 100 in a
+    /// single run and would be strictly better, but it is a separate install
+    /// this gate cannot assume on a daemon host, and it skips doctests.
+    ///
+    /// `--no-fail-fast` matches this repository's own CI SSOT
+    /// (`.config/nextest.toml` sets `fail-fast = false`): a gate that stops at
+    /// the first red binary reports one failure where there are twenty.
+    ///
+    /// # Cost
+    ///
+    /// The tree is an ephemeral worktree with no `target/`, so both steps are
+    /// cold. Measured on this repository (10-core, 984 tests): `cargo check`
+    /// 37s, against `cargo test --no-run` 45s plus the run 35s — roughly +43s
+    /// per pull request, and it is a build, not a rounding error. The whole
+    /// gate shares one `ExecClass::Build` deadline rather than taking one per
+    /// step, so its worst case is the class bound and not twice it.
+    ///
+    /// Known ceiling: a Cargo repository with no tests at all exits `0` and is
+    /// reported as a pass. `cargo` has no distinct signal for it; nextest's
+    /// `NO_TESTS_RUN = 4` does, and would be the way to close it.
+    pub async fn run_local_test_gate(repo_dir: &Path) -> TestGate {
+        if repo_dir.join("Cargo.toml").exists() {
+            return Self::run_cargo_test_gate(repo_dir).await;
+        }
+        if !Self::has_npm_test_script(repo_dir).await {
             return TestGate::Unavailable;
-        };
-        cmd.current_dir(repo_dir);
+        }
 
-        match crate::exec::run_bounded(cmd, crate::exec::ExecClass::Build, label).await {
+        let label = "npm test";
+        let mut cmd = Command::new("npm");
+        cmd.args(["test", "--silent"]).current_dir(repo_dir);
+        Self::classify(
+            label,
+            crate::exec::run_bounded(cmd, ExecClass::Build, label).await,
+        )
+    }
+
+    /// Build, then run. See `run_local_test_gate` for why the two are separate
+    /// invocations and why they share one deadline.
+    async fn run_cargo_test_gate(repo_dir: &Path) -> TestGate {
+        let label = "cargo test";
+        let deadline = Instant::now() + ExecClass::Build.timeout();
+
+        let mut build = Command::new("cargo");
+        build.args(["test", "--no-run"]).current_dir(repo_dir);
+        match crate::exec::run_bounded(build, ExecClass::Build, "cargo test --no-run").await {
+            Ok(out) if out.status.success() => {}
+            // Not `Failed`. A tree that does not build ran no test, so it is a
+            // gate that did not complete, which `local_verification_gate` maps
+            // to `None` and the corpus to `NotMeasured` — withholding the merge
+            // without accusing the pull request of a failing suite.
+            Ok(out) => {
+                let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                warn!(
+                    "the test suite could not be built in the local gate: {}",
+                    why
+                );
+                return TestGate::Errored(label, format!("the test suite did not build: {why}"));
+            }
+            Err(e) => {
+                warn!(
+                    "cargo test --no-run did not complete in the local gate: {:#}",
+                    e
+                );
+                return TestGate::Errored(label, format!("{e:#}"));
+            }
+        }
+
+        // The remainder of the one deadline the whole gate gets. Zero when the
+        // build consumed it, which `run_bounded_for` reports as a timeout —
+        // correctly, because no test ran.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let mut run = Command::new("cargo");
+        run.args(["test", "--no-fail-fast"]).current_dir(repo_dir);
+        Self::classify(
+            label,
+            crate::exec::run_bounded_for(run, remaining, label).await,
+        )
+    }
+
+    /// The three answers a completed, failed or absent run maps to. Shared by
+    /// both arms so neither can drift into calling absent evidence a failure.
+    fn classify(label: &'static str, outcome: Result<std::process::Output>) -> TestGate {
+        match outcome {
             Ok(out) if out.status.success() => TestGate::Passed(label),
             Ok(out) => {
                 warn!(
-                    "{} failed in queue healer gate: {}",
+                    "{} reported failures in the local gate: {}",
                     label,
                     String::from_utf8_lossy(&out.stderr).trim()
                 );
                 TestGate::Failed(label)
             }
             Err(e) => {
-                warn!("{} did not complete in queue healer gate: {:#}", label, e);
+                warn!("{} did not complete in the local gate: {:#}", label, e);
                 TestGate::Errored(label, format!("{e:#}"))
             }
         }
@@ -752,8 +839,8 @@ mod tests {
 
     #[test]
     fn heal_note_reports_the_gate_that_ran() {
-        let note = QueueHealer::heal_note("main", &TestGate::Passed("cargo check"), &Ok(()));
-        assert!(note.contains("Local gate `cargo check` passed"));
+        let note = QueueHealer::heal_note("main", &TestGate::Passed("cargo test"), &Ok(()));
+        assert!(note.contains("Local gate `cargo test` passed"));
         assert!(note.contains("trunk `main`"));
         assert!(!note.contains("Passed local test verification gate"));
 
@@ -765,10 +852,10 @@ mod tests {
     /// about to be attempted.
     #[test]
     fn heal_note_reports_the_re_enlistment_outcome() {
-        let enlisted = QueueHealer::heal_note("main", &TestGate::Passed("cargo check"), &Ok(()));
+        let enlisted = QueueHealer::heal_note("main", &TestGate::Passed("cargo test"), &Ok(()));
         let withheld = QueueHealer::heal_note(
             "main",
-            &TestGate::Passed("cargo check"),
+            &TestGate::Passed("cargo test"),
             &Err(anyhow::anyhow!("slo_status produced no measurement")),
         );
         assert_ne!(
@@ -784,11 +871,11 @@ mod tests {
     /// A gate that never completed is not a gate that reported failures.
     #[test]
     fn heal_note_separates_a_gate_that_did_not_complete_from_one_that_failed() {
-        let failed = QueueHealer::heal_note("main", &TestGate::Failed("cargo check"), &Ok(()));
+        let failed = QueueHealer::heal_note("main", &TestGate::Failed("cargo test"), &Ok(()));
         let errored = QueueHealer::heal_note(
             "main",
             &TestGate::Errored(
-                "cargo check",
+                "cargo test",
                 "No such file or directory (os error 2)".into(),
             ),
             &Ok(()),

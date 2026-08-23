@@ -15,6 +15,84 @@ pub struct RustQualityFinding {
     pub recommendation: String,
 }
 
+/// One rule this engine implements.
+///
+/// The table below is the engine's inventory, and it is what
+/// `rules_evaluated_count` and `categories_evaluated` are derived from. Those
+/// two were literals -- `380` and a hand-written list of eight categories
+/// carrying their own invented per-category totals -- describing an upstream
+/// corpus (`jason931225/rust-skills`, `rules-434` today and 380 for a few days
+/// in August 2026) that nothing in this process has ever loaded. A count is
+/// only a measurement when it counts the ruleset that ran, which is what ESLint
+/// reports from a resolved config and semgrep from `--config`.
+///
+/// `every_rule_the_engine_reports_is_in_the_table_the_count_comes_from` pins
+/// this table to the `rule_id`s `scan_diff` actually emits, because nothing in
+/// the compiler relates the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RustRule {
+    pub id: &'static str,
+    pub category: &'static str,
+    /// `CRITICAL` and `HIGH` block the gate; `MEDIUM` is advisory.
+    pub severity: &'static str,
+}
+
+impl RustRule {
+    pub fn blocks(&self) -> bool {
+        matches!(self.severity, "CRITICAL" | "HIGH")
+    }
+}
+
+/// Every rule `scan_diff` evaluates. Seven; four of them can block.
+pub const RULES: &[RustRule] = &[
+    RustRule {
+        id: "err-no-unwrap-prod",
+        category: "Error Handling",
+        severity: "HIGH",
+    },
+    RustRule {
+        id: "own-slice-over-vec",
+        category: "Ownership & Borrowing",
+        severity: "MEDIUM",
+    },
+    RustRule {
+        id: "async-spawn-blocking",
+        category: "Async/Await",
+        severity: "HIGH",
+    },
+    RustRule {
+        id: "async-no-lock-await",
+        category: "Async/Await",
+        severity: "HIGH",
+    },
+    RustRule {
+        id: "mem-avoid-format",
+        category: "Memory Optimization",
+        severity: "MEDIUM",
+    },
+    RustRule {
+        id: "unsafe-safety-comment",
+        category: "Unsafe Code",
+        severity: "CRITICAL",
+    },
+    RustRule {
+        id: "own-borrow-over-clone",
+        category: "Ownership & Borrowing",
+        severity: "MEDIUM",
+    },
+];
+
+/// The distinct categories `RULES` covers, in table order.
+pub fn categories() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for rule in RULES {
+        if !out.iter().any(|c| c == rule.category) {
+            out.push(rule.category.to_string());
+        }
+    }
+    out
+}
+
 pub struct RustQualityEngine;
 
 impl Default for RustQualityEngine {
@@ -28,7 +106,7 @@ impl RustQualityEngine {
         Self
     }
 
-    /// Evaluates PR diffs against high-priority deterministic rules from the full 380-rule corpus
+    /// Evaluates added diff lines in `.rs` files against every rule in [`RULES`].
     pub fn scan_diff(&self, diff_ctx: &PrDiffContext) -> Result<Vec<RustQualityFinding>> {
         let mut findings = Vec::new();
 
@@ -77,7 +155,7 @@ impl RustQualityEngine {
                 {
                     findings.push(RustQualityFinding {
                         rule_id: "err-no-unwrap-prod".to_string(),
-                        category: "Error Handling (Priority 2)".to_string(),
+                        category: "Error Handling".to_string(),
                         severity: "HIGH".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
@@ -90,7 +168,7 @@ impl RustQualityEngine {
                 if ref_string_re.is_match(code_line) {
                     findings.push(RustQualityFinding {
                         rule_id: "own-slice-over-vec".to_string(),
-                        category: "Ownership & Borrowing (Priority 1)".to_string(),
+                        category: "Ownership & Borrowing".to_string(),
                         severity: "MEDIUM".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
@@ -104,7 +182,7 @@ impl RustQualityEngine {
                 if ref_vec_re.is_match(code_line) {
                     findings.push(RustQualityFinding {
                         rule_id: "own-slice-over-vec".to_string(),
-                        category: "Ownership & Borrowing (Priority 1)".to_string(),
+                        category: "Ownership & Borrowing".to_string(),
                         severity: "MEDIUM".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
@@ -117,7 +195,7 @@ impl RustQualityEngine {
                 if blocking_in_async_re.is_match(code_line) && !is_test_file {
                     findings.push(RustQualityFinding {
                         rule_id: "async-spawn-blocking".to_string(),
-                        category: "Async/Await (Priority 6)".to_string(),
+                        category: "Async/Await".to_string(),
                         severity: "HIGH".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
@@ -130,7 +208,7 @@ impl RustQualityEngine {
                 if sync_mutex_in_async_re.is_match(code_line) && !is_test_file {
                     findings.push(RustQualityFinding {
                         rule_id: "async-no-lock-await".to_string(),
-                        category: "Async/Await (Priority 6)".to_string(),
+                        category: "Async/Await".to_string(),
                         severity: "HIGH".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
@@ -143,7 +221,7 @@ impl RustQualityEngine {
                 if format_literal_re.is_match(code_line) {
                     findings.push(RustQualityFinding {
                         rule_id: "mem-avoid-format".to_string(),
-                        category: "Memory Optimization (Priority 3)".to_string(),
+                        category: "Memory Optimization".to_string(),
                         severity: "MEDIUM".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
@@ -156,7 +234,7 @@ impl RustQualityEngine {
                 if unsafe_block_re.is_match(code_line) && !prev_line.contains("SAFETY:") {
                     findings.push(RustQualityFinding {
                         rule_id: "unsafe-safety-comment".to_string(),
-                        category: "Unsafe Code (Priority 4)".to_string(),
+                        category: "Unsafe Code".to_string(),
                         severity: "CRITICAL".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),
@@ -169,7 +247,7 @@ impl RustQualityEngine {
                 if clone_on_copy_re.is_match(code_line) {
                     findings.push(RustQualityFinding {
                         rule_id: "own-borrow-over-clone".to_string(),
-                        category: "Ownership & Borrowing (Priority 1)".to_string(),
+                        category: "Ownership & Borrowing".to_string(),
                         severity: "MEDIUM".to_string(),
                         file_path: current_file.clone(),
                         line_snippet: code_line.to_string(),

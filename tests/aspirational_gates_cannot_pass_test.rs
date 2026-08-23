@@ -343,11 +343,19 @@ fn withholding_carries_across_every_field_that_is_not_a_gate_status() {
         non_gate_fields.len()
     );
     for field in non_gate_fields {
+        // Code, not prose, and an assignment rather than a mention: a comment
+        // naming the field satisfied `body.contains(field)`, which is the same
+        // hole `fidelitys_pass_rule_has_a_production_consumer` closes one test
+        // down. Matching `rebuilt.{field} =` also rules out a prefix collision
+        // between `subject` and some future `subject_line`.
         assert!(
-            body.contains(field),
+            body.lines()
+                .map(str::trim)
+                .filter(|l| !l.starts_with("//"))
+                .any(|l| l.contains(&format!("rebuilt.{field} ="))),
             "`{field}` is not a gate status, so `build()` does not carry it and \
-             `withhold_aspirational_passes` must copy it across by hand. It does \
-             not, so sealing a report silently discards it"
+             `withhold_aspirational_passes` must assign it on the rebuilt \
+             report. It does not, so sealing a report silently discards it"
         );
     }
 }

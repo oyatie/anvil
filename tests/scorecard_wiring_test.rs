@@ -724,13 +724,13 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
     assert!(
         body.contains("do not fully measure"),
         "a certified scorecard must disclose that some passing gates are \
-         heuristic or aspirational; it published:\n{body}"
+         heuristic or partial; it published:\n{body}"
     );
 
-    for gate in ["kani", "mutation", "cosign", "zero-trust-workload"] {
+    for gate in ["kani", "mutation", "zero-trust-workload"] {
         assert!(
             body.contains(gate),
-            "gate {gate} is registry-recorded as below Measured fidelity and \
+            "gate {gate} is registry-recorded as heuristic or partial and \
              passed, so it must be named in the disclosure:\n{body}"
         );
     }
@@ -749,4 +749,18 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
              in the disclosure makes the list meaningless:\n{body}"
         );
     }
+
+    // `cosign_status` is `Fidelity::Aspirational`. A real certification run
+    // withholds its pass before sealing, so it is disclosed as a gate that
+    // produced no measurement. Naming it here as well would put the same gate
+    // on one scorecard as both "passed, but does not fully measure" and
+    // "produced no measurement". This fixture reaches the green branch only
+    // because it is built through `from_gate_outcomes`, which does not apply
+    // the ceiling -- which is exactly why the exclusion has to be in the
+    // renderer and pinned here.
+    assert!(
+        !disclosure.contains("cosign"),
+        "cosign is registry-recorded as aspirational, so it cannot be \
+         disclosed as a passing gate that measures imperfectly:\n{body}"
+    );
 }

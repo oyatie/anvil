@@ -712,13 +712,21 @@ impl PreMergeCertificationReport {
     ///   its size.
     ///
     /// Applied by `evaluate_pre_merge_gates` before it seals, so the withheld
-    /// gates land in `unmeasured_gates`, in the verdict and in the matrix.
-    /// Deliberately not folded into `seal()`: `seal` derives a verdict from
-    /// whatever statuses it is handed, and it is what the spec suite's
-    /// hypotheticals go through. A policy table inside it would make "every
-    /// gate passed" an unconstructible value and take the admission suite's
-    /// positive case down with it. Publication is what this rule is about, and
-    /// the certification run is what publishes.
+    /// gates land in `unmeasured_gates`, in the verdict and in the matrix. Why
+    /// the rule lives here and not inside `seal()` is argued in the pull
+    /// request that added it.
+    ///
+    /// Ends by sealing, so the method is total: `is_certified_ready` and
+    /// `unmeasured_gates` are derived from the statuses this just rewrote, and
+    /// leaving them carried across from before the rewrite would hand a caller
+    /// a report whose verdict disagrees with its own matrix.
+    ///
+    /// `from_gate_outcomes` does not apply this ceiling, so a report built
+    /// through that door can be all-green, carry the certification mark and
+    /// still contain aspirational passes; what keeps production off that door
+    /// is the source scan
+    /// `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`,
+    /// which is a lint rather than an invariant.
     pub fn withhold_aspirational_passes(&mut self) {
         // Rewritten through `build()` rather than by mutating each field:
         // `build` is the one place the seventy-two fields are written down, and
@@ -771,6 +779,11 @@ impl PreMergeCertificationReport {
         rebuilt.provenance = self.provenance;
         rebuilt.subject = self.subject.take();
         *self = rebuilt;
+        // The carries above make the rebuild lossless for every field `build()`
+        // does not set. Two of them are derived from the statuses that were just
+        // rewritten, so re-derive them rather than publishing the pre-rewrite
+        // values: `seal` is idempotent and the evaluator seals again right after.
+        self.seal();
     }
 }
 

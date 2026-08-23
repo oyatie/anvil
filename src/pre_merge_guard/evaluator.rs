@@ -187,18 +187,7 @@ impl PreMergeGuard {
         );
 
         // 1. Doc Parity
-        // A probe that could not run is Errored, not Failed: we have no evidence
-        // the documentation is deficient, only that we could not judge it.
-        // Both block (invariant I1).
-        let doc_parity_status = if let Some(err) = &doc_report.errored {
-            GateStatus::Errored(err.clone())
-        } else if !doc_report.files_created_or_updated.is_empty() {
-            GateStatus::AutoUpdated
-        } else if doc_report.is_sufficient {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(doc_report.summary.clone())
-        };
+        let doc_parity_status = doc_parity_status(doc_report);
 
         // 2. Cedar IAM Policy
         // The guard owns this verdict. Rebuilding it here from a boolean is
@@ -556,12 +545,13 @@ impl PreMergeGuard {
         // 60. Proactive Dependency Upgrade Train
         let upgrade_train_status = upgrade_train_report.status.clone();
 
-        // 61. AST Chaos Mutation Test Adequacy
-        let mutation_status = if mutation_report.is_adequate {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(mutation_report.summary.clone())
-        };
+        // 61. Mutation Adequacy of the Changed Lines
+        //
+        // Read, not rebuilt: `is_adequate` is false both for a surviving mutant
+        // and for a run that measured nothing, and collapsing the two here
+        // would publish absent evidence as an accusation (or, with the arms the
+        // other way round, as a pass).
+        let mutation_status = mutation_report.gate_status();
 
         // 62. Feature Flag & Dead Branch Lifecycle
         let feature_flag_report_status = if feature_flag_report.is_clean {
@@ -806,5 +796,46 @@ pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome)
                 GateStatus::Passed
             }
         }
+    }
+}
+
+/// Maps a `DocGuardReport` onto gate 1's `GateStatus`.
+///
+/// A probe that could not run is `Errored`, not `Failed`: we have no evidence
+/// the documentation is deficient, only that we could not judge it. Both block
+/// (invariant I1).
+///
+/// This mapping used to live inline in `evaluate_pre_merge_gates`, where it read
+/// a non-empty `files_created_or_updated` as `AutoUpdated` *before* consulting
+/// `is_sufficient`. `AutoUpdated.is_acceptable()` is `true`, so a report saying
+/// the diff was under-documented still certified as long as DocGuard had written
+/// a stub — and DocGuard writes one precisely when the probe flags a gap. An
+/// adverse finding therefore out-ranks work done here (issue #29).
+///
+/// # Contract
+///
+/// This is the seam issue #29's requirement is actually observable at.
+/// `DocGuardReport` is a value; the merge decision is
+/// `PreMergeCertificationReport::seal()`, which conjoins
+/// `GateStatus::is_acceptable()` over every gate. A repair that makes
+/// `ensure_documentation_parity` return `is_sufficient: false` and stops there
+/// leaves gate 1 passing every under-documented diff the probe flagged, because
+/// the stub it wrote makes the file list non-empty. So the mapping is pinned by
+/// `tests/docguard_oracle_repair_test.rs` and must keep being called from
+/// `evaluate_pre_merge_gates` — a second, private copy of it inside the
+/// evaluator would put the decision back out of the suite's reach.
+pub fn doc_parity_status(report: &DocGuardReport) -> GateStatus {
+    if let Some(err) = &report.errored {
+        GateStatus::Errored(err.clone())
+    } else if !report.is_sufficient {
+        // An adverse finding out-ranks work done. `AutoUpdated.is_acceptable()`
+        // is `true`, so consulting the file list first let a stub DocGuard wrote
+        // for an under-documented diff certify the very gap it is evidence of.
+        // Work done is not evidence about the diff.
+        GateStatus::Failed(report.summary.clone())
+    } else if !report.files_created_or_updated.is_empty() {
+        GateStatus::AutoUpdated
+    } else {
+        GateStatus::Passed
     }
 }

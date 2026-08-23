@@ -50,6 +50,7 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     // `= if cedar_report.is_compliant` restored, a policy set the checker
     // rejected publishes as `Passed` again and no gate-level test sees it.
     "cedar_report",
+    "mutation_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->
@@ -137,6 +138,28 @@ fn coverage_verdict_comes_from_the_gate_not_from_a_formatted_float() {
         !src.contains("Coverage {:.1}% is below requirement"),
         "formatting estimated_diff_coverage_percent produces \"Coverage NaN% is below \
          requirement\" when nothing was measured -- a fabricated accusation"
+    );
+}
+
+/// The same wiring failure, one gate over. `mutation_report.is_adequate` is
+/// false BOTH for a mutant the suite failed to kill and for a run that measured
+/// nothing at all, so `if is_adequate { Passed } else { Warning }` published
+/// absent evidence as an acceptable warning -- and `Warning` is acceptable to
+/// `is_admissible`, so the gate could not block whatever it found.
+#[test]
+fn mutation_verdict_comes_from_the_gate_not_from_a_two_way_boolean() {
+    let src = evaluator_source();
+
+    assert!(
+        src.contains("mutation_report.gate_status()"),
+        "the evaluator must call MutationAdequacyReport::gate_status(), which \
+         distinguishes a surviving mutant (Failed) from a run that measured \
+         nothing (NotMeasured) from nothing to mutate (Passed)"
+    );
+    assert!(
+        !src.contains("= if mutation_report.is_adequate"),
+        "rebuilding the mutation verdict from is_adequate collapses `no mutant \
+         survived` and `no mutant ran` into the same answer"
     );
 }
 

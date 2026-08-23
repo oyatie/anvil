@@ -97,8 +97,10 @@ fn reason_of(status: &GateStatus) -> String {
 #[test]
 fn a_rejected_policy_set_does_not_certify() {
     let diagnostics = "error: invalid policy effect: allow\n  --> tenants.cedar:1:1";
+    let scope = files(&["policies/cedar/tenants.cedar"]);
     let report = verify(
-        &files(&["policies/cedar/tenants.cedar"]),
+        &scope,
+        &scope,
         &CedarToolOutcome::Rejected(diagnostics.to_string()),
     );
 
@@ -132,11 +134,13 @@ fn a_rejected_policy_set_does_not_certify() {
 /// the wiring; this pins that there is a verdict there to carry.
 #[test]
 fn the_report_carries_the_verdict_rather_than_a_boolean_to_rebuild_it_from() {
+    let scope = files(&["a.cedar"]);
     let rejected = verify(
-        &files(&["a.cedar"]),
+        &scope,
+        &scope,
         &CedarToolOutcome::Rejected("error: unexpected end of input".to_string()),
     );
-    let accepted = verify(&files(&["a.cedar"]), &CedarToolOutcome::Accepted);
+    let accepted = verify(&scope, &scope, &CedarToolOutcome::Accepted);
 
     assert_ne!(
         rejected.status, accepted.status,
@@ -154,8 +158,10 @@ fn the_report_carries_the_verdict_rather_than_a_boolean_to_rebuild_it_from() {
 /// pull request, so it is neither a pass nor a finding.
 #[test]
 fn a_checker_that_could_not_run_is_not_a_pass_and_not_an_accusation() {
+    let scope = files(&["policies/cedar/anvil_policies.cedar"]);
     let report = verify(
-        &files(&["policies/cedar/anvil_policies.cedar"]),
+        &scope,
+        &[],
         &CedarToolOutcome::Unavailable(
             "cedar check-parse failed to run: No such file or directory (os error 2)".to_string(),
         ),
@@ -190,7 +196,7 @@ fn a_checker_that_could_not_run_is_not_a_pass_and_not_an_accusation() {
 /// routes this PR *did* touch is exactly what nothing here measured.
 #[test]
 fn a_pull_request_that_touches_no_policy_file_is_not_certified_by_this_gate() {
-    let report = verify(&[], &CedarToolOutcome::Accepted);
+    let report = verify(&[], &[], &CedarToolOutcome::Accepted);
 
     assert!(
         !matches!(report.status, GateStatus::Passed | GateStatus::AutoUpdated),
@@ -213,10 +219,8 @@ fn a_pull_request_that_touches_no_policy_file_is_not_certified_by_this_gate() {
 
 #[test]
 fn a_pass_says_what_was_parsed_and_does_not_claim_the_coverage_it_did_not_check() {
-    let report = verify(
-        &files(&["policies/cedar/anvil_policies.cedar", "b.cedar"]),
-        &CedarToolOutcome::Accepted,
-    );
+    let scope = files(&["policies/cedar/anvil_policies.cedar", "b.cedar"]);
+    let report = verify(&scope, &scope, &CedarToolOutcome::Accepted);
 
     assert_eq!(report.status, GateStatus::Passed);
     assert!(
@@ -252,6 +256,112 @@ fn a_pass_says_what_was_parsed_and_does_not_claim_the_coverage_it_did_not_check(
             report.summary
         );
     }
+}
+
+/// Catches: a pass that names files the checker never opened.
+///
+/// A change that deletes one policy and edits another leaves both paths in the
+/// diff and one file on disk. `check_parse_all` skips the unreadable one; the
+/// pass it produces used to be built from the *scope*, so it published
+/// "accepted 2 Cedar policy file(s)" and named a file that does not exist.
+/// That is the vacuously-clean shape `combine_outcomes` already guards at zero
+/// files parsed -- the same defect at one-of-two, and this is the arm that
+/// publishes green.
+#[test]
+fn a_pass_names_only_the_files_the_checker_actually_read() {
+    let scope = files(&["good.cedar", "policies/removed.cedar"]);
+    let parsed = files(&["good.cedar"]);
+    let report = verify(&scope, &parsed, &CedarToolOutcome::Accepted);
+
+    assert_eq!(report.status, GateStatus::Passed);
+    assert!(
+        !report.summary.contains("removed.cedar"),
+        "the pass names a policy file the checker never opened: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains("1 Cedar policy file"),
+        "the count must be what was parsed, not what was in scope: {}",
+        report.summary
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The invocation itself, where the checker exists.
+// ---------------------------------------------------------------------------
+
+/// Whether `cedar` is installed and runnable on this machine.
+fn cedar_on_path() -> bool {
+    std::process::Command::new("cedar")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Catches: a broken invocation that every other test in this file accepts.
+///
+/// Everything above reaches `verify` with an outcome it was handed. Nothing
+/// reaches the spawn, so with the binary installed and on PATH both a mistyped
+/// subcommand and a mistyped binary name survived the whole suite: each makes
+/// the gate incapable of measuring anything, and each is indistinguishable from
+/// "the runner does not have the tool" to a suite whose every end-to-end case
+/// accepts `NotMeasured`.
+///
+/// The early return is the honest form. On a runner without the checker this
+/// measures nothing and says nothing; on a runner with it, it is the only thing
+/// between the gate and a typo. It also pins `--error-format plain`: `cedar`
+/// renders through miette's graphical handler with no TTY gate, and the escape
+/// sequences were landing in the published `Failed` summary.
+#[tokio::test]
+async fn where_the_checker_is_installed_a_bad_policy_fails_and_a_good_one_passes() {
+    if !cedar_on_path() {
+        eprintln!("cedar is not on PATH: the invocation is unmeasured on this runner");
+        return;
+    }
+
+    assert_eq!(
+        anvil::cedar_guard::check_parse("permit(principal, action, resource);\n").await,
+        CedarToolOutcome::Accepted,
+        "a grammatical policy set must reach the checker and come back accepted; \
+         a mistyped subcommand or binary name lands here as Unavailable"
+    );
+
+    match anvil::cedar_guard::check_parse("allow(principal, action, resource);\n").await {
+        CedarToolOutcome::Rejected(d) => {
+            assert!(
+                d.contains("invalid policy effect"),
+                "the checker's own diagnostics must survive: {d}"
+            );
+            assert!(
+                !d.contains('\u{1b}'),
+                "raw ANSI escapes reached the published finding; the summary goes \
+                 onto the scorecard, where a reader cannot act on it: {d:?}"
+            );
+        }
+        other => panic!("an ungrammatical policy set is a rejection, got {other:?}"),
+    }
+
+    // The seam: two files in scope, one on disk. The pass must name one.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("good.cedar"),
+        "permit(principal, action, resource);\n",
+    )
+    .expect("write policy");
+    let ctx = a_diff_touching(dir.path(), &["good.cedar", "policies/removed.cedar"]);
+    let report = CedarGuard::new()
+        .evaluate_cedar_policies(dir.path(), &ctx)
+        .await;
+
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
+    assert!(
+        !report.summary.contains("removed.cedar"),
+        "the pass names a file that was not on disk: {}",
+        report.summary
+    );
 }
 
 // ---------------------------------------------------------------------------

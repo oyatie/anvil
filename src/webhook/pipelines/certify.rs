@@ -56,7 +56,7 @@ pub async fn execute_pr_certify(state: &AppState, repo: &str, pr_number: u64) ->
 /// where the repository offers none -- which reports `NotMeasured` rather than
 /// inventing either answer.
 ///
-/// This function mutates the caller's working tree (`git add -A`, `git commit`)
+/// This function mutates the caller's working tree (`git add` excluding Anvil's receipts, `git commit`)
 /// and the caller is responsible for holding `acquire_pr_lock` across it. It
 /// does not take the lock itself: `execute_pr_review` already holds it here and
 /// the mutex is not reentrant.
@@ -453,13 +453,13 @@ pub async fn certify_pull_request(
         let add_out = crate::exec::run_bounded(
             add_cmd,
             crate::exec::ExecClass::Quick,
-            "git add -A for domain guard auto-sync",
+            "git add for domain guard auto-sync",
         )
         .await
         .context("Failed to stage auto-synced documentation & cedar policies")?;
         if !add_out.status.success() {
             anyhow::bail!(
-                "git add -A failed while staging auto-synced governance files on PR #{}: {}",
+                "git add failed while staging auto-synced governance files on PR #{}: {}",
                 pr_number,
                 String::from_utf8_lossy(&add_out.stderr).trim()
             );

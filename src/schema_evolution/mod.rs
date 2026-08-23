@@ -1,6 +1,6 @@
 pub mod compatibility_checker;
 
-use compatibility_checker::{CompatibilityChecker, RENUMBERING_MARKER, classify};
+use compatibility_checker::{CompatibilityChecker, classify};
 
 use crate::pre_merge_guard::report::GateStatus;
 
@@ -15,9 +15,12 @@ const FINDINGS_LISTED: usize = 3;
 #[derive(Clone, Debug)]
 pub struct SchemaEvolutionReport {
     pub status: GateStatus,
-    pub passed: bool,
+    /// How many wire breaks were found. Read by `examples/schema_repro`, which
+    /// is what makes the false-positive rate measurable against real history
+    /// rather than asserted. Whether the gate passed is `status`, and only
+    /// `status` -- a second boolean saying the same thing is the shape the
+    /// evaluator guard forbids.
     pub breaking_field_changes: usize,
-    pub tag_renumbering_detected: bool,
     pub summary: String,
 }
 
@@ -63,6 +66,14 @@ impl SchemaEvolutionRatchet {
             if classify(path).is_none() {
                 continue;
             }
+            // A file with no previous revision has no baseline to be
+            // incompatible with. Reporting `required string tenant_id = 1;` in a
+            // brand-new `.proto` as MESSAGE_SAME_REQUIRED_FIELDS is an
+            // accusation against nothing -- the same defect this gate is here to
+            // remove, narrowed to one file type.
+            if file_diff.lines().any(|l| l.starts_with("new file mode ")) {
+                continue;
+            }
             scanned_a_schema = true;
             violations.extend(self.checker.check_file_diff(path, file_diff));
         }
@@ -77,14 +88,11 @@ impl SchemaEvolutionRatchet {
                     gate_id: GATE_ID.to_string(),
                     reason: NO_SCHEMA_IN_SCOPE.to_string(),
                 },
-                passed: false,
                 breaking_field_changes: 0,
-                tag_renumbering_detected: false,
                 summary: NO_SCHEMA_IN_SCOPE.to_string(),
             };
         }
 
-        let tag_renumbering = violations.iter().any(|v| v.contains(RENUMBERING_MARKER));
         let passed = violations.is_empty();
         let summary = if passed {
             "Every touched wire schema keeps its field numbers reserved and its published \
@@ -109,9 +117,7 @@ impl SchemaEvolutionRatchet {
             } else {
                 GateStatus::Failed(summary.clone())
             },
-            passed,
             breaking_field_changes: violations.len(),
-            tag_renumbering_detected: tag_renumbering,
             summary,
         }
     }
@@ -130,11 +136,10 @@ mod tests {
         // corpus with no file in it. Out of scope is now unmeasured.
         let report = ratchet.evaluate_schema_evolution("+ optional string new_field = 4;");
         assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
-        assert!(!report.passed);
 
         let in_scope = ratchet.evaluate_schema_evolution(
             "diff --git a/proto/order.proto b/proto/order.proto\n+ optional string new_field = 4;",
         );
-        assert!(in_scope.passed, "{}", in_scope.summary);
+        assert_eq!(in_scope.status, GateStatus::Passed, "{}", in_scope.summary);
     }
 }

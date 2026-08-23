@@ -296,7 +296,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "schema_evolution_status",
         "📐 Wire Schema Evolution Ratchet",
-        "Strict backward/forward wire compatibility (Protobuf/OpenAPI)",
+        "Deleted/renumbered .proto fields and removed OpenAPI paths (diff text, no baseline)",
     ),
     (
         "auto_rollback_status",

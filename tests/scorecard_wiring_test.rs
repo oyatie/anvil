@@ -668,7 +668,7 @@ fn boundary_worst_case_body_fits_a_github_comment_and_beats_the_table() {
         wasm_sandbox_status,
         consistency_status,
         flake_quarantine_status,
-        zero_trust_workload_status,
+        cleartext_transport_status,
         carbon_compute_status,
         replay_harness_status,
         upgrade_train_status,
@@ -765,7 +765,10 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
          heuristic or partial; it published:\n{body}"
     );
 
-    for gate in ["kani", "mutation", "zero-trust-workload"] {
+    // `cleartext-transport` was `zero-trust-workload` until the gate id was
+    // renamed to the lint it is; it is still the registry-Heuristic gate this
+    // assertion exists to pin.
+    for gate in ["kani", "mutation", "cleartext-transport"] {
         assert!(
             body.contains(gate),
             "gate {gate} is registry-recorded as heuristic or partial and \

@@ -57,9 +57,17 @@ fn pre_push_fmts_the_file_list() {
         src.contains("rustfmt --check"),
         "pre-push must rustfmt --check the changed *.rs list"
     );
+    // pre-push *is* the clippy bar, alongside CI. #95 scoped clippy out on the
+    // grounds that CI owns it. CI does own it -- and that is the problem: a
+    // `-D warnings` failure that only CI catches costs a full round trip, and
+    // an `async_fn_in_trait` lint reached the remote exactly that way once.
+    //
+    // The cost of keeping it here was measured rather than assumed: warm,
+    // `cargo check --all-targets` is 2.29s and `cargo clippy --all-targets
+    // -- -D warnings` is 3.83s. 1.5s on push against one CI round trip.
     assert!(
-        !src.contains("cargo clippy"),
-        "pre-push is not the clippy bar; CI is"
+        src.contains("cargo clippy"),
+        "pre-push must run clippy -D warnings; CI treats those as fatal"
     );
 }
 

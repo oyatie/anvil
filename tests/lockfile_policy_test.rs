@@ -69,21 +69,26 @@ fn package_rust_version_matches_the_toolchain_pin() {
 #[test]
 fn ci_installs_the_pinned_toolchain_not_stable() {
     let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
+    // rust-toolchain.toml is the pin. Repeating the version in YAML is a drift
+    // surface; dtolnay/rust-toolchain with no `toolchain:` input honours the file.
     let channel = toolchain_channel();
     assert!(
         ci.contains(&format!("toolchain: \"{channel}\"")),
-        "ci.yml must install toolchain \"{channel}\" explicitly"
+        "dtolnay/rust-toolchain@pinned SHA requires toolchain: \"{channel}\"; omitting it installs '' and rustup default becomes stable"
     );
     assert!(
         !ci.contains("toolchain: stable"),
-        "ci.yml must not install `stable`; the pin exists so CI and local builds agree"
+        "ci.yml must not install `stable`; rust-toolchain.toml is the pin"
     );
 }
 
 #[test]
 fn ci_and_hooks_build_with_locked_dependencies() {
     let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
-    for step in ["cargo clippy", "cargo test", "cargo build --release"] {
+    // Cheap local: pre-push `cargo check --locked`.
+    // Pre-merge: clippy + nextest, both --locked.
+    // Post-submit: `cargo build --release --locked` (release-profile compile check).
+    for step in ["cargo clippy", "cargo nextest run", "cargo build --release"] {
         let line = ci
             .lines()
             .find(|l| l.contains(step))
@@ -93,11 +98,36 @@ fn ci_and_hooks_build_with_locked_dependencies() {
             "`{step}` in ci.yml must pass --locked: {line}"
         );
     }
+    // Parsed, not substring-matched: `ci.contains("if: github.event_name ==
+    // 'push'")` passes with that string in a comment or on any other job. The
+    // property is that the *release* job is the gated one.
+    let workflow: serde_yaml::Value = serde_yaml::from_str(&ci).expect("ci.yml must be valid YAML");
+    let release = &workflow["jobs"]["release"];
+    assert!(
+        !release.is_null(),
+        "ci.yml must define a `release` job; found jobs: {:?}",
+        workflow["jobs"]
+            .as_mapping()
+            .map(|m| m.keys().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        release["if"].as_str(),
+        Some("github.event_name == 'push'"),
+        "the release job must be post-submit (push to trunk), not a PR merge gate"
+    );
     let pre_push =
         fs::read_to_string(repo_root().join("src/git_manager/hooks/pre-push")).expect("pre-push");
     assert!(
         pre_push.contains("rustfmt --check"),
-        "pre-push formats the changed *.rs list; --locked lives in CI, not the hook"
+        "pre-push must rustfmt --check the changed *.rs list"
+    );
+    assert!(
+        pre_push.contains("cargo check") && pre_push.contains("--locked"),
+        "pre-push must `cargo check --locked`"
+    );
+    assert!(
+        !pre_push.contains("cargo nextest") && !pre_push.contains("cargo test"),
+        "pre-push must stay a compile check; the test suite belongs in CI"
     );
 }
 

@@ -270,22 +270,16 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   os/core/network-domain); no fault-injection capability.",
     },
     MigrationEntry {
-        component: "chaos_mutation_guard (dir)",
-        verdict: Verdict::Migrating,
-        confidence: Confidence::Verified,
-        oyatie_counterpart: "none found",
-        counterpart_loc: 0,
-        evidence: "109 lines, PURE. AstMutatorEngine generating AST mutations. grep -rilE 'mutation \
-                  testing' and 'mutant' over oyatie *.rs both returned ZERO hits.",
-    },
-    MigrationEntry {
         component: "chaos_mutation_guard.rs",
-        verdict: Verdict::Migrating,
+        verdict: Verdict::Rewired,
         confidence: Confidence::Verified,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "178 lines, PURE. Mutation-adequacy scoring. Same verified negative: no mutation-testing \
-                  capability anywhere in oyatie.",
+        evidence: "PROC+ASYNC: run_cargo_mutants spawns `cargo mutants --in-diff` and reads its \
+                  outcome lists -- a real mutation measurement. The chaos_mutation_guard/ directory \
+                  (AstMutatorEngine, str::replace over lines nothing compiled) is deleted. Same \
+                  verified negative as before: no mutation-testing capability anywhere in oyatie, \
+                  so only the subprocess seam swaps.",
     },
     MigrationEntry {
         component: "ci_runner_economics",
@@ -437,8 +431,9 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         oyatie_counterpart: "governance/check/image-signing-discipline + libs/oya-governance-image-discipline-kernel \
                             + governance/check/slsa-l3-evidence-grounded",
         counterpart_loc: 1073,
-        evidence: "96 lines, PURE — infra scan shows no PROC, so it invokes no cosign binary and no Rekor; \
-                  it emits a CosignSignatureBundle from computed values. oyatie enforces the real posture: \
+        evidence: "105 lines, PURE — infra scan shows no PROC, so it invokes no signing binary and reaches no Rekor; \
+                  the fabricated signature bundle it used to emit is deleted and the gate now reports \
+                  that nothing signed. oyatie enforces the real posture: \
                   image-signing-discipline (178) + oya-governance-image-discipline-kernel (431) + \
                   slsa-l3-evidence-grounded (464) + supply-chain-audit (2675, VEX/cosign/SBOM).",
     },
@@ -490,9 +485,9 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         confidence: Confidence::Probable,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "120 lines. LockOrderKeywordScanner scanning for lock-order inversions. grep -rilE \
-                  'deadlock|lock order|lock_order' matched only incidental prose in ci/facade and os/core; \
-                  no static lock-order analysis in oyatie.",
+        evidence: "LockOrderGraph: a lock-order graph over diff text, cycles reported via reachability. \
+                  grep -rilE 'deadlock|lock order|lock_order' matched only incidental prose in ci/facade \
+                  and os/core; no static lock-order analysis in oyatie.",
     },
     MigrationEntry {
         component: "debt_shrink_guard.rs",
@@ -820,13 +815,14 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
     },
     MigrationEntry {
         component: "kani_guard",
-        verdict: Verdict::Rewired,
+        verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "264 lines, PROC+ASYNC: run_kani_proofs invokes the Kani model checker. grep -ril 'kani' \
-                  over all oyatie *.rs returned ZERO hits — no formal-verification capability there at \
-                  all. Only the subprocess/exec seam rewires.",
+        evidence: "211 lines, PURE: two regexes over the diff text, asking whether an added `unsafe` item \
+                  carries a `// SAFETY:` comment. No subprocess and no model checker — the run_kani_proofs \
+                  seam this entry once recorded went with proof_runner.rs. grep -ril 'kani' over all \
+                  oyatie *.rs returned ZERO hits, so nothing there receives it either; it moves as source.",
     },
     MigrationEntry {
         component: "lib.rs",

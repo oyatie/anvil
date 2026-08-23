@@ -540,6 +540,7 @@ mod stub {
             summary: STUB.to_string(),
         };
         let flake = FlakeQuarantineReport {
+            status: GateStatus::Passed,
             passed: true,
             quarantined_tests_isolated: 0,
             rehabilitated_tests_restored: 0,

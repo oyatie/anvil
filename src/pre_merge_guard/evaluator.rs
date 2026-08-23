@@ -159,7 +159,7 @@ impl PreMergeGuard {
         stacked_report: &StackedDiffsReport,
         microbench_report: &MicrobenchmarkReport,
         jittered_report: &JitteredBackoffReport,
-        schema_evo_report: &SchemaEvolutionReport,
+        schema_evolution_report: &SchemaEvolutionReport,
         auto_rollback_report: &AutoRollbackReport,
         wasm_report: &WasmSandboxReport,
         consistency_report: &ConsistencyReport,
@@ -503,11 +503,11 @@ impl PreMergeGuard {
         };
 
         // 52. Wire Schema Evolution Ratchet
-        let schema_evolution_status = if schema_evo_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(schema_evo_report.summary.clone())
-        };
+        // `passed` is false both for a real wire break and for a diff that
+        // touched no schema at all, so rebuilding the verdict from it published
+        // "Detected N breaking wire schema changes" over a pull request the gate
+        // never had a schema to compare. The gate distinguishes the two.
+        let schema_evolution_status = schema_evolution_report.status.clone();
 
         // 53. Auto-Rollback & Postmortem Engine
         let auto_rollback_status = auto_rollback_report.status.clone();

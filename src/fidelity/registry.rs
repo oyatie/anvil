@@ -1030,6 +1030,43 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
              neither, and both validate and symcc require the schema",
         ),
     },
+    GateFidelity {
+        gate_id: "schema_evolution_status",
+        aspiration: "Enforce strict backward and forward wire compatibility for Protobuf and OpenAPI \
+                     schemas against the previously published version of each schema.",
+        reference: "buf breaking against a stored image; Confluent Schema Registry \
+                    BACKWARD/FORWARD/FULL; oasdiff",
+        fidelity: Fidelity::Heuristic,
+        gap: "Parses no schema and holds no baseline. buf compiles both revisions to descriptor sets \
+              and compares them against an --against image, the registry compares a candidate against \
+              a subject's registered versions, and oasdiff compares two resolved documents; this reads \
+              the text of one pull request's diff. It also had no file-type scope of any kind, so any \
+              removed line carrying a type word and an equals sign was published as a breaking wire \
+              schema \
+              change: over this repository's own last ten commits that failed four of them, every \
+              finding a line of Rust, in a tree holding no protobuf file at all. Scope is now the \
+              path -- `classify` returns a schema language for a name ending `.proto`, or a YAML one \
+              beginning `openapi` or `swagger` (compatibility_checker.rs:50-59), and every other file \
+              is skipped before a line of it is read (schema_evolution/mod.rs:66-67). Inside that \
+              scope it covers two of buf's fifteen WIRE rules, \
+              `FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED` (compatibility_checker.rs:221-224) and \
+              `MESSAGE_SAME_REQUIRED_FIELDS`, plus reuse of a deleted field number, and exactly one \
+              of oasdiff's 219 checks -- `api-path-removed`, read off removed path keys rather than \
+              off two documents (compatibility_checker.rs:238-259). A file the pull request creates -- one whose \
+              diff section carries `new file mode` -- is skipped outright \
+              (schema_evolution/mod.rs:74-76): it has no previous revision, and alleging a \
+              break against no baseline is the same defect narrowed to one file type. A narrowed \
+              response type, a newly required request property, a removed operation under a \
+              surviving path, and any schema change outside a diff hunk are all invisible to it. A deleted enum value it does \
+              report, which is the right verdict under buf's enum-deletion rule and the wrong noun: \
+              it is published as a field. No tracked file in this repository is a protobuf \
+              definition, so `NO_SCHEMA_IN_SCOPE` rather than a pass is its ordinary verdict on a \
+              Rust change; the one OpenAPI description here does put it in scope, and reverting the \
+              commit that published this repository's health endpoint is caught.",
+        blocked_on: Some(
+            "a descriptor set or registry baseline; one diff is not a published schema",
+        ),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

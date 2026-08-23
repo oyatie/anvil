@@ -40,13 +40,17 @@
 //!     -> `no_fabricated_signing_material_survives_in_the_module` and
 //!        `no_fabricated_signing_material_survives_anywhere_in_src`.
 //! P2. The guard is made honest and the *wiring* throws the honesty away:
-//!     `evaluator.rs` rebuilds `GateStatus` from a boolean, exactly the pattern
-//!     already corrected for six other gates. With a false boolean that rebuild
-//!     publishes `Failed`, accusing every pull request in the fleet of a
-//!     signing failure -- absent evidence turned into an accusation, the
-//!     symmetric half of I1.
-//!     -> `the_evaluator_reads_the_cosign_verdict_instead_of_rebuilding_it`
-//!        and `an_absent_signing_backend_is_not_an_accusation`.
+//!     `evaluator.rs` rebuilds `GateStatus` from the report, exactly the
+//!     pattern already corrected for five other gates. That rebuild publishes
+//!     `Failed`, accusing every pull request in the fleet of a signing failure
+//!     -- absent evidence turned into an accusation, the symmetric half of I1.
+//!     -> `an_absent_signing_backend_is_not_an_accusation` for the verdict, and
+//!        the shared wiring guard in
+//!        `tests/evaluator_preserves_gate_verdicts_test.rs` for the wiring. This
+//!        lane found that guard's negative pattern did not match a rebuild
+//!        written as `= if cosign_report.status.is_acceptable()` and left the
+//!        other five gates exposed; it is now a positive check that every gate
+//!        owning a verdict has the one correct line, so no rebuild shape passes.
 //! P3. Everything is named `NotMeasured` and nothing else changes, so the gate
 //!     is cosmetically honest and mechanically inert: the id is not recorded,
 //!     merge admission is not withheld, and a measured verdict -- the one a
@@ -65,6 +69,20 @@ use anvil::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
 use std::path::{Path, PathBuf};
 
 const GATE_ID: &str = "cosign_status";
+
+/// Signing evidence that can only have been invented: this crate issues no
+/// certificates and writes no transparency-log entries, so a certificate body
+/// or a Rekor entry id sitting in the source is fabricated by construction.
+///
+/// This replaces a blanket ban on `format!` in the module. The fabrication was
+/// deriving a Rekor entry id from the first eight characters of a digest; the
+/// mechanism was not the macro. A real Fulcio/Rekor backend needs `format!` for
+/// endpoint URLs, error text and log lines, so banning it would have to be
+/// weakened by the first person doing the honest work -- and a guard you have
+/// to weaken to make progress teaches people to weaken guards. These needles do
+/// not: a real backend receives its certificate and entry id over the wire, it
+/// never writes them into the source.
+const FABRICATED_MATERIAL: &[&str] = &["BEGIN CERTIFICATE", "rekor-log-uuid"];
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -159,18 +177,22 @@ fn no_fabricated_signing_material_survives_in_the_module() {
     assert!(!files.is_empty(), "the module must still exist");
 
     // Field and item names that only ever existed to carry invented evidence.
+    // `is_valid: true` rather than `is_valid`: the bare identifier is a generic
+    // name any honest field could take (`src/fixer/evaluator.rs` has one), and a
+    // guard that fires on it teaches people to rename around it. The hardcoded
+    // constant is the fabrication.
     let banned = [
         "certificate_chain",
         "rekor_entry_uuid",
         "oidc_issuer",
-        "is_valid",
+        "is_valid: true",
         "sign_artifact_digest",
         "SigstoreAttestor",
         "CosignSignatureBundle",
     ];
     let mut found: Vec<String> = Vec::new();
     for (path, body) in &files {
-        for needle in banned {
+        for needle in banned.iter().chain(FABRICATED_MATERIAL) {
             if body.contains(needle) {
                 found.push(format!("{}: {needle}", path.display()));
             }
@@ -181,17 +203,6 @@ fn no_fabricated_signing_material_survives_in_the_module() {
         "the fabricated attestation must be deleted, not kept as a fixture a \
          caller can reach again: {found:?}"
     );
-
-    // A digest this module cannot sign has nothing to derive from it: any value
-    // formed here would be another invented identifier.
-    for (path, body) in &files {
-        assert!(
-            !body.contains("format!"),
-            "{} formats a value out of inputs it cannot verify; nothing here \
-             may derive published evidence",
-            path.display()
-        );
-    }
 }
 
 /// The same needles across the whole crate, because deleting a file is not the
@@ -202,7 +213,7 @@ fn no_fabricated_signing_material_survives_in_the_module() {
 fn no_fabricated_signing_material_survives_anywhere_in_src() {
     let mut found: Vec<String> = Vec::new();
     for (path, body) in rs_files(&repo_root().join("src")) {
-        for needle in ["BEGIN CERTIFICATE", "rekor-log-uuid"] {
+        for needle in FABRICATED_MATERIAL {
             if body.contains(needle) {
                 found.push(format!("{}: {needle}", path.display()));
             }
@@ -212,48 +223,6 @@ fn no_fabricated_signing_material_survives_anywhere_in_src() {
         found.is_empty(),
         "an invented certificate or transparency-log id is still published \
          somewhere in the crate: {found:?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// The wiring: a verdict the guard owns must reach the report unchanged.
-// ---------------------------------------------------------------------------
-
-/// P2. The bug this repository has already shipped six times: the guard is made
-/// honest and `evaluator.rs` rebuilds the status from a boolean, so
-/// `NotMeasured` becomes `Failed` on the way to the report. A guard-level test
-/// cannot see it, and `evaluate_pre_merge_gates` takes sixty-nine reports, so
-/// the wiring is checked where it is written.
-#[test]
-fn the_evaluator_reads_the_cosign_verdict_instead_of_rebuilding_it() {
-    let src = std::fs::read_to_string(repo_root().join("src/pre_merge_guard/evaluator.rs"))
-        .expect("evaluator.rs must exist");
-    let code: String = src
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    assert!(
-        code.contains("let cosign_status = cosign_report.status.clone();"),
-        "the evaluator must carry the gate's own verdict through unchanged"
-    );
-    assert!(
-        !code.contains("cosign_report.passed"),
-        "rebuilding the status from a boolean discards NotMeasured and \
-         publishes a fabricated accusation instead"
-    );
-    assert!(
-        !code.contains("Cosign keyless OIDC transparency log signing failed."),
-        "no signing was attempted, so no signing failure may be reported"
-    );
-    // The absence is the guard's finding, not the wiring's opinion. An
-    // evaluator that minted `NotMeasured` here would report absence for ever,
-    // including after a real Sigstore backend starts producing verdicts.
-    assert!(
-        !code.contains("gate_id: \"cosign_status\""),
-        "the evaluator must not mint this gate's NotMeasured itself; the guard \
-         owns the verdict so a real backend can replace it"
     );
 }
 

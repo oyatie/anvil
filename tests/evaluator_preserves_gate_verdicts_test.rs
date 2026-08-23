@@ -63,6 +63,11 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "local_probe_report",
     "chaos_injection_report",
     "feature_flag_report",
+    // `is_idiomatic` is true both for a clean scan and for a diff with no `.rs`
+    // file, so rebuilding the verdict from it published "380 rules evaluated,
+    // compliant" over zero Rust files. The guard now tells the two apart and
+    // the evaluator must carry its answer through.
+    "rust_skills_report",
     // The receipt stamper. Its verdict was rebuilt here from an `is_attested`
     // boolean whose only production value was the literal `true`, so the gate
     // passed on every pull request and the `Failed` arm the evaluator wrote for

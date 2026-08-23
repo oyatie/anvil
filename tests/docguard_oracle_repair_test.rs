@@ -2687,6 +2687,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             rules_evaluated_count: 0,
             categories_evaluated: Vec::new(),
             summary: n(),
+            measurement: anvil::rust_language_policy::RustSkillsMeasurement::NothingToMeasure,
         },
         kani: anvil::kani_guard::KaniGuardReport {
             all_unsafe_blocks_documented: true,

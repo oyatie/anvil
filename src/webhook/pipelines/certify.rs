@@ -138,7 +138,7 @@ pub async fn certify_pull_request(
         .rust_language_policy
         .evaluate_rust_quality(repo_dir, diff_ctx)?;
 
-    // 14. KaniGuard: Mathematical Formal Model Checking & Unsafe Invariant Verification
+    // 14. KaniGuard: `// SAFETY:` comment lint over added unsafe blocks
     let kani_report = state
         .kani_guard
         .evaluate_unsafe_invariants(repo_dir, diff_ctx)?;

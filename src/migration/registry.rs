@@ -820,13 +820,14 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
     },
     MigrationEntry {
         component: "kani_guard",
-        verdict: Verdict::Rewired,
+        verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "264 lines, PROC+ASYNC: run_kani_proofs invokes the Kani model checker. grep -ril 'kani' \
-                  over all oyatie *.rs returned ZERO hits — no formal-verification capability there at \
-                  all. Only the subprocess/exec seam rewires.",
+        evidence: "211 lines, PURE: two regexes over the diff text, asking whether an added `unsafe` item \
+                  carries a `// SAFETY:` comment. No subprocess and no model checker — the run_kani_proofs \
+                  seam this entry once recorded went with proof_runner.rs. grep -ril 'kani' over all \
+                  oyatie *.rs returned ZERO hits, so nothing there receives it either; it moves as source.",
     },
     MigrationEntry {
         component: "lib.rs",

@@ -353,7 +353,7 @@ pub async fn certify_pull_request(
         .evaluate_backoff_and_jitter(&diff_ctx.diff_content);
 
     // 53. SchemaEvolutionRatchet: Wire Schema Backward/Forward Compatibility Ratchet
-    let schema_evo_report = state
+    let schema_evolution_report = state
         .schema_evolution
         .evaluate_schema_evolution(&diff_ctx.diff_content);
 
@@ -588,7 +588,7 @@ pub async fn certify_pull_request(
         &stacked_report,
         &microbench_report,
         &jittered_report,
-        &schema_evo_report,
+        &schema_evolution_report,
         &auto_rollback_report,
         &wasm_report,
         &consistency_report,

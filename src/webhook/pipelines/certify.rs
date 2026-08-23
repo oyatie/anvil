@@ -84,11 +84,16 @@ pub async fn certify_pull_request(
         .ensure_documentation_parity(repo, repo_dir, diff_ctx, title, body)
         .await?;
 
-    // 3. CedarGuard: AWS Cedar IAM Policy Parity
+    // 3. CedarGuard: offline verification of the Cedar policies this PR touched.
+    //
+    // Deliberately not `?`. This guard used to propagate its error, so a
+    // missing binary failed the whole certification run rather than one gate;
+    // it now returns a report whose `NotMeasured` says the same thing without
+    // taking the other seventy-one gates down.
     let cedar_report = state
         .cedar_guard
-        .evaluate_cedar_policies(repo, repo_dir, diff_ctx, title)
-        .await?;
+        .evaluate_cedar_policies(repo_dir, diff_ctx)
+        .await;
 
     // 4. ComplianceGuard: Dynamic KR PIPA, FSS & HIPAA Regulatory Engine
     let compliance_report = state.compliance_guard.evaluate_compliance(diff_ctx)?;
@@ -429,7 +434,6 @@ pub async fn certify_pull_request(
     // Stage and commit ONLY substantive domain policy changes (NEVER push attestation receipts in a loop)
     let mut modified_files = Vec::new();
     modified_files.extend(doc_report.files_created_or_updated.clone());
-    modified_files.extend(cedar_report.files_created_or_updated.clone());
     modified_files.extend(api_contract_report.auto_synced_files.clone());
 
     if !modified_files.is_empty() {
@@ -452,7 +456,7 @@ pub async fn certify_pull_request(
             "git add for domain guard auto-sync",
         )
         .await
-        .context("Failed to stage auto-synced documentation & cedar policies")?;
+        .context("Failed to stage auto-synced documentation & contract files")?;
         if !add_out.status.success() {
             anyhow::bail!(
                 "git add failed while staging auto-synced governance files on PR #{}: {}",
@@ -462,7 +466,7 @@ pub async fn certify_pull_request(
         }
 
         let commit_msg = format!(
-            "chore(governance): [skip review] auto-sync documentation & cedar policies on PR #{}\n\n\
+            "chore(governance): [skip review] auto-sync documentation & wire contracts on PR #{}\n\n\
             X-Anvil-Action: doc-sync\n\
             X-Anvil-Version: 0.1.0\n\n\
             *🤖 Certified by Oyatie Anvil*",
@@ -478,7 +482,7 @@ pub async fn certify_pull_request(
             "git commit for domain guard auto-sync",
         )
         .await
-        .context("Failed to commit auto-synced documentation & cedar policies")?;
+        .context("Failed to commit auto-synced documentation & contract files")?;
 
         if commit_out.status.success() {
             // Auto-synced documentation & policies are staged and committed locally for gate verification

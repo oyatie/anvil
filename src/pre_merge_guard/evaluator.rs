@@ -190,13 +190,11 @@ impl PreMergeGuard {
         let doc_parity_status = doc_parity_status(doc_report);
 
         // 2. Cedar IAM Policy
-        let cedar_status = if !cedar_report.files_created_or_updated.is_empty() {
-            GateStatus::AutoUpdated
-        } else if cedar_report.is_compliant {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(cedar_report.summary.clone())
-        };
+        // The guard owns this verdict. Rebuilding it here from a boolean is
+        // what published `Passed` for a policy set its own evaluation had
+        // called non-compliant, and it would discard `NotMeasured` -- the
+        // answer this gate gives whenever no policy checker is installed.
+        let cedar_status = cedar_report.status.clone();
 
         // 3. Compliance (KR FSS & HIPAA)
         let compliance_status = if compliance_report.is_compliant {

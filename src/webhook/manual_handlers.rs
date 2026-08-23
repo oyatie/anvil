@@ -278,8 +278,9 @@ pub async fn manual_enlist_handler(
     // on: after `gh pr merge --auto` returned success that leaves the pull
     // request armed while the operator sees a connection error, and earlier it
     // abandons `certify_pull_request` holding the per-PR lock, after the doc
-    // and cedar guards have written files into the shared clone, for the next
-    // review run's `git add -A` to sweep into another pull request's commit.
+    // and contract guards have written files into the shared clone, for the
+    // next review run's `git add -A` to sweep into another pull request's
+    // commit.
     // Removing the 45-minute timeout did not remove that; it moved it from a
     // known moment to an arbitrary one.
     //

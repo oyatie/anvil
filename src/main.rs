@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
         config.agy_effort.clone(),
     ));
     let doc_guard = Arc::new(DocGuard::new(config.agy_effort.clone()));
-    let cedar_guard = Arc::new(CedarGuard::new(config.agy_effort.clone()));
+    let cedar_guard = Arc::new(CedarGuard::new());
     let compliance_guard = Arc::new(ComplianceGuard::new());
     let api_contract_guard = Arc::new(ApiContractGuard::new());
     let cell_isolation_guard = Arc::new(CellIsolationGuard::new());

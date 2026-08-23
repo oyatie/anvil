@@ -620,6 +620,36 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
              and a transparency log; none is reachable from here",
         ),
     },
+    GateFidelity {
+        gate_id: "cedar_status",
+        aspiration: "Decide, offline, whether the Cedar policy set authorises every action a change \
+                     introduces: validate the policies against a schema, then answer authorization \
+                     requests against an entity store.",
+        reference: "cedar-policy crate (Authorizer::is_authorized, Validator::validate); the cedar CLI; \
+                    AWS Verified Permissions; Zelkova / IAM Access Analyzer for SMT permissiveness \
+                    comparison",
+        fidelity: Fidelity::Partial,
+        gap: "Parses; it does not validate. The reference checker is spawned over the .cedar files the \
+              diff touched, one per file, and decides one property soundly: the policy set is \
+              grammatical Cedar. Everything past the grammar needs a schema -- the validate and symcc \
+              subcommands each take one as a required argument -- and this repository carries neither a \
+              schema nor an entity store, so no entity type, action, attribute or operand type is \
+              checked and no request is decided. The headline claim the gate is named for, that a \
+              policy covers the route a pull request added, goes with them: it is reported as nothing \
+              measured rather than put to a model. Scope used to be three path substrings, which \
+              admitted any Rust file spelling one of them and no policy file spelling none; it is now \
+              an `ends_with` test on the extension a parser can read (cedar_guard.rs:102). The verdict \
+              used to be a literal on all three exits, including the one reached after the model this \
+              gate paid had answered non-compliant; `verify` is now total over what the checker \
+              returned, and the model is deleted (cedar_guard.rs:164). Where the checker is not \
+              installed, and where it rejects Anvil own invocation rather than the policy, the gate \
+              measures nothing and says so: `interpret_cedar_outcome` keeps those two exit codes apart \
+              so a flag renamed here cannot read as a policy defect there (cedar_guard.rs:115).",
+        blocked_on: Some(
+            "a Cedar schema, and an entity store to decide a request against; this repository has \
+             neither, and both validate and symcc require the schema",
+        ),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

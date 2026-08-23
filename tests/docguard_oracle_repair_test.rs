@@ -2836,6 +2836,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         local_probe: anvil::local_inner_loop::LocalProbeReport {
+            status: GateStatus::Passed,
             is_valid: true,
             latency_ms: 0,
             findings: Vec::new(),
@@ -2887,8 +2888,10 @@ fn neutral_guard_reports() -> NeutralGuardReports {
         cosign: anvil::cosign_signer::CosignProvenanceSigner::new()
             .evaluate_without_signing_backend(),
         chaos_inj: anvil::chaos_injector::ChaosInjectorReport {
+            status: GateStatus::Passed,
             passed: true,
-            trials: Vec::new(),
+            unhandled_awaits: Vec::new(),
+            summary: n(),
         },
         stacked: anvil::stacked_diffs::StackedDiffsReport {
             status: GateStatus::Passed,
@@ -2979,6 +2982,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             measurement: anvil::chaos_mutation_guard::MutationMeasurement::NothingToMeasure,
         },
         feature_flag: anvil::feature_flag_ratchet::FeatureFlagReport {
+            status: GateStatus::Passed,
             is_clean: true,
             flags_scanned_count: 0,
             violations: Vec::new(),

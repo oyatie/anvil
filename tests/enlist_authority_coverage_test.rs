@@ -393,8 +393,13 @@ fn report_from_the_corpus(
     let shadow_traffic_report = anvil::shadow_traffic_harness::ShadowTrafficHarness::new()
         .evaluate_shadow_verification(dir, d)
         .expect("the shadow traffic harness reads the diff");
+    // A commit subject the way `git log <base>..<head>` returns it. There is no
+    // git repository under this temporary directory, so the corpus supplies the
+    // fixture the pipeline reads for real -- which exercises the measuring path
+    // rather than the abstention.
+    let commit_subjects = vec!["feat(corpus): exercise the gate corpus".to_string()];
     let local_probe_report = anvil::local_inner_loop::LocalInnerLoopProbe::new()
-        .evaluate_local_probe(dir, d)
+        .evaluate_local_probe(dir, d, &commit_subjects)
         .expect("the local inner loop probe reads the diff");
     let semantic_abi_report = anvil::semantic_abi_ratchet::SemanticAbiRatchet::new()
         .evaluate_abi_stability(dir, d)
@@ -433,8 +438,8 @@ fn report_from_the_corpus(
     );
     let cosign_report =
         anvil::cosign_signer::CosignProvenanceSigner::new().evaluate_without_signing_backend();
-    let chaos_inj_report =
-        anvil::chaos_injector::ChaosFaultInjector::new().inject_synthetic_chaos(&d.diff_content);
+    let chaos_injection_report = anvil::chaos_injector::ChaosFaultInjector::new()
+        .scan_for_unhandled_await_without_a_running_system(&d.diff_content);
     let stacked_report =
         anvil::stacked_diffs::StackedDiffsOrchestrator::new().evaluate_without_stack_source();
     let microbench_report = anvil::microbenchmark_ratchet::MicroBenchmarkRatchet::new()
@@ -516,7 +521,7 @@ fn report_from_the_corpus(
             &hermetic_report,
             &openvex_report,
             &cosign_report,
-            &chaos_inj_report,
+            &chaos_injection_report,
             &stacked_report,
             &microbench_report,
             &jittered_report,

@@ -78,6 +78,19 @@ impl Fidelity {
     }
 }
 
+/// The fidelity the registry declares for `gate_id`.
+///
+/// `None` means the gate has no entry: its implementation was never read, so
+/// the registry has no opinion about it and must not manufacture one. Callers
+/// enforcing a fidelity ceiling leave those gates alone; the size of that
+/// exemption is published by `gap_report().unaudited` rather than hidden.
+pub fn declared_fidelity(gate_id: &str) -> Option<Fidelity> {
+    registry::AUDITED_GATES
+        .iter()
+        .find(|e| e.gate_id == gate_id)
+        .map(|e| e.fidelity)
+}
+
 /// One gate's declared aspiration, its measured reality, and the gap between.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateFidelity {

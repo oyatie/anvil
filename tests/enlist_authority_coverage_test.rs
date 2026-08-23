@@ -1053,3 +1053,62 @@ fn every_gate_is_published_under_its_own_name() {
          published line is about"
     );
 }
+
+/// A gate the fidelity registry records as `Aspirational` implements none of
+/// the capability its name claims, so it has nothing to pass on. The rule was
+/// stated in `Fidelity`'s own doc comment and encoded in `may_report_pass()`,
+/// and until the certification run started asking it, seven aspirational gates
+/// published `Passed` on this very fixture: `deadlock_status`,
+/// `openvex_status`, `cosign_status`, `auto_rollback_status`,
+/// `carbon_compute_status`, `replay_harness_status` and
+/// `upgrade_train_status`.
+///
+/// `aspirational_gates_cannot_pass_test.rs` pins every branch of the rule
+/// against hand-built reports. This is the one that runs the real corpus over a
+/// real diff and asks what the pull request would actually have been told —
+/// which is the only place the seven were visible, because a hand-built report
+/// says whatever it was handed.
+#[test]
+fn no_aspirational_gate_publishes_a_pass_on_the_change_the_corpus_measured() {
+    let work = a_working_tree();
+    let report = report_from_the_corpus(work.path(), Some(true), "APPROVE");
+
+    let aspirational: Vec<&str> = anvil::fidelity::registry::AUDITED_GATES
+        .iter()
+        .filter(|e| !e.fidelity.may_report_pass())
+        .map(|e| e.gate_id)
+        .collect();
+    assert!(
+        !aspirational.is_empty(),
+        "fixture sanity: with no aspirational gate in the registry this test \
+         asks nothing"
+    );
+
+    let stamped: Vec<&str> = report
+        .named_statuses()
+        .into_iter()
+        .filter(|(gate, status)| {
+            aspirational.contains(gate)
+                && matches!(status, GateStatus::Passed | GateStatus::AutoUpdated)
+        })
+        .map(|(gate, _)| gate)
+        .collect();
+    assert!(
+        stamped.is_empty(),
+        "the registry records {stamped:?} as implementing none of the capability \
+         they are named for, and the certification run published them as passing \
+         on this pull request"
+    );
+
+    // Discrimination: a run in which nothing passes would satisfy the above.
+    let passing = report
+        .named_statuses()
+        .into_iter()
+        .filter(|(_, s)| matches!(s, GateStatus::Passed))
+        .count();
+    assert!(
+        passing > 20,
+        "fixture sanity: only {passing} gates passed, so the assertion above \
+         would hold against a corpus that measured nothing"
+    );
+}

@@ -218,11 +218,10 @@ impl PreMergeGuard {
         };
 
         // 6. Supply Chain Security
-        let supply_chain_status = if supply_chain_report.is_secure {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(supply_chain_report.summary.clone())
-        };
+        // Published unchanged: the guard tells a measured pass from an
+        // unreachable advisory database, and a status rebuilt from a boolean
+        // here would collapse the second into the first.
+        let supply_chain_status = supply_chain_report.status.clone();
 
         // 7. Clean Architecture
         // A run that classified no layered file measured nothing: reporting it
@@ -417,11 +416,7 @@ impl PreMergeGuard {
         let semantic_abi_status = semantic_abi_report.status.clone();
 
         // 40. Zero-Day Vulnerability Auto-Patcher
-        let zero_day_status = if zero_day_report.is_clean {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(zero_day_report.summary.clone())
-        };
+        let zero_day_status = zero_day_report.status.clone();
 
         // 41. Formal SMT Constraint Verification
         let formal_verification_status = if formal_report.passed {

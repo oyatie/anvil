@@ -46,7 +46,7 @@ fn disjoint_open_paths_are_parallel() {
     let b = set(&["tests/nparallel_lane_1.rs"]);
     assert!(path_sets_disjoint(&a, &b));
     assert_eq!(
-        admit_spawn(&a, &hubs, &[b.clone()], true).unwrap(),
+        admit_spawn(&a, &hubs, std::slice::from_ref(&b), true).unwrap(),
         SpawnKind::Parallel
     );
     assert_eq!(

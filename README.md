@@ -35,7 +35,7 @@ The table below is a representative selection, not the full corpus.
 | **AST Chaos Mutation Test Adequacy** | Critical branches verified against surviving mutants (`ChaosMutationGuard`) |
 | **Feature Flag & Dead Branch Lifecycle** | Zero stale or dead toggle fallback branches (`FeatureFlagRatchet`) |
 | **Micro-Benchmark & Latency Ratchet** | Hot paths within +3% latency & zero-leak budget (`CriterionBenchRatchet`) |
-| **Cryptographic Provenance Attestation** | Stamped verification receipts in `.cursor/receipts` (`AttestationGuard`) |
+| **Lane Receipt & Provenance** | Receipt recorded in `.anvil/receipts`; nothing signs or attests it, so the gate reports `NotMeasured` (`AttestationGuard`) |
 | **Secret & Credential Scan** | Deep entropy scan for leaked credentials |
 | **Schema & Migration Compatibility** | Zero destructive breakages across cell nodes |
 | **Concurrency, Perf & Flake Guard** | Bounded execution and flake-resistant timings |

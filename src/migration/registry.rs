@@ -182,7 +182,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         oyatie_counterpart: "governance/check/slsa-l3-evidence-grounded + ci/facade/artifact-accountability + \
                             ci/facade/parity-claim-evidence + intelligence/core/evidence-domain",
         counterpart_loc: 3458,
-        evidence: "252 lines; stamps lane receipts into Anvil's own `.anvil/receipts` directory (module doc \
+        evidence: "412 lines; records lane receipts in Anvil's own `.anvil/receipts` directory (module doc \
                   explicitly names that path). The receipt store exists only because Anvil is its own \
                   repo; oyatie carries evidence/ledger plus a SLSA-L3 evidence gate and \
                   artifact-accountability gate.",

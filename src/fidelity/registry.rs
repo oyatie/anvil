@@ -187,9 +187,26 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      breaking changes.",
         reference: "cargo-semver-checks over rustdoc JSON",
         fidelity: Fidelity::Heuristic,
-        gap: "Whole-diff predicate: contains(\"-pub fn \") && !contains(\"+pub fn \"). Removing a public \
-              function goes undetected if the same PR adds any other one, and a signature change emits both \
-              lines so it can never be detected (semantic_abi_ratchet/signature_scanner.rs:33).",
+        gap: "Compares the `pub fn` declarations a diff removes against the ones it adds, by name over the \
+              whole diff rather than by two substring tests on it. A removal is reported only when the name \
+              is added nowhere in the diff -- `added.get(name)` (signature_scanner.rs:230) -- and a \
+              signature only when the name occurs once on each side and both lines close their parameter \
+              list, so a move and a rustfmt reflow both clear it while `unpaired_names` counts the pairs it \
+              declined to compare (signature_scanner.rs:244,248). It builds no rustdoc JSON, resolves no \
+              module path and reads no baseline revision, so a function moved between modules reads as \
+              clean and a major version bump is not read. Two shapes are declined outright rather than \
+              guessed at: a name the diff removes but re-declares inside a string literal on the added \
+              side -- an inline fixture rewritten from a raw string, which the anchor alone does not catch \
+              because the indented body line reaches it bare -- and anything after a `#[cfg(test)]` marker \
+              in the same file chunk, since `is_library_rust` tests directories and a test module inside \
+              src publishes nothing (signature_scanner.rs:221,169). Both cost recall: a genuine removal \
+              re-mentioned as a declaration in a string, or declared below a test module, is not reported. \
+              The memory-layout half of the old claim is withdrawn: nothing computes a layout, and a diff \
+              that adds or removes a `#[repr(` line -- the symmetric difference, so a line present \
+              identically on both sides was moved and does not count -- is reported `NotMeasured` rather \
+              than passed. Adding a brand-new repr type also triggers it, which is why the published \
+              sentence says add or remove rather than change -- `layout_files` \
+              (semantic_abi_ratchet/mod.rs:104,116).",
         blocked_on: None,
     },
     GateFidelity {

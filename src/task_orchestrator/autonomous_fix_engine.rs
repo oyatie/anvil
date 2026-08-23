@@ -90,7 +90,7 @@ impl AutonomousFixEngine {
 
         // Prompt formatting for Multi-Model ensemble
         let prompt = format!(
-            "You are an autonomous systems engineer for Oyatie Anvil.\n\
+            "You are an autonomous systems engineer for Anvil.\n\
              Task: {}\n\
              Source Scope: {}\n\
              Target Files: {:?}\n\

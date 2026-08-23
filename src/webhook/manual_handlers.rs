@@ -521,15 +521,14 @@ pub async fn task_sweep_handler(
     tokio::spawn(async move {
         let _ = state_clone
             .task_orchestrator
-            .sweep_and_execute_adrs(&repo, &repo_dir)
-            .await;
+            .sweep_and_publish(&repo, &repo_dir);
     });
 
     (
         StatusCode::ACCEPTED,
         Json(ApiResponse {
             success: true,
-            message: format!("Autonomous ADR task sweep dispatched for {}", payload.repo),
+            message: format!("Ready hops published for {} (no agent spawn)", payload.repo),
         }),
     )
 }

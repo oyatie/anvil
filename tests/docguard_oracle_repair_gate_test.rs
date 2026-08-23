@@ -55,143 +55,80 @@
 //! `tests/docguard_oracle_repair_test.rs`, because none of them can reach the
 //! probe at all.
 //!
-//! ## Six of the eighteen cases here are FENCES, not red evidence
+//! ## What each case is red for, measured
 //!
-//! Seventeen of the eighteen are currently blocked at a seam `todo!()`
-//! (`src/doc_guard/mod.rs:172` and `:228`), so an unmodified run reports 17
-//! failing and one passing. That number must not be read as seventeen
-//! behaviours failing against the three live defects, and this file used to let
-//! it be read that way.
+//! These cases were written before the implementation existed, against a seam
+//! whose body was `todo!()`, so at test-review time most of them were red by
+//! PANIC — which proves a function is unimplemented and nothing else. That is no
+//! longer what this file rests on. Every case below is now red by ASSERTION, on
+//! the gate's own report, and the mutation that turns each one red is recorded
+//! rather than argued.
 //!
-//! Measured, not assumed: with ONLY the four scaffolding bodies filled in
-//! (`with_probe_override` -> `Self { probe: Probe::Overridden(outcome) }`;
-//! `with_probe_output_override` -> `Self { probe: Probe::SuppliedOutput(output) }`;
-//! the `Probe::Overridden` arm in `evaluate_doc_parity` ->
-//! `return outcome.clone().map_err(anyhow::Error::msg)`; the
-//! `Probe::SuppliedOutput` arm -> `return classify_probe_output(..)`) and
-//! nothing else touched — no defect repaired — this binary reports **12 failing
-//! on test-file assertion lines and these six passing**:
+//! MEASURED: six mutants, each the defect this branch removed, applied one at a
+//! time to the repaired implementation and reverted. Every mutant compiles, and
+//! every one is killed. Cases in this binary that go red, per mutant:
 //!
-//! * `a_probe_that_produced_no_judgement_is_errored_and_never_a_pass`
-//! * `a_failed_probe_is_not_rescued_by_a_corpus_sync_that_did_have_work_to_do`
-//! * `a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate`
-//! * `published_drift_the_sync_could_not_repair_fails_anvils_own_gate`
+//! * `is_anvils_own_repository -> true` (issue #27, the sync applies to every
+//!   repository) kills five:
+//!   `reviewing_a_repository_that_is_not_anvil_leaves_its_owned_pages_byte_identical`,
+//!   `the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason`,
+//!   `the_gate_applies_the_corpus_sync_to_anvils_own_repository`,
+//!   `both_probe_verdicts_carry_anvils_corpus_sync_outcome_into_the_report`,
+//!   `an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply`.
+//!   (It kills four more in `tests/docguard_oracle_repair_test.rs` and the
+//!   whole of `tests/docguard_oracle_repair_self_repo_test.rs`.)
+//! * The exemption deletion taking the LINE instead of the sentence (issue #28)
+//!   kills thirteen cases in `tests/docguard_oracle_repair_test.rs` and none
+//!   here — the deletion is a pure function and this binary drives it only
+//!   through the sync's own report.
+//! * `is_sufficient: true` on the generate path (issue #29, the historical
+//!   hardcode) kills four here:
+//!   `an_under_documented_diff_does_not_pass_through_the_public_gate`,
+//!   `an_under_documented_diff_that_named_no_files_still_fails_the_gate`,
+//!   `an_under_documented_diff_that_stated_no_reason_still_fails_the_gate`,
+//!   `naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass`, plus
+//!   two of the corpus-sync summary cases and the seam binary's repeat-run case.
+//! * `let _ = tokio::fs::write(..)` kills exactly one:
+//!   `a_write_that_failed_with_its_directory_already_present_is_still_errored`.
+//! * Pushing a named file that was never amended onto the updated list kills
+//!   exactly one: `naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass`.
+//! * Reading `files_created_or_updated` before `is_sufficient` at
+//!   `evaluator::doc_parity_status` kills two, both in
+//!   `tests/docguard_oracle_repair_test.rs` — this binary stops at the
+//!   `DocGuardReport`, and the merge decision is one seam further on.
+//!
+//! Two cases in this binary are killed by no mutant above, and both are
+//! disclosed as FENCES rather than red evidence:
+//!
+//! * `a_corpus_sync_that_could_not_run_at_all_is_errored_at_the_gate` and
+//!   `published_drift_the_sync_could_not_repair_fails_anvils_own_gate` fence the
+//!   `Err` and DRIFT arms of the corpus-sync match, which are already correct.
+//!   The repair that breaks them is collapsing that match to
+//!   `let sync = sync_published_counts(..)?;` — which propagates the error out of
+//!   the gate instead of mapping it onto `errored`, and reports an unrepaired
+//!   page as a completed documentation update. The drift arm is the more
+//!   dangerous of the two, because `rewritten` is non-empty on its fixture. See
+//!   `unrepairable_drift_page()` for why that fixture has to be built rather
+//!   than merely written down.
 //! * `a_finding_the_gate_reached_before_the_probe_is_the_finding_it_reports`
-//! * `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path`
-//!   (which needs no seam at all, and so is the one case that passes on an
-//!   unmodified tree)
+//!   fences the ORDER of the gate's steps: the frontmatter check runs before the
+//!   probe, so a diff that violates it is reported as that finding and the
+//!   probe's outcome is not observable at all. It is what closes the "override
+//!   consulted too early" hole in its second placement — an early
+//!   `if let Probe::Overridden(Err(e)) = &self.probe` return sitting between the
+//!   corpus-sync match and the frontmatter loop. MEASURED: with that mutant
+//!   applied, this is the one case in any of the four binaries that flips.
 //!
-//! They are regression fences on arms of `ensure_documentation_parity` that are
-//! already CORRECT on `main` — the same category, and the same disclosure, that
-//! `tests/docguard_oracle_repair_test.rs` gives its four green mapping cases at
-//! the head of that file. Each names the arm it fences and the repair that could
-//! break it:
+//! `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path` is a
+//! fence of a third kind, and it is the only case in any binary that traverses
+//! the PRODUCTION of a probe failure rather than its consumption: it hands the
+//! gate nothing, lets the real probe closure run with an empty `PATH`, and reads
+//! the failure back out of the report, so `run_bounded_for`, `run_with_watchdog`
+//! and the watchdog's own fallback are traversed by the product rather than
+//! described by a comment.
 //!
-//! * The first two fence the `Err` arm of the `evaluate_doc_parity` match: a
-//!   probe that produced no judgement returns `errored: Some(reason)`,
-//!   `is_sufficient: false`, an empty file list, and a summary carrying the
-//!   reason. The repair that breaks it is reordering the tail of
-//!   `ensure_documentation_parity` so work the gate got done — a stub written by
-//!   `generate_and_write_docs`, or a page the corpus sync rewrote — out-ranks
-//!   `errored` and is reported as a non-empty `files_created_or_updated` on a run
-//!   that has no judgement. The second case is the one that carries a corpus sync
-//!   with real work to do, which is exactly the pairing that produces the wrong
-//!   answer under that reorder.
-//! * The third fences the `Err` arm of the corpus-sync match. The repair that
-//!   breaks it is collapsing that match to
-//!   `let sync = sync_published_counts(..)?;` while threading `not_applicable`
-//!   through it — which propagates the error out of the gate instead of mapping
-//!   it onto `errored`, or, with the `?` swallowed, reports a corpus the gate
-//!   could not read as sufficient.
-//! * The fourth fences the DRIFT arm of that same match: published claims the
-//!   sync rewrote the page for and still could not make honest fail the gate,
-//!   with an empty `files_created_or_updated`. It is the sibling of the third
-//!   and it falls to the same flattening refactor — and it is the more dangerous
-//!   loss of the two, because `rewritten` is non-empty on its fixture, so the
-//!   arm's disappearance does not merely stop failing the pull request, it
-//!   announces the unrepaired page as a completed documentation update and
-//!   certifies. See `unrepairable_drift_page()` for why a fixture that reaches
-//!   this arm has to be built rather than merely written down.
-//! * The fifth is a fence of a different kind: it fences the ORDER of the gate's
-//!   own steps — the frontmatter check runs before the probe, so a diff that
-//!   violates it is reported as that finding and the probe's outcome is not
-//!   observable in the report at all. `main` already behaves this way, so it is
-//!   green from the moment the seam compiles. It is here because the two `Err`
-//!   fences above close the "override consulted too early" hole in only ONE of
-//!   its two placements: the README-on-disk assertion in the second of them
-//!   proves the override was not read BEFORE the corpus sync, and nothing
-//!   proved it was not read AFTER the sync but BEFORE the frontmatter loop —
-//!   which is the placement this header claims to have killed. The repair that
-//!   breaks it is an early `if let Probe::Overridden(Err(e)) = &self.probe`
-//!   return sitting between the corpus-sync match and the frontmatter loop.
-//!   MEASURED, not argued: with that mutant applied on top of the seam
-//!   scaffolding this binary reports one more failing case than without it, and
-//!   the one case that flips is this one — every other `Err`-arm assertion in
-//!   all four binaries is satisfied by the mutant. What the mutant costs is
-//!   that no test in any binary reaches the real `Err(e) =>` arm at the
-//!   `evaluate_doc_parity` call site, which is the arm whose historical collapse
-//!   into `is_doc_sufficient: true` made gate 1 unfailable.
-//! * The sixth is
-//!   `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path`,
-//!   and it fences something no other case in any binary touches: the
-//!   PRODUCTION of a probe failure, as opposed to its consumption. Every case
-//!   above hands the gate a failure string a test wrote. This one hands it
-//!   nothing, lets the real probe closure run with an empty `PATH`, and reads
-//!   the failure back out of the report — so `run_bounded_for`,
-//!   `run_with_watchdog` and the watchdog's own fallback are all traversed by
-//!   the product rather than described by a comment.
-//!
-//! Nothing about them needs to change; they are correctly aimed and correctly
-//! falsifiable. What was wrong was publishing "16/16 red" as behavioural red
-//! evidence when several of the cases prove only that a seam is unimplemented
-//! and then go green. On a branch whose subject is ADR-0002's honesty law, a
-//! published number that does not match the measurement is that same defect one
-//! level up.
-//!
-//! ## One more thing the failing count does not say, and should
-//!
-//! Of those failing cases, FOUR die inside the `skipped_sync_reason()` helper rather
-//! than on the assertion the case is named for —
-//! `the_gate_summary_for_a_non_anvil_repository_carries_the_skipped_syncs_reason`,
-//! `the_gate_applies_the_corpus_sync_to_anvils_own_repository`,
-//! `both_probe_verdicts_carry_anvils_corpus_sync_outcome_into_the_report` and
-//! `an_applied_corpus_sync_is_never_described_as_one_that_did_not_apply`, all
-//! four reporting `"oyatie/console" is not Anvil's repository, so the sync did
-//! not apply and must say so before any caller can repeat it`.
-//!
-//! That is still a specified behaviour failing — issue #27's `not_applicable` —
-//! and once ownership lands the four proceed to the assertions they are named
-//! for. But it means the third of them,
-//! `the_gate_applies_the_corpus_sync_to_anvils_own_repository`, is effectively a
-//! further fence at review time: its own subject (Anvil's sync still runs at the
-//! gate) is correct on `main`, and its redness today comes from the helper.
-//! Recorded here so the number is read for what it measures.
-//!
-//! ## The two cases at the end of this file, and what they close
-//!
-//! `PROBE_FAILURES` is five strings a test wrote, and every case that uses them
-//! pins what the gate DOES with a probe failure. Until now nothing in any binary
-//! ran the code that decides whether a probe run IS a failure, which is the one
-//! arm this whole branch keeps naming as the one whose collapse made gate 1
-//! unfailable. Two cases close that, neither of them spawning anything:
-//!
-//! * `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path`
-//!   runs the real probe path with an empty `PATH`, so `run_bounded_for` fails
-//!   to resolve `agy` before any process exists and the failure the gate reports
-//!   is one the product produced.
-//! * `the_supplied_probe_output_is_classified_by_the_exported_classifier`
-//!   supplies a completed probe RUN — exit status, stdout, stderr — through
-//!   `DocGuard::with_probe_output_override`, and requires the gate's report to
-//!   agree with what `doc_guard::classify_probe_output` returns for that same
-//!   run. `classify_probe_output`'s own behaviour is pinned directly in
-//!   `tests/docguard_oracle_repair_test.rs`; this is the binding that stops a
-//!   second, private copy from deciding it while the exported one stays
-//!   correctly repaired and uncalled.
-
 use anvil::doc_guard::corpus_sync::sync_published_counts;
-use anvil::doc_guard::{
-    DocGuard, DocGuardReport, DocParityEvaluation, FrontmatterValidator, classify_probe_output,
-};
+use anvil::doc_guard::{DocGuard, DocGuardReport, DocParityEvaluation, FrontmatterValidator};
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::report::TOTAL_GATES;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -250,9 +187,9 @@ const MISSING_REASON: &str = "newly_public is a new public API with no reference
 ///
 /// These strings therefore say nothing about whether the product produces `Err`
 /// in those five situations — they are the CONSUMPTION side only. The production
-/// side is pinned separately and against the product's own output, by the two
-/// cases at the end of this file and by the `classify_probe_output` /
-/// `probe_supervision_failure` section of
+/// side is pinned separately and against the product's own output, by
+/// `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path` at
+/// the end of this file and by the `classify_probe_output` section of
 /// `tests/docguard_oracle_repair_test.rs`.
 const PROBE_FAILURES: &[&str] = &[
     "failed to run doc parity probe: No such file or directory (os error 2)",
@@ -551,52 +488,6 @@ fn probe_failed(reason: &str) -> Result<DocParityEvaluation, String> {
     Err(reason.to_string())
 }
 
-/// A completed process' exit status, built rather than obtained, so a probe run
-/// of a given shape can be handed to the gate without any process existing.
-///
-/// STATED COST: there is no portable constructor, so on a non-unix target this
-/// fixture cannot be built. It panics there rather than letting the case that
-/// needs it disappear from the run.
-#[cfg(unix)]
-fn exit_status(code: i32) -> std::process::ExitStatus {
-    use std::os::unix::process::ExitStatusExt;
-    std::process::ExitStatus::from_raw(code << 8)
-}
-
-#[cfg(not(unix))]
-fn exit_status(_code: i32) -> std::process::ExitStatus {
-    panic!(
-        "this fixture needs a constructed `ExitStatus`, which only the unix \
-         extension trait provides. The behaviour is not satisfied on this \
-         platform, it is unmeasured on it"
-    )
-}
-
-/// A completed probe run: what `run_bounded_for` hands the classification.
-fn probe_output(code: i32, stdout: &str, stderr: &str) -> std::process::Output {
-    std::process::Output {
-        status: exit_status(code),
-        stdout: stdout.as_bytes().to_vec(),
-        stderr: stderr.as_bytes().to_vec(),
-    }
-}
-
-/// A judgement of sufficiency, printed the way the probe's own prompt asks for
-/// it. Held as stdout rather than as a `DocParityEvaluation` because these two
-/// constants exist to be PARSED by the code under test.
-const PRINTED_SUFFICIENT: &str = "```json\n\
-     {\"is_doc_sufficient\": true, \"missing_doc_summary\": null, \
-     \"doc_files_to_update\": [], \"suggested_adr_title\": null}\n\
-     ```\n";
-
-/// A judgement of insufficiency, naming one file, printed the same way.
-const PRINTED_INSUFFICIENT: &str = "```json\n\
-     {\"is_doc_sufficient\": false, \"missing_doc_summary\": \
-     \"newly_public is a new public API with no reference page\", \
-     \"doc_files_to_update\": [\"docs/reference/newly-public.md\"], \
-     \"suggested_adr_title\": null}\n\
-     ```\n";
-
 /// `true` when the outcome is a judgement of sufficiency. Only meaningful for
 /// the `Ok` arm; used to label the two-verdict loops.
 fn verdict_of(outcome: &Result<DocParityEvaluation, String>) -> bool {
@@ -615,7 +506,7 @@ fn run_gate(
 ) -> DocGuardReport {
     let ctx = diff_ctx(repo, repo_dir, changed);
     block_on(async {
-        DocGuard::with_probe_override("low".to_string(), outcome)
+        DocGuard::with_probe_override(outcome)
             .ensure_documentation_parity(repo, repo_dir, &ctx, "feat: add a public API", "")
             .await
             .unwrap()
@@ -2224,6 +2115,70 @@ fn a_write_that_failed_is_not_reported_as_updated_even_when_another_one_succeede
     );
 }
 
+/// The write itself failing — with its directory already in place — is still
+/// absent evidence.
+///
+/// The two cases above make the *directory creation* fail (`reference` is a
+/// regular file), so the `?` they exercise is `create_dir_all`'s. That leaves
+/// `tokio::fs::write`'s own error unpinned, which is the half issue #29 names:
+/// `let _ = tokio::fs::write(..)` discarded the error and pushed the file onto
+/// the updated list anyway, so a write that never happened was reported as
+/// AutoUpdated.
+///
+/// MEASURED, not argued: with `tokio::fs::write(..).await.with_context(..)?`
+/// replaced by `let _ = tokio::fs::write(..).await;` — the exact historical
+/// shape — every other case in all four binaries still passes and this one
+/// fails on "a write that failed is absent evidence".
+///
+/// A NUL byte is what makes the write fail, rather than a permission bit:
+/// `doc_files_to_update` is deserialised straight out of model JSON, so this is
+/// a name a probe can really emit, and the failure needs no chmod, no root check
+/// and no filesystem that honours one.
+fn a_write_that_failed_with_its_directory_already_present_is_still_errored() {
+    const UNWRITABLE: &str = "docs/reference/newly\0public.md";
+
+    let dir = tempdir().unwrap();
+    assert!(
+        sync_published_counts(ANVIL, dir.path(), TOTAL_GATES).is_ok(),
+        "fence: the corpus sync must succeed here, so the only thing that can \
+         fail is the documentation write"
+    );
+
+    let report = run_gate(
+        insufficient(Some(MISSING_REASON), &[UNWRITABLE]),
+        ANVIL,
+        dir.path(),
+        &["src/lib.rs"],
+    );
+
+    assert!(
+        dir.path().join("docs/reference").is_dir(),
+        "precondition: the parent directory was created, so `create_dir_all` \
+         cannot be the step that failed"
+    );
+    let errored = report.errored.as_deref().unwrap_or_else(|| {
+        panic!(
+            "a write that failed is absent evidence and must be Errored. summary \
+             was: {}",
+            report.summary
+        )
+    });
+    assert!(
+        !errored.trim().is_empty(),
+        "an Errored gate that states nothing cannot be acted on: {report:?}"
+    );
+    assert!(
+        !report.is_sufficient,
+        "a failed write must not pass the gate. summary was: {}",
+        report.summary
+    );
+    assert!(
+        report.files_created_or_updated.is_empty(),
+        "nothing was written, so nothing may be reported as AutoUpdated: {:?}",
+        report.files_created_or_updated
+    );
+}
+
 /// A file that was named but never amended is not reported as updated, and
 /// naming it never yields a pass.
 fn naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass() {
@@ -2384,134 +2339,6 @@ fn a_live_probe_that_could_not_run_is_errored_through_the_real_call_path() {
     );
 }
 
-/// The gate classifies a completed probe run exactly as `classify_probe_output`
-/// classifies it.
-///
-/// This is the binding assertion, and it is the same one
-/// `a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator`
-/// makes for `doc_parity_status`: the expectation is not written down here, it
-/// is COMPUTED by calling the exported function, and the report the gate
-/// produced for the same probe run must agree with it. A second, private copy of
-/// the classification inside the probe closure — the shape that reintroduces
-/// "ran, printed nothing usable, therefore sufficient" while leaving the
-/// exported function correctly repaired, publicly visible and uncalled — cannot
-/// diverge without failing here.
-///
-/// Nothing is spawned: the probe run is supplied, and only the run. What the
-/// gate does with it is production code all the way down.
-///
-/// STATED EXCLUSION: this does not assert that the classification happens
-/// *inside* the watchdog-supervised closure, only that it is the exported
-/// function's answer that reaches the report. Requiring the watchdog's wrapping
-/// would pin how the error is composed rather than what it says, and
-/// `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path` above
-/// already traverses that closure for real.
-///
-/// MEASURED, not argued — three runs, all reverted:
-///
-/// * With the four scaffolding bodies filled and `is_sufficient` corrected on
-///   the generate path, this case passes on all four runs. It is satisfiable by
-///   an obvious correct implementation.
-/// * With a second, private copy in the `SuppliedOutput` arm that collapses
-///   "ran, printed nothing usable" into `is_doc_sufficient: true` — the exact
-///   historical defect, with the exported function left correctly repaired and
-///   uncalled — it fails on "a successful run that printed no judgement" with
-///   "Absent evidence is never a pass".
-/// * With a private copy that returns `Err` but words it differently, it fails
-///   on the same run with the classifier's message and the reported one printed
-///   side by side. Divergence in either direction is caught.
-fn the_supplied_probe_output_is_classified_by_the_exported_classifier() {
-    let runs: &[(&str, i32, &str, &str)] = &[
-        ("a judgement of sufficiency", 0, PRINTED_SUFFICIENT, ""),
-        ("a judgement of insufficiency", 0, PRINTED_INSUFFICIENT, ""),
-        // The historical defect, in the shape the product actually meets it: the
-        // probe ran, exited zero, and printed prose. It said nothing about this
-        // diff.
-        (
-            "a successful run that printed no judgement",
-            0,
-            "I was unable to review this diff.\n",
-            "",
-        ),
-        // A judgement on stdout AND a non-zero exit: the run failed, so its
-        // answer is not taken. Nothing else in this suite drives that pairing.
-        (
-            "a non-zero exit that printed a judgement anyway",
-            1,
-            PRINTED_SUFFICIENT,
-            "permission check failed for command",
-        ),
-    ];
-
-    for (label, code, stdout, stderr) in runs {
-        let expected = classify_probe_output(exit_status(*code), stdout, stderr);
-
-        let dir = tempdir().unwrap();
-        let ctx = diff_ctx(ANVIL, dir.path(), &["src/lib.rs"]);
-        let report = block_on(async {
-            DocGuard::with_probe_output_override(
-                "low".to_string(),
-                probe_output(*code, stdout, stderr),
-            )
-            .ensure_documentation_parity(ANVIL, dir.path(), &ctx, "feat: add a public API", "")
-            .await
-            .expect("the gate reports, it does not propagate")
-        });
-
-        match expected {
-            Ok(eval) => {
-                assert!(
-                    report.errored.is_none(),
-                    "{label}: `classify_probe_output` obtained a judgement from this \
-                     run, so the gate has evidence and this is not absent evidence: \
-                     {:?}",
-                    report.errored
-                );
-                assert_eq!(
-                    report.is_sufficient, eval.is_doc_sufficient,
-                    "{label}: the gate's verdict must be the verdict the exported \
-                     classifier read out of this run. summary: {}",
-                    report.summary
-                );
-            }
-            Err(e) => {
-                let errored = report.errored.as_deref().unwrap_or_else(|| {
-                    panic!(
-                        "{label}: `classify_probe_output` obtained no judgement from \
-                         this run, so the gate has none either. Absent evidence is \
-                         never a pass. summary: {}",
-                        report.summary
-                    )
-                });
-                assert!(
-                    errored.contains(&e.to_string()),
-                    "{label}: the reason the gate reports must be the reason the \
-                     exported classifier gave, or a second private copy is deciding \
-                     this and the exported one is decoration.\nclassifier: {}\n\
-                     reported:   {errored}",
-                    e
-                );
-                assert!(
-                    !report.is_sufficient,
-                    "{label}: no judgement was obtained, so the diff was not judged \
-                     documented: {}",
-                    report.summary
-                );
-                assert!(
-                    report.files_created_or_updated.is_empty(),
-                    "{label}: with no judgement there is no file list to act on: {:?}",
-                    report.files_created_or_updated
-                );
-                assert!(
-                    report.summary.contains(errored),
-                    "{label}: the summary a contributor reads must carry the reason: {}",
-                    report.summary
-                );
-            }
-        }
-    }
-}
-
 // =========================================================================
 // The single entry point
 // =========================================================================
@@ -2598,16 +2425,16 @@ fn the_documentation_gate_is_pinned_with_no_agy_reachable_on_path() {
             a_write_that_failed_is_not_reported_as_updated_even_when_another_one_succeeded,
         ),
         (
+            "a_write_that_failed_with_its_directory_already_present_is_still_errored",
+            a_write_that_failed_with_its_directory_already_present_is_still_errored,
+        ),
+        (
             "naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass",
             naming_an_existing_file_that_is_never_amended_cannot_yield_a_pass,
         ),
         (
             "a_live_probe_that_could_not_run_is_errored_through_the_real_call_path",
             a_live_probe_that_could_not_run_is_errored_through_the_real_call_path,
-        ),
-        (
-            "the_supplied_probe_output_is_classified_by_the_exported_classifier",
-            the_supplied_probe_output_is_classified_by_the_exported_classifier,
         ),
     ];
 

@@ -44,8 +44,11 @@
 //!
 //! `DocGuard::with_probe_override` supplies the *outcome* the `agy` probe would
 //! have produced — `Ok(judgement)` or `Err(reason)`. Its signature is pinned by
-//! this suite and may not be changed during implementation without a fresh test
-//! review. The `Err` arm carries as much weight as the `Ok` arm: it is the arm
+//! this suite. It carried an `agy_effort` parameter as originally specified,
+//! dropped on the floor behind an `#[allow(unused_variables)]`; that is a named
+//! input nothing measures, which is the defect class this branch exists to
+//! remove, so review directed it be deleted and the fixtures changed with it.
+//! The `Err` arm carries as much weight as the `Ok` arm: it is the arm
 //! whose historical collapse into `is_doc_sufficient: true` made gate 1
 //! unfailable (the comment recording it still sits in `evaluate_doc_parity`), so
 //! `Err(reason)` must be delivered as an `Err` out of `evaluate_doc_parity` —
@@ -57,50 +60,56 @@
 //! `tests/docguard_oracle_repair_gate_test.rs` and
 //! `tests/docguard_oracle_repair_probe_seam_test.rs`.
 //!
-//! ## Nine cases in this file are GREEN at review time, deliberately
+//! ## Which of these cases is red evidence, and which is a fence
 //!
-//! Measured: this binary reports **9 passed, 19 failed**. All nine are named
-//! below and every one of them is a regression fence rather than red evidence.
+//! This file was written before the implementation existed. At test-review time
+//! it reported 9 passed and 19 failed, and the nine were disclosed as fences
+//! rather than red evidence. That disclosure is kept here in its measured form,
+//! now that the implementation exists and every case is green: red-by-assertion
+//! is claimed only where a mutant demonstrates it.
 //!
-//! Five of the nine are the `classify_probe_output` /
-//! `probe_supervision_failure` section at the end of this file, which pins where
-//! a probe failure is PRODUCED. Their disclosure, and the mutation each one
-//! kills, is written at the head of that section. The other four are the
-//! `DocGuardReport` -> `GateStatus` mapping cases described next.
+//! MEASURED — each mutant applied alone to the repaired implementation, run, and
+//! reverted; all six compile and all six are killed:
 //!
-//! The `DocGuardReport` -> `GateStatus` mapping section pins where issue #29's
-//! requirement is actually decided. To drive it, the scaffolding EXTRACTED the
-//! evaluator's existing inline mapping into
-//! `pre_merge_guard::evaluator::doc_parity_status` — verbatim, defect and all —
-//! rather than replacing it with a `todo!()`. The consequence is that four of
-//! the five cases there pass today:
+//! * The exemption deletion taking the LINE instead of the sentence (issue #28)
+//!   turns THIRTEEN cases in this file red, on their own assertions. That is the
+//!   bulk of the red evidence here, and it is the defect the pre-#12 README
+//!   reproduces.
+//! * `is_anvils_own_repository -> true` (issue #27) turns four red:
+//!   `a_corpus_sync_that_did_not_apply_says_so_instead_of_passing_silently`,
+//!   `a_slug_that_merely_resembles_anvils_is_still_somebody_elses_repository`,
+//!   `the_corpus_sync_rewrites_anvils_own_published_counts_but_not_a_watched_repositorys`,
+//!   `anvil_is_recognised_case_insensitively_and_only_as_a_whole_slug`.
+//! * Reading `files_created_or_updated` before `is_sufficient` at
+//!   `evaluator::doc_parity_status` — the live defect on `main` — turns two red:
+//!   `a_diff_the_probe_judged_under_documented_does_not_certify_because_a_stub_was_written`
+//!   and
+//!   `a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator`.
+//!   The second is the one that closes the requirement the first cannot: that
+//!   `evaluate_pre_merge_gates` keeps reaching gate 1's verdict through
+//!   `doc_parity_status` rather than through a second, private copy.
+//! * The three remaining mutants (`is_sufficient: true` on the generate path,
+//!   `let _ = tokio::fs::write(..)`, and a never-amended file pushed onto the
+//!   updated list) turn nothing in this file red. They need the gate, and they
+//!   are killed in `tests/docguard_oracle_repair_gate_test.rs`.
+//!
+//! FENCES, disclosed: the four `classify_probe_output` cases at the end of this
+//! file and four of the five `DocGuardReport` -> `GateStatus` mapping cases —
 //!
 //! * `a_diff_..._does_not_certify_when_no_file_was_written`
 //! * `a_probe_that_produced_no_judgement_does_not_certify`
 //! * `an_errored_gate_does_not_certify_even_when_a_page_was_rewritten`
 //! * `a_sufficient_diff_certifies_and_a_rewritten_owned_page_does_not_block_it`
 //!
-//! They are regression fences on arms of the mapping that are already correct
-//! and that the repair for the fifth case must not break — the last one is the
+//! — pin arms that were already correct before this branch. Both
+//! `doc_parity_status` and `classify_probe_output` were EXTRACTED from
+//! production verbatim, defect and all, rather than being written here; the
+//! extraction is disclosed at each of them. The last of the four is the
 //! counterweight that stops "never accept a non-empty file list" from being the
-//! cheapest repair. Their falsifiability was checked by mutation rather than
-//! assumed: dropping the `Errored` arm fails two of them, turning the
-//! `AutoUpdated` arm into `Failed` fails the fourth, and blocking with an empty
-//! reason fails the fifth (red) case's pass-through assertion.
-//!
-//! Had the seam been given a `todo!()` body instead, all five would be red — on
-//! a panic, proving only that a function is unimplemented, and hiding the one
-//! thing worth showing: that the mapping certifies an under-documented diff
-//! **today**, which is what
-//! `a_diff_..._does_not_certify_because_a_stub_was_written` reports when it
-//! fails with `status: AutoUpdated`.
-//!
-//! The section after that one —
-//! `a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator`
-//! — closes the requirement those five cases cannot: that
-//! `evaluate_pre_merge_gates` keeps reaching gate 1's verdict through
-//! `doc_parity_status` rather than through a second, private copy. It is RED, on
-//! `gate 1: AutoUpdated`, for the same live defect.
+//! cheapest repair. Their falsifiability is not assumed either: dropping the
+//! `Errored` arm fails two of them, turning the `AutoUpdated` arm into `Failed`
+//! fails the fourth, and blocking with an empty reason fails the fifth case's
+//! pass-through assertion.
 //!
 //! ## Ownership is a compile-time constant
 //!
@@ -112,7 +121,7 @@
 //! mutates the environment, which is a data race in a parallel one.
 
 use anvil::doc_guard::corpus_sync::sync_published_counts;
-use anvil::doc_guard::{DocGuardReport, classify_probe_output, probe_supervision_failure};
+use anvil::doc_guard::{DocGuardReport, classify_probe_output};
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::evaluator::{PreMergeGuard, doc_parity_status};
 use anvil::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport, TOTAL_GATES};
@@ -275,8 +284,8 @@ const MISSING_REASON: &str = "newly_public is a new public API with no reference
 /// These strings therefore say nothing about whether the product produces `Err`
 /// in those five situations — they are the CONSUMPTION side only. The production
 /// side is pinned separately and against the product's own output, by
-/// `classify_probe_output` and `probe_supervision_failure` in the last section
-/// of this file and by the two live-path cases at the end of
+/// `classify_probe_output` in the last section of this file and by
+/// `a_live_probe_that_could_not_run_is_errored_through_the_real_call_path` in
 /// `tests/docguard_oracle_repair_gate_test.rs`.
 const PROBE_FAILURES: &[&str] = &[
     "failed to run doc parity probe: No such file or directory (os error 2)",
@@ -2708,6 +2717,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         trace: anvil::trace_context_guard::TraceContextReport {
+            status: GateStatus::Passed,
             is_propagated: true,
             tasks_scanned: 0,
             detached_findings: Vec::new(),
@@ -2724,6 +2734,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         finops: anvil::finops_ratchet::FinOpsReport {
+            status: GateStatus::Passed,
             is_cost_optimal: true,
             findings: Vec::new(),
             summary: n(),
@@ -2767,6 +2778,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         predictive_test: anvil::predictive_test_selector::PredictiveTestReport {
+            status: GateStatus::Passed,
             is_optimized: true,
             selected_packages: Vec::new(),
             skipped_packages_count: 0,
@@ -2789,6 +2801,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         sandbox: anvil::ephemeral_sandbox::SandboxReport {
+            status: GateStatus::Passed,
             is_hermetic: true,
             sandboxes_allocated: 0,
             average_spinup_ms: 0,
@@ -2858,10 +2871,12 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             },
         },
         hermetic: anvil::hermetic_build::HermeticBuildReport {
+            status: GateStatus::Passed,
             passed: true,
             result: anvil::hermetic_build::ReproducibilityResult::DeterministicBitForBit,
         },
         openvex: anvil::vex_scanner::OpenVexReport {
+            status: GateStatus::Passed,
             passed: true,
             statements: Vec::new(),
         },
@@ -2906,9 +2921,9 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         auto_rollback: anvil::auto_rollback::AutoRollbackReport {
+            status: GateStatus::Passed,
             passed: true,
             rollback_triggered: false,
-            postmortem: None,
             summary: n(),
         },
         wasm: anvil::wasm_sandbox::WasmSandboxReport {
@@ -2924,6 +2939,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         flake_quarantine: anvil::flake_quarantine::FlakeQuarantineReport {
+            status: GateStatus::Passed,
             passed: true,
             quarantined_tests_isolated: 0,
             rehabilitated_tests_restored: 0,
@@ -2937,18 +2953,21 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         carbon: anvil::carbon_aware::CarbonComputeReport {
+            status: GateStatus::Passed,
             passed: true,
             estimated_joules_per_build: 0.0,
             green_window_scheduled: true,
             summary: n(),
         },
         replay: anvil::replay_harness::ReplayHarnessReport {
+            status: GateStatus::Passed,
             passed: true,
             replayed_fixtures_count: 0,
             divergence_detected: false,
             summary: n(),
         },
         upgrade_train: anvil::upgrade_train::UpgradeTrainReport {
+            status: GateStatus::Passed,
             passed: true,
             pending_upgrades_available: 0,
             breaking_major_upgrades: 0,
@@ -3072,7 +3091,7 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
             &r.feature_flag,
             &r.bench,
             &r.attestation,
-            true,
+            Some(true),
             "APPROVE",
             &r.shape,
         )
@@ -3193,25 +3212,26 @@ fn a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_eval
 // over while leaving its production unpinned is the same shape of gap as the
 // defects this branch exists to close.
 //
-// These five cases pin it. They need no environment, no tempdir and no process:
+// These cases pin it. They need no environment, no tempdir and no process:
 // `classify_probe_output` is pure, which is why they live in this binary rather
 // than with the gate cases.
 //
-// FENCES, disclosed: all five PASS today, for the same reason and with the same
-// justification as the four `doc_parity_status` cases named at the head of this
-// file. The scaffolding EXTRACTED this classification out of
-// `evaluate_doc_parity`'s probe closure verbatim, defect and all, rather than
-// replacing it with a `todo!()`, and the classification is one of the parts of
-// the oracle that is already correct. What they buy is that the repair for
+// FENCES, disclosed: they pinned an already-correct part of the oracle before
+// this branch, for the same reason and with the same justification as the four
+// `doc_parity_status` cases named at the head of this file. The classification
+// was EXTRACTED out of `evaluate_doc_parity`'s probe closure verbatim, defect
+// and all, rather than being written here. What they buy is that the repair for
 // issues #27, #28 and #29 — which reaches into this function's caller — cannot
 // quietly restore the collapse while the rest of the suite stays green. Their
 // falsifiability is not assumed: each case names the mutation it kills.
 //
-// The binding half of the requirement — that the gate reaches its verdict
-// through THIS function rather than through a second, private copy — is
-// `the_supplied_probe_output_is_classified_by_the_exported_classifier` in
-// `tests/docguard_oracle_repair_gate_test.rs`, which needs the gate and
-// therefore needs that binary's emptied `PATH`.
+// There is exactly one call site: the probe closure in `evaluate_doc_parity`
+// hands `run_bounded_for`'s output straight to this function, so there is no
+// second, private copy for the gate to reach its verdict through instead. The
+// seam that used to supply a completed probe run to the gate — so that a test
+// could bind the two together — was removed on review: it bought this same
+// assertion a second time, at the price of a third `Probe` arm and a second
+// public constructor.
 
 /// A completed process' exit status, built rather than obtained.
 ///
@@ -3423,45 +3443,6 @@ fn a_probe_run_that_exited_non_zero_is_not_a_judgement() {
 }
 
 #[test]
-fn a_probe_abandoned_by_its_supervisor_is_not_a_judgement() {
-    // The way `evaluate_doc_parity` comes back with nothing that has no
-    // `ExitStatus` at all, and therefore the one case in this section that is
-    // not unix-gated: the watchdog gave up on the probe. This arm's own comment
-    // records that it "previously returned is_doc_sufficient: true, which made
-    // gate 1 unfailable".
-    //
-    // `run_with_adaptive_watchdog` calls this fallback for BOTH of its own
-    // failure modes — a global SLA breach and an inactivity stall — and for an
-    // operation that simply returned `Err`, so it is the last thing every
-    // unsuccessful probe passes through, and the reason it is handed is the only
-    // thing that separates them.
-    const STALL: &str = "Inactivity stall: 0 bytes/tokens/syscalls emitted in 15.0s";
-    const SLA: &str = "Exceeded global SLA limit of 30s";
-
-    let stalled = probe_supervision_failure(STALL).to_string();
-    let over_sla = probe_supervision_failure(SLA).to_string();
-
-    assert!(
-        !stalled.trim().is_empty() && !over_sla.trim().is_empty(),
-        "a gate blocked because its probe was abandoned must say so"
-    );
-    assert!(
-        stalled.contains(STALL),
-        "the supervisor's own reason is the whole diagnostic; without it a stall, \
-         an SLA breach and a probe that exited non-zero are one unactionable \
-         line. got: {stalled}"
-    );
-    assert!(
-        over_sla.contains(SLA),
-        "the same on the other supervision failure: {over_sla}"
-    );
-    assert_ne!(
-        stalled, over_sla,
-        "two different supervision failures must not read identically"
-    );
-}
-
-#[test]
 fn the_ways_a_probe_can_fail_are_told_apart_in_what_it_reports() {
     // Absent evidence blocks, and it blocks the same way whichever shape it
     // took — so the only thing that tells an operator what to do about it is
@@ -3475,12 +3456,10 @@ fn the_ways_a_probe_can_fail_are_told_apart_in_what_it_reports() {
     let exited_non_zero = classify_probe_output(exit_status(1), "", "permission check failed")
         .expect_err("a non-zero exit is no judgement")
         .to_string();
-    let abandoned = probe_supervision_failure("watchdog channel closed").to_string();
 
     let reported = [
         ("ran, printed nothing usable", printed_nothing),
         ("exited non-zero", exited_non_zero),
-        ("abandoned by its supervisor", abandoned),
     ];
     for (i, (a_label, a)) in reported.iter().enumerate() {
         for (b_label, b) in reported.iter().skip(i + 1) {

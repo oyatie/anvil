@@ -10,12 +10,34 @@
 //! being corrected: a confident claim with nothing behind it. An honest
 //! "not yet audited" is worth more than an invented "Heuristic".
 //!
-//! Sixty-nine of the seventy-two gates have an entry. The three that do not --
-//! `cedar_status`, `attestation_status` and `schema_evolution_status` -- are
-//! being rewritten in open pull requests which enter their own, so auditing
-//! them here would collide and would describe code about to change. They stay
-//! unaudited, `unaudited_count` says three, and the ceiling in
-//! `withhold_aspirational_passes` exempts exactly those three.
+//! Fifty-six of the seventy-two gates have an entry on this branch. The other
+//! sixteen are each being rewritten in an open pull request that enters its
+//! own, so auditing them here would collide and would describe code about to
+//! change. They stay unaudited here, `unaudited_count` says sixteen, and the
+//! ceiling in `withhold_aspirational_passes` exempts exactly those.
+//!
+//! # When two pull requests audit the same gate
+//!
+//! The surviving entry is the one written by the pull request that changed that
+//! gate's code, and this branch drops its own.
+//!
+//! Not a tie-break by date or by author. A `gap` is not prose about a gate, it
+//! is a set of `file:line` citations into the gate's implementation, and
+//! `tests/fidelity_registry_citations_test.rs` requires each of them to name a
+//! line that exists and to quote something the code at that line contains. An
+//! entry written against the old implementation describes code that the other
+//! pull request has just deleted; its citations do not merely drift, they point
+//! at the wrong mechanism. The entry written alongside the rewrite is the only
+//! one whose evidence is answerable.
+//!
+//! Thirteen entries were removed from this branch on that rule --
+//! `security_scan`, `zero_day`, `canary`, `shuffle`, `progressive_ring`,
+//! `feature_flag`, `local_probe`, `chaos_injection`, `test_suite`,
+//! `rust_skills`, `adr`, `compliance` and `cross_service` -- together with
+//! `cedar_status`, `attestation_status` and `schema_evolution_status`, which
+//! were never entered here for the same reason. Merged naively the registry
+//! held eighty-five entries and seventy-two distinct ids, which is
+//! `gate_ids_are_unique` red and a gap report that has lost thirteen gates.
 
 use super::{Fidelity, GateFidelity};
 
@@ -600,27 +622,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: Some("a shadow database"),
     },
     GateFidelity {
-        gate_id: "compliance_status",
-        aspiration: "Evaluate a change against the statutes in force on the day it is evaluated, across \
-                     every jurisdiction it touches, and block a violation.",
-        reference: "Korea PIPA and the PIPC safeguard notice; HIPAA Security Rule 45 CFR 164.312; PCI-DSS \
-                    v4.0.1",
-        fidelity: Fidelity::Heuristic,
-        gap: "A regex sweep over added lines against six hand-written rules that do carry real citations, \
-              and three things the words dynamic and temporal do not survive. The evaluation date is \
-              frozen: `current_date` (compliance_guard/mod.rs:51) is a literal, so a rule taking effect \
-              after that day never becomes enforceable, a rule sunsetting after it never lapses, and the \
-              grace-period branch answers for a day that cannot advance. Scope is the file extension alone \
-              -- `trigger_extensions` (compliance_guard/engine.rs:61) -- while `trigger_paths` \
-              (compliance_guard/registry.rs:59) is carried on every rule and read by nothing, and a rule \
-              whose `pattern_regex` (compliance_guard/engine.rs:71) is absent can never fire, which is one \
-              of the six. And `jurisdictions_evaluated` (compliance_guard/mod.rs:61) is a fixed list of \
-              five strings published on every run whatever the rules did, beside a summary calling the \
-              change fully compliant whenever `has_blocking_violations` (compliance_guard/mod.rs:69) found \
-              nothing at CRITICAL or HIGH -- so a MEDIUM or ADVISORY finding is published inside a pass.",
-        blocked_on: None,
-    },
-    GateFidelity {
         gate_id: "api_contract_status",
         aspiration: "Parse the OpenAPI document, validate it, and diff it against the routes the service \
                      actually registers so a contract and its implementation cannot drift apart.",
@@ -722,67 +723,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: None,
     },
     GateFidelity {
-        gate_id: "rust_skills_status",
-        aspiration: "Hold the change to the language's idiom set with a compiler-backed linter, so that a \
-                     rule about types is decided on types.",
-        reference: "clippy, including its pedantic and restriction groups; the Rust API Guidelines",
-        fidelity: Fidelity::Heuristic,
-        gap: "No linter runs and no type is resolved. Seven line-regexes over added lines \
-              (rust_language_policy/engine.rs:33-40) stand in for the corpus this row is named after, \
-              while `rules_evaluated_count: 380` (rust_language_policy/mod.rs:108) is published as the \
-              number evaluated regardless, beside `categories_evaluated` (rust_language_policy/mod.rs:68) \
-              -- a fixed list of headings whose own counts sum to neither seven nor that figure. A change \
-              touching no Rust file returns early and publishes the same number with a summary calling the \
-              change compliant (rust_language_policy/mod.rs:56-63), which is a pass declared over an empty \
-              scope. The rules themselves are honest proxies and do fire: an added `.unwrap()` in a path \
-              not spelling test is a HIGH finding, and that is mostly what `is_idiomatic` \
-              (rust_language_policy/mod.rs:82) turns on. But every judgement is made from one line of text \
-              -- a path containing the word test exempts a whole file, and a rule about a parameter type \
-              is decided by the spelling on the signature line.",
-        blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "adr_status",
-        aspiration: "Require an architecture decision record carrying the mandatory clause schema for \
-                     every change that moves an architectural boundary, and refuse a boundary change that \
-                     carries none.",
-        reference: "Michael Nygard, Documenting Architecture Decisions; the adr-tools convention; \
-                    ThoughtWorks Technology Radar, lightweight ADRs",
-        fidelity: Fidelity::Heuristic,
-        gap: "No decision record is ever parsed, on either of the two paths. Where the change touches \
-              `docs/decisions/` or `docs/adr/` the five mandatory clauses are matched against the WHOLE \
-              diff rather than against the record -- `if !re.is_match(&diff_ctx.diff_content)` \
-              (adr_drift_ratchet.rs:74) -- so the five words appearing anywhere in any file of the change \
-              satisfy every record in it, and two records are each checked against the other's text. Where \
-              the change touches no such file the other path is taken: `has_arch_changes` \
-              (adr_drift_ratchet.rs:47) matches a path fragment, and a boundary change carrying no record \
-              pushes a filename onto `scaffolded_adrs` (adr_drift_ratchet.rs:84) that nothing writes, \
-              while `is_compliant` (adr_drift_ratchet.rs:90) stays true. A change that adds no record \
-              therefore cannot fail this gate, which inverts the incentive the row is named for, and \
-              `adrs_evaluated` counts files rather than records read.",
-        blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "shuffle_status",
-        aspiration: "Compute the blast radius of a change's cell topology from the real tenant-to-cell \
-                     assignment, and refuse an assignment whose overlap exceeds the bound.",
-        reference: "AWS shuffle sharding (Amazon Builders' Library, workload isolation); Route 53 Infima",
-        fidelity: Fidelity::Aspirational,
-        gap: "Reads no topology and no assignment, and does not look at the change at all -- `diff_ctx` \
-              reaches only the log line. Both tenants and the cell count are literals written into the \
-              guard (`total_cells`, shuffle_shard_simulator/mod.rs:46-60), and the two assignments there \
-              overlap in exactly two cells against a bound of `max_tenant_overlap > 2` \
-              (shuffle_shard_simulator/mod.rs:66), so the comparison is decided where it is written and \
-              `let is_isolated = violations.is_empty();` (shuffle_shard_simulator/mod.rs:73) is true on \
-              every pull request. The passing sentence then publishes a combination count and a \
-              blast-radius percentage derived from those literals as though they described the change. The \
-              arithmetic underneath is correct and unreached: `calculate_combinations` and \
-              `evaluate_overlap` (shuffle_shard_simulator/math.rs:21,37) would answer a real allocation \
-              and `select_tenant_cells` (shuffle_shard_simulator/math.rs:77) would produce one, but no \
-              caller on this path supplies a tenant.",
-        blocked_on: Some("a real tenant-to-cell assignment; nothing here declares one"),
-    },
-    GateFidelity {
         gate_id: "constant_work_status",
         aspiration: "Prove a change adds no unbounded queue, pool or retry: every buffer has a fixed \
                      capacity and every producer meets backpressure.",
@@ -838,23 +778,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: None,
     },
     GateFidelity {
-        gate_id: "canary_status",
-        aspiration: "Shift traffic to a canary in steps and trip a circuit breaker when the live \
-                     error-budget burn rate or tail latency crosses its threshold.",
-        reference: "Google SRE Workbook error-budget policy; Argo Rollouts and Flagger analysis steps",
-        fidelity: Fidelity::Aspirational,
-        gap: "Deploys nothing, queries nothing, and does not read the change -- `diff_ctx` reaches only \
-              the log line. The readings are a struct literal written into the guard: `burn_rate_5m: 0.2` \
-              and a `p99_latency_ms` well under its ceiling (canary_rollout/mod.rs:46-51), compared \
-              against bounds that are themselves literals at the call site (canary_rollout/mod.rs:53). \
-              Both comparisons are decided where they are written, so `let is_healthy = \
-              !decision.should_rollback;` (canary_rollout/mod.rs:54) is true on every pull request, and \
-              the passing sentence publishes that fabricated figure as a measured burn rate. The breaker \
-              itself is correct and would trip (canary_rollout/circuit_breaker.rs:37,47); nothing ever \
-              hands it a reading.",
-        blocked_on: Some("a canary deployment with a queryable error-budget metric source"),
-    },
-    GateFidelity {
         gate_id: "compile_profile_status",
         aspiration: "Measure a change's effect on compile wallclock -- macro expansion, codegen work, \
                      dependency cost -- and refuse a regression past a budget.",
@@ -887,24 +810,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               default hosted runner, so the rule does not fire here, though the idiom is generic enough to \
               fire elsewhere. `is_cost_optimal` (ci_runner_economics/mod.rs:62) is that one coincidence \
               and nothing more.",
-        blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "cross_service_status",
-        aspiration: "Derive the service dependency graph and refuse a wire-contract change that breaks a \
-                     consumer of the service which owns it.",
-        reference: "Pact consumer-driven contract testing; Buf breaking-change detection; protolock",
-        fidelity: Fidelity::Heuristic,
-        gap: "Builds no graph and knows no consumer. The whole decision is a path fragment and one \
-              substring: a chunk whose path names an api or proto directory and whose text contains a \
-              removed line spelled \"-   required:\" with exactly three spaces \
-              (cross_service_impact/service_graph.rs:33-34). One tracked path in this repository satisfies \
-              the fragment and none of its lines carries that indentation, so the rule has no way to fire \
-              here. When it does fire, the finding is invented rather than derived: the consumer it names \
-              is the literal `oyatie-console` written into the struct \
-              (cross_service_impact/service_graph.rs:37-38), not a service any graph resolved, and the \
-              blast radius the row is named for is never computed. `is_compatible` \
-              (cross_service_impact/mod.rs:62) reports on that one substring in that one path shape.",
         blocked_on: None,
     },
     GateFidelity {
@@ -948,45 +853,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: None,
     },
     GateFidelity {
-        gate_id: "local_probe_status",
-        aspiration: "Run the checks a developer runs before committing -- commit-message hygiene and a \
-                     fast lint -- inside a hundred milliseconds, and report what they found.",
-        reference: "Conventional Commits; the pre-commit and lefthook hook frameworks; fast local \
-                    presubmit lanes",
-        fidelity: Fidelity::Heuristic,
-        gap: "Half of this gate cannot fail, and the timing it publishes is a literal. The commit message \
-              validated is not the change's: a fixed string is handed to `validate_pre_commit` \
-              (local_inner_loop/mod.rs:48), and `is_conventional` (local_inner_loop/fast_validator.rs:28) \
-              tests that fixed string for a prefix it always has, so the conventional-commit check named \
-              in the row's detail is a constant pass and no commit message is ever read. The other half is \
-              real and can fire: `has_secret` (local_inner_loop/fast_validator.rs:48-49) is two substring \
-              tests over the diff, so `is_valid` (local_inner_loop/mod.rs:49) is that scan alone. Nothing \
-              is linted and no syntax tree is built. Nothing is timed either -- `latency_ms: 18` \
-              (local_inner_loop/mod.rs:61) is written into the report, so the sub-hundred-millisecond \
-              claim is a constant rather than a measurement.",
-        blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "zero_day_status",
-        aspiration: "Watch upstream advisories, match them against the resolved dependency graph, and \
-                     synthesise the patch when a dependency here is affected.",
-        reference: "RustSec advisory-db and cargo-audit; GitHub Dependabot security updates; OSV",
-        fidelity: Fidelity::Aspirational,
-        gap: "Reads no advisory feed and no lockfile. `let active_advisories = vec![];` \
-              (zero_day_patcher/mod.rs:45) is the entire advisory set, so the reconciler iterates nothing, \
-              `is_clean` (zero_day_patcher/mod.rs:49) is the emptiness of an empty result, and the gate \
-              publishes zero un-patched advisories on every pull request without having looked at one. The \
-              matcher it would use, given a feed, is a pair of substring tests over manifest text keyed on \
-              `package_name` (zero_day_patcher/advisory_listener.rs:34-35) rather than a resolved version \
-              range -- and what it is handed is the diff, not the lockfile, so it would see only the \
-              dependencies this change touched. Nothing synthesises or opens a patch, which is the other \
-              half of the row's title.",
-        blocked_on: Some(
-            "an advisory feed and a resolved dependency inventory; neither is reachable from \
-            here",
-        ),
-    },
-    GateFidelity {
         gate_id: "review_verdict_status",
         aspiration: "Review the change adversarially and block on a finding a human reviewer would block \
                      on.",
@@ -1003,47 +869,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               same diff twice yields the same verdict, or that a finding it reports is present in the \
               change at all. What the gate measures is what one model said on one occasion.",
         blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "chaos_injection_status",
-        aspiration: "Inject real faults -- packet loss, resolver latency, a database failover -- against a \
-                     running instance of the change and observe whether it degrades gracefully.",
-        reference: "Netflix Chaos Monkey and ChAP; Gremlin; LitmusChaos",
-        fidelity: Fidelity::Heuristic,
-        gap: "Injects nothing and runs nothing. Three fault types are constructed and then ignored: \
-              `simulate_chaos_fault` (chaos_injector/fault_simulator.rs:28) echoes back the fault it was \
-              handed and decides on one substring test over the whole diff, for \".send().await.unwrap()\" \
-              or the same shape on a query call (chaos_injector/fault_simulator.rs:34-35). So the three \
-              trials are one test run three times, and the drop percentage and resolver delay are \
-              parameters `code_diff` never reaches. The trial then publishes figures nothing measured: \
-              `recovery_time_ms: 45` on the clean path (chaos_injector/fault_simulator.rs:48), a longer \
-              one on the other, neither of them timed, and an error-leak flag nothing observed. The idiom \
-              it looks for is real, so the gate can fire on real code; what it cannot do is tell whether \
-              the change survives a fault.",
-        blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "progressive_ring_status",
-        aspiration: "Promote a release through bounded rings, holding each for its bake window and \
-                     refusing promotion when that ring's telemetry says stop.",
-        reference: "Microsoft Azure safe deployment practice (deployment rings); Google canary-to-global \
-                    rollout",
-        fidelity: Fidelity::Aspirational,
-        gap: "Deploys nothing and holds nothing. `compute_next_ring` \
-              (progressive_rollout/ring_scheduler.rs:78) is a pure function of the ring it is handed and \
-              one boolean, and every arm below its guard clause returns `is_healthy: true` \
-              (progressive_rollout/ring_scheduler.rs:97,103,109,115). The certification run always hands \
-              it the first ring together with the canary gate's acceptability, and that gate reports \
-              NotMeasured, which is acceptable -- so `passed: state.is_healthy` \
-              (progressive_rollout/mod.rs:33) is true on every pull request and the single failing branch \
-              is unreachable from the corpus. The two functions that would do the work this row describes \
-              have no caller on this path: `validate_bake_window` \
-              (progressive_rollout/ring_scheduler.rs:121) is never asked, so no bake time is enforced, and \
-              `validate_geo_paired_exclusion` (progressive_rollout/ring_scheduler.rs:135) is never asked, \
-              so no paired-region rule is applied.",
-        blocked_on: Some(
-            "a deployment with per-ring telemetry; nothing on this path promotes anything",
-        ),
     },
     GateFidelity {
         gate_id: "bench_status",
@@ -1069,45 +894,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: Some(
             "a benchmark harness and a published trunk baseline; this crate declares neither",
         ),
-    },
-    GateFidelity {
-        gate_id: "feature_flag_status",
-        aspiration: "Track every flag from creation to retirement and refuse a toggle that has outlived \
-                     its expiry or whose fallback branch is dead.",
-        reference: "LaunchDarkly and Unleash flag lifecycle and technical-debt tooling; Martin Fowler, \
-                    Feature Toggles",
-        fidelity: Fidelity::Heuristic,
-        gap: "There is no flag registry, no flag age and no dead-branch analysis: the gate reads added \
-              diff lines and nothing else. `flag_usage_re` (feature_flag_ratchet.rs:53) recognises four \
-              real lookup spellings, but the count it produces gates nothing. Only two conditions can fail \
-              the gate. `permanent_true_re` (feature_flag_ratchet.rs:54,74) needs a conjunction with a \
-              literal true and a flag lookup on one line, which is not how a stale toggle is normally \
-              written. `stale_annotation_re` (feature_flag_ratchet.rs:56,85) needs an annotation this \
-              guard itself invented, and no tracked file outside this guard contains either spelling, so \
-              in practice the only reachable trigger is an expiry comment in one fixed format. `is_clean` \
-              (feature_flag_ratchet.rs:99) therefore reports that nobody wrote one of those markers, not \
-              that the change left no stale toggle behind.",
-        blocked_on: Some(
-            "a flag registry recording each flag's owner and expiry; nothing here holds one",
-        ),
-    },
-    GateFidelity {
-        gate_id: "security_scan_status",
-        aspiration: "Find a credential anywhere in a change, including one no known prefix identifies, and \
-                     treat a hit as leaked until it is rotated.",
-        reference: "gitleaks and trufflehog (entropy plus live verification); GitHub secret scanning with \
-                    provider validation",
-        fidelity: Fidelity::Heuristic,
-        gap: "Six regexes for six known credential shapes over added lines \
-              (pre_merge_guard/scanner.rs:8-21). That is a real check and it does fire. What the word \
-              entropy in this row's detail names is absent: nothing computes the randomness of a string, \
-              so a high-entropy value under an unrecognised prefix -- a connection URL, a private host \
-              token, a base64 blob -- passes untouched, and only the listed issuers are covered at all. \
-              Nothing is verified against the issuing service either, so a revoked or example key is a \
-              blocking failure while a live one in an unmatched format is not a finding. `secret_patterns` \
-              (pre_merge_guard/scanner.rs:8) is the whole vocabulary, and only added lines are read, so a \
-              credential the change leaves in place is invisible.",
-        blocked_on: None,
     },
     GateFidelity {
         gate_id: "schema_compat_status",
@@ -1142,26 +928,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               result this scan can return is `GateStatus::Warning` (pre_merge_guard/scanner.rs:80), which \
               is acceptable, so a match neither blocks a merge nor withholds admission -- and every other \
               input returns `GateStatus::Passed` (pre_merge_guard/scanner.rs:89).",
-        blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "test_suite_status",
-        aspiration: "Run the change's test suite at the commit being certified and report what the suite \
-                     found.",
-        reference: "cargo nextest and cargo test in presubmit; Bazel test; Google TAP",
-        fidelity: Fidelity::Heuristic,
-        gap: "For a Rust repository this gate never runs a test. `run_local_test_gate` \
-              (queue_healer.rs:617-620) chooses by marker file, and where a manifest exists it runs \
-              `cargo` with the argument `check` -- a compile, not a suite -- after which a successful \
-              compile becomes `TestGate::Passed` (queue_healer.rs:631) and the corpus turns that into a \
-              pass for a row named for the test suite. Only a repository with no manifest but a package \
-              script reaches an actual \"npm test\" command (queue_healer.rs:621-624). Everything around \
-              that decision is careful and worth keeping: the run happens in an ephemeral worktree \
-              verified to be the certified commit, and a tree that could not be produced, a command that \
-              did not complete, and a repository offering no gate all return no measurement rather than a \
-              verdict, which `test_suite_gate_status` (pre_merge_guard/evaluator.rs:91-102) \
-              publishes as NotMeasured. What \
-              is missing is the measurement itself.",
         blocked_on: None,
     },
     GateFidelity {

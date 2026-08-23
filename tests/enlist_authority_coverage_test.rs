@@ -291,9 +291,9 @@ fn report_from_the_corpus(
         summary: "no unresolved review threads".to_string(),
     };
     let attestation_report = anvil::attestation_guard::AttestationReport {
-        is_attested: true,
+        status: anvil::pre_merge_guard::GateStatus::Passed,
         stamped_receipt_path: None,
-        summary: "receipt stamped".to_string(),
+        summary: "receipt recorded".to_string(),
     };
 
     let compliance_report = anvil::compliance_guard::ComplianceGuard::new()

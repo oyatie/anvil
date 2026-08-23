@@ -9,7 +9,6 @@ use tracing::{error, info, warn};
 pub mod bisector;
 pub use bisector::{BisectionResult, MergeTrainBisector};
 
-use crate::attestation_guard::ANVIL_RECEIPTS_DIR;
 use crate::git_manager::GitManager;
 use crate::github::{GitHubClient, PrMetadata};
 use crate::merge_enlister::MergeEnlister;
@@ -22,11 +21,6 @@ use crate::merge_enlister::MergeEnlister;
 /// a little under its own kill so the two deadlines agree and agy's default
 /// never silently wins.
 const AGY_TURN_LIMIT: Duration = crate::exec::ExecClass::Model.timeout();
-
-/// Receipts Anvil writes into a checkout. A heal commit carries what the repair
-/// produced, never Anvil's own provenance artifacts (`.cursor/receipts` is the
-/// legacy location, still present in older checkouts).
-const ANVIL_OWNED_PATHS: &[&str] = &[ANVIL_RECEIPTS_DIR, ".cursor/receipts"];
 
 /// Outcome of the local verification gate.
 ///
@@ -103,19 +97,14 @@ impl QueueHealer {
         state.trim().eq_ignore_ascii_case("open")
     }
 
-    /// Arguments for `git add` that stage the repair but exclude Anvil's own
-    /// receipts, so a stray attestation never becomes a "healed" commit.
+    /// Arguments that stage the repair but exclude Anvil's own receipts, so a
+    /// stray receipt never becomes a "healed" commit.
+    ///
+    /// Delegates rather than spelling the pathspec a second time: the
+    /// certification pipeline had its own staging site with no exclusion at
+    /// all, which is exactly what two copies of a rule produce.
     pub fn heal_add_args() -> Vec<String> {
-        let mut args = vec![
-            "add".to_string(),
-            "-A".to_string(),
-            "--".to_string(),
-            ".".to_string(),
-        ];
-        for p in ANVIL_OWNED_PATHS {
-            args.push(format!(":(exclude){}", p));
-        }
-        args
+        crate::attestation_guard::git_add_args_excluding_receipts()
     }
 
     /// Comment body for a pushed heal; says only what was actually done.
@@ -746,7 +735,10 @@ mod tests {
     fn heal_commit_excludes_anvil_receipts() {
         let args = QueueHealer::heal_add_args();
         assert_eq!(&args[..4], &["add", "-A", "--", "."]);
-        assert!(args.contains(&format!(":(exclude){}", ANVIL_RECEIPTS_DIR)));
+        assert!(args.contains(&format!(
+            ":(exclude){}",
+            crate::attestation_guard::ANVIL_RECEIPTS_DIR
+        )));
         assert!(args.contains(&":(exclude).cursor/receipts".to_string()));
     }
 

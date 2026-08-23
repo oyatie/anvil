@@ -264,10 +264,22 @@ pub async fn certify_pull_request(
         .evaluate_unresolved_reviews(repo, pr_number)
         .await?;
 
-    // 39. LocalInnerLoopProbe: Sub-100ms Inner-Loop Local Probe Gate
-    let local_probe_report = state
-        .local_inner_loop
-        .evaluate_local_probe(repo_dir, diff_ctx)?;
+    // 39. LocalInnerLoopProbe: Pre-Commit Conventional-Commit & Secret Probe
+    // The probe used to be handed the literal `"feat: update codebase"`, so the
+    // conventional-commit half graded a string written on that line. The real
+    // subjects come from the clone this pipeline already has. An unreadable log
+    // is left empty rather than fatal: the gate reports NotMeasured for it, and
+    // one certification run does not fail because a commit range could not be
+    // resolved.
+    let commit_subjects = state
+        .git_mgr
+        .commit_subjects(repo_dir, &diff_ctx.base_sha, &diff_ctx.head_sha)
+        .await
+        .unwrap_or_default();
+    let local_probe_report =
+        state
+            .local_inner_loop
+            .evaluate_local_probe(repo_dir, diff_ctx, &commit_subjects)?;
 
     // 40. SemanticAbiRatchet: Public Library ABI & Semver Stability Gate
     let semantic_abi_report = state
@@ -328,10 +340,15 @@ pub async fn certify_pull_request(
     // transparency-log id from it; the gate now reports the absence instead.
     let cosign_report = state.cosign_signer.evaluate_without_signing_backend();
 
-    // 49. ChaosFaultInjector: Pre-Merge Synthetic Fault Simulation
-    let chaos_inj_report = state
+    // 49. ChaosFaultInjector: Unhandled-Await Lint Over The Diff
+    // No fault is injected: nothing here runs a system for Chaos Monkey, AWS
+    // FIS, Gremlin or LitmusChaos to disturb. The three faults declared here
+    // were handed to a simulator that never read them, so one two-substring
+    // scan produced three identical verdicts carrying a fabricated recovery
+    // time. What survives is the lint, published as one.
+    let chaos_injection_report = state
         .chaos_injector
-        .inject_synthetic_chaos(&diff_ctx.diff_content);
+        .scan_for_unhandled_await_without_a_running_system(&diff_ctx.diff_content);
 
     // 50. StackedDiffsOrchestrator: Multi-PR DAG Synchronization
     // No forge query enumerates the PRs stacked on this one, so the stack is
@@ -584,7 +601,7 @@ pub async fn certify_pull_request(
         &hermetic_report,
         &openvex_report,
         &cosign_report,
-        &chaos_inj_report,
+        &chaos_injection_report,
         &stacked_report,
         &microbench_report,
         &jittered_report,

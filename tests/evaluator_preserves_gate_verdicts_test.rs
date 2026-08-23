@@ -44,6 +44,18 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "gitops_drift_report",
     "migration_orch_report",
     "mutation_report",
+    // Three gates whose vocabulary was invented or expired, so their green was
+    // unreachable by any input. Each now tells "measured and clean" apart from
+    // "the source this gate needs does not exist"; a boolean rebuilt here would
+    // collapse the second into the first again.
+    //
+    // The evaluator's parameter for the chaos gate was `chaos_inj_report` while
+    // its status is `chaos_injection_status`, which breaks the name rule this
+    // list is checked against. Renamed to `chaos_injection_report` rather than
+    // exempting the gate, as `debt_shrink_report` was.
+    "local_probe_report",
+    "chaos_injection_report",
+    "feature_flag_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

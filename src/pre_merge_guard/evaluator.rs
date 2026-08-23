@@ -155,7 +155,7 @@ impl PreMergeGuard {
         hermetic_report: &HermeticBuildReport,
         openvex_report: &OpenVexReport,
         cosign_report: &CosignReport,
-        chaos_inj_report: &ChaosInjectorReport,
+        chaos_injection_report: &ChaosInjectorReport,
         stacked_report: &StackedDiffsReport,
         microbench_report: &MicrobenchmarkReport,
         jittered_report: &JitteredBackoffReport,
@@ -404,12 +404,12 @@ impl PreMergeGuard {
             GateStatus::Failed(unresolved_review_report.summary.clone())
         };
 
-        // 38. Sub-100ms Inner-Loop Local Probe
-        let local_probe_status = if local_probe_report.is_valid {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(local_probe_report.summary.clone())
-        };
+        // 38. Pre-Commit Conventional-Commit & Secret Probe
+        // Rebuilt from `is_valid`, which is false both for a violation and for a
+        // pull request whose commit subjects never reached the gate -- so a
+        // missing commit source was published as an accusation. The probe tells
+        // the three outcomes apart and owns the verdict now.
+        let local_probe_status = local_probe_report.status.clone();
 
         // 39. Public Function Signature Stability
         // Published unchanged: the ratchet distinguishes "compared and clean"
@@ -480,12 +480,13 @@ impl PreMergeGuard {
         // without touching this wiring.
         let cosign_status = cosign_report.status.clone();
 
-        // 48. Pre-Merge Chaos Injection
-        let chaos_injection_status = if chaos_inj_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed("Synthetic chaos fault injection provoked unhandled panic/outage in preview sandbox.".to_string())
-        };
+        // 48. Unhandled-Await Lint Over The Diff
+        // This rebuilt the verdict from `passed`, and the failure text it wrote
+        // named a preview sandbox that is not deployed, spawned or configured
+        // anywhere in this repository -- so a blocked author was sent to look
+        // for a thing that does not exist. The guard owns the sentence now, and
+        // it says what was actually read.
+        let chaos_injection_status = chaos_injection_report.status.clone();
 
         // 49. Stacked Diffs & PR DAG Synchronization
         // As above: `passed` is `plan.atomic_merge_ready`, which is true for a
@@ -555,12 +556,12 @@ impl PreMergeGuard {
         // other way round, as a pass).
         let mutation_status = mutation_report.gate_status();
 
-        // 62. Feature Flag & Dead Branch Lifecycle
-        let feature_flag_report_status = if feature_flag_report.is_clean {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(feature_flag_report.summary.clone())
-        };
+        // 62. Feature Flag Lifecycle
+        // `is_clean` was `violations.is_empty()` over three rules no flag system
+        // uses, so it was true on every input. It is now false while unmeasured
+        // too, and a status rebuilt from it here would publish "no flag
+        // lifecycle source" as a warning about the change.
+        let feature_flag_status = feature_flag_report.status.clone();
 
         // 63. Micro-Benchmark & Latency Ratchet
         let bench_status = if bench_report.is_within_budget {
@@ -717,7 +718,7 @@ impl PreMergeGuard {
             replay_harness_status,
             upgrade_train_status,
             mutation_status,
-            feature_flag_status: feature_flag_report_status,
+            feature_flag_status,
             bench_status,
             attestation_status,
             security_scan_status,

@@ -640,7 +640,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               message to a check that was `starts_with` on a type prefix, which accepts a header \
               with no colon and no description and accepts `feature` as a type, none of which \
               Conventional Commits 1.0.0 admits. The subjects are now read from the clone the \
-              pipeline already holds, by `commit_subjects` (git_manager/mod.rs:532), and judged \
+              pipeline already holds, by `commit_subjects` (git_manager/mod.rs:560), and judged \
               against `CONVENTIONAL_HEADER` (fast_validator.rs:34) with commitlint's default type \
               list plus this repository's own promote type -- type-enum is configuration, not \
               specification, and hardcoding the default made the check red on the convention the \
@@ -699,6 +699,34 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               with no such line is reported unmeasured, not resilient: nothing was made to fail, so \
               nothing survived failing.",
         blocked_on: Some("a running deployment a fault injector can act on"),
+    },
+    GateFidelity {
+        gate_id: "attestation_status",
+        aspiration: "Emit a signed provenance statement binding this artefact, by digest, to how it \
+                     was produced, and record it where a third party who does not trust the \
+                     producer can verify it.",
+        reference: "in-toto attestation v1 (subject digest, predicateType); DSSE PAE envelopes; \
+                    cosign attest with Fulcio and Rekor; SLSA v1.0 build levels; RFC 6962 \
+                    transparency logs",
+        fidelity: Fidelity::Aspirational,
+        gap: "Attests nothing. No digest is computed over any artefact, no DSSE envelope is built, \
+              no signature is produced -- the crate holds no signing key and no X.509 or ECDSA \
+              dependency -- and no transparency log is written or read, so there is no verifier \
+              here and nothing for one to check. What runs is `serde_json::to_string_pretty` and \
+              `fs::write`, and the gate's pass used to be rebuilt in the wiring from a boolean \
+              whose one production value was a literal, which made the failure arm unreachable. \
+              The guard now owns the verdict and publishes `NO_PROVENANCE_BACKEND` \
+              (attestation_guard.rs:116,209-211). A hash-chained receipt log was considered and \
+              rejected rather than shipped: the chain would be unkeyed, so recomputing it after \
+              an edit is the write path rather than an attack on it, and receipts are per-pull-\
+              request files overwritten in place inside a per-run clone, so there is no \
+              append-only log to chain in the first place. The receipt was also swept onto the \
+              pull request by the certification pipeline's own staging sweep; all four staging \
+              sites now share `stage_excluding_receipts` (git_manager/mod.rs:32).",
+        blocked_on: Some(
+            "a signing identity and a log to publish to -- a key or an OIDC issuer plus Fulcio, \
+             and a transparency log; none is reachable from here",
+        ),
     },
 ];
 

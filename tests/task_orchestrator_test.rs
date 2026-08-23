@@ -1,4 +1,7 @@
 use anvil::task_orchestrator::{ScopedTaskDefinition, SourceDocVerifier, TaskDagSequencer};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tempfile::tempdir;
 
 #[test]
@@ -193,50 +196,38 @@ fn path_occupancy_is_set_intersection_not_crate_lock() {
     use anvil::task_orchestrator::{occupy_move, path_sets_disjoint};
 
     assert!(path_sets_disjoint(
-        &["src/items/a.rs".into()],
-        &["src/items/b.rs".into()]
+        &["storage/core/a.rs".into()],
+        &["storage/core/b.rs".into()]
     ));
     assert!(!path_sets_disjoint(
-        &["src/items/a.rs".into()],
-        &["src/items/a.rs".into()]
+        &["storage/core/a.rs".into()],
+        &["storage/core/a.rs".into()]
     ));
-    let mv = occupy_move("src/a.rs", "src/b.rs");
-    assert!(mv.contains("src/a.rs") && mv.contains("src/b.rs"));
+    let mv: Vec<String> = occupy_move("storage/core/old.rs", "storage/core/new.rs")
+        .into_iter()
+        .collect();
+    assert!(mv.contains(&"storage/core/old.rs".into()));
+    assert!(mv.contains(&"storage/core/new.rs".into()));
+    assert!(!path_sets_disjoint(&mv, &["storage/core/old.rs".into()]));
+    assert!(!path_sets_disjoint(&mv, &["storage/core/new.rs".into()]));
+    assert!(path_sets_disjoint(&mv, &["storage/core/other.rs".into()]));
 }
 
-#[test]
-fn overlapping_layer_fails_closed_before_spawn() {
-    use anvil::task_orchestrator::assert_layer_paths_disjoint;
+#[tokio::test]
+async fn overlapping_layer_fails_closed_before_spawn() {
+    use anvil::task_orchestrator::{
+        assert_layer_paths_disjoint, run_layer_parallel, TaskExecutionReport,
+    };
 
     let tasks = vec![task("A", &["src/lib.rs"]), task("B", &["src/lib.rs"])];
     let err = assert_layer_paths_disjoint(&tasks).unwrap_err().to_string();
     assert!(err.contains("path occupancy overlap"));
-}
 
-#[tokio::test]
-async fn disjoint_layer_peak_concurrency_is_n() {
-    use anvil::task_orchestrator::{run_layer_parallel, TaskExecutionReport};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let live = Arc::new(AtomicUsize::new(0));
-    let peak = Arc::new(AtomicUsize::new(0));
-    let tasks = vec![
-        task("A", &["src/items/a.rs"]),
-        task("B", &["src/items/b.rs"]),
-        task("C", &["src/items/c.rs"]),
-    ];
-    let live_c = Arc::clone(&live);
-    let peak_c = Arc::clone(&peak);
-    let reports = run_layer_parallel(tasks, move |t| {
-        let live = Arc::clone(&live_c);
-        let peak = Arc::clone(&peak_c);
+    let spawned = Arc::new(AtomicUsize::new(0));
+    let spawned_c = Arc::clone(&spawned);
+    let err = run_layer_parallel(tasks, move |t| {
+        spawned_c.fetch_add(1, Ordering::SeqCst);
         async move {
-            let n = live.fetch_add(1, Ordering::SeqCst) + 1;
-            peak.fetch_max(n, Ordering::SeqCst);
-            tokio::time::sleep(Duration::from_millis(80)).await;
-            live.fetch_sub(1, Ordering::SeqCst);
             Ok(TaskExecutionReport {
                 task_id: t.task_id,
                 repo: "lab".into(),
@@ -250,13 +241,90 @@ async fn disjoint_layer_peak_concurrency_is_n() {
         }
     })
     .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("path occupancy overlap"));
+    assert_eq!(spawned.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn git_mv_overlap_on_either_end_fails_closed_before_spawn() {
+    use anvil::task_orchestrator::{assert_layer_paths_disjoint, occupy_move};
+
+    let occupied_paths: Vec<String> = occupy_move("storage/core/old.rs", "storage/core/new.rs")
+        .into_iter()
+        .collect();
+    let occupied: Vec<&str> = occupied_paths.iter().map(String::as_str).collect();
+    assert!(assert_layer_paths_disjoint(&[
+        task("mv", &occupied),
+        task("edit-new", &["storage/core/new.rs"]),
+    ])
+    .unwrap_err()
+    .to_string()
+    .contains("path occupancy overlap"));
+    assert!(assert_layer_paths_disjoint(&[
+        task("mv", &occupied),
+        task("edit-old", &["storage/core/old.rs"]),
+    ])
+    .unwrap_err()
+    .to_string()
+    .contains("path occupancy overlap"));
+    assert_layer_paths_disjoint(&[
+        task("mv", &occupied),
+        task("other", &["storage/core/other.rs"]),
+    ])
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn disjoint_layer_peak_concurrency_is_n() {
+    use anvil::task_orchestrator::{run_layer_parallel, TaskExecutionReport};
+
+    let live = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let n = 3;
+    let barrier = Arc::new(tokio::sync::Barrier::new(n));
+    let tasks = vec![
+        task("A", &["storage/core/a.rs"]),
+        task("B", &["storage/core/b.rs"]),
+        task("C", &["storage/core/c.rs"]),
+    ];
+    let live_c = Arc::clone(&live);
+    let peak_c = Arc::clone(&peak);
+    let barrier_c = Arc::clone(&barrier);
+    let reports = tokio::time::timeout(
+        Duration::from_secs(5),
+        run_layer_parallel(tasks, move |t| {
+            let live = Arc::clone(&live_c);
+            let peak = Arc::clone(&peak_c);
+            let barrier = Arc::clone(&barrier_c);
+            async move {
+                let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                barrier.wait().await;
+                live.fetch_sub(1, Ordering::SeqCst);
+                Ok(TaskExecutionReport {
+                    task_id: t.task_id,
+                    repo: "lab".into(),
+                    branch_name: "feat/x".into(),
+                    pr_number: None,
+                    attempts: 1,
+                    tokens_consumed: 0,
+                    status: "ok".into(),
+                    summary: String::new(),
+                })
+            }
+        }),
+    )
+    .await
+    .expect("serial for-await deadlocks a barrier of N")
     .expect("layer");
 
-    assert_eq!(reports.len(), 3);
+    assert_eq!(reports.len(), n);
     assert_eq!(
         peak.load(Ordering::SeqCst),
-        3,
-        "serial for-await cannot overlap three 80ms tasks; peak={:?}",
+        n,
+        "peak in-flight hops was {}, not {n}",
         peak.load(Ordering::SeqCst)
     );
 }

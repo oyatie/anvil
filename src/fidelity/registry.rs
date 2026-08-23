@@ -10,11 +10,19 @@
 //! being corrected: a confident claim with nothing behind it. An honest
 //! "not yet audited" is worth more than an invented "Heuristic".
 //!
-//! Fifty-six of the seventy-two gates have an entry on this branch. The other
-//! sixteen are each being rewritten in an open pull request that enters its
-//! own, so auditing them here would collide and would describe code about to
-//! change. They stay unaudited here, `unaudited_count` says sixteen, and the
-//! ceiling in `withhold_aspirational_passes` exempts exactly those.
+//! Sixty-nine of the seventy-two gates have an entry here. The three that do
+//! not -- `adr_status`, `compliance_status` and `cross_service_status` -- are
+//! audited by #98, which rewrites all three; auditing them here would describe
+//! code about to change and would collide with the entry that describes what
+//! replaces it. They are unaudited on this branch, `unaudited_count` says
+//! three, and the ceiling in `withhold_aspirational_passes` exempts exactly
+//! those three. With #98 the registry reaches seventy-two of seventy-two and
+//! nothing is exempt.
+//!
+//! The count is derived rather than written down -- `unaudited_count` subtracts
+//! from `TOTAL_GATES` -- so it corrects itself as pull requests land. This
+//! paragraph does not, which is why it names which gates rather than only how
+//! many.
 //!
 //! # When two pull requests audit the same gate
 //!
@@ -970,15 +978,17 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               reads Anvil's own source, extracts declared item names and string literals, matches them \
               word-wise against a fixed vocabulary (`FORBIDDEN_STAMPS`, brand_absence/mod.rs:63) plus a \
               vendor roll-call rule needing `VENDOR_ROLL_CALL_THRESHOLD` distinct vendors \
-              (brand_absence/mod.rs:115), and reports as `new_violations` (brand_absence/mod.rs:416) \
+              (brand_absence/mod.rs:115), and reports as `new_violations` (brand_absence/mod.rs:441) \
               anything a ledger entry does not already account for. Three limits. The vocabulary is \
               hand-written, so a stamp nobody thought of is not a violation, and what the gate actually \
               measures is conformance to that list rather than the property in its own title. The scan is \
               of Anvil's own tree on every run, so on a foreign pull request the verdict describes THIS \
               repository and not the change under review. And the module ships itself advisory -- \
-              `is_blocking: !WARN_ONLY` (brand_absence/mod.rs:444) is always false -- while the \
-              certification run ignores that field and fails the gate on any new violation, so the \
-              published severity is stricter than the module computing it declares.",
+              `is_blocking: !WARN_ONLY` (brand_absence/mod.rs:444) is always false -- and the \
+              certification run now honours it rather than overriding it: the verdict comes from \
+              `gate_status` (brand_absence/mod.rs:255), which publishes a new violation as \
+              `Warning`. So a finding here is real and blocks nothing, which is the module's own \
+              declared severity rather than a stricter one imposed in the wiring.",
         blocked_on: None,
     },
     GateFidelity {

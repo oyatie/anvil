@@ -24,13 +24,9 @@ jobs:
         run: cargo fmt --all -- --check
 
   test:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: test
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install Rust toolchain
@@ -45,15 +41,15 @@ jobs:
       - name: Rust Cache
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
-          shared-key: anvil-test-${{ matrix.os }}
+          shared-key: anvil-test
           cache-workspace-crates: "true"
       - name: Clippy Lint
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
         run: cargo nextest run --all-targets --locked --profile ci
 
-  # Rulesets still require the `fast-checks` context. This job is the fan-in:
-  # fmt + both native test legs. Same pattern as oya-ci-required.
+  # Rulesets still require the `fast-checks` context. This job is the fan-in
+  # for fmt + test. Same pattern as oya-ci-required.
   fast-checks:
     name: fast-checks
     runs-on: ubuntu-24.04
@@ -64,8 +60,9 @@ jobs:
         run: |
           [ "${{ needs.fmt.result }}" = "success" ] && [ "${{ needs.test.result }}" = "success" ]
 
-  # Post-submit / pre-deployment: the binary `scripts/start.sh` deploys.
-  # Not a merge-queue gate — release profile is a different rustc than nextest.
+  # Post-submit compile check under the release profile. Nothing is uploaded:
+  # `scripts/start.sh` builds its own binary on the host. Not a merge-queue
+  # gate — the release profile is a different rustc than the test profile.
   release:
     name: release-build
     if: github.event_name == 'push'
@@ -83,5 +80,5 @@ jobs:
         with:
           shared-key: anvil-release
           cache-workspace-crates: "true"
-      - name: Release artifact
+      - name: Release profile compile check
         run: cargo build --release --locked

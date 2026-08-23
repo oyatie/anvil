@@ -22,10 +22,12 @@ and treats Cargo as the merge path with Buck2 as local hermeticity (ADR-0716).
    `[package] rust-version = "1.97.1"`. CI installs `"1.97.1"`, never `stable`.
 2. **Lockfile is authoritative**: every CI and hook invocation passes
    `--locked`; `Cargo.lock` stays at format `version = 4`.
-3. **The deployed artifact is built post-submit**: `cargo build --release --locked`
-   runs on push to trunk (the binary `scripts/start.sh` deploys). Pre-merge CI
-   is `cargo nextest` + clippy on native amd64 and arm64. Release profile is a
-   different rustc than the test profile; it is not a merge-queue gate.
+3. **The release profile is compile-checked post-submit**: `cargo build
+   --release --locked` runs on push to trunk. It uploads nothing and deploys
+   nothing — `scripts/start.sh` builds its own binary on the host. Its only job
+   is to prove the release profile still compiles, which the pre-merge legs
+   (`cargo nextest` + clippy, dev profile, amd64) do not cover. It is not a
+   merge-queue gate.
 4. **Edition 2024** follows in its own change (behaviour-class under I8: the
    `gen` keyword, `if let` temporary scope, and impl-trait capture rules change
    semantics, so it is reviewed apart from any file move).

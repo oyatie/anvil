@@ -142,7 +142,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               bound nothing, so a named line may be one the change only carried past rather than \
               wrote; the failing sentence says so. \
               What the guard decides is what is published: it builds its own `GateStatus` and \
-              `trace_status` clones it (pre_merge_guard/evaluator.rs:291-297), the shape \
+              `trace_status` clones it (pre_merge_guard/evaluator.rs:302), the shape \
               `slo_status` already used. A diff crossing no boundary it can see is `Warning` \
               carrying `NOTHING TO MEASURE` (trace_context_guard/mod.rs:176-179): acceptable, so it \
               neither blocks nor accuses, and not `Passed`, which carries no string and would \
@@ -891,7 +891,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         gap: "A language model's opinion, taken as the verdict. The plumbing around it is mechanical and \
               correct: a response that does not parse, or that omits the field, reports `VERDICT_ERRORED` \
               (reviewer.rs:28,334) rather than an implicit pass, and `review_verdict_status` admits only \
-              an explicit approval or comment (pre_merge_guard/evaluator.rs:604-605), so an absent \
+              an explicit approval or comment (pre_merge_guard/evaluator.rs:594-595), so an absent \
               review blocks. The \
               judgement is not mechanical. The sixteen lenses this row is named for exist as prompt text \
               -- `16-lens` (reviewer.rs:304) -- and nothing checks that any lens was applied, that the \
@@ -932,13 +932,13 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                     preconditions",
         fidelity: Fidelity::Heuristic,
         gap: "Three regexes for destructive DDL over added lines, entered only where `has_migration` \
-              (pre_merge_guard/scanner.rs:37-39) finds a changed path spelling that word or ending in a \
+              (pre_merge_guard/scanner.rs:214-216) finds a changed path spelling that word or ending in a \
               SQL extension. Neither half of the row's claim is measured: no node version is known, so \
               compatibility across cell nodes is asserted by the summary rather than checked, and nothing \
               looks at the release the schema ships with. The path filter is a plain substring, so the six \
               tracked source paths here that spell that word put a change into schema scope while no \
               tracked file is a schema at all. And the verdict is capped: the worst this scan can return \
-              is `GateStatus::Warning` (pre_merge_guard/scanner.rs:52), which is acceptable and blocks \
+              is `GateStatus::Warning` (pre_merge_guard/scanner.rs:229), which is acceptable and blocks \
               nothing, so a destructive migration it does detect is published as advice.",
         blocked_on: None,
     },
@@ -950,13 +950,13 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                     ThreadSanitizer",
         fidelity: Fidelity::Heuristic,
         gap: "Two regexes for one shape: a real-clock sleep with a literal duration, in Rust or in Go \
-              (`flake_patterns`, pre_merge_guard/scanner.rs:65-74), matched against added lines. It is a \
+              (`flake_patterns`, pre_merge_guard/scanner.rs:242-251), matched against added lines. It is a \
               real idiom and it fires, but it is everything this gate does: no interleaving is explored, \
               nothing is run twice, no test is repeated, no timing is recorded, and the concurrency half \
               of the row's title has no implementation at all. The verdict is capped as well -- the worst \
-              result this scan can return is `GateStatus::Warning` (pre_merge_guard/scanner.rs:80), which \
+              result this scan can return is `GateStatus::Warning` (pre_merge_guard/scanner.rs:257), which \
               is acceptable, so a match neither blocks a merge nor withholds admission -- and every other \
-              input returns `GateStatus::Passed` (pre_merge_guard/scanner.rs:89).",
+              input returns `GateStatus::Passed` (pre_merge_guard/scanner.rs:266).",
         blocked_on: None,
     },
     GateFidelity {
@@ -966,17 +966,17 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         reference: "Google Rosie and Tricorder ratchets; ArchUnit FreezingArchRule; the debt-ledger \
                     ratchet pattern",
         fidelity: Fidelity::Partial,
-        gap: "This one runs against the real tree and really fails. `scan_tree` (brand_absence/mod.rs:260) \
+        gap: "This one runs against the real tree and really fails. `scan_tree` (brand_absence/mod.rs:323) \
               reads Anvil's own source, extracts declared item names and string literals, matches them \
               word-wise against a fixed vocabulary (`FORBIDDEN_STAMPS`, brand_absence/mod.rs:63) plus a \
               vendor roll-call rule needing `VENDOR_ROLL_CALL_THRESHOLD` distinct vendors \
-              (brand_absence/mod.rs:115), and reports as `new_violations` (brand_absence/mod.rs:362) \
+              (brand_absence/mod.rs:115), and reports as `new_violations` (brand_absence/mod.rs:416) \
               anything a ledger entry does not already account for. Three limits. The vocabulary is \
               hand-written, so a stamp nobody thought of is not a violation, and what the gate actually \
               measures is conformance to that list rather than the property in its own title. The scan is \
               of Anvil's own tree on every run, so on a foreign pull request the verdict describes THIS \
               repository and not the change under review. And the module ships itself advisory -- \
-              `is_blocking: !WARN_ONLY` (brand_absence/mod.rs:381) is always false -- while the \
+              `is_blocking: !WARN_ONLY` (brand_absence/mod.rs:444) is always false -- while the \
               certification run ignores that field and fails the gate on any new violation, so the \
               published severity is stricter than the module computing it declares.",
         blocked_on: None,
@@ -1189,34 +1189,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               is added lines, so Rust this pull request does not touch is never examined and a \
               clean verdict here is not a statement about the repository.",
         blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "attestation_status",
-        aspiration: "Emit a signed provenance statement binding this artefact, by digest, to how it \
-                     was produced, and record it where a third party who does not trust the \
-                     producer can verify it.",
-        reference: "in-toto attestation v1 (subject digest, predicateType); DSSE PAE envelopes; \
-                    cosign attest with Fulcio and Rekor; SLSA v1.0 build levels; RFC 6962 \
-                    transparency logs",
-        fidelity: Fidelity::Aspirational,
-        gap: "Attests nothing. No digest is computed over any artefact, no DSSE envelope is built, \
-              no signature is produced -- the crate holds no signing key and no X.509 or ECDSA \
-              dependency -- and no transparency log is written or read, so there is no verifier \
-              here and nothing for one to check. What runs is `serde_json::to_string_pretty` and \
-              `fs::write`, and the gate's pass used to be rebuilt in the wiring from a boolean \
-              whose one production value was a literal, which made the failure arm unreachable. \
-              The guard now owns the verdict and publishes `NO_PROVENANCE_BACKEND` \
-              (attestation_guard.rs:116,209-211). A hash-chained receipt log was considered and \
-              rejected rather than shipped: the chain would be unkeyed, so recomputing it after \
-              an edit is the write path rather than an attack on it, and receipts are per-pull-\
-              request files overwritten in place inside a per-run clone, so there is no \
-              append-only log to chain in the first place. The receipt was also swept onto the \
-              pull request by the certification pipeline's own staging sweep; all four staging \
-              sites now share `stage_excluding_receipts` (git_manager/mod.rs:32).",
-        blocked_on: Some(
-            "a signing identity and a log to publish to -- a key or an OIDC issuer plus Fulcio, \
-             and a transparency log; none is reachable from here",
-        ),
     },
     GateFidelity {
         gate_id: "cedar_status",

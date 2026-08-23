@@ -204,10 +204,21 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Resolve the dependency graph, match it against a live vulnerability database, and \
                      emit a signed SBOM.",
         reference: "osv-scanner, cargo-deny, CycloneDX",
-        fidelity: Fidelity::Heuristic,
-        gap: "Matches a short list of banned package names by regex. No dependency resolution, no CVE \
-              database, no SBOM.",
-        blocked_on: None,
+        fidelity: Fidelity::Partial,
+        gap: "No SBOM is produced -- neither syft nor cargo-cyclonedx is invoked -- no provenance is \
+              signed, and no deny.toml license or ban policy is evaluated. The audit half is real: \
+              `query_batch` sends every locked version to the OSV advisory database \
+              (supply_chain_guard.rs:192), and a runner that cannot reach it publishes NotMeasured \
+              rather than a pass. It reads one lockfile and only one: repo_dir.join with Cargo.lock \
+              (supply_chain_guard.rs:174). Every repository in the fleet that is not a Cargo \
+              workspace is therefore permanently NotMeasured on this gate -- a narrowing, since the \
+              regex this replaced at least read a package.json filename -- and the reference tool \
+              reads any recognised lockfile. Advisory lists are complete or absent, never short: a \
+              next_page_token in any result aborts the audit (osv_stream.rs:175) rather than \
+              publishing a truncated first page as the answer.",
+        blocked_on: Some(
+            "an SBOM generator and a hosted signing platform; the advisory half is done",
+        ),
     },
     GateFidelity {
         gate_id: "formal_verification_status",
@@ -1113,6 +1124,22 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               it. Nothing here reads git history, so a credential added by an earlier commit and \
               merely retained by this one is outside the scan.",
         blocked_on: Some("network egress to the issuing providers, for verification"),
+    },
+    GateFidelity {
+        gate_id: "zero_day_status",
+        aspiration: "Detect upstream zero-day advisories against the workspace lockfiles and open the \
+                     patch that closes them.",
+        reference: "RustSec advisory-db; Dependabot security updates; Renovate",
+        fidelity: Fidelity::Aspirational,
+        gap: "Reads no advisory feed and writes no patch. The evaluation matched an empty advisory list \
+              against the pull request diff, never against a lockfile, so every pull request was \
+              certified clean; nothing in the module edits a manifest or opens a pull request. It now \
+              publishes `NO_PATCH_SYNTHESIS` instead (zero_day_patcher/mod.rs:33). Advisory detection \
+              against the locked dependency graph moved to gate 6, which is real.",
+        blocked_on: Some(
+            "a manifest writer and a bot identity with write access; detection alone is \
+                          already covered by gate 6",
+        ),
     },
 ];
 

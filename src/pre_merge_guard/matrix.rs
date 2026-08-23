@@ -45,8 +45,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "supply_chain_status",
-        "📦 Supply Chain & CVE Audit (SLSA L2+)",
-        "Dependency audit, Syft CycloneDX SBOM & provenance",
+        "📦 Supply Chain & CVE Audit",
+        "Cargo.lock matched against the OSV advisory database; no SBOM, no provenance",
     ),
     (
         "clean_arch_status",
@@ -215,8 +215,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "zero_day_status",
-        "🛡️ Zero-Day Vulnerability Auto-Patcher",
-        "Autonomous upstream RustSec/CVE patch synthesis",
+        "🛡️ Zero-Day Patch Synthesis",
+        "Not measured: nothing here writes a patch; detection is gate 6",
     ),
     (
         "formal_verification_status",

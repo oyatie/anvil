@@ -961,32 +961,48 @@ fn test_scorecard_contains_anvil_receipt_marker() {
 // 29. Supply Chain Guard: Banned & Deprecated Dependencies
 // =========================================================================
 
+/// RED: a locked version carrying a live OSV advisory.
+///
+/// Was: a regex for the literal `net2` in the diff. The gate never opened
+/// `Cargo.lock`, so a vulnerable transitive dependency -- which is where
+/// supply-chain defects actually live -- was invisible to it.
 #[test]
-fn test_supply_chain_red_flag_banned_crate() {
-    let guard = anvil::supply_chain_guard::SupplyChainGuard::new();
-    let bad_diff = create_test_diff_context("Cargo.toml", "+ net2 = \"0.2.37\"");
-    let report = guard
-        .audit_supply_chain(std::path::Path::new("."), &bad_diff)
-        .unwrap();
+fn test_supply_chain_red_flag_advisory_against_a_locked_version() {
+    use anvil::pre_merge_guard::report::GateStatus;
+    use anvil::supply_chain_guard::{OsvAdvisoryStream, SupplyChainGuard};
+
+    let lock = "[[package]]\nname = \"time\"\nversion = \"0.1.44\"\n";
+    let packages = SupplyChainGuard::parse_lockfile(lock).expect("the lockfile resolves");
+    let advisories = OsvAdvisoryStream::parse_batch_response(
+        r#"{"results":[{"vulns":[{"id":"RUSTSEC-2020-0071"}]}]}"#,
+        &packages,
+    )
+    .expect("the advisory response parses");
+
+    let report = SupplyChainGuard::report(&packages, Ok(advisories));
     assert!(
-        !report.is_secure,
-        "Expected False Green prevention: Banned crate net2 must FAIL"
+        matches!(report.status, GateStatus::Failed(_)),
+        "Expected False Green prevention: a locked version with a live advisory must FAIL, got {:?}",
+        report.status
     );
 }
 
+/// GREEN: the same lockfile, with the advisory database returning nothing.
 #[test]
-fn test_supply_chain_green_nominal_dependency() {
-    let guard = anvil::supply_chain_guard::SupplyChainGuard::new();
-    let good_diff = create_test_diff_context(
-        "Cargo.toml",
-        "+ tokio = { version = \"1.38\", features = [\"macros\"] }",
-    );
-    let report = guard
-        .audit_supply_chain(std::path::Path::new("."), &good_diff)
-        .unwrap();
+fn test_supply_chain_green_no_advisory_against_any_locked_version() {
+    use anvil::pre_merge_guard::report::GateStatus;
+    use anvil::supply_chain_guard::{OsvAdvisoryStream, SupplyChainGuard};
+
+    let lock = "[[package]]\nname = \"serde\"\nversion = \"1.0.219\"\n";
+    let packages = SupplyChainGuard::parse_lockfile(lock).expect("the lockfile resolves");
+    let advisories = OsvAdvisoryStream::parse_batch_response(r#"{"results":[{}]}"#, &packages)
+        .expect("the advisory response parses");
+
+    let report = SupplyChainGuard::report(&packages, Ok(advisories));
     assert!(
-        report.is_secure,
-        "Expected False Red prevention: Standard clean dependency must PASS"
+        matches!(report.status, GateStatus::Passed),
+        "Expected False Red prevention: a clean lockfile must PASS, got {:?}",
+        report.status
     );
 }
 

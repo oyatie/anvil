@@ -2640,10 +2640,9 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         supply_chain: anvil::supply_chain_guard::SupplyChainReport {
-            is_secure: true,
+            status: GateStatus::Passed,
             audited_packages: 0,
-            patched_packages: Vec::new(),
-            slsa_provenance_generated: true,
+            vulnerable_packages: Vec::new(),
             summary: n(),
         },
         clean_arch: anvil::clean_architecture_guard::CleanArchitectureReport {
@@ -2850,9 +2849,14 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             breaking_findings: Vec::new(),
             summary: n(),
         },
+        // Gate 40 abstains permanently: it has no advisory feed and no patch
+        // writer, so it can no longer produce a pass. `Passed` here would be a
+        // neutral fixture claiming a verdict the gate cannot reach.
         zero_day: anvil::zero_day_patcher::ZeroDayReport {
-            is_clean: true,
-            advisories_detected: Vec::new(),
+            status: GateStatus::NotMeasured {
+                gate_id: "zero_day_status".to_string(),
+                reason: n(),
+            },
             summary: n(),
         },
         formal: anvil::formal_verification::FormalVerificationReport {

@@ -65,6 +65,11 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     // `schema_evolution_status`, which breaks the name rule this list is
     // checked against. Renamed rather than exempted, as above.
     "schema_evolution_report",
+    // Gate 6 measures a real dependency graph against a real advisory database
+    // and gate 40 abstains; rebuilding either from a boolean in the wiring
+    // restores the two verdicts this lane removed.
+    "supply_chain_report",
+    "zero_day_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

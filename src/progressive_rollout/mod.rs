@@ -89,6 +89,16 @@ impl ProgressiveRingOrchestrator {
     ) -> ProgressiveRingReport {
         let mut holds: Vec<String> = Vec::new();
 
+        let next = self.scheduler.compute_next_ring(current_ring, manifest);
+        if next.is_none() {
+            holds.push(format!(
+                "`{}` declares no config for {:?}, the ring {current_ring:?} would advance to; \
+                 an undeclared ring has no traffic percentage to advance at",
+                manifest.service_name,
+                current_ring.next()
+            ));
+        }
+
         if !self
             .scheduler
             .validate_bake_window(current_ring, elapsed_bake_minutes, manifest)
@@ -113,7 +123,7 @@ impl ProgressiveRingOrchestrator {
         if holds.is_empty() {
             ProgressiveRingReport {
                 status: GateStatus::Passed,
-                state: Some(self.scheduler.compute_next_ring(current_ring, manifest)),
+                state: next,
             }
         } else {
             ProgressiveRingReport {
@@ -144,13 +154,51 @@ mod tests {
         RolloutManifest {
             service_name: "svc".to_string(),
             geo_paired_exclusion_enabled: true,
-            rings: vec![RingConfig {
-                ring: DeploymentRing::Ring0Canary,
-                traffic_percentage: 1,
-                min_bake_minutes: 60,
-                regions: vec!["eastus".to_string()],
-            }],
+            rings: vec![
+                RingConfig {
+                    ring: DeploymentRing::Ring0Canary,
+                    traffic_percentage: 1,
+                    min_bake_minutes: 60,
+                    regions: vec!["eastus".to_string()],
+                },
+                // The ring Ring0Canary advances INTO. Without it every advance
+                // below would be held for an undeclared target, which is the
+                // subject of its own test rather than a precondition of these.
+                RingConfig {
+                    ring: DeploymentRing::Ring1Dogfood,
+                    traffic_percentage: 5,
+                    min_bake_minutes: 360,
+                    regions: vec!["northeurope".to_string()],
+                },
+            ],
         }
+    }
+
+    #[test]
+    fn a_manifest_that_does_not_declare_the_target_ring_holds_the_advance() {
+        let mut only_canary = manifest();
+        only_canary
+            .rings
+            .retain(|r| r.ring == DeploymentRing::Ring0Canary);
+        let report = ProgressiveRingOrchestrator::new().evaluate_ring_advance(
+            &DeploymentRing::Ring0Canary,
+            60,
+            &["eastus".to_string()],
+            &only_canary,
+        );
+        match report.status {
+            GateStatus::Failed(ref why) => assert!(
+                why.contains("declares no config for Ring1Dogfood"),
+                "the hold must name the ring the manifest is missing, got: {why}"
+            ),
+            other => panic!(
+                "a bake-complete ring with an undeclared successor must not advance, got {other:?}"
+            ),
+        }
+        assert!(
+            report.state.is_none(),
+            "a held ring advances to nothing, least of all to an unscheduled ring at 0% traffic"
+        );
     }
 
     #[test]

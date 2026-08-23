@@ -228,30 +228,47 @@ fn code_only(line: &str) -> String {
 ///   - comparisons (`>=`, `<=`, `==`, `!=`) are excluded: a threshold compared
 ///     against a *measured* value is legitimate, a fabricated input is not;
 ///   - `= 0` and `= 1` are excluded: initialising a counter is not a measurement.
-///   - a `const` or `static` DECLARATION is excluded. `MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT`
-///     is a named bound, which is the same thing as the `3.0` ceiling a caller
-///     passes in -- and the exemption for comparisons above already says a
-///     bound is legitimate. Firing on it would make this rule fire on honest
-///     code, which is how a rule gets deleted rather than satisfied. What is
-///     NOT exempt is the value flowing anywhere else: into a `let`, into a
-///     struct field, into an argument. A reading arrives; a bound is declared.
+///   - a `const` or `static` declaration whose NAME says it is a bound is
+///     excluded: `MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT` is the same thing as the
+///     `3.0` ceiling a caller passes in, and the exemption for comparisons
+///     above already says a bound is legitimate. Firing on it would make this
+///     rule fire on honest code, which is how a rule gets deleted rather than
+///     satisfied. What is NOT exempt is the value flowing anywhere else: into a
+///     `let`, into a struct field, into an argument. A reading arrives; a bound
+///     is declared.
 ///
-///     This does leave "move the reading into a `const` and read it back". That
-///     evasion is caught from the other side, by behaviour rather than by text:
-///     the pipeline reaches every one of these gates through a constructor that
-///     takes no argument, so a `const` in the module has nothing to reach the
-///     verdict through, and `no_owned_gate_reports_passed_without_a_data_source`
-///     is red the moment one does.
+///     The exemption is keyed on the name and not on the `const` keyword,
+///     because "move the reading into a `const` and read it back" is otherwise
+///     wide open: `pub const OBSERVED_P99_LATENCY_MS: f64 = 137.5;` in
+///     `slo_canary_guard` is a fabricated reading wearing a keyword, and a
+///     keyword-only exemption cannot see it. `no_owned_gate_reports_passed_without_a_data_source`
+///     is the behavioural backstop, but it only fires once a gate reaches
+///     `Passed`; a gate that abstains while carrying a fabricated number in its
+///     report is exactly the shape this scan exists to catch, and is invisible
+///     to it. So: `MIN_`/`MAX_`/`_THRESHOLD`/`_CEILING`/`_LIMIT`/`_BUDGET` name
+///     a bound and pass, and every other `const` is scanned like any other line.
 fn assigned_numeric_literals(rel: &str) -> Vec<String> {
+    /// A `const` naming one of these is declaring a bound, not recording a
+    /// reading. Anything else is scanned.
+    const BOUND_NAME_MARKERS: [&str; 6] = [
+        "MIN_",
+        "MAX_",
+        "_THRESHOLD",
+        "_CEILING",
+        "_LIMIT",
+        "_BUDGET",
+    ];
+
     let mut hits = Vec::new();
     for line in production_source(rel).lines() {
         let code: Vec<char> = code_only(line).chars().collect();
-        let declaration = {
+        let declared_bound = {
             let t: String = code.iter().collect();
             let t = t.trim().trim_start_matches("pub ").trim_start();
-            t.starts_with("const ") || t.starts_with("static ")
+            (t.starts_with("const ") || t.starts_with("static "))
+                && BOUND_NAME_MARKERS.iter().any(|m| t.contains(m))
         };
-        if declaration {
+        if declared_bound {
             continue;
         }
         for i in 0..code.len() {
@@ -1407,10 +1424,10 @@ fn test_shuffle_shard_publishes_the_blast_radius_the_oracle_defines() {
     );
     let expected = 1.0_f64 / 70.0;
     assert!(
-        (metrics.full_shard_overlap_ratio - expected).abs() < 1e-12,
+        (metrics.uniform_random_shard_collision_ratio - expected).abs() < 1e-12,
         "blast radius is 1/C(n,k) = {expected}, not cells-per-tenant over total-cells \
          (which would be 0.5 here); got {}",
-        metrics.full_shard_overlap_ratio
+        metrics.uniform_random_shard_collision_ratio
     );
 }
 

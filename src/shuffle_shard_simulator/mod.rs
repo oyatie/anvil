@@ -10,8 +10,8 @@
 //!
 //! The number it published was worse than unmoving, it was the wrong quantity:
 //! "blast radius limited to 50.0%" was the per-tenant shard size divided by the
-//! cell count. See [`math::BlastRadiusMetrics::full_shard_overlap_ratio`] for
-//! why that inverts the sign of the claim.
+//! cell count. See [`math::BlastRadiusMetrics::uniform_random_shard_collision_ratio`]
+//! for why that inverts the sign of the claim.
 //!
 //! # What is here now
 //!
@@ -174,7 +174,7 @@ mod tests {
         // coverage gate already cost this repository once.
         assert!(
             ShuffleShardMath::compute_metrics(2, 4, &[])
-                .full_shard_overlap_ratio
+                .uniform_random_shard_collision_ratio
                 .is_nan()
         );
     }

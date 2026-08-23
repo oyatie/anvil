@@ -1,6 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,23 +41,39 @@ pub struct AbiScan {
     pub layout_files: Vec<String>,
 }
 
+/// A public function declaration, without an anchor.
+///
+/// Restricted visibility is deliberately not matched: `pub(crate)`,
+/// `pub(super)` and `pub(in path)` are not a published surface, so `pub` must
+/// be followed by whitespace. That also makes a `pub fn` narrowed to
+/// `pub(crate) fn` read as a removal, which is what it is.
+const PUB_FN_PAT: &str =
+    r#"pub\s+(?:(?:const|async|unsafe|extern\s+"[^"]*")\s+)*fn\s+([A-Za-z_][A-Za-z0-9_]*)"#;
+
 /// `pub fn NAME`, anchored at the first non-space character of a diff body line.
 ///
 /// Anchored on purpose. The predicate this replaced asked
 /// `diff.contains("-pub fn ")`, which is satisfied by a signature quoted inside
 /// a string literal -- the shape of this repository's own scanner fixtures --
 /// and reported a removal that never happened.
-///
-/// Restricted visibility is deliberately not matched: `pub(crate)`,
-/// `pub(super)` and `pub(in path)` are not a published surface, so `pub` must
-/// be followed by whitespace. That also makes a `pub fn` narrowed to
-/// `pub(crate) fn` read as a removal, which is what it is.
 static PUB_FN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"^pub\s+(?:(?:const|async|unsafe|extern\s+"[^"]*")\s+)*fn\s+([A-Za-z_][A-Za-z0-9_]*)"#,
-    )
-    .expect("the pattern is a literal and compiles")
+    Regex::new(&format!("^{PUB_FN_PAT}")).expect("the pattern is a literal and compiles")
 });
+
+/// The same pattern unanchored, used only to ask whether a name is *mentioned*
+/// as a declaration somewhere on the added side.
+///
+/// The anchor alone was not enough. `body.trim_start()` runs before it, so the
+/// anchor protects a fixture line only when the opening quote sits on the same
+/// source line as the `pub fn` -- the single-line `let diff = "-pub fn ..."`
+/// shape. This repository writes its fixtures as multi-line raw strings
+/// instead, where the indented body line reaches the anchor as bare `pub fn`.
+/// So the anchored form matches the removed half, the added half (rewritten to
+/// `"pub async fn handle_event() {",`, which starts with `"`) does not, and the
+/// removal is never cleared. `c501d9a` reported `handle_event` removed twice on
+/// exactly that shape; the function never existed.
+static PUB_FN_MENTION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(PUB_FN_PAT).expect("the pattern is a literal and compiles"));
 
 pub struct SignatureScanner;
 
@@ -100,6 +116,15 @@ impl SignatureScanner {
         // read as a header.
         let mut path: Option<&str> = None;
         let mut minus: Option<&str> = None;
+        // Names written as `pub fn NAME` anywhere on an added line, anchored or
+        // not. Consulted only for a name the diff removes and does not add.
+        let mut mentioned_added: BTreeSet<String> = BTreeSet::new();
+        // `#[cfg(test)]` seen in this file's chunk. Everything after it is a
+        // test module: `pub` inside one publishes nothing, and `is_library_rust`
+        // cannot see it because the file is under `src/`.
+        let mut in_test_cfg = false;
+        // Per file, the `#[repr(...)]` lines each side of the diff carries.
+        let mut reprs: BTreeMap<&str, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
 
         for line in diff.lines() {
             if let Some(rest) = line.strip_prefix("--- ") {
@@ -112,25 +137,65 @@ impl SignatureScanner {
                 // pre-image path is the only name that file still has.
                 path = header_path(rest).or(minus).filter(|p| is_library_rust(p));
                 minus = None;
+                in_test_cfg = false;
                 continue;
             }
             if line.starts_with("diff --git ") {
                 path = None;
                 minus = None;
+                in_test_cfg = false;
                 continue;
             }
             let Some(path) = path else { continue };
             let (sign, body) = line.split_at(line.chars().next().map_or(0, char::len_utf8));
+            let body = body.trim_start();
+
+            // Read off context lines as well as changed ones. `#[cfg(test)]` is
+            // almost never the line a diff edits -- it is the context above the
+            // fixture that is -- so testing only `+`/`-` would never see it.
+            //
+            // `#[cfg(test)] mod tests` is conventionally the last item in a Rust
+            // file, so "the rest of this chunk" is the test module. Erring past
+            // its closing brace costs a genuine removal declared below it and
+            // buys silence on every inline fixture, which is the direction this
+            // gate has already chosen everywhere else.
+            //
+            // The flag is chunk-wide and not per-side, which over-reaches when a
+            // change *deletes* a test module and writes library code below it
+            // (`553dd03`). That is safe only because the mention below is
+            // recorded before the skip, so the added declaration still clears
+            // its removal. Reordering those two lines invents an ABI break.
+            if body.starts_with("#[cfg(test)]") {
+                in_test_cfg = true;
+            }
+
             let side = match sign {
                 "+" => &mut added,
                 "-" => &mut removed,
-                // Context, hunk headers, `index` lines and git's
-                // `\ No newline at end of file` marker are not declarations.
+                // Hunk headers, `index` lines and git's `\ No newline at end of
+                // file` marker are not declarations, and neither is a context
+                // line: it is code the change carried past, not code it wrote.
                 _ => continue,
             };
-            let body = body.trim_start();
-            if body.starts_with("#[repr(") && !scan.layout_files.iter().any(|f| f == path) {
-                scan.layout_files.push(path.to_string());
+            // A quoted or test-module `pub fn` on the added side is still
+            // evidence the name did not leave, and declining to accuse is the
+            // safe direction, so the mention is recorded before the skip.
+            if sign == "+"
+                && let Some(m) = PUB_FN_MENTION.captures(body)
+            {
+                mentioned_added.insert(m[1].to_string());
+            }
+            if in_test_cfg {
+                continue;
+            }
+            if body.starts_with("#[repr(") {
+                let entry = reprs.entry(path).or_default();
+                let repr_side = if sign == "+" {
+                    &mut entry.1
+                } else {
+                    &mut entry.0
+                };
+                repr_side.insert(body.chars().filter(|c| !c.is_whitespace()).collect());
             }
             let Some(name) = PUB_FN.captures(body) else {
                 continue;
@@ -144,7 +209,24 @@ impl SignatureScanner {
                 });
         }
 
+        // A `#[repr(...)]` line present identically on both sides was moved, not
+        // changed. Only the symmetric difference is a layout the diff touched.
+        scan.layout_files = reprs
+            .into_iter()
+            .filter(|(_, (before, after))| before != after)
+            .map(|(p, _)| p.to_string())
+            .collect();
+
         for (name, gone) in &removed {
+            if !added.contains_key(name) && mentioned_added.contains(name) {
+                // A quoted declaration is not a declaration, but it is not
+                // nothing either: a fixture rewritten from a raw string into a
+                // `&[&str]` removes the anchored form and adds the quoted one.
+                // Declining costs a genuine removal that happens to be
+                // re-declared inside a string, and buys the whole phantom class.
+                scan.unpaired_names += 1;
+                continue;
+            }
             let Some(arrived) = added.get(name) else {
                 scan.findings
                     .extend(gone.iter().map(|d| BreakingAbiFinding {
@@ -195,6 +277,10 @@ fn header_path(header: &str) -> Option<&str> {
 /// `tests/`, `benches/` and `examples/` are Cargo targets, not library surface:
 /// a `pub fn` helper deleted from an integration test breaks no downstream
 /// caller, and reporting it is the false accusation that gets a gate disabled.
+///
+/// This is a directory test and cannot see a `#[cfg(test)] mod tests` inside
+/// `src/`, which is where every inline fixture in this repository lives. That
+/// half is handled in the scan loop, off the `#[cfg(test)]` marker.
 fn is_library_rust(path: &str) -> bool {
     path.ends_with(".rs")
         && !path

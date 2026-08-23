@@ -138,7 +138,7 @@ pub async fn certify_pull_request(
         .coverage_guard
         .evaluate_diff_coverage(repo_dir, diff_ctx)?;
 
-    // 13. RustLanguagePolicy: 380 Upstream Rust 2024 Edition Rules
+    // 13. RustLanguagePolicy: deterministic Rust idiom rules over added lines
     let rust_skills_report = state
         .rust_language_policy
         .evaluate_rust_quality(repo_dir, diff_ctx)?;
@@ -747,7 +747,7 @@ pub async fn local_verification_gate(
         // `GateStatus::Failed("Test suite reported failures during verification
         // gate.")` on the scorecard, with a remediation telling the contributor
         // to fix tests that were never run. `cargo` missing from the daemon's
-        // PATH, the `ExecClass::Build` deadline expiring on a cold check, and
+        // PATH, the `ExecClass::Build` deadline expiring on a cold build, and
         // the worktree GC reaping this tree mid-build all arrive here.
         crate::queue_healer::TestGate::Errored(label, cause) => {
             warn!(
@@ -819,7 +819,7 @@ async fn certify_for_enlistment(
     // report this function can return inadmissible, for every input, whatever
     // the pull request is -- and each of the three doors that calls it would
     // otherwise pay a full clone, seventy-two guards, a model turn, a cold
-    // `cargo check` and a `git add -A` + `git commit` into the shared clone to
+    // `cargo test` and a `git add -A` + `git commit` into the shared clone to
     // arrive at a refusal the configuration had already determined. That is the
     // objection this file makes to the previous hardcoded-verdict version a few
     // hundred lines below -- "a door that runs the most expensive operation in

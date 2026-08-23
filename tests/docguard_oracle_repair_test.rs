@@ -2972,14 +2972,12 @@ fn neutral_guard_reports() -> NeutralGuardReports {
         },
         mutation: anvil::chaos_mutation_guard::MutationAdequacyReport {
             is_adequate: true,
-            // `mutated_branches_count` was removed by #77, which replaced it
-            // with `measurement` so an unmeasured run can be told from a clean
-            // one. #34 landed this literal against the old shape and origin/main
-            // has not compiled since. This fixture wants the all-green report,
-            // which is what `NothingToMeasure` publishes.
-            measurement: anvil::chaos_mutation_guard::MutationMeasurement::NothingToMeasure,
             surviving_findings: Vec::new(),
             summary: n(),
+            // #77 replaced the filename-substring check with a real
+            // cargo-mutants run, so the count field is gone. This fixture is a
+            // neutral stand-in that no case reads back.
+            measurement: anvil::chaos_mutation_guard::MutationMeasurement::NothingToMeasure,
         },
         feature_flag: anvil::feature_flag_ratchet::FeatureFlagReport {
             is_clean: true,

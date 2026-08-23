@@ -17,8 +17,8 @@ fn main() {
         report.breaking_field_changes,
         report.status.badge()
     );
-    for finding in report.summary.split("; ") {
-        if !report.passed && report.breaking_field_changes > 0 {
+    if report.breaking_field_changes > 0 {
+        for finding in report.summary.split("; ") {
             println!("     {finding}");
         }
     }

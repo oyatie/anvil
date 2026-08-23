@@ -17,6 +17,7 @@ use anvil::git_manager::PrDiffContext;
 use anvil::gitops_promotion::GitOpsPromotionEngine;
 use anvil::jittered_backoff::JitteredBackoffGuard;
 use anvil::kani_guard::KaniGuard;
+use anvil::pre_merge_guard::report::GateStatus;
 use anvil::psa_admission_guard::PsaAdmissionGuard;
 use anvil::replay_harness::{DeterministicReplayHarness, ReplayTraceRecord};
 use anvil::rust_language_policy::RustLanguagePolicy;
@@ -193,8 +194,9 @@ fn test_schema_evolution_red_flag_deleted_field_without_reserved() {
     // RED: Deleting an active protobuf field without reserved annotation breaks wire compatibility
     let bad_diff = "diff --git a/proto/order.proto b/proto/order.proto\n- string customer_id = 3;\n+ string account_id = 3;";
     let report = ratchet.evaluate_schema_evolution(bad_diff);
-    assert!(
-        !report.passed,
+    assert_ne!(
+        report.status,
+        GateStatus::Passed,
         "Expected False Green prevention: Proto field renumbering/deletion must FAIL"
     );
 }
@@ -205,8 +207,9 @@ fn test_schema_evolution_green_compatible_field_addition() {
     // GREEN: Adding new optional field with unique tag
     let good_diff = "diff --git a/proto/order.proto b/proto/order.proto\n+ optional string idempotency_token = 12;";
     let report = ratchet.evaluate_schema_evolution(good_diff);
-    assert!(
-        report.passed,
+    assert_eq!(
+        report.status,
+        GateStatus::Passed,
         "Expected False Red prevention: Optional proto field addition must PASS"
     );
 }

@@ -143,13 +143,32 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
     },
     GateFidelity {
         gate_id: "mutation_status",
-        aspiration: "Inject AST mutations, run the suite against each mutant, and require a kill rate above \
-                     a threshold.",
-        reference: "cargo-mutants; Meta TestInfra mutation testing",
-        fidelity: Fidelity::Heuristic,
-        gap: "Compiles and runs no mutants. Checks whether a changed filename contains \"test\" \
-              (chaos_mutation_guard.rs:57,76).",
-        blocked_on: None,
+        aspiration: "Build a mutant of every function the change touches, run the suite against each one, \
+                     and block on any the suite fails to kill.",
+        reference: "cargo-mutants; Google mutation testing at review time (Petrovic & Ivankovic, ICSE-SEIP \
+                    2018), which surfaces only surviving mutants on changed lines",
+        fidelity: Fidelity::Partial,
+        gap: "The filename match is gone: `run_bounded_for` spawns cargo-mutants with `--in-diff` over \
+              the pull request's own diff (chaos_mutation_guard.rs:306,316), so the suite really is run \
+              against each mutant on the changed lines, and one it fails to kill is published as \
+              `GateStatus::Failed` naming it. A seeded-defect fixture runs the real tool against a \
+              deliberately inadequate suite and requires that failure. Measured nowhere it currently \
+              runs, for two reasons and not one. (1) This repository's CI installs no cargo-mutants \
+              (.github/workflows/ci.yml), so every run ends `Unavailable` and publishes `NotMeasured` \
+              (chaos_mutation_guard.rs:176). (2) Installing it would not change that: cargo-mutants \
+              copies the tree without a .git directory, and the daemon-tree tests in \
+              change_delivery_lane_test.rs run the lane at CARGO-MANIFEST-DIR, where the shape \
+              adapter shells out to \"rev-parse\" (shape/adapters/git_tree_at_rev.rs:56) and fails in \
+              the copy -- so the real tool exits 4 in about 30 s, which is `NotMeasured`, correctly, \
+              with no false green. Unmeasured at this budget too: a diff this size generates 41 \
+              mutants against a `MUTATION_BUDGET` that buys 8 to 17 of them \
+              (chaos_mutation_guard.rs:105). Still missing: no kill-rate threshold, no \
+              equivalent-mutant suppression and no arid-node rules, so every survivor is reported \
+              whether or not it is killable.",
+        blocked_on: Some(
+            "the daemon-tree tests running without .git (tests/change_delivery_lane_test.rs:104), \
+             then the cargo-mutants binary on the runner and a budget that fits the mutant count",
+        ),
     },
     GateFidelity {
         gate_id: "supply_chain_status",
@@ -277,8 +296,11 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         reference: "docs-as-code; Google g3doc",
         fidelity: Fidelity::Partial,
         gap: "Fails closed, creates missing ADRs, and corpus_sync amends owned pages so published \
-              gate counts match TOTAL_GATES. generate_and_write_docs still writes only when a file \
-              does not exist (doc_guard/mod.rs:350-375); it does not rewrite existing documents.",
+              gate counts match TOTAL_GATES -- but only in Anvil's own repository \
+              (doc_guard::corpus_sync::is_anvils_own_repository); on any other repository the sync \
+              does not apply and the gate says so. generate_and_write_docs still writes only when a \
+              file does not exist (doc_guard::generate_and_write_docs); it does not rewrite existing \
+              documents, and a named file it leaves unchanged is not reported as updated.",
         blocked_on: None,
     },
     GateFidelity {

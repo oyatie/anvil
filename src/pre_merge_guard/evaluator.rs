@@ -116,7 +116,7 @@ impl PreMergeGuard {
         supply_chain_report: &SupplyChainReport,
         clean_arch_report: &CleanArchitectureReport,
         monorepo_report: &MonorepoGuardReport,
-        debt_report: &DebtShrinkReport,
+        debt_shrink_report: &DebtShrinkReport,
         modular_report: &ModularizationReport,
         coverage_report: &CoverageReport,
         rust_skills_report: &RustSkillsReport,
@@ -258,11 +258,7 @@ impl PreMergeGuard {
         };
 
         // 9. Debt Shrink Guard
-        let debt_shrink_status = if debt_report.is_acceptable {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(debt_report.summary.clone())
-        };
+        let debt_shrink_status = debt_shrink_report.status.clone();
 
         // 10. Modularization Guard
         let modularization_status = if modular_report.is_modular {
@@ -337,11 +333,7 @@ impl PreMergeGuard {
         let finops_status = finops_report.status.clone();
 
         // 21. Ghost DB Migration & Zero Exclusive Locks
-        let ghost_migration_status = if ghost_migration_report.is_safe {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(ghost_migration_report.summary.clone())
-        };
+        let ghost_migration_status = ghost_migration_report.status.clone();
 
         // 22. GitOps Immutable Digest Pinning
         let gitops_promo_status = if gitops_promo_report.is_pinned {
@@ -351,11 +343,7 @@ impl PreMergeGuard {
         };
 
         // 23. GitOps ArgoCD Manifest Parity
-        let gitops_drift_status = if gitops_drift_report.is_safe {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(gitops_drift_report.summary.clone())
-        };
+        let gitops_drift_status = gitops_drift_report.status.clone();
 
         // 24. Progressive Canary Burn-Rate Circuit Breaker
         let canary_status = if canary_report.is_healthy {
@@ -368,11 +356,7 @@ impl PreMergeGuard {
         let cluster_audit_status = cluster_audit_report.status.clone();
 
         // 26. Database Expand-Contract Lifecycle
-        let migration_orch_status = if migration_orch_report.is_ordered {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(migration_orch_report.summary.clone())
-        };
+        let migration_orch_status = migration_orch_report.status.clone();
 
         // 27. CI Wallclock & Compute Cost Ratchet
         let ci_wallclock_status = ci_wallclock_report.status.clone();

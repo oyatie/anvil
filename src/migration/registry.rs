@@ -690,8 +690,8 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         confidence: Confidence::Probable,
         oyatie_counterpart: "tools/oya-checkout-guard-app + ci/adapters/path-resolver (partial)",
         counterpart_loc: 5120,
-        evidence: "653 lines, PROC+FS+ASYNC. ensure_repo_cloned, create_ephemeral_worktree, \
-                  clean_abandoned_worktrees, prepare_pr_diff, install_repo_hooks. oyatie's \
+        evidence: "575 lines, PROC+FS+ASYNC. ensure_repo_cloned, create_ephemeral_worktree, \
+                  clean_abandoned_worktrees, prepare_pr_diff, point_at_tracked_hooks. oyatie's \
                   checkout-guard-app (4234) is a guard over checkout state, not a worktree manager; \
                   ci/adapters/path-resolver (886) resolves paths. The PrDiffContext producer survives; the \
                   git backend rewires.",

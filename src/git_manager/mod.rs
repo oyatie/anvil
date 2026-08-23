@@ -30,8 +30,8 @@ impl GitManager {
     /// Defence in depth: callers are expected to have validated the name via
     /// `webhook::repo_guard`, but this took the segment after the last '/'
     /// unconditionally, so `"x/.."` yielded `repos_base_dir.join("..")` —
-    /// escaping the repos directory (`install_repo_hooks` then writes
-    /// executable files there). Any segment that is not a plain path component
+    /// escaping the repos directory, which Anvil then runs git against. Any
+    /// segment that is not a plain path component
     /// is now sanitised rather than trusted.
     pub fn get_repo_dir(&self, repo: &str) -> PathBuf {
         let raw = repo.split('/').next_back().unwrap_or(repo);
@@ -95,7 +95,13 @@ impl GitManager {
             .await;
         }
 
-        let _ = Self::install_repo_hooks(&repo_dir).await;
+        // Propagated, not dropped: a clone whose hooks were not installed is a
+        // clone with no enforcement, and `let _ =` made that indistinguishable
+        // from success. A repository that ships no `.githooks/` is not an error
+        // -- there is nothing to point at -- but a failed `git config` is.
+        if !Self::point_at_tracked_hooks(&repo_dir).await? {
+            info!("{} ships no .githooks/; no hooks installed", repo);
+        }
 
         Ok(repo_dir)
     }
@@ -124,80 +130,6 @@ impl GitManager {
             crate::exec::run_bounded(cmd, crate::exec::ExecClass::Vcs, "git config hooksPath")
                 .await?;
         Ok(out.status.success())
-    }
-
-    /// Automatically maintains and updates standard developer inner-loop git hooks in a maintained repository
-    pub async fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
-        let hooks_dir = repo_dir.join(".git").join("hooks");
-        if !hooks_dir.exists() {
-            let _ = tokio::fs::create_dir_all(&hooks_dir).await;
-        }
-
-        let pre_commit_script = r#"#!/bin/bash
-# Anvil Developer Inner-Loop Pre-Commit Hook (Sub-100ms AST Lint & Hygiene Probe)
-set -e
-
-# Run fast formatter and clippy check
-cargo fmt -- --check 2>/dev/null || { echo "❌ [pre-commit] 'cargo fmt' failed. Please format code before committing."; exit 1; }
-cargo clippy --all-targets -- -D warnings 2>/dev/null || { echo "❌ [pre-commit] 'cargo clippy' caught compiler warnings."; exit 1; }
-"#;
-
-        let commit_msg_script = r#"#!/bin/bash
-# Anvil Conventional Commit Format Validator
-set -e
-
-MSG_FILE="$1"
-COMMIT_MSG=$(head -n 1 "$MSG_FILE")
-
-CONVENTIONAL_REGEX="^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)(\([a-zA-Z0-9_\-]+\))?: .+$"
-
-if [[ ! "$COMMIT_MSG" =~ $CONVENTIONAL_REGEX ]] && [[ ! "$COMMIT_MSG" =~ ^Merge ]]; then
-    echo "❌ [commit-msg] Commit message '$COMMIT_MSG' violates Conventional Commits standard."
-    echo "💡 Expected format: <type>(<scope>): <short summary>"
-    echo "💡 Example: feat(orchestrator): add truth verification engine"
-    exit 1
-fi
-"#;
-
-        let pre_push_script = r#"#!/bin/bash
-# Anvil Developer Pre-Push Fast Gate (<30s Verification Suite)
-set -e
-
-echo "🔍 [pre-push] Running Anvil Fast Verification Suite..."
-cargo test --test red_green_gates_test -- --quiet 2>/dev/null || { echo "❌ [pre-push] Quality matrix test failed."; exit 1; }
-"#;
-
-        let post_merge_script = r#"#!/bin/bash
-# Anvil Post-Merge Lockfile & Drift Reconciler
-set -e
-
-if git diff-tree -r --name-only --no-commit-id HEAD@{1} HEAD | grep -q "Cargo.lock"; then
-    echo "📦 [post-merge] Cargo.lock modified in merge. Ensuring deterministic dependencies..."
-    cargo check --quiet 2>/dev/null || true
-fi
-"#;
-
-        let pre_commit_path = hooks_dir.join("pre-commit");
-        let commit_msg_path = hooks_dir.join("commit-msg");
-        let pre_push_path = hooks_dir.join("pre-push");
-        let post_merge_path = hooks_dir.join("post-merge");
-
-        let _ = tokio::fs::write(&pre_commit_path, pre_commit_script).await;
-        let _ = tokio::fs::write(&commit_msg_path, commit_msg_script).await;
-        let _ = tokio::fs::write(&pre_push_path, pre_push_script).await;
-        let _ = tokio::fs::write(&post_merge_path, post_merge_script).await;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o755);
-            let _ = std::fs::set_permissions(&pre_commit_path, perms.clone());
-            let _ = std::fs::set_permissions(&commit_msg_path, perms.clone());
-            let _ = std::fs::set_permissions(&pre_push_path, perms.clone());
-            let _ = std::fs::set_permissions(&post_merge_path, perms);
-        }
-
-        Ok(())
     }
 
     /// Creates an isolated, ephemeral git worktree for concurrent PR evaluation.

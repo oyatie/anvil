@@ -15,7 +15,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const REQUIRED_HOOKS: &[&str] = &["pre-commit", "commit-msg", "pre-push"];
@@ -101,4 +101,64 @@ fn hooks_are_escapable_deliberately_but_not_by_accident() {
              get every hook turned off instead of this one skipped"
         );
     }
+}
+
+/// The hook git would actually dispatch must be the tracked one.
+///
+/// Everything above reads `.githooks/`. Git does not necessarily read
+/// `.githooks/` -- it reads whatever `core.hooksPath` resolves to, and with
+/// that unset it reads the untracked common `.git/hooks`. That gap is not
+/// theoretical: a leftover `pre-commit` there ran a bare `rustfmt` at edition
+/// 2015, rejected every `async fn` in the tree, and blocked three agents in a
+/// single day while all five assertions above stayed green. They were reading
+/// a different file from the one that ran.
+///
+/// Resolved, not assumed. `git rev-parse --git-path hooks` honours
+/// `core.hooksPath` and, in a linked worktree, resolves to the common dir --
+/// so this is the directory git dispatches from, for every worktree.
+///
+/// A checkout with no hook installed is unenforced but not lying, and that is
+/// the state of a fresh clone and of every CI runner, so absence passes here.
+/// Divergence is what fails: a hook that is present and is not the reviewed
+/// text is a hook nobody read.
+#[test]
+fn the_hook_git_would_run_is_the_tracked_one() {
+    for (dir, why) in [
+        (resolved_hooks_dir(), "the directory git dispatches from"),
+        // Checked even when `core.hooksPath` currently points elsewhere: a
+        // divergent copy sitting here is armed, not inert. It becomes the live
+        // hook the moment the config is unset -- which is exactly what a fresh
+        // clone, a CI runner, and `git -c core.hooksPath= ` all are.
+        (common_dir().join("hooks"), "the untracked common hooks dir"),
+    ] {
+        for hook in REQUIRED_HOOKS {
+            let Ok(live) = fs::read_to_string(dir.join(hook)) else {
+                continue; // absent: unenforced, but not a stale copy
+            };
+            let tracked = fs::read_to_string(Path::new(".githooks").join(hook))
+                .unwrap_or_else(|e| panic!(".githooks/{hook}: {e}"));
+            assert_eq!(
+                live,
+                tracked,
+                "{}/{hook} ({why}) is not .githooks/{hook}. An untracked copy is \
+                 reviewed by nobody and diffed by nothing, so it goes stale in \
+                 place -- delete it and let core.hooksPath do the work.",
+                dir.display()
+            );
+        }
+    }
+}
+
+fn git_out(args: &[&str]) -> String {
+    let out = Command::new("git").args(args).output().expect("git");
+    assert!(out.status.success(), "`git {}` failed", args.join(" "));
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn resolved_hooks_dir() -> PathBuf {
+    PathBuf::from(git_out(&["rev-parse", "--git-path", "hooks"]))
+}
+
+fn common_dir() -> PathBuf {
+    PathBuf::from(git_out(&["rev-parse", "--git-common-dir"]))
 }

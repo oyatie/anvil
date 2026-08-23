@@ -516,6 +516,7 @@ mod stub {
             summary: STUB.to_string(),
         };
         let schema_evo = SchemaEvolutionReport {
+            status: GateStatus::Passed,
             passed: true,
             breaking_field_changes: 0,
             tag_renumbering_detected: false,

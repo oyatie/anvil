@@ -65,20 +65,11 @@ const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// Do not widen this to carry an `Option`, and do not add an arm meaning
 /// "used up". `the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate`
 /// pins the behaviour; this type is what stops the mistake from compiling.
-///
-/// `SuppliedOutput` is a third arm and it is not an exception to any of the
-/// above: it is a stored value too, answered on every call too, and it has no
-/// empty state either. It exists because `Overridden` supplies the outcome
-/// `evaluate_doc_parity` *returns*, which means an overridden run never runs the
-/// code that DECIDES what to return. See `with_probe_output_override`.
 pub enum Probe {
     /// Spawn the real `agy` probe at this effort level.
     Live(String),
     /// Return this outcome, on every call, without spawning anything.
     Overridden(Result<DocParityEvaluation, String>),
-    /// Classify this completed probe run, on every call, without spawning
-    /// anything — through the same classification a real run is put through.
-    SuppliedOutput(std::process::Output),
 }
 
 pub struct DocGuard {
@@ -95,127 +86,27 @@ impl DocGuard {
     /// Constructs a guard whose doc-parity probe *outcome* is supplied directly
     /// instead of being obtained by spawning the `agy` probe.
     ///
-    /// Both of the behaviours the specification asks for on the far side of the
-    /// probe — issue #29's "a diff the probe judged insufficient does not yield
-    /// a sufficient report", and issue #27's "the gate's summary must state the
-    /// sync did not apply" — are only reachable through
-    /// `ensure_documentation_parity` after a model has run, and no test may
-    /// spawn a model.
+    /// The behaviours issue #27 and issue #29 ask for are only reachable through
+    /// `ensure_documentation_parity` after a model has run, and no test may spawn
+    /// a model. `outcome` is what `evaluate_doc_parity` would have *returned*:
+    /// `Ok(evaluation)` when the probe produced a judgement, `Err(reason)` when
+    /// it produced none (spawn failure, non-zero exit, timeout, unparseable
+    /// JSON, supervision failure — all one case to this gate, all reaching
+    /// `DocGuardReport::errored`).
     ///
-    /// # Contract
+    /// Two requirements, both pinned by `tests/docguard_oracle_repair_test.rs`:
     ///
-    /// This signature is pinned by `tests/docguard_oracle_repair_test.rs`. It is
-    /// not a suggestion the implementer may substitute a different shape for;
-    /// changing it edits the specification and requires a fresh test review.
+    /// * The outcome is a stored value, never a slot that empties. See `Probe`.
+    /// * It is consulted **inside `evaluate_doc_parity`**, where the probe's
+    ///   judgement is produced, so an overridden run and a production run
+    ///   traverse byte-identical code from the judgement onward. An override
+    ///   consulted earlier — returning before the corpus sync, or jumping to a
+    ///   report-composing helper — would let the suite go green over an entry
+    ///   point whose real path still passes every under-documented diff.
     ///
-    /// `outcome` is what `evaluate_doc_parity` would have *returned*, not merely
-    /// what the probe would have judged:
-    ///
-    /// * `Ok(evaluation)` — the probe produced a judgement.
-    /// * `Err(reason)` — the probe produced **no** judgement: spawn failure,
-    ///   non-zero exit, timeout, unparseable JSON, or watchdog supervision
-    ///   failure. All five are the same case to this gate and all five must
-    ///   reach `DocGuardReport::errored`.
-    ///
-    /// The `Err` arm is not a convenience. It is the arm whose historical
-    /// collapse into `is_doc_sufficient: true` made gate 1 unfailable, and a
-    /// seam that could only express a *successful* judgement would leave that
-    /// arm reachable only from production. `Err(reason)` must be delivered to
-    /// the same code path a real probe failure takes — an `Err` out of
-    /// `evaluate_doc_parity` — so that the failure handling the suite exercises
-    /// is the failure handling production runs.
-    ///
-    /// The outcome is a **stored value, not a slot that empties**. Every call to
-    /// `ensure_documentation_parity` on a guard built this way observes it, and
-    /// there is no "override exhausted" state in which spawning `agy` becomes
-    /// legal again. A `take()`-able slot that falls through to the real spawn
-    /// once drained puts `agy --dangerously-skip-permissions`, on a 120-second
-    /// budget, one retry loop or one shared guard away from running inside
-    /// `cargo test`.
-    ///
-    /// That is a requirement of this contract, and it is also enforced by the
-    /// type: `outcome` must be stored as `Probe::Overridden(outcome)` on the
-    /// guard's single `probe` field, replacing the `Probe::Live` the guard
-    /// would otherwise carry. `Probe` deliberately has no empty arm and no
-    /// drainable arm, so "the override has been used up" is a state this code
-    /// cannot spell. Do not reintroduce it by adding a second field, an
-    /// `Option`, or a `Mutex<Option<..>>` alongside `probe` —
-    /// `the_probe_outcome_is_not_consumed_by_the_first_run_of_the_gate` pins
-    /// the behaviour (the gate is run twice on one guard and the two reports
-    /// must agree), and `Probe` is what stops the mistake from compiling in the
-    /// first place.
-    ///
-    /// The stored outcome must be consulted **inside `evaluate_doc_parity`**,
-    /// at the point where the `agy` probe's judgement is produced and returned,
-    /// so that an overridden run and a production run traverse byte-identical
-    /// code from the judgement onward. An override consulted earlier — one that
-    /// returns from `ensure_documentation_parity` before the corpus sync, or
-    /// jumps straight to a report-composing helper — would let the whole suite
-    /// go green over an entry point whose real path still passes every
-    /// under-documented diff. That is the defect class this branch exists to
-    /// remove, so it must not be reintroduced by the seam that tests it.
-    ///
-    #[allow(unused_variables)]
-    pub fn with_probe_override(
-        agy_effort: String,
-        outcome: Result<DocParityEvaluation, String>,
-    ) -> Self {
-        // The effort level is deliberately dropped: this guard has no probe to
-        // spawn, and keeping it beside `Probe::Overridden` would be the second
-        // field that lets "the override was used up" be spelled again.
+    pub fn with_probe_override(outcome: Result<DocParityEvaluation, String>) -> Self {
         Self {
             probe: Probe::Overridden(outcome),
-        }
-    }
-
-    /// Constructs a guard whose doc-parity probe *ran and produced this output*,
-    /// instead of spawning `agy` to produce it.
-    ///
-    /// # Why this exists alongside `with_probe_override`
-    ///
-    /// `with_probe_override` supplies what `evaluate_doc_parity` RETURNS. That
-    /// is the right seam for everything on the far side of the judgement, and it
-    /// is the seam every gate case uses. But it also means an overridden run
-    /// never executes the code that DECIDES whether a probe run produced a
-    /// judgement at all, so every `Err` the suite consumes is a string a test
-    /// wrote rather than one the product produced. The arm whose historical
-    /// collapse into `is_doc_sufficient: true` made gate 1 unfailable is the arm
-    /// that decides, and a suite that only ever consumes hand-written `Err`s
-    /// leaves exactly that arm unguarded.
-    ///
-    /// So this seam supplies the probe run's OUTPUT — exit status, stdout,
-    /// stderr — and stops there. Everything after it is production code:
-    ///
-    /// * the supplied output is handed to `classify_probe_output`, the same
-    ///   function the live call site hands a real `run_bounded_for` result to,
-    ///   and the one whose behaviour `tests/docguard_oracle_repair_test.rs` pins
-    ///   directly;
-    /// * that classification runs INSIDE the watchdog-supervised probe closure,
-    ///   so an `Err` out of it reaches `run_with_watchdog`'s fallback exactly as
-    ///   a real probe's would, and the report the gate composes is the report a
-    ///   real run of that shape composes.
-    ///
-    /// # Contract
-    ///
-    /// This signature is pinned by `tests/docguard_oracle_repair_gate_test.rs`
-    /// (`the_supplied_probe_output_is_classified_by_the_exported_classifier`).
-    /// The requirement is behavioural and it is asserted as such: whatever
-    /// `classify_probe_output` returns for a given `(status, stdout, stderr)`,
-    /// the gate's report for a guard built from that same output must agree with
-    /// it — the verdict on the `Ok` arm, and the error's own text carried into
-    /// `DocGuardReport::errored` on the `Err` arm. A second, private copy of the
-    /// classification inside the probe closure therefore cannot diverge from the
-    /// exported one without failing, which is the same protection
-    /// `a_stub_written_for_an_under_documented_diff_does_not_certify_through_the_evaluator`
-    /// gives `doc_parity_status`.
-    ///
-    /// Like `Probe::Overridden`, the output is a **stored value, not a slot that
-    /// empties**: there is no state in which spawning `agy` becomes legal again.
-    ///
-    #[allow(unused_variables)]
-    pub fn with_probe_output_override(agy_effort: String, output: std::process::Output) -> Self {
-        Self {
-            probe: Probe::SuppliedOutput(output),
         }
     }
 
@@ -479,8 +370,8 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         let target = format!("{}#{}", repo, diff_ctx.pr_number);
         // The `Live` arm is what this line always did, verbatim. See
         // `with_probe_override` for why the other two answer from here.
-        let (agy_effort, supplied_output) = match &self.probe {
-            Probe::Live(effort) => (effort.clone(), None),
+        let agy_effort = match &self.probe {
+            Probe::Live(effort) => effort.clone(),
             // The stored outcome is answered HERE, at the point the probe's
             // judgement is produced and returned, so an overridden run and a
             // production run traverse byte-identical code from the judgement
@@ -492,12 +383,6 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                     Err(reason) => Err(anyhow::anyhow!("{reason}")),
                 };
             }
-            // A completed probe RUN, classified below by the same exported
-            // function the live call site hands a real `run_bounded_for` result
-            // to, inside the same watchdog-supervised closure — so an `Err` out
-            // of it reaches the watchdog's fallback exactly as a real probe's
-            // would.
-            Probe::SuppliedOutput(output) => (String::new(), Some(output.clone())),
         };
         let repo_dir_owned = repo_dir.to_path_buf();
         let prompt_clone = prompt.clone();
@@ -507,13 +392,6 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             &target,
             std::time::Duration::from_secs(30),
             move || async move {
-                if let Some(output) = supplied_output {
-                    return classify_probe_output(
-                        output.status,
-                        &String::from_utf8_lossy(&output.stdout),
-                        &String::from_utf8_lossy(&output.stderr),
-                    );
-                }
                 let mut cmd = Command::new("agy");
                 // Match the invocation form used by every other agy call site
                 // (`--print <prompt> --effort <e>`); the previous
@@ -562,7 +440,19 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             // watchdog path must report the failure rather than manufacture a
             // pass. This arm previously returned is_doc_sufficient: true, which
             // made gate 1 unfailable.
-            |err| Err(probe_supervision_failure(&err)),
+            //
+            // `run_with_watchdog` delegates to `run_with_adaptive_watchdog`
+            // (watchdog/mod.rs:253), which calls this fallback for both of its
+            // own failure modes AND for an operation that returned `Err`, so it
+            // is the last thing every unsuccessful probe passes through. It must
+            // carry the supervisor's own reason, or a stalled probe, one that
+            // exited non-zero and one that printed gibberish all become the same
+            // unactionable line on a contributor's scorecard.
+            |err| {
+                Err(anyhow::anyhow!(
+                    "doc parity probe supervision failed: {err}"
+                ))
+            },
         )
         .await
     }
@@ -694,24 +584,6 @@ pub fn classify_probe_output(
         status,
         stderr.trim()
     )
-}
-
-/// The error a doc-parity probe abandoned by its supervisor produces.
-///
-/// SCAFFOLDING (`tdd/docguard-oracle-repair`): a byte-verbatim EXTRACTION of the
-/// `run_with_watchdog` fallback closure `evaluate_doc_parity` already passed
-/// inline, which now passes this instead. Same disclosure as
-/// `classify_probe_output`.
-///
-/// `run_with_adaptive_watchdog` calls its fallback for both of its own failure
-/// modes AND for an operation that simply returned `Err`, so this is the last
-/// thing every unsuccessful probe passes through. There is no deterministic
-/// local fallback for doc parity, so it must report the failure rather than
-/// manufacture a judgement — and it must carry the supervisor's own reason, or a
-/// stalled probe, a probe that exited non-zero, and a probe that printed
-/// gibberish all become the same unactionable line on a contributor's scorecard.
-pub fn probe_supervision_failure(err: &str) -> anyhow::Error {
-    anyhow::anyhow!("doc parity probe supervision failed: {}", err)
 }
 
 fn extract_json_block(text: &str) -> Option<String> {

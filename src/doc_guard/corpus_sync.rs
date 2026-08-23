@@ -5,6 +5,7 @@
 //! drifted. This module owns those claims: rewrite when it can, fail
 //! closed if a page still disagrees after the write.
 
+use crate::config::SELF_REPO;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::path::Path;
@@ -22,21 +23,19 @@ pub struct CorpusSync {
 const OWNED: &[&str] = &["README.md", "docs/doctrine.md", "openapi/openapi.yaml"];
 const ADR_DIRS: &[&str] = &["docs/adr", "docs/decisions"];
 
-/// Anvil's own repository slug.
+/// Whether the repository under review is Anvil's own.
 ///
-/// A compile-time constant rather than an environment lookup. `Config::self_repo`
-/// reads `SELF_REPO` through `Config::from_env`, which calls `dotenvy::dotenv()`
-/// and mutates the process environment; a mis-set value there would hand a
+/// Compared against `config::SELF_REPO`, the compile-time constant, and never
+/// against `Config::self_repo`: that field reads the `SELF_REPO` environment
+/// variable through `Config::from_env`, which calls `dotenvy::dotenv()` and
+/// mutates the process environment, so a mis-set value there would hand a
 /// watched repository's published documents to a rewrite the review pipeline
-/// then commits and pushes, which is issue #27 reached by a second route.
+/// then commits and pushes — issue #27 reached by a second route.
 ///
 /// STATED COST: renaming or moving this repository switches gate 1's corpus
-/// enforcement off until this constant is updated in the same commit. The
+/// enforcement off until the constant is updated in the same commit. The
 /// failure direction is safe — Anvil stops repairing its own pages, and no
 /// watched repository is ever corrupted.
-const SELF_REPO: &str = "oyatie/anvil";
-
-/// Whether the repository under review is Anvil's own.
 ///
 /// GitHub slugs are case-insensitive identities and arrive in whatever case the
 /// event payload carried, so `Oyatie/Anvil` is this repository. That is safe

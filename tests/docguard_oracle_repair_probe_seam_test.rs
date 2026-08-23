@@ -63,14 +63,8 @@
 //! pub enum Probe {
 //!     Live(String),
 //!     Overridden(Result<DocParityEvaluation, String>),
-//!     SuppliedOutput(std::process::Output),
 //! }
 //! ```
-//!
-//! (`SuppliedOutput` is the seam for the OTHER half of the probe boundary —
-//! supplying a completed probe run so that the code deciding whether it produced
-//! a judgement is the code under test. It is a stored value on exactly the same
-//! terms, and it is driven from `tests/docguard_oracle_repair_gate_test.rs`.)
 //!
 //! It has no empty arm and no drainable arm, so an implementer cannot reach for
 //! `take()` — there is no `None` to fall through from, and "the override has
@@ -189,7 +183,7 @@ fn run_gate_twice(
 ) -> (DocGuardReport, DocGuardReport) {
     let ctx = diff_ctx(repo, repo_dir, changed);
     block_on(async {
-        let guard = DocGuard::with_probe_override("low".to_string(), outcome);
+        let guard = DocGuard::with_probe_override(outcome);
         let first = guard
             .ensure_documentation_parity(repo, repo_dir, &ctx, "feat: add a public API", "")
             .await

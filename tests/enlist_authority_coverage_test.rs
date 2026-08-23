@@ -330,8 +330,7 @@ fn report_from_the_corpus(
         .evaluate_adr_parity(dir, d)
         .expect("the adr ratchet reads the diff");
     let shuffle_report = anvil::shuffle_shard_simulator::ShuffleShardSimulator::new()
-        .evaluate_shuffle_sharding(dir, d)
-        .expect("the shuffle shard simulator reads the diff");
+        .evaluate_without_topology_source();
     let trace_report = anvil::trace_context_guard::TraceContextGuard::new()
         .evaluate_trace_propagation(dir, d)
         .expect("the trace context guard reads the diff");
@@ -353,9 +352,8 @@ fn report_from_the_corpus(
     let gitops_drift_report = anvil::gitops_drift_reconciler::GitOpsDriftReconciler::new()
         .evaluate_gitops_drift(dir, d)
         .expect("the gitops drift reconciler reads the diff");
-    let canary_report = anvil::canary_rollout::CanaryRolloutGuard::new()
-        .evaluate_rollout_health(dir, d)
-        .expect("the canary rollout guard reads the diff");
+    let canary_report =
+        anvil::canary_rollout::CanaryRolloutGuard::new().evaluate_without_metrics_source();
     let cluster_audit_report = anvil::cluster_state_auditor::ClusterStateAuditor::new()
         .evaluate_cluster_parity(dir, d)
         .expect("the cluster state auditor reads the diff");
@@ -418,11 +416,8 @@ fn report_from_the_corpus(
         .evaluate_deadlock_invariants(&d.repo, &d.diff_content);
     let aca_report =
         anvil::automated_canary::AutomatedCanaryAnalysis::new().evaluate_without_metrics_source();
-    let ring_report = anvil::progressive_rollout::ProgressiveRingOrchestrator::new()
-        .evaluate_ring_rollout(
-            &anvil::progressive_rollout::DeploymentRing::Ring0Canary,
-            aca_report.status.is_acceptable(),
-        );
+    let progressive_ring_report = anvil::progressive_rollout::ProgressiveRingOrchestrator::new()
+        .evaluate_without_rollout_state();
     let hermetic_report = anvil::hermetic_build::HermeticBuildValidator::new()
         .evaluate_hermetic_reproducibility("sha256_clean", "sha256_clean", &d.diff_content);
     let openvex_report = anvil::vex_scanner::OpenVexReachabilityScanner::new().scan_reachability(
@@ -512,7 +507,7 @@ fn report_from_the_corpus(
             &formal_report,
             &deadlock_report,
             &aca_report,
-            &ring_report,
+            &progressive_ring_report,
             &hermetic_report,
             &openvex_report,
             &cosign_report,

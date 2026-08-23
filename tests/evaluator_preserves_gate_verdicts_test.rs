@@ -44,6 +44,17 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "gitops_drift_report",
     "migration_orch_report",
     "mutation_report",
+    // Three gates that were unfailable by arithmetic: each fabricated the input
+    // it then judged, and the evaluator widened the resulting boolean into a
+    // pass. `progressive_ring_report` is the one that shows why this list has to
+    // grow with the fix -- its constant arrived as a *call argument*
+    // (`aca_report.status.is_acceptable()`, true for `NotMeasured`), so no scan
+    // for literals could see it. The evaluator's parameter was `ring_report`
+    // while its status is `progressive_ring_status`; renamed rather than
+    // exempted, as `debt_shrink_report` was.
+    "canary_report",
+    "shuffle_report",
+    "progressive_ring_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

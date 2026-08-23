@@ -2708,13 +2708,8 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         shuffle: anvil::shuffle_shard_simulator::ShuffleShardReport {
-            is_isolated: true,
-            total_cells: 0,
-            cells_per_tenant: 0,
-            blast_radius_ratio: 0.0,
-            max_tenant_overlap: 0,
-            violations: Vec::new(),
-            summary: n(),
+            status: GateStatus::Passed,
+            metrics: None,
         },
         trace: anvil::trace_context_guard::TraceContextReport {
             status: GateStatus::Passed,
@@ -2758,10 +2753,8 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         canary: anvil::canary_rollout::CanaryRolloutReport {
-            is_healthy: true,
-            current_traffic_percent: 100,
-            burn_rate: 0.0,
-            summary: n(),
+            status: GateStatus::Passed,
+            observed: None,
         },
         cluster_audit: anvil::cluster_state_auditor::ClusterAuditReport {
             status: GateStatus::Passed,
@@ -2866,13 +2859,8 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             verdict: anvil::automated_canary::CanaryVerdict::Pass,
         },
         ring: anvil::progressive_rollout::ProgressiveRingReport {
-            passed: true,
-            state: anvil::progressive_rollout::RingRolloutState {
-                current_ring: anvil::progressive_rollout::DeploymentRing::Ring3GlobalProd,
-                target_ring: anvil::progressive_rollout::DeploymentRing::Ring3GlobalProd,
-                traffic_pct: 100,
-                is_healthy: true,
-            },
+            status: GateStatus::Passed,
+            state: None,
         },
         hermetic: anvil::hermetic_build::HermeticBuildReport {
             status: GateStatus::Passed,

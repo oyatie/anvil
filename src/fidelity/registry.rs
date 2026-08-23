@@ -592,6 +592,88 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               check clean; both now report that nothing was scanned.",
         blocked_on: Some("a shadow database"),
     },
+    GateFidelity {
+        gate_id: "canary_status",
+        aspiration: "Evaluate a live canary deployment's error budget burn rate and tail latency \
+                     against production telemetry, and trip a circuit breaker that halts the \
+                     rollout before the budget is spent.",
+        reference: "Argo Rollouts AnalysisTemplate over Prometheus; Flagger; Spinnaker/Kayenta; \
+                    Google SRE Workbook multiwindow multi-burn-rate alerting",
+        fidelity: Fidelity::Aspirational,
+        gap: "Queries no telemetry: this crate carries no HTTP client, deploys no canary and reads \
+              no metrics endpoint. The guard used to build the reading four lines above the ceiling \
+              it was compared against, so the branch was decided at compile time and the published \
+              sentence described a literal rather than the pull request. That reading is deleted \
+              and evaluate_without_metrics_source is the only path the pipeline takes \
+              (canary_rollout/mod.rs:106-110). The circuit breaker survives as the seam a real \
+              query plugs into, and it is honest but narrower than the name: it compares \
+              burn_rate_5m and p99_latency_ms against caller-supplied bounds \
+              (canary_rollout/circuit_breaker.rs:41,51), which is a single-window rule. The SRE \
+              Workbook walks that shape through as its Approach 4 and rejects it for recall, \
+              recommending a long window paired with a short one and a threshold expressed as a \
+              factor of the error budget rather than as a bare ratio; neither the pairing nor an \
+              SLO target exists here, so what survives is not dimensionally a burn rate.",
+        blocked_on: Some(
+            "a canary deployment and a reachable Prometheus or OpenTelemetry endpoint; this crate \
+             has no HTTP client to reach one with",
+        ),
+    },
+    GateFidelity {
+        gate_id: "shuffle_status",
+        aspiration: "Verify that the tenant-to-cell assignment in force gives every tenant a \
+                     distinct shuffle shard, and that no two tenants share enough cells for one \
+                     cell's failure to take both of them down.",
+        reference: "AWS Builders' Library, Workload isolation using shuffle-sharding; Route 53 \
+                    infima; AWS cell-based architecture guidance",
+        fidelity: Fidelity::Aspirational,
+        gap: "Reads no tenant-to-cell mapping table, and a pull request diff carries none: the \
+              assignment is control-plane state. The guard used to declare its own two-tenant \
+              table, whose two shards shared exactly as many cells as the bound permitted, on \
+              every pull request forever. That table is deleted and \
+              evaluate_without_topology_source is the only path the pipeline takes \
+              (shuffle_shard_simulator/mod.rs:124-126). The combinatorics survive as the seam a \
+              real table plugs into -- calculate_combinations and evaluate_overlap are honest \
+              (shuffle_shard_simulator/math.rs:34,50). What the gate published was also the wrong \
+              quantity: cells per tenant over total cells is one tenant's infrastructure \
+              footprint, and it rises as isolation improves. It is now \
+              full_shard_overlap_ratio, the reciprocal of the number of possible shards that the \
+              infima javadoc defines as blast radius \
+              (shuffle_shard_simulator/math.rs:74-77). Checking a finished table is still weaker \
+              than the oracle, which enforces the bound at assignment time with a sharder that \
+              backtracks against every shard already handed out.",
+        blocked_on: Some(
+            "a tenant-to-cell mapping table, from a control plane or from a checked-in topology",
+        ),
+    },
+    GateFidelity {
+        gate_id: "progressive_ring_status",
+        aspiration: "Advance a change through progressive-exposure rings only once the ring it \
+                     occupies has baked for its declared minimum and no region pair is taking the \
+                     rollout on both halves at once.",
+        reference: "Azure Safe Deployment Practices; Azure Well-Architected OE:11 safe deployment; \
+                    Azure region pairs",
+        fidelity: Fidelity::Aspirational,
+        gap: "Deploys nothing and reads no cloud control plane, so the elapsed bake time and the \
+              live region set are both unknown and evaluate_without_rollout_state is the path the \
+              pipeline takes (progressive_rollout/mod.rs:129-133). The health verdict used to be a \
+              constant threaded through three calls and answered with the same literal in all four \
+              arms of the scheduler; the field that carried it is gone, and the two validators \
+              that check something real -- which had zero production callers -- are now reached \
+              only through evaluate_ring_advance, which runs both \
+              (progressive_rollout/mod.rs:95,105). validate_bake_window compares \
+              elapsed_bake_minutes against the manifest's own min_bake_minutes, and an undeclared \
+              ring is no longer treated as satisfied \
+              (progressive_rollout/ring_scheduler.rs:121,131). AZURE_REGION_PAIRS held region codes \
+              lifted from a different cloud, paired by a rule Azure does not use -- it \
+              pairs East US with West US, not with East US 2 -- and now holds the published table \
+              (progressive_rollout/ring_scheduler.rs:20-27). It stays partial: asymmetric pairs \
+              and the growing set of nonpaired regions are not modelled, and a region it does not \
+              name is treated as unpaired.",
+        blocked_on: Some(
+            "rollout state -- a bake clock over a deployed artefact, and the set of regions \
+             currently taking the rollout",
+        ),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!-- Occupancy proof: a hub file edited from a stale merge-base. Hubs are
+     N=1 at trunk HEAD, so this line exists only to be refused. -->
+
 ### Fixed — merge-decision integrity
 
 - **reviewer**: an unparseable AI response reported verdict `COMMENT`, which the evaluator accepts, so a

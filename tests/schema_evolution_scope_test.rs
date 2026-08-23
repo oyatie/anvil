@@ -90,10 +90,6 @@ fn removed_rust_lines_from_this_repositorys_own_history_are_not_wire_breaks() {
             "a diff touching no schema file measured nothing, and must say so \
              rather than passing or failing: {removed}"
         );
-        assert!(
-            !report.passed,
-            "an unmeasured gate has not passed: {removed}"
-        );
     }
 }
 
@@ -135,12 +131,12 @@ fn a_removed_proto_comment_is_not_a_removed_field() {
     ));
 
     assert_eq!(report.breaking_field_changes, 0);
-    assert!(
-        report.passed,
+    assert_eq!(
+        report.status,
+        GateStatus::Passed,
         "a proto file was in scope and scanned clean: {}",
         report.summary
     );
-    assert!(matches!(report.status, GateStatus::Passed));
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +156,6 @@ fn a_deleted_proto_field_whose_number_is_not_reserved_fails() {
     ));
 
     assert_eq!(report.breaking_field_changes, 1, "{}", report.summary);
-    assert!(!report.passed);
     match &report.status {
         GateStatus::Failed(reason) => assert!(
             reason.contains("customer_id"),
@@ -184,13 +179,13 @@ fn a_deleted_proto_field_whose_number_is_reserved_is_compatible() {
         "reserving the number is exactly how buf says to delete a field: {}",
         report.summary
     );
-    assert!(report.passed);
     assert!(matches!(report.status, GateStatus::Passed));
 }
 
 /// Catches: number reuse read as an ordinary deletion. Handing tag 3 to a
-/// different field is the wire break the `tag_renumbering_detected` field is
-/// named for.
+/// different field is a different violation from deleting it -- an old reader
+/// decodes the new field into the old one -- and the published text must say
+/// which of the two happened.
 #[test]
 fn reusing_a_deleted_field_number_for_a_different_field_is_renumbering() {
     let report = evaluate(&file_diff(
@@ -199,11 +194,13 @@ fn reusing_a_deleted_field_number_for_a_different_field_is_renumbering() {
     ));
 
     assert!(
-        report.tag_renumbering_detected,
-        "tag 3 was handed to a different field: {}",
+        report
+            .summary
+            .contains("`account_id` reuses field number 3")
+            && report.summary.contains("previously `customer_id`"),
+        "tag 3 was handed to a different field, and the summary must name both: {}",
         report.summary
     );
-    assert!(!report.passed);
     assert!(matches!(report.status, GateStatus::Failed(_)));
 }
 
@@ -218,7 +215,7 @@ fn a_deleted_proto_field_whose_name_is_reserved_is_compatible() {
     ));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);
-    assert!(report.passed);
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
 }
 
 /// Catches: a field line rewritten unchanged -- reindented, or moved with its
@@ -232,8 +229,12 @@ fn a_field_removed_and_re_added_unchanged_is_not_withdrawn() {
     ));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);
-    assert!(!report.tag_renumbering_detected);
-    assert!(report.passed);
+    assert!(
+        !report.summary.contains("reuses field number"),
+        "{}",
+        report.summary
+    );
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
 }
 
 /// Catches: a summary that lists every finding unbounded, which is how a gate
@@ -284,7 +285,6 @@ fn adding_an_optional_proto_field_is_compatible() {
     ));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);
-    assert!(report.passed);
     assert!(matches!(report.status, GateStatus::Passed));
 }
 
@@ -304,7 +304,6 @@ fn removing_an_openapi_endpoint_fails() {
     let report = evaluate(&file_diff("openapi/openapi.yaml", "-  /healthz:"));
 
     assert_eq!(report.breaking_field_changes, 1, "{}", report.summary);
-    assert!(!report.passed);
     match &report.status {
         GateStatus::Failed(reason) => assert!(
             reason.contains("/healthz"),
@@ -325,7 +324,7 @@ fn reindenting_an_openapi_endpoint_is_not_removing_it() {
     ));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);
-    assert!(report.passed);
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
 }
 
 /// Catches: an OpenAPI edit that removes nothing being reported as anything
@@ -338,7 +337,6 @@ fn an_additive_openapi_change_passes() {
     ));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);
-    assert!(report.passed);
     assert!(matches!(report.status, GateStatus::Passed));
 }
 
@@ -354,7 +352,7 @@ fn removing_a_non_path_openapi_key_is_not_removing_an_endpoint() {
     ));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);
-    assert!(report.passed);
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
 }
 
 /// Catches: a removed YAML comment being read as content. `#` opens a comment
@@ -364,7 +362,7 @@ fn a_removed_openapi_comment_is_not_a_removed_endpoint() {
     let report = evaluate(&file_diff("openapi/openapi.yaml", "-  # /healthz: dropped"));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);
-    assert!(report.passed);
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
 }
 
 /// Catches: a YAML file that is not an API description being pulled into scope
@@ -393,7 +391,7 @@ fn a_headerless_diff_is_not_measured() {
     let report = evaluate("-  string customer_id = 3;");
 
     assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
-    assert!(!report.passed);
+    assert_ne!(report.status, GateStatus::Passed, "{}", report.summary);
 }
 
 #[test]
@@ -401,7 +399,7 @@ fn an_empty_diff_is_not_measured() {
     let report = evaluate("");
 
     assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
-    assert!(!report.passed);
+    assert_ne!(report.status, GateStatus::Passed, "{}", report.summary);
 }
 
 /// Catches: the `---`/`+++` header lines of the unified diff itself being
@@ -418,5 +416,185 @@ fn the_diffs_own_header_lines_are_not_schema_content() {
         "`--- a/proto/order.proto` is diff syntax, not a removed field: {}",
         report.summary
     );
-    assert!(report.passed);
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
+}
+
+// ---------------------------------------------------------------------------
+// No baseline, no accusation
+// ---------------------------------------------------------------------------
+
+/// Catches: a brand-new `.proto` reported as a wire break. `buf`'s
+/// `MESSAGE_SAME_REQUIRED_FIELDS` compares a message against a previous
+/// revision; a file that has none cannot be incompatible with it. Alleging a
+/// break with no baseline is the defect this lane removes, narrowed to one file
+/// type instead of every file type.
+#[test]
+fn a_brand_new_proto_file_has_no_baseline_to_break() {
+    let diff = "diff --git a/proto/new.proto b/proto/new.proto\n\
+                new file mode 100644\n\
+                index 0000000..1c2d3e4\n\
+                --- /dev/null\n\
+                +++ b/proto/new.proto\n\
+                @@ -0,0 +1,3 @@\n\
+                +message Tenant {\n\
+                +  required string tenant_id = 1;\n\
+                +}\n";
+
+    let report = evaluate(diff);
+
+    assert_eq!(
+        report.breaking_field_changes, 0,
+        "a file with no previous revision has nothing to be incompatible with: {}",
+        report.summary
+    );
+    assert_eq!(
+        report.status.unmeasured_gate_id(),
+        Some(GATE_ID),
+        "nothing was compared, so nothing was measured: {}",
+        report.summary
+    );
+}
+
+/// Catches: the new-file skip swallowing a real break in the same pull request.
+/// One added `.proto` must not buy silence for an edited one.
+#[test]
+fn a_new_proto_alongside_an_edited_one_still_reports_the_edit() {
+    let diff = format!(
+        "diff --git a/proto/new.proto b/proto/new.proto\nnew file mode 100644\n--- /dev/null\n\
+         +++ b/proto/new.proto\n+  required string tenant_id = 1;\n{}",
+        file_diff("proto/order.proto", "-  string customer_id = 3;")
+    );
+
+    let report = evaluate(&diff);
+
+    assert_eq!(
+        report.breaking_field_changes, 1,
+        "the edited proto's deletion is still a finding: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains("order.proto") && !report.summary.contains("new.proto"),
+        "exactly the file with a baseline is reported: {}",
+        report.summary
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `reserved` covers the forms protobuf actually publishes
+// ---------------------------------------------------------------------------
+
+/// Catches: `reserved N to max;` -- protobuf's canonical open-ended form --
+/// being dropped as an unparseable token, so the deletion it authorises is
+/// published as a wire break. A blocking false positive, the class this lane
+/// exists to delete.
+#[test]
+fn reserved_to_max_withdraws_the_number_it_covers() {
+    let report = evaluate(&file_diff(
+        "proto/order.proto",
+        "-  string customer_id = 3;\n+  reserved 2 to max;",
+    ));
+
+    assert_eq!(
+        report.breaking_field_changes, 0,
+        "`reserved 2 to max;` covers field 3: {}",
+        report.summary
+    );
+    assert_eq!(report.status, GateStatus::Passed, "{}", report.summary);
+}
+
+/// Catches: the range check capped at 512, which read a deletion above the cap
+/// as unreserved even though `reserved 1 to max;` covers every field number.
+#[test]
+fn a_high_field_number_is_covered_by_an_open_ended_reservation() {
+    let report = evaluate(&file_diff(
+        "proto/order.proto",
+        "-  string customer_id = 90000;\n+  reserved 1 to max;",
+    ));
+
+    assert_eq!(
+        report.breaking_field_changes, 0,
+        "field 90000 is inside `1 to max`: {}",
+        report.summary
+    );
+}
+
+/// Catches: `reserved` credited for a number outside its range, which would
+/// clear every deletion once any reservation appeared.
+#[test]
+fn a_reservation_does_not_cover_a_number_outside_its_range() {
+    let report = evaluate(&file_diff(
+        "proto/order.proto",
+        "-  string customer_id = 3;\n+  reserved 8 to max;",
+    ));
+
+    assert_eq!(
+        report.breaking_field_changes, 1,
+        "`reserved 8 to max;` starts above field 3: {}",
+        report.summary
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A comment on the end of the line is still a field
+// ---------------------------------------------------------------------------
+
+/// Catches: a trailing `//` comment defeating `field_declaration`, so the
+/// most ordinary shape of a deleted proto field -- the one carrying a note
+/// about why it went -- reported nothing at all.
+#[test]
+fn a_deleted_field_carrying_a_trailing_comment_is_still_deleted() {
+    let report = evaluate(&file_diff(
+        "proto/order.proto",
+        "-  string customer_id = 3; // legacy",
+    ));
+
+    assert_eq!(
+        report.breaking_field_changes, 1,
+        "the comment is not part of the declaration: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains("`customer_id`"),
+        "the finding names the field, not the comment: {}",
+        report.summary
+    );
+}
+
+/// Catches: a trailing YAML `#` comment hiding an endpoint removal, the same
+/// defect on the OpenAPI half.
+#[test]
+fn a_removed_endpoint_carrying_a_trailing_comment_is_still_removed() {
+    let report = evaluate(&file_diff(
+        "openapi/openapi.yaml",
+        "-  /healthz:  # liveness probe",
+    ));
+
+    assert_eq!(
+        report.breaking_field_changes, 1,
+        "the comment is not part of the path key: {}",
+        report.summary
+    );
+    assert!(
+        report.summary.contains("`/healthz`"),
+        "the finding names the endpoint: {}",
+        report.summary
+    );
+}
+
+/// Catches: the new-file test loosened from `starts_with` to `contains`, which
+/// turns `new file mode` into a bypass -- put that text in a line of your
+/// `.proto` and the whole file stops being checked. `new file mode 100644` is a
+/// git header, and a header is the only place it can start a line.
+#[test]
+fn the_new_file_header_is_only_a_header_at_the_start_of_a_line() {
+    let report = evaluate(&file_diff(
+        "proto/order.proto",
+        "-  string customer_id = 3;\n+  // new file mode 100644",
+    ));
+
+    assert_eq!(
+        report.breaking_field_changes, 1,
+        "an added line quoting the git header is content, not a header: {}",
+        report.summary
+    );
 }

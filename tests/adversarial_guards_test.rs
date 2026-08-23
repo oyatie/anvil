@@ -29,7 +29,7 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
     let repo_dir = temp_dir.path();
 
     let doc_guard = DocGuard::new("high".to_string());
-    let cedar_guard = CedarGuard::new("high".to_string());
+    let cedar_guard = CedarGuard::new();
     let compliance_guard = ComplianceGuard::new();
     let api_guard = ApiContractGuard::new();
     let cell_guard = CellIsolationGuard::new();

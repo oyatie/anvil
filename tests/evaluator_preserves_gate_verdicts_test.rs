@@ -43,6 +43,13 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "ghost_migration_report",
     "gitops_drift_report",
     "migration_orch_report",
+    // Gate 2. Its verdict used to be rebuilt from `cedar_report.is_compliant`,
+    // a field the guard set to `true` on all three of its exits -- including
+    // the one reached after its own evaluation had come back non-compliant. The
+    // guard now owns a `GateStatus` and the rebuild must not come back: with
+    // `= if cedar_report.is_compliant` restored, a policy set the checker
+    // rejected publishes as `Passed` again and no gate-level test sees it.
+    "cedar_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

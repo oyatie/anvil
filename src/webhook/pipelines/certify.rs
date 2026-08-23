@@ -309,19 +309,17 @@ pub async fn certify_pull_request(
     );
 
     // 46. HermeticBuildValidator: Deterministic Bit-for-Bit Reproducibility
-    let hermetic_report = state.hermetic_build.evaluate_hermetic_reproducibility(
-        "sha256_clean",
-        "sha256_clean",
-        &diff_ctx.diff_content,
-    );
+    // Nothing builds this tree twice, so there is no second digest to compare.
+    // The two literals passed here were the same string, making the equality
+    // check true by construction.
+    let hermetic_report = state
+        .hermetic_build
+        .scan_for_impurity_without_build_pair(&diff_ctx.diff_content);
 
     // 47. OpenVexReachabilityScanner: Callgraph-Pruned Dead-Code Exploitability
-    let openvex_report = state.vex_scanner.scan_reachability(
-        "CVE-NONE",
-        "none",
-        "symbol_none",
-        &diff_ctx.diff_content,
-    );
+    // No advisory feed is read. The placeholders passed here named a CVE that
+    // does not exist, and the scanner clears anything whose symbol is absent.
+    let openvex_report = state.vex_scanner.evaluate_without_advisory_source();
 
     // 48. CosignProvenanceSigner: OIDC Keyless Cryptographic Attestation
     // No OIDC token is requested, no Fulcio certificate is issued and no Rekor
@@ -360,9 +358,9 @@ pub async fn certify_pull_request(
         .evaluate_schema_evolution(&diff_ctx.diff_content);
 
     // 54. AutoRollbackPostmortemEngine: Canary Auto-Rollback & Postmortem Engine
-    let auto_rollback_report = state
-        .auto_rollback
-        .evaluate_health_and_rollback(repo, 0.01, 45.0);
+    // No canary telemetry is queried. The literals passed here sat far below
+    // the degradation thresholds, so the rollback branch was unreachable.
+    let auto_rollback_report = state.auto_rollback.evaluate_without_telemetry_source();
 
     // 55. WasmPolicySandbox: WebAssembly Dynamic Bytecode Policy Sandbox Gate
     let wasm_report = state
@@ -385,13 +383,19 @@ pub async fn certify_pull_request(
         .evaluate_workload_identity(&diff_ctx.diff_content);
 
     // 59. CarbonAwareComputeRatchet: GreenOps Carbon-Aware Compute Efficiency Ratchet
-    let carbon_report = state.carbon_aware.evaluate_compute_carbon(30.0, 12.0);
+    // Nothing meters CPU time or grid intensity; the two literals passed here
+    // were compared against each other and published as joules.
+    let carbon_report = state.carbon_aware.evaluate_without_energy_source();
 
     // 60. DeterministicReplayHarness: Production Dark-Trace Record-and-Replay Gate
-    let replay_report = state.replay_harness.evaluate_replay_parity(&[]);
+    // No production trace corpus is collected. The empty slice passed here was
+    // answered vacuously: an empty slice trivially satisfies the payload check.
+    let replay_report = state.replay_harness.evaluate_without_trace_source();
 
     // 61. ProactiveUpgradeTrain: Proactive Dependency & Security Upgrade Train Gate
-    let upgrade_train_report = state.upgrade_train.evaluate_upgrade_train(&[]);
+    // No dependency manifest or advisory feed is read; `breaking == 0` is
+    // trivially true of the empty slice that was passed here.
+    let upgrade_train_report = state.upgrade_train.evaluate_without_dependency_source();
 
     // 62. ChaosMutationGuard: AST Chaos Mutation Test Adequacy Gate
     let mutation_report = state

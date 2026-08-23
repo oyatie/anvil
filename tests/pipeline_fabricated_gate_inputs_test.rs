@@ -685,3 +685,167 @@ fn unmeasured_gate_ids_are_registered_and_may_not_claim_a_pass() {
         );
     }
 }
+
+/// A gate handed a literal was measured against nothing.
+///
+/// `assigned_numeric_literals` deliberately exempts function-call arguments so
+/// it cannot block a real implementation. That exemption is why six
+/// fabrications survived in the very file this suite scans:
+///
+///   evaluate_health_and_rollback(repo, 0.01, 45.0)   // thresholds 5.0 / 500.0
+///   evaluate_compute_carbon(30.0, 12.0)              // budget vs actual
+///   evaluate_replay_parity(&[])                      // answered with (true, 5)
+///   evaluate_upgrade_train(&[])                      // breaking == 0 vacuously
+///   evaluate_hermetic_reproducibility("sha256_clean", "sha256_clean", ..)
+///   scan_reachability("CVE-NONE", "none", "symbol_none", ..)
+///
+/// Each was fixed once and then reverted by a rebase that moved the gate
+/// corpus between files, because nothing failed when they came back.
+///
+/// This check is narrow on purpose: it fires only on a `state.<gate>.<call>(..)`
+/// in the certification pipeline whose arguments are literals. A real
+/// implementation passes values it read from somewhere, so it has variables in
+/// its argument list and is untouched.
+#[test]
+fn no_gate_in_the_pipeline_is_invoked_with_a_fabricated_argument() {
+    let mut offenders = Vec::new();
+
+    for rel in [
+        "src/webhook/pipelines/certify.rs",
+        "src/webhook/pipelines/review.rs",
+    ] {
+        let src = std::fs::read_to_string(rel).expect("pipeline source is readable");
+        let code = code_only(&src);
+
+        // Join continuations so a multi-line call is one subject, then close up
+        // the whitespace before a `.` so the receiver and its field are
+        // adjacent. Without this second step the scan matched only calls
+        // rustfmt happened to leave on one line -- 15 of 72 in `certify.rs`,
+        // with the other 57 written as `state` / `.gate` / `.method(..)` and
+        // therefore invisible. Which side a call landed on was decided by
+        // formatting, not by whether it fabricated.
+        let flat = collapse_before_dot(&code.replace('\n', " "));
+        let mut rest = flat.as_str();
+
+        while let Some(at) = rest.find("state.") {
+            rest = &rest[at + "state.".len()..];
+            let Some(open) = rest.find('(') else { break };
+            let head = &rest[..open];
+            // `state.<field>.<method>` and nothing more exotic.
+            if head.contains(')') || head.contains(';') || head.matches('.').count() != 1 {
+                continue;
+            }
+            // Only gate evaluations. The first version of this scan matched any
+            // `state.<field>.<method>(..)`, and immediately flagged
+            // `upsert_pr_comment(repo, pr_number, "<!-- marker -->", ..)` --
+            // a literal that is the marker, not a measurement. A rule that
+            // fires on honest code is one someone deletes.
+            let method = head.rsplit('.').next().unwrap_or("").trim();
+            if !GATE_CALL_VERBS.iter().any(|v| method.starts_with(v)) {
+                continue;
+            }
+            let Some(close) = matching_paren(rest, open) else {
+                continue;
+            };
+            let args = &rest[open + 1..close];
+            if args.trim().is_empty() {
+                continue; // a no-argument constructor reads nothing by definition
+            }
+            if argument_list_has_a_literal(args) {
+                offenders.push(format!("{rel}: state.{}({})", head.trim(), args.trim()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "these gates are invoked with fabricated arguments, so their verdicts \
+         measure nothing:\n  {}\n\nA gate with no real input must say so -- use \
+         its `evaluate_without_*_source` constructor -- rather than being handed \
+         a literal that makes its check true by construction.",
+        offenders.join("\n  ")
+    );
+}
+
+/// The verbs a gate evaluation is spelled with in the certification pipeline.
+///
+/// Taken from the 72 distinct methods called on `state` fields in
+/// `certify.rs`: every gate is `evaluate_*`, `audit_*`, `scan_*`, `inject_*`
+/// or `execute_sandboxed_*`. The rest -- `ensure_repo_cloned`,
+/// `prepare_pr_diff`, `fetch_pr_metadata`, `upsert_pr_comment`,
+/// `acquire_pr_lock` -- are plumbing, and plumbing may legitimately take a
+/// constant.
+const GATE_CALL_VERBS: &[&str] = &[
+    "evaluate_",
+    "audit_",
+    "scan_",
+    "inject_",
+    "execute_sandboxed",
+];
+
+/// Removes whitespace sitting between a receiver and its `.`, so a call split
+/// across lines reads as one subject.
+fn collapse_before_dot(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for c in src.chars() {
+        if c == '.' {
+            while out.ends_with(char::is_whitespace) {
+                out.pop();
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// True when ANY argument is a literal.
+///
+/// "Every argument is a literal" was the first rule here, and it was too weak:
+/// `evaluate_health_and_rollback(repo, 0.01, 45.0)` and
+/// `evaluate_hermetic_reproducibility("sha256_clean", "sha256_clean", &diff)`
+/// both carry one real value, so both evaded it -- and both are fabrications,
+/// because the arguments that decide the verdict are the constants. A gate's
+/// inputs are measurements; a literal among them is a value nobody read.
+fn argument_list_has_a_literal(args: &str) -> bool {
+    split_top_level(args).iter().any(|arg| {
+        let a = arg.trim().trim_start_matches('&').trim();
+        a == "[]" || a.starts_with('"') || a.chars().next().is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
+fn split_top_level(args: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut depth, mut cur) = (0i32, String::new());
+    for c in args.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(c);
+    }
+    out.push(cur);
+    out
+}
+
+fn matching_paren(s: &str, open: usize) -> Option<usize> {
+    let b: Vec<char> = s.chars().collect();
+    let mut depth = 0i32;
+    for (i, c) in b.iter().enumerate().skip(open) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}

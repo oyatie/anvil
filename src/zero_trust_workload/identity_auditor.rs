@@ -103,20 +103,32 @@ fn path_is_out_of_scope(path: &str) -> bool {
 
 /// The line with its comment tail removed.
 ///
-/// The one subtlety is that `//` is both a comment opener and the middle of
-/// every URL, so a `//` preceded by `:` is left alone -- otherwise this
-/// function would truncate exactly the thing it exists to expose.
+/// Every comment opener here is also ordinary code somewhere, so each one is
+/// recognised only in the position a comment actually starts in:
+///
+///   - `//` is the middle of every URL, so one preceded by `:` is left alone --
+///     otherwise this function would truncate exactly the thing it exists to
+///     expose.
+///   - `#` opens a comment in YAML, TOML and shell, but it also delimits a Rust
+///     raw string (`r#"..."#`) and a URL fragment (`/doc#frag`). Treating it as
+///     an opener anywhere made `let url = r#"http://host"#;` invisible to the
+///     lint -- a one-character bypass -- so it must start a token.
+///   - a leading `*` continues a block comment (`* text`, `*/`), but it is also
+///     a dereference: blanking the line on `*` alone hid `*endpoint = "..."`.
 fn code_before_comment(line: &str) -> &str {
     let b = line.as_bytes();
     // A block-comment continuation and a SQL comment open the whole line. A
     // lone `-` must not: a YAML sequence item (`- url: ...`) starts with one.
     let trimmed = line.trim_start();
-    if trimmed.starts_with('*') || trimmed.starts_with("--") {
+    let block_continuation = trimmed.strip_prefix('*').is_some_and(|rest| {
+        rest.is_empty() || rest.starts_with('/') || rest.starts_with(char::is_whitespace)
+    });
+    if block_continuation || trimmed.starts_with("--") {
         return "";
     }
     for i in 0..b.len() {
         let is_comment_open = match b[i] {
-            b'#' => true,
+            b'#' => i == 0 || b[i - 1].is_ascii_whitespace(),
             b'/' if i + 1 < b.len() => {
                 (b[i + 1] == b'/' && (i == 0 || b[i - 1] != b':')) || b[i + 1] == b'*'
             }
@@ -154,10 +166,13 @@ fn insecure_transport_in(code: &str) -> Option<&'static str> {
     // An explicit opt-out of transport security, named as a call. Requiring the
     // open paren is what keeps this file -- which names both identifiers as
     // string data below -- from being a finding against itself.
+    // Every occurrence, not only the first: a line that names the identifier
+    // before calling it (`let f = allow_insecure; f(true)` and the like) would
+    // otherwise clear the check on its first, uncalled mention.
     for opt_in in ["allow_insecure", "insecure_client"] {
         if code
-            .find(opt_in)
-            .is_some_and(|i| code[i + opt_in.len()..].starts_with('('))
+            .match_indices(opt_in)
+            .any(|(i, _)| code[i + opt_in.len()..].starts_with('('))
         {
             return Some("Explicit insecure-transport opt-in");
         }

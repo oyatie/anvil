@@ -3,8 +3,8 @@
 //! edit `src/main.rs` or `docs/doctrine.md`.
 
 use anvil::change_delivery::core::shard::{
-    admit_spawn, anvil_hubs, is_open_test_crate, occupy_move, path_sets_disjoint, SpawnKind,
-    SpawnRefused,
+    SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, is_open_test_crate, occupy_move,
+    path_sets_disjoint,
 };
 use std::collections::BTreeSet;
 use std::fs;

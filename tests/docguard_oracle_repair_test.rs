@@ -2512,12 +2512,13 @@ fn a_sufficient_diff_certifies_and_a_rewritten_owned_page_does_not_block_it() {
 // assert `!report.is_certified_ready` even though that is the sentence one would
 // like to write. `evaluate_pre_merge_gates` runs two gates against Anvil's OWN
 // tree rather than against the reports it is handed: `brand_absence_status` and
-// `migration_boundary_status`. On this tree the brand-absence gate is
-// `Failed("12 name(s) or PR-visible string(s) ...")` — twelve pre-existing
-// violations in `src/migration/registry.rs`, none of them this branch's, and the
-// gate is a real measurement rather than a fixture input, so no test can supply
-// a value that clears it. `is_certified_ready` is therefore `false` for every
-// report this fixture can build, and asserting it would be a test that passes
+// `migration_boundary_status`. On this tree the brand-absence gate reports
+// twelve pre-existing violations in `src/migration/registry.rs`, none of them
+// this branch's, and the gate is a real measurement rather than a fixture input,
+// so no test can supply a value that clears it. It is advisory since
+// `fix/severity-that-is-actually-published`, so it is the gates reporting
+// `NotMeasured` in this build that hold `is_certified_ready` at `false` for
+// every report this fixture can build; asserting it would be a test that passes
 // whether or not gate 1 is correct — the exact defect this suite exists to stop.
 //
 // What replaces it is stronger, not weaker: the two runs differ in nothing but

@@ -28,7 +28,7 @@ The table below is a representative selection, not the full corpus.
 | **Deprecation & Reorg Drain Ratchet** | Only debt shrinks permitted on deprecating targets (`DebtShrinkGuard`) |
 | **Code Modularization (100-300 lines)** | Componentized architecture with zero monoliths (`ModularizationGuard`) |
 | **Differential Test Coverage (≥85%)** | Verified test coverage on added & modified lines (`CoverageGuard`) |
-| **Rust 2024 Edition Quality** | 380 Rust rules: zero unwrap panics & zero-copy (`RustSkillsGuard`) |
+| **Rust Idiom Scan** | Deterministic regex rules over added lines; no clippy or rustc lint runs (`RustLanguagePolicy`) |
 | **Unsafe Block `// SAFETY:` Comment Lint** | Added unsafe blocks carry a `// SAFETY:` comment; no model checker runs (`KaniGuard`) |
 | **OpenSLO & Error Budget Burn-Rate Gate** | Target reliability SLOs & <3x 5m burn rate verified (`SloCanaryGuard`) |
 | **Ghost DB Migration & Zero-Lock Validator** | Zero exclusive table locks & rollback parity verified (`GhostMigrationHarness`) |

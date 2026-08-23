@@ -272,7 +272,7 @@ pub async fn manual_enlist_handler(
     // Awaiting it directly on the handler's own future fixed that and created
     // the mirror-image defect: axum drops a handler future when the client or
     // an intermediary closes the connection, and this run is a clone, seventy-
-    // two guards, a model turn and a cold `cargo check` -- tens of minutes,
+    // two guards, a model turn and a cold `cargo test` -- tens of minutes,
     // over which a proxy or client cut is ordinary rather than exceptional.
     // Dropped mid-run the future is cancelled at whatever await it is suspended
     // on: after `gh pr merge --auto` returned success that leaves the pull

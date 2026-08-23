@@ -263,12 +263,12 @@ impl PreMergeGuard {
         // every PR that adds code without coverage evidence.
         let coverage_status = coverage_report.gate_status();
 
-        // 12. Rust Skills Guard (Upstream 380 Rust Rules)
-        let rust_skills_status = if rust_skills_report.is_idiomatic {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(rust_skills_report.summary.clone())
-        };
+        // 12. Rust idiom scan over added lines
+        // `is_idiomatic` is true both for a scan that found nothing and for a diff
+        // with no `.rs` file in it, and the second used to be published with a
+        // rule count of 380 and the sentence "rust-skills quality check passed".
+        // The guard now distinguishes them and owns the verdict.
+        let rust_skills_status = rust_skills_report.gate_status();
 
         // 13. `// SAFETY:` comment lint over added unsafe blocks
         let kani_status = if kani_report.all_unsafe_blocks_documented {

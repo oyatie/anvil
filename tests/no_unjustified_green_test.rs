@@ -106,3 +106,199 @@ fn a_selection_that_prunes_nothing_is_not_reported_as_optimised() {
          a constant `true` would violate"
     );
 }
+
+// ---------------------------------------------------------------------------
+// rust_skills_status: a rule count nothing counted
+// ---------------------------------------------------------------------------
+//
+// `rules_evaluated_count: 380` was a literal, written twice in
+// `rust_language_policy/mod.rs`, and `categories_evaluated` was a hand-written
+// list of eight categories carrying their own invented per-category counts
+// ("API Design (46 rules)"). The engine underneath implements seven regexes,
+// four of which can block. Nothing in the process has ever held 380 rules.
+//
+// The number was not merely unearned, it was wrong: the corpus it names --
+// `jason931225/rust-skills` -- publishes a `rules-434` badge over 434 files in
+// `rules/`, and its own changelog records the count passing through 380 in
+// mid-August 2026 on the way there. A literal transcribed from a moving corpus
+// is stale from the day after it is written, which is the general argument for
+// counting the ruleset you loaded rather than the one you remember.
+//
+// The second half is the early return: a diff with no `.rs` file published
+// `is_idiomatic: true`, that same `rules_evaluated_count: 380`, the category
+// "All 27 Categories (Zero Rust files in PR)" and the sentence "rust-skills
+// quality check passed" -- 380 rules reported as evaluated over zero files.
+
+use anvil::rust_language_policy::{RustLanguagePolicy, RustSkillsMeasurement, engine};
+
+fn rust_diff_ctx(changed: &[&str], diff: &str) -> anvil::git_manager::PrDiffContext {
+    let mut ctx = diff_ctx(&changed.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    ctx.diff_content = diff.to_string();
+    ctx
+}
+
+/// Catches: the early return publishing a corpus it did not evaluate.
+///
+/// A documentation-only pull request is the ordinary case here, and the gate
+/// answered it with a rule count and the word "passed".
+#[test]
+fn a_diff_with_no_rust_file_publishes_no_rule_count_and_no_compliance_claim() {
+    let report = RustLanguagePolicy::new()
+        .evaluate_rust_quality(
+            std::path::Path::new("."),
+            &rust_diff_ctx(&["README.md"], "+++ b/README.md\n+ a documentation line\n"),
+        )
+        .expect("evaluates");
+
+    assert_eq!(
+        report.measurement,
+        RustSkillsMeasurement::NothingToMeasure,
+        "no `.rs` file changed, so no rule was evaluated"
+    );
+    assert_eq!(
+        report.rules_evaluated_count, 0,
+        "a run that evaluated nothing must publish a count of nothing, not the \
+         size of a corpus it never loaded"
+    );
+    assert!(
+        report.categories_evaluated.is_empty(),
+        "no category was evaluated either; got {:?}",
+        report.categories_evaluated
+    );
+
+    let summary = report.summary.to_lowercase();
+    for claim in ["380", "compliant", "passed", "verified"] {
+        assert!(
+            !summary.contains(claim),
+            "the summary of a run that evaluated nothing claims `{claim}`: {:?}",
+            report.summary
+        );
+    }
+}
+
+/// Catches: the count restored as a literal somewhere else, or drifting from
+/// the rules the engine actually runs.
+///
+/// The published count must be the length of the ruleset the scan iterates,
+/// which is the ESLint/semgrep convention -- report the resolved ruleset, never
+/// a remembered total.
+#[test]
+fn the_published_rule_count_is_the_ruleset_the_engine_actually_evaluates() {
+    let report = RustLanguagePolicy::new()
+        .evaluate_rust_quality(
+            std::path::Path::new("."),
+            &rust_diff_ctx(
+                &["src/handler.rs"],
+                "+++ b/src/handler.rs\n+ pub fn ok() -> u32 { 2 }\n",
+            ),
+        )
+        .expect("evaluates");
+
+    assert_eq!(
+        report.rules_evaluated_count,
+        engine::RULES.len(),
+        "the count published on the scorecard must be the ruleset that ran"
+    );
+    assert!(
+        matches!(
+            report.measurement,
+            RustSkillsMeasurement::Evaluated { rust_files: 1 }
+        ),
+        "one `.rs` file was in scope; got {:?}",
+        report.measurement
+    );
+
+    let mut categories: Vec<&str> = engine::RULES.iter().map(|r| r.category).collect();
+    categories.sort_unstable();
+    categories.dedup();
+    assert_eq!(
+        report.categories_evaluated.len(),
+        categories.len(),
+        "the categories published must be the categories the ruleset covers, \
+         not a hand-written list with its own invented per-category totals"
+    );
+}
+
+/// Catches: `RULES` and the scan drifting apart -- a rule deleted from the scan
+/// while its entry stays in the table, or a rule added to the scan and never
+/// counted. The count is only honest while the table is the scan's inventory.
+///
+/// A mechanism over source text, because nothing in the compiler relates a
+/// `rule_id` string constructed in one place to a table in another.
+#[test]
+fn every_rule_the_engine_reports_is_in_the_table_the_count_comes_from() {
+    let src = std::fs::read_to_string("src/rust_language_policy/engine.rs")
+        .expect("engine.rs must exist");
+
+    let mut emitted: Vec<String> = Vec::new();
+    for (idx, _) in src.match_indices("rule_id: \"") {
+        let rest = &src[idx + "rule_id: \"".len()..];
+        let Some(close) = rest.find('"') else {
+            continue;
+        };
+        emitted.push(rest[..close].to_string());
+    }
+    emitted.sort();
+    emitted.dedup();
+    assert!(
+        !emitted.is_empty(),
+        "no `rule_id` literal was found in engine.rs, so this check scanned nothing"
+    );
+
+    let mut tabled: Vec<String> = engine::RULES.iter().map(|r| r.id.to_string()).collect();
+    tabled.sort();
+    tabled.dedup();
+
+    assert_eq!(
+        emitted, tabled,
+        "the rules the engine emits findings for and the table `rules_evaluated_count` \
+         is derived from must be the same set"
+    );
+}
+
+/// Catches: the literal surviving in the text a human reads. The struct can be
+/// honest while the scorecard row, the pipeline comment and the README still
+/// advertise a corpus of 380.
+#[test]
+fn nothing_the_rust_skills_gate_publishes_still_advertises_the_unevaluated_corpus() {
+    const PUBLISHERS: &[&str] = &[
+        "src/rust_language_policy/mod.rs",
+        "src/rust_language_policy/engine.rs",
+        "src/pre_merge_guard/matrix.rs",
+        "src/pre_merge_guard/evaluator.rs",
+        "src/webhook/pipelines/certify.rs",
+        "README.md",
+    ];
+
+    // Code only. A comment recording that the literal used to be there is not a
+    // publication; a `380` still reachable by `rustc` is. Same distinction
+    // `fidelity_registry_citations_test::code_only` draws, for the same reason.
+    let code_only = |line: &str| -> String {
+        match line.find("//") {
+            Some(at) => line[..at].to_string(),
+            None => line.to_string(),
+        }
+    };
+
+    let mut offenders: Vec<String> = Vec::new();
+    for rel in PUBLISHERS {
+        let body = std::fs::read_to_string(rel).unwrap_or_else(|e| panic!("read {rel}: {e}"));
+        for (n, line) in body.lines().enumerate() {
+            let code = if rel.ends_with(".rs") {
+                code_only(line)
+            } else {
+                line.to_string()
+            };
+            if code.contains("380") {
+                offenders.push(format!("{rel}:{}: {}", n + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "these lines still publish a 380-rule corpus that nothing here loads or \
+         evaluates:\n  {}",
+        offenders.join("\n  ")
+    );
+}

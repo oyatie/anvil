@@ -44,6 +44,11 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "gitops_drift_report",
     "migration_orch_report",
     "mutation_report",
+    // `is_idiomatic` is true both for a clean scan and for a diff with no `.rs`
+    // file, so rebuilding the verdict from it published "380 rules evaluated,
+    // compliant" over zero Rust files. The guard now tells the two apart and
+    // the evaluator must carry its answer through.
+    "rust_skills_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

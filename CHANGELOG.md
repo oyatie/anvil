@@ -27,6 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **telemetry**: pass/fail counts were hardcoded as `(70, 0)` / `(69, 1)`, so every failing PR was recorded as
   exactly one failed gate — the reason accumulated telemetry showed most PRs "stuck at 69/70". Counts are now
   computed, and the previously-empty `gate_failures` sink now records which gates failed and why.
+- **feature_flag**: all three rules were unmatchable, so the gate's green was unreachable by any input. Two
+  were annotations no flag system uses — LaunchDarkly, Unleash, Statsig and OpenFeature all decide staleness
+  on their own backend, and `ld-find-code-refs` and `piranha` locate flags by the *key* at the call site, not
+  by a comment — the third was a year window ending in 2025, expired in 2026, and the dead-branch rule
+  required source rustc and clippy both reject. The key scan survives as the seam a real flag API plugs into;
+  staleness is now answered from a `STALE-FLAGS.md` ledger, and reports `NotMeasured` when there is none.
+- **local_probe**: the conventional-commit check graded the hardcoded literal `"feat: update codebase"`, and
+  `starts_with("feat")` accepts headers Conventional Commits 1.0.0 rejects. The pipeline now reads the pull
+  request's real subjects with `git log <base>..<head>` and judges them against the grammar. `latency_ms` was
+  the literal `18`, and a test asserted it was under 100 — the eighth assertion over a constant found here;
+  it is now the call's own elapsed time. The AST-linting claim is withdrawn: there is no AST and no parser.
+- **chaos_injection**: three faults were declared and handed to a simulator that never read its `fault`
+  argument, so one scan produced three identical verdicts carrying a fabricated recovery time, and the
+  blocking sentence named a preview sandbox that does not exist. Every real chaos tool acts on a running
+  system; nothing here runs one. The surviving half is published as what it is — a lint for an `.unwrap()`
+  on an awaited call — and a diff without one reports `NotMeasured`, not resilient.
 
 ### Fixed — ingress and untrusted input
 

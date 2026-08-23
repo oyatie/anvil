@@ -397,10 +397,11 @@ pub async fn certify_pull_request(
     // trivially true of the empty slice that was passed here.
     let upgrade_train_report = state.upgrade_train.evaluate_without_dependency_source();
 
-    // 62. ChaosMutationGuard: AST Chaos Mutation Test Adequacy Gate
+    // 62. ChaosMutationGuard: Mutation Adequacy of the Changed Lines
     let mutation_report = state
         .chaos_mutation_guard
-        .evaluate_mutation_adequacy(diff_ctx)?;
+        .measure_diff_mutants(repo_dir, diff_ctx)
+        .await;
 
     // 63. FeatureFlagRatchet: Feature Flag & Dead Branch Lifecycle Gate
     let feature_flag_report = state

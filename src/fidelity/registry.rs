@@ -2,13 +2,20 @@
 //!
 //! # Scope of this registry
 //!
-//! Entries exist ONLY for gates whose implementation was read directly during
-//! the 2026-08-19/20 audit. Gates that were not read have no entry and are
-//! counted as `unaudited` in the gap report.
+//! Entries exist ONLY for gates whose implementation was read directly. Gates
+//! that were not read have no entry and are counted as `unaudited` in the gap
+//! report.
 //!
 //! This is deliberate. Guessing a fidelity would reproduce exactly the failure
 //! being corrected: a confident claim with nothing behind it. An honest
 //! "not yet audited" is worth more than an invented "Heuristic".
+//!
+//! Sixty-nine of the seventy-two gates have an entry. The three that do not --
+//! `cedar_status`, `attestation_status` and `schema_evolution_status` -- are
+//! being rewritten in open pull requests which enter their own, so auditing
+//! them here would collide and would describe code about to change. They stay
+//! unaudited, `unaudited_count` says three, and the ceiling in
+//! `withhold_aspirational_passes` exempts exactly those three.
 
 use super::{Fidelity, GateFidelity};
 
@@ -591,6 +598,610 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               never arrived. Both used to return early with a pass declaring the ghost migration \
               check clean; both now report that nothing was scanned.",
         blocked_on: Some("a shadow database"),
+    },
+    GateFidelity {
+        gate_id: "compliance_status",
+        aspiration: "Evaluate a change against the statutes in force on the day it is evaluated, across \
+                     every jurisdiction it touches, and block a violation.",
+        reference: "Korea PIPA and the PIPC safeguard notice; HIPAA Security Rule 45 CFR 164.312; PCI-DSS \
+                    v4.0.1",
+        fidelity: Fidelity::Heuristic,
+        gap: "A regex sweep over added lines against six hand-written rules that do carry real citations, \
+              and three things the words dynamic and temporal do not survive. The evaluation date is \
+              frozen: `current_date` (compliance_guard/mod.rs:51) is a literal, so a rule taking effect \
+              after that day never becomes enforceable, a rule sunsetting after it never lapses, and the \
+              grace-period branch answers for a day that cannot advance. Scope is the file extension alone \
+              -- `trigger_extensions` (compliance_guard/engine.rs:61) -- while `trigger_paths` \
+              (compliance_guard/registry.rs:59) is carried on every rule and read by nothing, and a rule \
+              whose `pattern_regex` (compliance_guard/engine.rs:71) is absent can never fire, which is one \
+              of the six. And `jurisdictions_evaluated` (compliance_guard/mod.rs:61) is a fixed list of \
+              five strings published on every run whatever the rules did, beside a summary calling the \
+              change fully compliant whenever `has_blocking_violations` (compliance_guard/mod.rs:69) found \
+              nothing at CRITICAL or HIGH -- so a MEDIUM or ADVISORY finding is published inside a pass.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "api_contract_status",
+        aspiration: "Parse the OpenAPI document, validate it, and diff it against the routes the service \
+                     actually registers so a contract and its implementation cannot drift apart.",
+        reference: "OpenAPI Specification 3.1; Spectral and Redocly lint; openapi-diff \
+                    backward-compatibility checks",
+        fidelity: Fidelity::Aspirational,
+        gap: "Parses no schema and enumerates no route. The only two checks shell out to marker scripts -- \
+              \"scripts/check-openapi-refs.mjs\" (api_contract_guard.rs:58) and \
+              \"scripts/union-openapi.py\" (api_contract_guard.rs:96) -- and neither file exists in this \
+              repository, so neither branch is entered and `let is_intact = unverifiable.is_none() && \
+              (!script_failed || !synced_files.is_empty());` (api_contract_guard.rs:152) reduces to a \
+              constant true for every change in scope. What is left is a `--porcelain` status read \
+              filtered for paths that name a schema, which is empty on a clean tree. A pass here reports \
+              that two absent scripts did not complain.",
+        blocked_on: Some(
+            "an OpenAPI validator; the two scripts this shells out to are not in this \
+            repository",
+        ),
+    },
+    GateFidelity {
+        gate_id: "cell_isolation_status",
+        aspiration: "Prove that every data access a change introduces is scoped to one tenant, and that no \
+                     call crosses a cell boundary outside the cell gateway.",
+        reference: "AWS cell-based architecture (Well-Architected reliability pillar); PostgreSQL \
+                    row-level security",
+        fidelity: Fidelity::Heuristic,
+        gap: "Two regexes over added lines. No query is parsed, no schema is read and no call graph is \
+              built. A line matched by `sql_re` (cell_isolation_guard.rs:43) -- the word SELECT, DELETE or \
+              UPDATE followed anywhere on the line by WHERE -- is a violation unless that same line also \
+              contains the text `tenant_id` (cell_isolation_guard.rs:52). So prose, a log message and a \
+              comment about a query are accused; an ORM call scoped one line above is accused; and a query \
+              naming the column without filtering on it is cleared. The cross-cell half matches only a \
+              `TcpStream::connect` call whose argument is a literal dotted quad and port \
+              (cell_isolation_guard.rs:44,61), and this repository's own connect call passes a variable, \
+              so it is invisible to the rule. `is_isolated` (cell_isolation_guard.rs:71) therefore says \
+              nothing about cell boundaries, blast radius, or the tenant scoping of anything the change \
+              did not spell out on a single line.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "clean_arch_status",
+        aspiration: "Enforce the Dependency Rule over the real build graph: no inner layer may depend on \
+                     an outer one, whatever the file happens to be called.",
+        reference: "Robert C. Martin, Clean Architecture (the Dependency Rule); ArchUnit \
+                    layered-architecture rules",
+        fidelity: Fidelity::Heuristic,
+        gap: "A text scan that is candid about its own blind spot. A file's layer is its path -- \
+              `classify_layer` (clean_architecture_guard.rs:164) matches path fragments -- and an edge is \
+              an added line that `is_import_line` (clean_architecture_guard.rs:148) accepts and whose text \
+              carries a layer word from `core_forbidden_imports` (clean_architecture_guard.rs:308). No \
+              module path is resolved, so an import of a crate whose name merely contains one of those \
+              words is an edge, while an inward dependency reached through a re-export, a trait object or \
+              a plain call rather than an import is not one at all. Only added lines are read, so a \
+              violation the change carries past untouched is invisible, and a file outside the four path \
+              conventions is unclassified however it depends. Two things it does right, and this registry \
+              records them rather than hiding them: a run for which `files_classified == 0` \
+              (clean_architecture_guard.rs:385) reports NotMeasured instead of clean, and `let is_clean = \
+              violations.is_empty() && measurement.is_measured();` (clean_architecture_guard.rs:401) \
+              refuses to call an unmeasured run a pass.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "monorepo_status",
+        aspiration: "Enforce package boundaries and hermeticity across the repository: no undeclared \
+                     dependency, no path escape, no non-hermetic build input.",
+        reference: "Bazel strict deps and sandboxing; Google monorepo BUILD visibility; Nx and Turborepo \
+                    boundary rules",
+        fidelity: Fidelity::Heuristic,
+        gap: "No package graph is read, so hermeticity is approximated by text rules plus one absent \
+              script. The rules match real idioms and do fire: a deep relative include and an absolute \
+              path under a user home (`HARDCODED_ABSOLUTE_PATH`, monorepo_guard/mod.rs:80-96), an agent \
+              scratch directory in the changed-file list (`BANNED_HARNESS_PREFIXES`, \
+              monorepo_guard/harness_quarantine.rs:22-23), and a whole-file pass counting lines against \
+              `MAX_WHOLE_FILE_LINES` and flagging any `.unwrap()` outside a path spelling test \
+              (monorepo_guard/whole_file_expansion.rs:35,75). That last rule dominates the verdict on any \
+              Rust repository, and is most of what `is_compliant` (monorepo_guard/mod.rs:166) actually \
+              reports; it reads the file on disk rather than the change, so a pre-existing occurrence in a \
+              file the change merely touches is charged to the change. The undeclared-import half is a \
+              marker script, \"scripts/check-undeclared-imports.mjs\" (monorepo_guard/mod.rs:118), which \
+              does not exist here -- so the one check that would need a package graph never runs.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "modularization_status",
+        aspiration: "Keep every module inside a size envelope, and refuse a change that grows a file past \
+                     the ceiling.",
+        reference: "Google style guides on file size; SonarQube maintainability rules; Parnas, On the \
+                    Criteria To Be Used in Decomposing Systems",
+        fidelity: Fidelity::Heuristic,
+        gap: "It does not measure file length. `line_count` is incremented once per ADDED line in a chunk \
+              (modularization_guard.rs:66-68) and compared against `MAX_RECOMMENDED_LINES` \
+              (modularization_guard.rs:54), so a file already far past the ceiling passes as long as this \
+              change adds few lines, a new file just over the ceiling fails, and the finding then \
+              publishes that added-line count as the file's total length -- a number the gate never read. \
+              The lower bound in the row's title is not checked at all: nothing looks for a file that is \
+              too small. The second rule is real and does measure what it claims, comparing directory \
+              depth per category against `max_depth` (modularization_guard.rs:82,97), and `is_modular` \
+              (modularization_guard.rs:109) is the conjunction of the two.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "rust_skills_status",
+        aspiration: "Hold the change to the language's idiom set with a compiler-backed linter, so that a \
+                     rule about types is decided on types.",
+        reference: "clippy, including its pedantic and restriction groups; the Rust API Guidelines",
+        fidelity: Fidelity::Heuristic,
+        gap: "No linter runs and no type is resolved. Seven line-regexes over added lines \
+              (rust_language_policy/engine.rs:33-40) stand in for the corpus this row is named after, \
+              while `rules_evaluated_count: 380` (rust_language_policy/mod.rs:108) is published as the \
+              number evaluated regardless, beside `categories_evaluated` (rust_language_policy/mod.rs:68) \
+              -- a fixed list of headings whose own counts sum to neither seven nor that figure. A change \
+              touching no Rust file returns early and publishes the same number with a summary calling the \
+              change compliant (rust_language_policy/mod.rs:56-63), which is a pass declared over an empty \
+              scope. The rules themselves are honest proxies and do fire: an added `.unwrap()` in a path \
+              not spelling test is a HIGH finding, and that is mostly what `is_idiomatic` \
+              (rust_language_policy/mod.rs:82) turns on. But every judgement is made from one line of text \
+              -- a path containing the word test exempts a whole file, and a rule about a parameter type \
+              is decided by the spelling on the signature line.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "adr_status",
+        aspiration: "Require an architecture decision record carrying the mandatory clause schema for \
+                     every change that moves an architectural boundary, and refuse a boundary change that \
+                     carries none.",
+        reference: "Michael Nygard, Documenting Architecture Decisions; the adr-tools convention; \
+                    ThoughtWorks Technology Radar, lightweight ADRs",
+        fidelity: Fidelity::Heuristic,
+        gap: "No decision record is ever parsed, on either of the two paths. Where the change touches \
+              `docs/decisions/` or `docs/adr/` the five mandatory clauses are matched against the WHOLE \
+              diff rather than against the record -- `if !re.is_match(&diff_ctx.diff_content)` \
+              (adr_drift_ratchet.rs:74) -- so the five words appearing anywhere in any file of the change \
+              satisfy every record in it, and two records are each checked against the other's text. Where \
+              the change touches no such file the other path is taken: `has_arch_changes` \
+              (adr_drift_ratchet.rs:47) matches a path fragment, and a boundary change carrying no record \
+              pushes a filename onto `scaffolded_adrs` (adr_drift_ratchet.rs:84) that nothing writes, \
+              while `is_compliant` (adr_drift_ratchet.rs:90) stays true. A change that adds no record \
+              therefore cannot fail this gate, which inverts the incentive the row is named for, and \
+              `adrs_evaluated` counts files rather than records read.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "shuffle_status",
+        aspiration: "Compute the blast radius of a change's cell topology from the real tenant-to-cell \
+                     assignment, and refuse an assignment whose overlap exceeds the bound.",
+        reference: "AWS shuffle sharding (Amazon Builders' Library, workload isolation); Route 53 Infima",
+        fidelity: Fidelity::Aspirational,
+        gap: "Reads no topology and no assignment, and does not look at the change at all -- `diff_ctx` \
+              reaches only the log line. Both tenants and the cell count are literals written into the \
+              guard (`total_cells`, shuffle_shard_simulator/mod.rs:46-60), and the two assignments there \
+              overlap in exactly two cells against a bound of `max_tenant_overlap > 2` \
+              (shuffle_shard_simulator/mod.rs:66), so the comparison is decided where it is written and \
+              `let is_isolated = violations.is_empty();` (shuffle_shard_simulator/mod.rs:73) is true on \
+              every pull request. The passing sentence then publishes a combination count and a \
+              blast-radius percentage derived from those literals as though they described the change. The \
+              arithmetic underneath is correct and unreached: `calculate_combinations` and \
+              `evaluate_overlap` (shuffle_shard_simulator/math.rs:21,37) would answer a real allocation \
+              and `select_tenant_cells` (shuffle_shard_simulator/math.rs:77) would produce one, but no \
+              caller on this path supplies a tenant.",
+        blocked_on: Some("a real tenant-to-cell assignment; nothing here declares one"),
+    },
+    GateFidelity {
+        gate_id: "constant_work_status",
+        aspiration: "Prove a change adds no unbounded queue, pool or retry: every buffer has a fixed \
+                     capacity and every producer meets backpressure.",
+        reference: "Amazon Builders' Library, reliability and constant work; tokio bounded mpsc and \
+                    backpressure",
+        fidelity: Fidelity::Heuristic,
+        gap: "One regex, `unbounded_chan_re` (constant_work_guard/buffer_limits.rs:32,36), matching a \
+              single constructor spelling. The idiom is real and does occur in this repository, so the \
+              check can fire -- but it is the whole check. A `Vec` that grows per request, a thread pool \
+              with no ceiling, work proportional to fleet size on an interval, and every channel from \
+              another library are all outside it, and backpressure is never examined in any form. \
+              `scan_unbounded_structures` (constant_work_guard/mod.rs:60-62) is handed the entire file \
+              chunk -- added, removed and context lines alike -- so a change that DELETES an unbounded \
+              channel is reported as adding one, and `is_bounded` (constant_work_guard/mod.rs:66) is a \
+              statement about that one spelling.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "idempotency_status",
+        aspiration: "Require every state-mutating endpoint to accept and honour an idempotency key, and \
+                     every side effect to leave through a transactional outbox.",
+        reference: "Stripe idempotent requests; the transactional outbox pattern (Richardson, \
+                    Microservices Patterns)",
+        fidelity: Fidelity::Heuristic,
+        gap: "The outbox half has no implementation: nothing looks for a transaction, a relay, or an event \
+              table. What runs is `post_route_re` (idempotency_guard/outbox_rules.rs:32,37), one \
+              router-registration spelling taking a string path and a mutating verb, which does match this \
+              repository's own registrations. It is cleared whenever `idempotency_header_re` \
+              (idempotency_guard/outbox_rules.rs:34,41) matches anywhere in the same file chunk, so a \
+              single mention of the header exempts every route in that file, and nothing checks that a key \
+              is read, stored, or compared against a previous request. Routes registered in any other \
+              spelling, and mutating handlers not registered on a route at all, are invisible. \
+              `is_idempotent` (idempotency_guard/mod.rs:66) reports on that one registration shape.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "gitops_promo_status",
+        aspiration: "Require every container reference a manifest promotes to be an immutable digest, \
+                     resolved and verified against the registry that serves it.",
+        reference: "OCI image specification content-addressable digests; Kubernetes imagePullPolicy \
+                    guidance; Flux image automation",
+        fidelity: Fidelity::Heuristic,
+        gap: "Resolves nothing against a registry. The check is `image_line_re` \
+              (gitops_promotion/digest_pinner.rs:35) over the chunk text, failing a reference that carries \
+              a mutable tag or lacks `@sha256:` (gitops_promotion/digest_pinner.rs:36-37,43-44). Scope is \
+              not the path but the chunk's own text -- `is_gitops_manifest` (gitops_promotion/mod.rs:49) \
+              is satisfied by a substring naming a manifest extension appearing anywhere in it -- so a \
+              source file that merely mentions a manifest filename is in GitOps scope, while no tracked \
+              manifest in this repository carries an image reference for it to read. Every line of the \
+              chunk is scanned, removed and context alike, so deleting an unpinned image is reported as \
+              adding one. `is_pinned` (gitops_promotion/mod.rs:72) says nothing about whether a digest \
+              that IS present names the artefact this change built.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "canary_status",
+        aspiration: "Shift traffic to a canary in steps and trip a circuit breaker when the live \
+                     error-budget burn rate or tail latency crosses its threshold.",
+        reference: "Google SRE Workbook error-budget policy; Argo Rollouts and Flagger analysis steps",
+        fidelity: Fidelity::Aspirational,
+        gap: "Deploys nothing, queries nothing, and does not read the change -- `diff_ctx` reaches only \
+              the log line. The readings are a struct literal written into the guard: `burn_rate_5m: 0.2` \
+              and a `p99_latency_ms` well under its ceiling (canary_rollout/mod.rs:46-51), compared \
+              against bounds that are themselves literals at the call site (canary_rollout/mod.rs:53). \
+              Both comparisons are decided where they are written, so `let is_healthy = \
+              !decision.should_rollback;` (canary_rollout/mod.rs:54) is true on every pull request, and \
+              the passing sentence publishes that fabricated figure as a measured burn rate. The breaker \
+              itself is correct and would trip (canary_rollout/circuit_breaker.rs:37,47); nothing ever \
+              hands it a reading.",
+        blocked_on: Some("a canary deployment with a queryable error-budget metric source"),
+    },
+    GateFidelity {
+        gate_id: "compile_profile_status",
+        aspiration: "Measure a change's effect on compile wallclock -- macro expansion, codegen work, \
+                     dependency cost -- and refuse a regression past a budget.",
+        reference: "cargo build --timings; cargo-bloat and cargo-llvm-lines; the Rust compiler performance \
+                    dashboard",
+        fidelity: Fidelity::Heuristic,
+        gap: "Compiles nothing and times nothing, so there is no budget for anything to regress past. Two \
+              literal checks stand in for one. In a manifest, `full_syn_re` \
+              (compile_time_profiler/heavy_deps.rs:34-35) matches one dependency spelling on one line, and \
+              no other crate is treated as heavy however long it takes to build. In a build script, the \
+              absence of `cargo:rerun-if-changed` (compile_time_profiler/heavy_deps.rs:44) is the entire \
+              caching check. Both read the whole file chunk rather than its added lines, so removing \
+              either construct reads the same as adding it. `is_lean` (compile_time_profiler/mod.rs:62) is \
+              a statement about those two spellings and about nothing else in the row's title.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "runner_economics_status",
+        aspiration: "Route CI work to the cheapest runner that can do it, and keep expensive SKUs off \
+                     pull-request triggers.",
+        reference: "GitHub Actions larger-runner billing; AWS Spot Instances; Bazel remote execution pools",
+        fidelity: Fidelity::Heuristic,
+        gap: "Prices nothing and allocates nothing: there is no rate card, no runner inventory, and no \
+              measured minute. One rule, needing two coincidences in the same chunk -- `is_pr_trigger` \
+              (ci_runner_economics/sku_allocator.rs:34) is the substring `pull_request:` appearing \
+              anywhere in it, and a `runs-on` value containing macos or gpu \
+              (ci_runner_economics/sku_allocator.rs:41). The spot allocation the row's detail promises is \
+              not checked at all: no label is compared against a spot pool and nothing distinguishes an \
+              on-demand runner from a preemptible one. Both workflows in this repository run on the \
+              default hosted runner, so the rule does not fire here, though the idiom is generic enough to \
+              fire elsewhere. `is_cost_optimal` (ci_runner_economics/mod.rs:62) is that one coincidence \
+              and nothing more.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "cross_service_status",
+        aspiration: "Derive the service dependency graph and refuse a wire-contract change that breaks a \
+                     consumer of the service which owns it.",
+        reference: "Pact consumer-driven contract testing; Buf breaking-change detection; protolock",
+        fidelity: Fidelity::Heuristic,
+        gap: "Builds no graph and knows no consumer. The whole decision is a path fragment and one \
+              substring: a chunk whose path names an api or proto directory and whose text contains a \
+              removed line spelled \"-   required:\" with exactly three spaces \
+              (cross_service_impact/service_graph.rs:33-34). One tracked path in this repository satisfies \
+              the fragment and none of its lines carries that indentation, so the rule has no way to fire \
+              here. When it does fire, the finding is invented rather than derived: the consumer it names \
+              is the literal `oyatie-console` written into the struct \
+              (cross_service_impact/service_graph.rs:37-38), not a service any graph resolved, and the \
+              blast radius the row is named for is never computed. `is_compatible` \
+              (cross_service_impact/mod.rs:62) reports on that one substring in that one path shape.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "ephemeral_secret_status",
+        aspiration: "Prove every credential a workflow uses is a short-lived token federated through OIDC, \
+                     and that no long-lived secret is reachable from a pull-request trigger.",
+        reference: "GitHub Actions OIDC hardening guidance; AWS STS AssumeRoleWithWebIdentity; HashiCorp \
+                    Vault dynamic secrets",
+        fidelity: Fidelity::Heuristic,
+        gap: "One regex, over one vendor's one variable name. `static_aws_secret_re` \
+              (ephemeral_secrets/oidc_validator.rs:37,41) matches an AWS secret-key assignment drawing its \
+              value from the secrets context, and scope is any path containing \".github/workflows/\" \
+              (ephemeral_secrets/oidc_validator.rs:33). Everything else the row claims is unexamined: no \
+              token lifetime is read anywhere, so the fifteen-minute ceiling is never checked; no OIDC \
+              configuration is required, so a workflow that federates nothing passes as long as it names \
+              no AWS key; and cloud, registry and package credentials from every other vendor are not \
+              matched at all. A chunk carrying no path header keeps a default workflow filename \
+              (ephemeral_secrets/mod.rs:49), which puts text belonging to no file into workflow scope. \
+              `is_zero_trust` (ephemeral_secrets/mod.rs:62) is a statement about that single assignment \
+              spelling.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "psa_status",
+        aspiration: "Admit no workload below the restricted Pod Security Standard, and hold every \
+                     exception in a registry that carries an owner and an expiry.",
+        reference: "Kubernetes Pod Security Admission and the Pod Security Standards; OPA Gatekeeper and \
+                    Kyverno admission policies",
+        fidelity: Fidelity::Heuristic,
+        gap: "Admits nothing and reaches no cluster: this is a substring test over chunks whose path ends \
+              in a YAML extension. A chunk containing `kind: Namespace` and not containing \
+              `pod-security.kubernetes.io/enforce:` is the only violation it can raise \
+              (psa_admission_guard/psa_rules.rs:33-34), so every Pod, Deployment, StatefulSet and CronJob \
+              goes unexamined, the label's VALUE is never read -- baseline and privileged clear the check \
+              as readily as restricted -- and a namespace labelled elsewhere or inheriting its policy is \
+              judged on the text of one file. The registry the row's detail names is two hardcoded path \
+              substrings carrying no owner and no expiry (psa_admission_guard/psa_rules.rs:35-36). No \
+              tracked YAML here declares a namespace, so `is_compliant` (psa_admission_guard/mod.rs:60) \
+              has never been anything but true in this repository, though the idiom is generic and would \
+              fire on one that carries manifests.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "local_probe_status",
+        aspiration: "Run the checks a developer runs before committing -- commit-message hygiene and a \
+                     fast lint -- inside a hundred milliseconds, and report what they found.",
+        reference: "Conventional Commits; the pre-commit and lefthook hook frameworks; fast local \
+                    presubmit lanes",
+        fidelity: Fidelity::Heuristic,
+        gap: "Half of this gate cannot fail, and the timing it publishes is a literal. The commit message \
+              validated is not the change's: a fixed string is handed to `validate_pre_commit` \
+              (local_inner_loop/mod.rs:48), and `is_conventional` (local_inner_loop/fast_validator.rs:28) \
+              tests that fixed string for a prefix it always has, so the conventional-commit check named \
+              in the row's detail is a constant pass and no commit message is ever read. The other half is \
+              real and can fire: `has_secret` (local_inner_loop/fast_validator.rs:48-49) is two substring \
+              tests over the diff, so `is_valid` (local_inner_loop/mod.rs:49) is that scan alone. Nothing \
+              is linted and no syntax tree is built. Nothing is timed either -- `latency_ms: 18` \
+              (local_inner_loop/mod.rs:61) is written into the report, so the sub-hundred-millisecond \
+              claim is a constant rather than a measurement.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "zero_day_status",
+        aspiration: "Watch upstream advisories, match them against the resolved dependency graph, and \
+                     synthesise the patch when a dependency here is affected.",
+        reference: "RustSec advisory-db and cargo-audit; GitHub Dependabot security updates; OSV",
+        fidelity: Fidelity::Aspirational,
+        gap: "Reads no advisory feed and no lockfile. `let active_advisories = vec![];` \
+              (zero_day_patcher/mod.rs:45) is the entire advisory set, so the reconciler iterates nothing, \
+              `is_clean` (zero_day_patcher/mod.rs:49) is the emptiness of an empty result, and the gate \
+              publishes zero un-patched advisories on every pull request without having looked at one. The \
+              matcher it would use, given a feed, is a pair of substring tests over manifest text keyed on \
+              `package_name` (zero_day_patcher/advisory_listener.rs:34-35) rather than a resolved version \
+              range -- and what it is handed is the diff, not the lockfile, so it would see only the \
+              dependencies this change touched. Nothing synthesises or opens a patch, which is the other \
+              half of the row's title.",
+        blocked_on: Some(
+            "an advisory feed and a resolved dependency inventory; neither is reachable from \
+            here",
+        ),
+    },
+    GateFidelity {
+        gate_id: "review_verdict_status",
+        aspiration: "Review the change adversarially and block on a finding a human reviewer would block \
+                     on.",
+        reference: "Google Critique and Tricorder; automated model-driven code review (CodeRabbit, \
+                    Greptile)",
+        fidelity: Fidelity::Heuristic,
+        gap: "A language model's opinion, taken as the verdict. The plumbing around it is mechanical and \
+              correct: a response that does not parse, or that omits the field, reports `VERDICT_ERRORED` \
+              (reviewer.rs:28,334) rather than an implicit pass, and `review_verdict_status` admits only \
+              an explicit approval or comment (pre_merge_guard/evaluator.rs:604-605), so an absent \
+              review blocks. The \
+              judgement is not mechanical. The sixteen lenses this row is named for exist as prompt text \
+              -- `16-lens` (reviewer.rs:304) -- and nothing checks that any lens was applied, that the \
+              same diff twice yields the same verdict, or that a finding it reports is present in the \
+              change at all. What the gate measures is what one model said on one occasion.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "chaos_injection_status",
+        aspiration: "Inject real faults -- packet loss, resolver latency, a database failover -- against a \
+                     running instance of the change and observe whether it degrades gracefully.",
+        reference: "Netflix Chaos Monkey and ChAP; Gremlin; LitmusChaos",
+        fidelity: Fidelity::Heuristic,
+        gap: "Injects nothing and runs nothing. Three fault types are constructed and then ignored: \
+              `simulate_chaos_fault` (chaos_injector/fault_simulator.rs:28) echoes back the fault it was \
+              handed and decides on one substring test over the whole diff, for \".send().await.unwrap()\" \
+              or the same shape on a query call (chaos_injector/fault_simulator.rs:34-35). So the three \
+              trials are one test run three times, and the drop percentage and resolver delay are \
+              parameters `code_diff` never reaches. The trial then publishes figures nothing measured: \
+              `recovery_time_ms: 45` on the clean path (chaos_injector/fault_simulator.rs:48), a longer \
+              one on the other, neither of them timed, and an error-leak flag nothing observed. The idiom \
+              it looks for is real, so the gate can fire on real code; what it cannot do is tell whether \
+              the change survives a fault.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "progressive_ring_status",
+        aspiration: "Promote a release through bounded rings, holding each for its bake window and \
+                     refusing promotion when that ring's telemetry says stop.",
+        reference: "Microsoft Azure safe deployment practice (deployment rings); Google canary-to-global \
+                    rollout",
+        fidelity: Fidelity::Aspirational,
+        gap: "Deploys nothing and holds nothing. `compute_next_ring` \
+              (progressive_rollout/ring_scheduler.rs:78) is a pure function of the ring it is handed and \
+              one boolean, and every arm below its guard clause returns `is_healthy: true` \
+              (progressive_rollout/ring_scheduler.rs:97,103,109,115). The certification run always hands \
+              it the first ring together with the canary gate's acceptability, and that gate reports \
+              NotMeasured, which is acceptable -- so `passed: state.is_healthy` \
+              (progressive_rollout/mod.rs:33) is true on every pull request and the single failing branch \
+              is unreachable from the corpus. The two functions that would do the work this row describes \
+              have no caller on this path: `validate_bake_window` \
+              (progressive_rollout/ring_scheduler.rs:121) is never asked, so no bake time is enforced, and \
+              `validate_geo_paired_exclusion` (progressive_rollout/ring_scheduler.rs:135) is never asked, \
+              so no paired-region rule is applied.",
+        blocked_on: Some(
+            "a deployment with per-ring telemetry; nothing on this path promotes anything",
+        ),
+    },
+    GateFidelity {
+        gate_id: "bench_status",
+        aspiration: "Run the benchmark suite on base and head and refuse a hot-path latency or allocation \
+                     regression beyond a published budget.",
+        reference: "criterion.rs; Google Fleetbench; continuous benchmarking gates (bencher, CodSpeed)",
+        fidelity: Fidelity::Aspirational,
+        gap: "Times nothing and counts no allocation: no benchmark harness is declared by this crate and \
+              none is invoked, so there is no budget for anything to be within. Two regexes stand in for \
+              one. `clone_in_loop_re` (criterion_bench_ratchet.rs:68) fires only where an added line \
+              already carries a trailing hot-path marker the author wrote, and no tracked file outside \
+              this guard and the allocation scanner contains that marker, so it cannot fire on ordinary \
+              code. `unbounded_alloc_re` (criterion_bench_ratchet.rs:66,92) needs a loop header and a \
+              binding of one specific name on the line below it. `hot_paths_evaluated` \
+              (criterion_bench_ratchet.rs:64) counts changed paths by fragment and then scopes nothing, \
+              since the scan runs over the whole diff either way -- yet the passing summary reports those \
+              paths as evaluated within a latency and leak budget nothing measured. `is_within_budget` \
+              (criterion_bench_ratchet.rs:105) has been true for every change this repository has \
+              produced.",
+        blocked_on: Some(
+            "a benchmark harness and a published trunk baseline; this crate declares neither",
+        ),
+    },
+    GateFidelity {
+        gate_id: "feature_flag_status",
+        aspiration: "Track every flag from creation to retirement and refuse a toggle that has outlived \
+                     its expiry or whose fallback branch is dead.",
+        reference: "LaunchDarkly and Unleash flag lifecycle and technical-debt tooling; Martin Fowler, \
+                    Feature Toggles",
+        fidelity: Fidelity::Heuristic,
+        gap: "There is no flag registry, no flag age and no dead-branch analysis: the gate reads added \
+              diff lines and nothing else. `flag_usage_re` (feature_flag_ratchet.rs:53) recognises four \
+              real lookup spellings, but the count it produces gates nothing. Only two conditions can fail \
+              the gate. `permanent_true_re` (feature_flag_ratchet.rs:54,74) needs a conjunction with a \
+              literal true and a flag lookup on one line, which is not how a stale toggle is normally \
+              written. `stale_annotation_re` (feature_flag_ratchet.rs:56,85) needs an annotation this \
+              guard itself invented, and no tracked file outside this guard contains either spelling, so \
+              in practice the only reachable trigger is an expiry comment in one fixed format. `is_clean` \
+              (feature_flag_ratchet.rs:99) therefore reports that nobody wrote one of those markers, not \
+              that the change left no stale toggle behind.",
+        blocked_on: Some(
+            "a flag registry recording each flag's owner and expiry; nothing here holds one",
+        ),
+    },
+    GateFidelity {
+        gate_id: "security_scan_status",
+        aspiration: "Find a credential anywhere in a change, including one no known prefix identifies, and \
+                     treat a hit as leaked until it is rotated.",
+        reference: "gitleaks and trufflehog (entropy plus live verification); GitHub secret scanning with \
+                    provider validation",
+        fidelity: Fidelity::Heuristic,
+        gap: "Six regexes for six known credential shapes over added lines \
+              (pre_merge_guard/scanner.rs:8-21). That is a real check and it does fire. What the word \
+              entropy in this row's detail names is absent: nothing computes the randomness of a string, \
+              so a high-entropy value under an unrecognised prefix -- a connection URL, a private host \
+              token, a base64 blob -- passes untouched, and only the listed issuers are covered at all. \
+              Nothing is verified against the issuing service either, so a revoked or example key is a \
+              blocking failure while a live one in an unmatched format is not a finding. `secret_patterns` \
+              (pre_merge_guard/scanner.rs:8) is the whole vocabulary, and only added lines are read, so a \
+              credential the change leaves in place is invisible.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "schema_compat_status",
+        aspiration: "Detect a destructive schema change and prove it is safe for every node still running \
+                     the previous release.",
+        reference: "Expand-contract (Parallel Change); squawk and strong_migrations linters; Liquibase \
+                    preconditions",
+        fidelity: Fidelity::Heuristic,
+        gap: "Three regexes for destructive DDL over added lines, entered only where `has_migration` \
+              (pre_merge_guard/scanner.rs:37-39) finds a changed path spelling that word or ending in a \
+              SQL extension. Neither half of the row's claim is measured: no node version is known, so \
+              compatibility across cell nodes is asserted by the summary rather than checked, and nothing \
+              looks at the release the schema ships with. The path filter is a plain substring, so the six \
+              tracked source paths here that spell that word put a change into schema scope while no \
+              tracked file is a schema at all. And the verdict is capped: the worst this scan can return \
+              is `GateStatus::Warning` (pre_merge_guard/scanner.rs:52), which is acceptable and blocks \
+              nothing, so a destructive migration it does detect is published as advice.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "performance_concurrency_status",
+        aspiration: "Bound the concurrency a change introduces and catch a timing-dependent test before it \
+                     flakes in CI.",
+        reference: "Google flaky-test infrastructure; loom and shuttle concurrency model checking; \
+                    ThreadSanitizer",
+        fidelity: Fidelity::Heuristic,
+        gap: "Two regexes for one shape: a real-clock sleep with a literal duration, in Rust or in Go \
+              (`flake_patterns`, pre_merge_guard/scanner.rs:65-74), matched against added lines. It is a \
+              real idiom and it fires, but it is everything this gate does: no interleaving is explored, \
+              nothing is run twice, no test is repeated, no timing is recorded, and the concurrency half \
+              of the row's title has no implementation at all. The verdict is capped as well -- the worst \
+              result this scan can return is `GateStatus::Warning` (pre_merge_guard/scanner.rs:80), which \
+              is acceptable, so a match neither blocks a merge nor withholds admission -- and every other \
+              input returns `GateStatus::Passed` (pre_merge_guard/scanner.rs:89).",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "test_suite_status",
+        aspiration: "Run the change's test suite at the commit being certified and report what the suite \
+                     found.",
+        reference: "cargo nextest and cargo test in presubmit; Bazel test; Google TAP",
+        fidelity: Fidelity::Heuristic,
+        gap: "For a Rust repository this gate never runs a test. `run_local_test_gate` \
+              (queue_healer.rs:617-620) chooses by marker file, and where a manifest exists it runs \
+              `cargo` with the argument `check` -- a compile, not a suite -- after which a successful \
+              compile becomes `TestGate::Passed` (queue_healer.rs:631) and the corpus turns that into a \
+              pass for a row named for the test suite. Only a repository with no manifest but a package \
+              script reaches an actual \"npm test\" command (queue_healer.rs:621-624). Everything around \
+              that decision is careful and worth keeping: the run happens in an ephemeral worktree \
+              verified to be the certified commit, and a tree that could not be produced, a command that \
+              did not complete, and a repository offering no gate all return no measurement rather than a \
+              verdict, which `test_suite_gate_status` (pre_merge_guard/evaluator.rs:91-102) \
+              publishes as NotMeasured. What \
+              is missing is the measurement itself.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "brand_absence_status",
+        aspiration: "Refuse a name or a pull-request-visible string that stamps an aspiration, or borrows \
+                     a vendor's credibility, instead of naming what the code verifies.",
+        reference: "Google Rosie and Tricorder ratchets; ArchUnit FreezingArchRule; the debt-ledger \
+                    ratchet pattern",
+        fidelity: Fidelity::Partial,
+        gap: "This one runs against the real tree and really fails. `scan_tree` (brand_absence/mod.rs:260) \
+              reads Anvil's own source, extracts declared item names and string literals, matches them \
+              word-wise against a fixed vocabulary (`FORBIDDEN_STAMPS`, brand_absence/mod.rs:63) plus a \
+              vendor roll-call rule needing `VENDOR_ROLL_CALL_THRESHOLD` distinct vendors \
+              (brand_absence/mod.rs:115), and reports as `new_violations` (brand_absence/mod.rs:362) \
+              anything a ledger entry does not already account for. Three limits. The vocabulary is \
+              hand-written, so a stamp nobody thought of is not a violation, and what the gate actually \
+              measures is conformance to that list rather than the property in its own title. The scan is \
+              of Anvil's own tree on every run, so on a foreign pull request the verdict describes THIS \
+              repository and not the change under review. And the module ships itself advisory -- \
+              `is_blocking: !WARN_ONLY` (brand_absence/mod.rs:381) is always false -- while the \
+              certification run ignores that field and fails the gate on any new violation, so the \
+              published severity is stricter than the module computing it declares.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "migration_boundary_status",
+        aspiration: "Refuse a dependency pointing the wrong way across the migration boundary: code that \
+                     is moving must not be anchored to code that is being deleted.",
+        reference: "Strangler Fig migration (Fowler); the Dependency Rule; ArchUnit layered-architecture \
+                    rules",
+        fidelity: Fidelity::Partial,
+        gap: "This one runs against the real tree and really fails. `live_tree_violations` \
+              (migration/mod.rs:51) walks Anvil's own source, collects each top-level module's `crate::` \
+              references, and applies `edge_is_allowed` (migration/boundary.rs:97,103) to the verdict each \
+              side carries, reporting NotMeasured where the tree cannot be read rather than passing. Three \
+              limits. Edges are extracted from text after dropping whole-line comments only, so a \
+              reference inside a string literal, a trailing comment or a block comment counts as an edge, \
+              while one reached through a re-export or a type alias does not. Granularity is two path \
+              segments, so an edge into a module the ledger splits more finely is attributed to its \
+              parent. And the verdicts themselves are hand-written data in `MIGRATION_LEDGER` \
+              (migration/boundary.rs:38): the rule is enforced mechanically, but what it is enforced \
+              against is somebody's classification, which no code here can check.",
+        blocked_on: None,
     },
 ];
 

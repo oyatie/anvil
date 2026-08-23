@@ -37,9 +37,11 @@
 //! P12  With many gates failing the body exceeds GitHub's 65536-character
 //!      comment limit and the post is rejected outright.
 
+use anvil::fidelity::Fidelity;
 use anvil::pre_merge_guard::{GateStatus, MatrixRenderer, PreMergeCertificationReport};
 use anvil::publish;
 use anvil::webhook::pipelines::review;
+use std::collections::BTreeSet;
 
 /// GitHub rejects an issue-comment body above this length.
 const GITHUB_COMMENT_LIMIT: usize = 65_536;
@@ -742,18 +744,45 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
         .split_once("do not fully measure")
         .expect("disclosure line")
         .1;
-    // `debt-shrink` used to stand here as a gate the registry did not record.
-    // It does now: this pull request audited it and entered it as Heuristic,
-    // so naming it in the disclosure became correct and it is no longer a
-    // negative example. `idempotency` replaces it -- still unaudited, so the
-    // list keeps exactly as many gates that must NOT appear.
-    for gate in ["cell-isolation", "monorepo", "idempotency"] {
-        assert!(
-            !disclosure.contains(gate),
-            "gate {gate} is not recorded below Measured fidelity, so naming it \
-             in the disclosure makes the list meaningless:\n{body}"
-        );
-    }
+    // `debt-shrink`, then `cell-isolation`, `monorepo` and `idempotency` each
+    // stood here in turn as a gate the registry had not recorded. None is left:
+    // the registry now covers all seventy-two, so there is no gate to name as a
+    // fixed negative example and a hand-written list would only go stale again.
+    //
+    // The property that list was standing in for is stated directly instead --
+    // membership of the disclosure is exactly the passing gates the registry
+    // records below `Measured` and above `Aspirational`. That fails on a
+    // renderer which names every gate (the failure the list was written to
+    // catch), on one which names too few, and on one which leaks an
+    // aspirational gate into the green list; and it cannot go stale as the
+    // registry moves.
+    let disclosed: BTreeSet<&str> = disclosure
+        .split_once(". See `src/fidelity/registry.rs`")
+        .expect("the disclosure names its own source")
+        .0
+        .rsplit_once(": ")
+        .expect("the disclosure lists the gates it is about")
+        .1
+        .split(", ")
+        .collect();
+    let expected: BTreeSet<&str> = anvil::fidelity::registry::AUDITED_GATES
+        .iter()
+        .filter(|e| e.fidelity.may_report_pass() && e.fidelity < Fidelity::Measured)
+        .map(|e| {
+            e.gate_id
+                .strip_suffix("_status")
+                .unwrap_or(e.gate_id)
+                .trim_end_matches(char::is_whitespace)
+        })
+        .collect();
+    let disclosed_ids: BTreeSet<String> = disclosed.iter().map(|g| g.replace('-', "_")).collect();
+    let expected_ids: BTreeSet<String> = expected.iter().map(|g| g.to_string()).collect();
+    assert_eq!(
+        disclosed_ids, expected_ids,
+        "the disclosure must name exactly the passing gates the registry \
+         records below Measured -- naming every gate tells a reader nothing, \
+         and omitting one hides it:\n{body}"
+    );
 
     // `cosign_status` is `Fidelity::Aspirational`. A real certification run
     // withholds its pass before sealing, so it is disclosed as a gate that

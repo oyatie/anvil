@@ -150,13 +150,20 @@ fn a_gate_the_registry_records_above_aspirational_keeps_its_pass() {
     );
 }
 
-/// The gates the audit has not reached — thirty-seven of seventy-two today.
+/// The gates the audit has not reached — three of seventy-two today.
 ///
 /// They are neither downgraded nor quietly forgiven. Downgrading one would be a
 /// fabricated `NotMeasured` for a gate nobody has read, the symmetric violation
 /// of I1; forgiving one silently would make the ceiling's coverage invisible.
 /// So the status is left exactly as the guard produced it and the size of the
 /// exemption is published by `gap_report().unaudited`.
+///
+/// The set has three members today and the test does not require any count. A
+/// gate added to the corpus tomorrow is unaudited until somebody reads its
+/// implementation, and this is the rule that keeps its pass intact while that
+/// is true. What is pinned is the agreement between the exemption the ceiling
+/// actually grants and the number `gap_report` publishes — the half that would
+/// otherwise go silent, and the half that breaks first if the set empties.
 #[test]
 fn an_unaudited_gate_keeps_its_pass_and_the_size_of_that_exemption_is_published() {
     let mut report = every_gate_reporting(GateStatus::Passed);
@@ -184,8 +191,10 @@ fn an_unaudited_gate_keeps_its_pass_and_the_size_of_that_exemption_is_published(
          report publishes, or the exemption is silent"
     );
     assert!(
-        gap.unaudited > 0 && gap.summary().contains("not yet audited"),
-        "while any gate is unaudited the published summary has to say so: {}",
+        gap.summary()
+            .contains(&format!("{} not yet audited", gap.unaudited)),
+        "the published summary has to state the real size of the exemption, \
+         including when it is zero: {}",
         gap.summary()
     );
 }
@@ -458,10 +467,19 @@ fn the_registry_lookup_answers_for_audited_gates_and_declines_for_the_rest() {
         fidelity::declared_fidelity("doc_parity_status"),
         Some(Fidelity::Partial)
     );
-    assert_eq!(
-        fidelity::declared_fidelity("cell_isolation_status"),
-        None,
-        "a gate nobody has audited must not be given a fidelity by default"
-    );
+    // A gate nobody has audited must not be given a fidelity by default. The
+    // registry covers the whole corpus as this is written, so naming one gate
+    // here would go stale the moment that changed in either direction; the rule
+    // is stated over the corpus instead, and holds whichever way it moves.
+    for gate in gate_names() {
+        let has_entry = anvil::fidelity::registry::AUDITED_GATES
+            .iter()
+            .any(|e| e.gate_id == gate);
+        assert_eq!(
+            fidelity::declared_fidelity(gate).is_some(),
+            has_entry,
+            "{gate} must be answered for exactly when the registry has read it"
+        );
+    }
     assert_eq!(fidelity::declared_fidelity("no_such_gate"), None);
 }

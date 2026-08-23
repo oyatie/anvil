@@ -2911,6 +2911,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         schema_evo: anvil::schema_evolution::SchemaEvolutionReport {
+            status: GateStatus::Passed,
             passed: true,
             breaking_field_changes: 0,
             tag_renumbering_detected: false,
@@ -2971,7 +2972,12 @@ fn neutral_guard_reports() -> NeutralGuardReports {
         },
         mutation: anvil::chaos_mutation_guard::MutationAdequacyReport {
             is_adequate: true,
-            mutated_branches_count: 0,
+            // `mutated_branches_count` was removed by #77, which replaced it
+            // with `measurement` so an unmeasured run can be told from a clean
+            // one. #34 landed this literal against the old shape and origin/main
+            // has not compiled since. This fixture wants the all-green report,
+            // which is what `NothingToMeasure` publishes.
+            measurement: anvil::chaos_mutation_guard::MutationMeasurement::NothingToMeasure,
             surviving_findings: Vec::new(),
             summary: n(),
         },

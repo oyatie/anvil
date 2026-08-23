@@ -2971,9 +2971,12 @@ fn neutral_guard_reports() -> NeutralGuardReports {
         },
         mutation: anvil::chaos_mutation_guard::MutationAdequacyReport {
             is_adequate: true,
-            mutated_branches_count: 0,
             surviving_findings: Vec::new(),
             summary: n(),
+            // #77 replaced the filename-substring check with a real
+            // cargo-mutants run, so the count field is gone. This fixture is a
+            // neutral stand-in that no case reads back.
+            measurement: anvil::chaos_mutation_guard::MutationMeasurement::NothingToMeasure,
         },
         feature_flag: anvil::feature_flag_ratchet::FeatureFlagReport {
             is_clean: true,

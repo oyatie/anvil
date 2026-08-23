@@ -107,8 +107,14 @@ impl SemanticAbiRatchet {
             // gate's own defect restated: silence read as evidence. `NotMeasured`
             // makes no accusation and still withholds merge-queue admission
             // through `unmeasured_gates` (invariant I1).
+            // "add or remove", not "change": what was measured is that a
+            // `#[repr(...)]` line is present on one side of the diff and not
+            // the other. A line present identically on both sides was moved and
+            // no longer counts, but a brand-new `#[repr(C)]` type does -- it
+            // adds a repr line, and this gate cannot tell that from an existing
+            // type gaining one.
             let reason = format!(
-                "{} of the diff's file(s) change a `#[repr(...)]` attribute, and {LAYOUT_DISCLAIMER}",
+                "{} of the diff's file(s) add or remove a `#[repr(...)]` line, and {LAYOUT_DISCLAIMER}",
                 scan.layout_files.len()
             );
             (

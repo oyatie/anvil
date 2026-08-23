@@ -177,6 +177,137 @@ fn a_pub_fn_quoted_inside_a_string_literal_is_not_a_signature() {
     );
 }
 
+/// The shape the test above does not cover, and the one this repository
+/// actually writes.
+///
+/// `a_pub_fn_quoted_inside_a_string_literal_is_not_a_signature` puts the quote
+/// and the `pub fn` on the same source line, so the anchor sees the `"` first
+/// and declines. A multi-line raw string literal does not: `body.trim_start()`
+/// hands the anchor a bare, indented `pub fn`, and the anchor matches. When
+/// such a fixture is rewritten from a raw string into a `&[&str]`, the removed
+/// side is the anchored form and the added side starts with `"`, so the removal
+/// is never cleared and the gate accuses a public function that never existed.
+///
+/// That is commit `c501d9a`, which reports `handle_event` REMOVED twice from
+/// `src/trace_context_guard/span_tracker.rs`. `GateStatus::Failed` blocks the
+/// merge queue with a named accusation that is false.
+#[test]
+fn a_pub_fn_indented_inside_a_multi_line_raw_string_is_not_a_signature() {
+    let report = certify(&[chunk(
+        "src/chaos_mutation_guard/mutators.rs",
+        &[
+            "         let code = r#\"",
+            "-        pub fn check_bound(val: usize) -> bool {",
+            "-            val < 10",
+            "-        }",
+            "-    \"#;",
+            "+    let code = [",
+            "+            \"pub fn check_bound(val: usize) -> bool {\",",
+            "+            \"    val < 10\",",
+            "+            \"}\",",
+            "+    ]",
+            "+    .join(\"\\n\");",
+        ]
+        .join("\n"),
+    )]);
+    assert!(
+        report.is_abi_stable,
+        "a fixture rewritten from a raw string to a `&[&str]` declares and \
+         removes nothing; the gate accused `check_bound`. {} {:?}",
+        report.summary, report.breaking_findings
+    );
+}
+
+/// `is_library_rust` excludes the `tests/` directory. It cannot exclude a
+/// `#[cfg(test)] mod tests` inside `src/`, and that is where every inline
+/// fixture in this repository lives. A `pub fn` there is not published surface,
+/// so deleting one breaks no downstream caller.
+#[test]
+fn a_pub_fn_inside_a_cfg_test_module_in_src_is_not_public_surface() {
+    let report = certify(&[chunk(
+        "src/thing/mod.rs",
+        &[
+            " #[cfg(test)]",
+            " mod tests {",
+            "-    pub fn helper_only_for_tests() -> bool {",
+            "-        true",
+            "-    }",
+            " }",
+        ]
+        .join("\n"),
+    )]);
+    assert!(
+        report.is_abi_stable,
+        "`pub` inside a `#[cfg(test)]` module publishes nothing, so removing it \
+         is not an ABI break. {} {:?}",
+        report.summary, report.breaking_findings
+    );
+}
+
+/// The marker only silences what comes after it. A removal above the test
+/// module is still the library's.
+#[test]
+fn a_removal_above_the_cfg_test_module_still_fires() {
+    let report = certify(&[chunk(
+        "src/thing/mod.rs",
+        &[
+            "-pub fn real_api() -> u32 {",
+            "-    1",
+            "-}",
+            " #[cfg(test)]",
+            " mod tests {",
+            "-    pub fn helper_only_for_tests() -> bool { true }",
+            " }",
+        ]
+        .join("\n"),
+    )]);
+    let kinds: Vec<&str> = report
+        .breaking_findings
+        .iter()
+        .map(|f| f.symbol_name.as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec!["real_api"],
+        "only the declaration above the `#[cfg(test)]` marker is public surface. {}",
+        report.summary
+    );
+}
+
+/// The marker is a fact about one side of the diff, not about the chunk.
+///
+/// `553dd03` deletes a `#[cfg(test)] mod tests` and writes a free function
+/// below where it was. The marker is on a `-` line, so the post-image there is
+/// ordinary library code -- but a single chunk-wide flag suppressed the *added*
+/// declaration, left the paired removal unmasked, and invented an ABI break for
+/// `verify_issue_roadmap_alignment`, which the commit does not remove.
+#[test]
+fn deleting_a_test_module_does_not_hide_a_declaration_added_below_it() {
+    let report = certify(&[chunk(
+        "src/roadmap_guard.rs",
+        &[
+            "-    pub fn verify_issue_roadmap_alignment(&self) -> bool {",
+            "-        true",
+            "-    }",
+            "-#[cfg(test)]",
+            "-mod tests {",
+            "-    #[test]",
+            "-    fn old() {}",
+            "-}",
+            "+pub fn verify_issue_roadmap_alignment() -> bool {",
+            "+    true",
+            "+}",
+        ]
+        .join("\n"),
+    )]);
+    assert!(
+        report.is_abi_stable,
+        "the function was moved out of an impl, not removed; the `#[cfg(test)]` \
+         on the removed side says nothing about the added side. {} {:?}",
+        report.summary, report.breaking_findings
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The other direction: shapes that must NOT fire.
 //
@@ -345,6 +476,58 @@ fn a_diff_that_changes_a_repr_attribute_is_not_measured_rather_than_passed() {
             report.summary
         ),
     }
+}
+
+/// The trigger was "a `#[repr(` line was touched, on either side", which fires
+/// on a move: git writes the identical line as both `-` and `+` when the lines
+/// around it shift. Nothing's layout changed, and `NotMeasured` withholds
+/// admission through `unmeasured_gates`, so the gate parked itself on a
+/// whitespace edit.
+#[test]
+fn moving_an_unchanged_repr_line_is_not_a_layout_change() {
+    let report = certify(&[chunk(
+        "src/wire.rs",
+        &[
+            "-#[repr(C)]",
+            "-pub struct Header {",
+            "+",
+            "+#[repr(C)]",
+            "+pub struct Header {",
+            "     tag: u8,",
+            " }",
+        ]
+        .join("\n"),
+    )]);
+    assert_eq!(
+        report.status,
+        GateStatus::Passed,
+        "a repr line present identically on both sides was moved, not changed. {}",
+        report.summary
+    );
+}
+
+/// The published sentence has to say what the trigger tests. Adding a brand-new
+/// `#[repr(C)]` type changes no existing layout, but this gate cannot tell that
+/// from an existing type gaining an attribute -- both are a repr line on the
+/// added side and nothing on the removed side. So it still reports
+/// `NotMeasured`, and the sentence says "add or remove", not "change".
+#[test]
+fn the_repr_sentence_says_add_or_remove_because_that_is_what_is_tested() {
+    let report = certify(&[chunk(
+        "src/wire.rs",
+        &["+#[repr(C)]", "+pub struct New {", "+    a: u8,", "+}"].join("\n"),
+    )]);
+    let GateStatus::NotMeasured { reason, .. } = &report.status else {
+        panic!(
+            "a repr line arrived and no layout was computed. Got {:?}",
+            report.status
+        );
+    };
+    assert!(
+        reason.contains("add or remove a `#[repr(...)]` line"),
+        "the sentence must claim exactly what the trigger tests -- a repr line \
+         on one side and not the other -- not that an attribute changed: {reason}"
+    );
 }
 
 #[test]

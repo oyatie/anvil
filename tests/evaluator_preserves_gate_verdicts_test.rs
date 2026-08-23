@@ -34,9 +34,29 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->
-/// `cosign_status`, uniformly for all six.
+/// `cosign_status` for all but one, where the report and the gate are not
+/// named the same thing. The exception is listed, not derived: a gate whose id
+/// diverges and is *not* listed here makes both checks below look for a line
+/// that cannot exist, which is red, not silence.
 fn gate_id_of(report: &str) -> String {
-    report.replace("_report", "_status")
+    match report {
+        "debt_report" => "debt_shrink_status".to_string(),
+        _ => report.replace("_report", "_status"),
+    }
+}
+
+/// The two ways an evaluator may obtain a gate's verdict, neither of which
+/// authors one: `status.clone()` copies the field the guard set, and
+/// `gate_status()` calls a method the guard's own crate implements. A gate that
+/// must tell three outcomes apart -- measured-pass, measured-failure, and
+/// nothing measured -- has no single `status` field to clone, so it publishes
+/// the method instead; the decision is the gate's either way. Anything else, a
+/// boolean widened by an `if` or a `match` written in the wiring, is the
+/// evaluator deciding, which is what this file exists to forbid.
+fn reads_the_gates_verdict(src: &str, report: &str) -> bool {
+    let id = gate_id_of(report);
+    src.contains(&format!("let {id} = {report}.status.clone();"))
+        || src.contains(&format!("let {id} = {report}.gate_status();"))
 }
 
 /// Catches: every rebuild shape, not the two that happened to be written first.
@@ -44,22 +64,22 @@ fn gate_id_of(report: &str) -> String {
 /// This was a *negative* check for `= if {report}.is_`, and a verdict rebuilt as
 /// `= if cosign_report.status.is_acceptable()` walks straight through that -- a
 /// hole demonstrated by exploitation, with all six gates exposed and only the
-/// gate whose author noticed protected by a bespoke assertion. Requiring the one
-/// line that is correct closes it for every shape at once: any rebuild, from a
-/// boolean or from the status itself, leaves the expected line absent.
+/// gate whose author noticed protected by a bespoke assertion. Requiring one of
+/// the two lines that are correct closes it for every shape at once: any
+/// rebuild, from a boolean or from the status itself, leaves both absent.
 #[test]
 fn gates_that_own_a_verdict_have_it_read_not_rebuilt() {
     let src = evaluator_source();
-    let missing: Vec<String> = GATES_OWNING_A_VERDICT
+    let missing: Vec<&&str> = GATES_OWNING_A_VERDICT
         .iter()
-        .map(|g| format!("let {} = {g}.status.clone();", gate_id_of(g)))
-        .filter(|line| !src.contains(line))
+        .filter(|g| !reads_the_gates_verdict(&src, g))
         .collect();
 
     assert!(
         missing.is_empty(),
         "these gates own their GateStatus and the evaluator must carry it \
-         through verbatim; the expected line is not in evaluator.rs, so the \
+         through verbatim; neither `let <id> = <report>.status.clone();` nor \
+         `let <id> = <report>.gate_status();` is in evaluator.rs, so the \
          verdict is being rebuilt from something else and NotMeasured is \
          discarded: {missing:?}"
     );

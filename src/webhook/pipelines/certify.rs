@@ -324,7 +324,11 @@ pub async fn certify_pull_request(
     );
 
     // 48. CosignProvenanceSigner: OIDC Keyless Cryptographic Attestation
-    let cosign_report = state.cosign_signer.generate_cosign_attestation(head_sha);
+    // No OIDC token is requested, no Fulcio certificate is issued and no Rekor
+    // entry is submitted, so this artefact carries no attestation. The head sha
+    // used to be handed to a signer that invented a certificate and a
+    // transparency-log id from it; the gate now reports the absence instead.
+    let cosign_report = state.cosign_signer.evaluate_without_signing_backend();
 
     // 49. ChaosFaultInjector: Pre-Merge Synthetic Fault Simulation
     let chaos_inj_report = state

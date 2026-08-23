@@ -1048,17 +1048,41 @@ fn test_debt_shrink_red_flag_blanket_allow() {
 #[test]
 fn test_debt_shrink_green_clean_code() {
     let guard = anvil::debt_shrink_guard::DebtShrinkGuard::new();
+    // This used to hand the guard `src/lib.rs` -- a path no marker in the
+    // deprecation scope can ever match -- and assert the pass that came back.
+    // That is the vacuous green the guard now refuses: it certified a debt
+    // ratchet over an empty corpus. A green here has to be earned by a
+    // deprecating target that was actually read and actually shrank.
     let good_diff = create_test_diff_context(
-        "src/lib.rs",
-        "+ pub fn process_event() -> Result<(), Error> { Ok(()) }",
+        "src/legacy/old_auth_handler.rs",
+        "- pub fn dead_path() {}\n- pub fn also_dead() {}",
     );
     let report = guard
         .evaluate_debt_shrink(std::path::Path::new("."), &good_diff)
         .unwrap();
     assert!(
         report.is_acceptable,
-        "Expected False Red prevention: Clean code must PASS"
+        "Expected False Red prevention: a deprecating target that only shrank must PASS"
     );
+    assert_eq!(report.total_debt_shrunk, 2);
+}
+
+#[test]
+fn test_debt_shrink_red_flag_empty_scope_is_not_a_pass() {
+    let guard = anvil::debt_shrink_guard::DebtShrinkGuard::new();
+    let out_of_scope = create_test_diff_context(
+        "src/lib.rs",
+        "+ pub fn process_event() -> Result<(), Error> { Ok(()) }",
+    );
+    let report = guard
+        .evaluate_debt_shrink(std::path::Path::new("."), &out_of_scope)
+        .unwrap();
+    assert_eq!(
+        report.status.unmeasured_gate_id(),
+        Some("debt_shrink_status"),
+        "Expected False Green prevention: no deprecating target in scope must NOT pass"
+    );
+    assert!(!report.is_acceptable);
 }
 
 // =========================================================================

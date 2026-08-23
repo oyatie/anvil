@@ -28,6 +28,22 @@ impl MigrationPhaseValidator {
         Self
     }
 
+    /// Whether a changed path is a SQL migration -- the scope this validator
+    /// inspects.
+    ///
+    /// `pub` because the caller must distinguish "parsed and ordered" from
+    /// "nothing was in scope". The predicate used to be `chunk.contains(".sql")`
+    /// against the *hunk text* rather than the path, so a Rust file mentioning
+    /// `schema.sql` was validated as SQL and a chunk with no derivable path fell
+    /// back to a `migration.sql` default and was too.
+    ///
+    /// It is still a guess about file extension: a schema transition arrives as
+    /// `db/migrate/*.rb`, `schema.rb` or an Atlas `*.hcl` at least as often as
+    /// `*.sql`, and none of those are visible here.
+    pub fn is_migration_sql(file_path: &str) -> bool {
+        file_path.ends_with(".sql")
+    }
+
     /// 100% Deterministic validation of Expand-Contract database migration phase invariants
     pub fn validate_migration_sql(
         &self,

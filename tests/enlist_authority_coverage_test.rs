@@ -55,8 +55,10 @@
 //! # What the corpus can and cannot produce in this build
 //!
 //! A report the corpus produces is not admissible in this tree, for reasons
-//! that are facts about the deployment rather than about any pull request: ten
-//! gates have no data source configured and report `NotMeasured`, and
+//! that are facts about the deployment rather than about any pull request:
+//! eighteen gates at this commit have no data source configured and report
+//! `NotMeasured` -- four more than before, since the empty-scope gates stopped
+//! certifying corpora they never had -- and
 //! `brand_absence_status` scans Anvil's own `src/` and reports `Failed` on the
 //! naming debt recorded there. So a corpus run is always refused here, whatever
 //! the pull request is, and the integration tests below assert the refusal
@@ -319,7 +321,7 @@ fn report_from_the_corpus(
         .evaluate_rust_quality(dir, d)
         .expect("the rust language policy reads the diff");
     let kani_report = anvil::kani_guard::KaniGuard::new()
-        .evaluate_unsafe_invariants(dir, d)
+        .lint_unsafe_safety_comments(dir, d)
         .expect("the kani guard reads the diff");
     let slo_report = anvil::slo_canary_guard::SloCanaryGuard::new()
         .evaluate_slo_canary_health(dir, d)
@@ -429,8 +431,8 @@ fn report_from_the_corpus(
         "symbol_none",
         &d.diff_content,
     );
-    let cosign_report = anvil::cosign_signer::CosignProvenanceSigner::new()
-        .generate_cosign_attestation(&d.head_sha);
+    let cosign_report =
+        anvil::cosign_signer::CosignProvenanceSigner::new().evaluate_without_signing_backend();
     let chaos_inj_report =
         anvil::chaos_injector::ChaosFaultInjector::new().inject_synthetic_chaos(&d.diff_content);
     let stacked_report =
@@ -604,13 +606,18 @@ fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
     // A corpus run in this tree is always refused (module docs), so this is
     // asserted rather than branched on: a branch whose other arm cannot execute
     // reads as coverage and runs never.
+    // The count is interpolated rather than written out: a number in a panic
+    // message goes stale the moment a gate changes verdict, and this suite's
+    // whole subject is claims outliving the thing they describe.
+    let why_refused = format!(
+        "{} gates in this build have no data source and `brand_absence_status` \
+         reports Anvil's own naming debt, so no corpus run here can admit a \
+         pull request. If that changed, this test is now asserting the wrong \
+         half of the wiring",
+        recorded.len()
+    );
     let refusal = MergeEnlister::admission_refusal(Some(&report))
-        .expect_err(
-            "ten gates in this build have no data source and `brand_absence_status` \
-             reports Anvil's own naming debt, so no corpus run here can admit a \
-             pull request. If that changed, this test is now asserting the wrong \
-             half of the wiring",
-        )
+        .expect_err(&why_refused)
         .to_string();
     let absent_or_failing: Vec<&str> = report
         .named_statuses()
@@ -1051,5 +1058,64 @@ fn every_gate_is_published_under_its_own_name() {
         "two gates are published under one name, so one of them can never be \
          named in a refusal and a reader cannot tell which of the two a \
          published line is about"
+    );
+}
+
+/// A gate the fidelity registry records as `Aspirational` implements none of
+/// the capability its name claims, so it has nothing to pass on. The rule was
+/// stated in `Fidelity`'s own doc comment and encoded in `may_report_pass()`,
+/// and until the certification run started asking it, seven aspirational gates
+/// published `Passed` on this very fixture: `deadlock_status`,
+/// `openvex_status`, `cosign_status`, `auto_rollback_status`,
+/// `carbon_compute_status`, `replay_harness_status` and
+/// `upgrade_train_status`.
+///
+/// `aspirational_gates_cannot_pass_test.rs` pins every branch of the rule
+/// against hand-built reports. This is the one that runs the real corpus over a
+/// real diff and asks what the pull request would actually have been told —
+/// which is the only place the seven were visible, because a hand-built report
+/// says whatever it was handed.
+#[test]
+fn no_aspirational_gate_publishes_a_pass_on_the_change_the_corpus_measured() {
+    let work = a_working_tree();
+    let report = report_from_the_corpus(work.path(), Some(true), "APPROVE");
+
+    let aspirational: Vec<&str> = anvil::fidelity::registry::AUDITED_GATES
+        .iter()
+        .filter(|e| !e.fidelity.may_report_pass())
+        .map(|e| e.gate_id)
+        .collect();
+    assert!(
+        !aspirational.is_empty(),
+        "fixture sanity: with no aspirational gate in the registry this test \
+         asks nothing"
+    );
+
+    let stamped: Vec<&str> = report
+        .named_statuses()
+        .into_iter()
+        .filter(|(gate, status)| {
+            aspirational.contains(gate)
+                && matches!(status, GateStatus::Passed | GateStatus::AutoUpdated)
+        })
+        .map(|(gate, _)| gate)
+        .collect();
+    assert!(
+        stamped.is_empty(),
+        "the registry records {stamped:?} as implementing none of the capability \
+         they are named for, and the certification run published them as passing \
+         on this pull request"
+    );
+
+    // Discrimination: a run in which nothing passes would satisfy the above.
+    let passing = report
+        .named_statuses()
+        .into_iter()
+        .filter(|(_, s)| matches!(s, GateStatus::Passed))
+        .count();
+    assert!(
+        passing > 20,
+        "fixture sanity: only {passing} gates passed, so the assertion above \
+         would hold against a corpus that measured nothing"
     );
 }

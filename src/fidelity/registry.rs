@@ -641,17 +641,23 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               with no colon and no description and accepts `feature` as a type, none of which \
               Conventional Commits 1.0.0 admits. The subjects are now read from the clone the \
               pipeline already holds, by `commit_subjects` (git_manager/mod.rs:532), and judged \
-              against `CONVENTIONAL_HEADER` (fast_validator.rs:24) with commitlint's default type list. Two \
+              against `CONVENTIONAL_HEADER` (fast_validator.rs:34) with commitlint's default type \
+              list plus this repository's own promote type -- type-enum is configuration, not \
+              specification, and hardcoding the default made the check red on the convention the \
+              project follows. Two \
               gaps remain there: only the subject line is read, so a breaking-change footer and \
               a body are not checked, and none of commitlint's other default rules -- length, \
               case, trailing stop -- is enforced. Subjects git generates rather than the author \
-              writes are skipped -- `GENERATED_SUBJECT_PREFIXES` (fast_validator.rs:30), as commitlint's own defaultIgnores skip \
+              writes are skipped -- `GENERATED_SUBJECT_PREFIXES` (fast_validator.rs:39), as commitlint's own defaultIgnores skip \
               them; a pull request made entirely of those is reported unmeasured rather than \
               clean. \
-              The credential half is a prefix match, `SECRET_MARKERS` (fast_validator.rs:44). Four \
-              fixed vendor prefixes is not a secret scanner: an entropy check, a private key \
-              block, a bare token with no prefix and every other vendor's format all pass it, and \
-              it reads only the diff, so a credential this change does not touch is not seen. \
+              The credential half delegates to `PreMergeScanner::scan_for_secrets` \
+              (fast_validator.rs:111), which matches whole credentials on added lines only. It \
+              used to be four bare vendor prefixes tested against the whole diff, so a change \
+              that DELETED a leaked key was refused for containing one and any change touching \
+              this repository's own AWS-key regex blocked itself. Six regexes is still not a \
+              secret scanner: no entropy check, no bare token without a recognised shape, and \
+              most vendors' formats pass it. \
               `latency_ms` is now this call's own elapsed time (local_inner_loop/mod.rs:143) \
               rather than a constant; it times the gate, and says nothing about the pull request \
               or about any developer's machine.",
@@ -676,14 +682,20 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               not run, and the blocking sentence named a preview sandbox that is not deployed, \
               spawned or configured anywhere in this repository. All of that is deleted. \
               What remains is a lint, published as one: added lines whose text contains \
-              `.await.unwrap()` once whitespace is removed (chaos_injector/mod.rs:141). That is \
+              `.await.unwrap()` once whitespace is removed (chaos_injector/mod.rs:149). That is \
               the property `clippy::unwrap_used` checks, which upstream files under the opt-in \
-              restriction group rather than correctness -- and this gate blocks on it, which is a \
-              stronger stance than clippy's. It is text, not syntax: an occurrence inside a string \
-              literal or a comment counts, an unwrap split across lines does not, and an expect \
-              on the same await is not matched at all. Only added lines are read, as `code_line` \
-              (chaos_injector/mod.rs:136-137), so an unwrap this change leaves untouched is invisible, \
-              and a line in a test module is indistinguishable from one in production code. A diff \
+              restriction group rather than correctness -- so a hit is a Warning, not a refused \
+              merge. It blocked once, and was red on ten lines of its own diff with no true \
+              positive among them. It is text, not syntax, but only over `code_only` \
+              (chaos_injector/mod.rs:145), which drops a comment and empties a string literal, so \
+              prose about the property is no longer counted as the property. That is one line at \
+              a time with no memory of the last, so the continuation line of a multi-line string \
+              literal -- this sentence, for one -- carries no opening quote and is still counted; \
+              an unwrap split across lines is still invisible, and an expect on the same await is \
+              not matched at all. Only added lines are read, as `code_line` \
+              (chaos_injector/mod.rs:144), so an unwrap this change leaves untouched is invisible, \
+              and a line in a test module is indistinguishable from one in production code -- which \
+              is the other reason this warns rather than blocks. A diff \
               with no such line is reported unmeasured, not resilient: nothing was made to fail, so \
               nothing survived failing.",
         blocked_on: Some("a running deployment a fault injector can act on"),

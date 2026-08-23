@@ -2889,7 +2889,6 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             .evaluate_without_signing_backend(),
         chaos_inj: anvil::chaos_injector::ChaosInjectorReport {
             status: GateStatus::Passed,
-            passed: true,
             unhandled_awaits: Vec::new(),
             summary: n(),
         },

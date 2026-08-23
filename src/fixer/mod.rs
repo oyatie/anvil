@@ -188,10 +188,12 @@ impl Fixer {
             return Ok(None);
         }
 
-        let mut add_cmd = Command::new("git");
-        add_cmd.current_dir(&repo_dir).args(["add", "-A"]);
-        let _ =
-            crate::exec::run_bounded(add_cmd, crate::exec::ExecClass::Quick, "git add -A").await;
+        // `repo_dir` is the clone `review.rs` stamps the lane receipt into, so
+        // a bare sweep here committed Anvil's own bookkeeping onto the pull
+        // request it was fixing.
+        let add_cmd = crate::git_manager::stage_excluding_receipts(&repo_dir);
+        let _ = crate::exec::run_bounded(add_cmd, crate::exec::ExecClass::Quick, "git add (fixer)")
+            .await;
 
         let commit_msg = format!(
             "fix: address review feedback on PR #{}\n\n\

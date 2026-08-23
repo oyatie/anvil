@@ -78,7 +78,7 @@ mod tests {
     /// The diff that used to be certified clean: `vec![]` made every input
     /// clean, so no diff exists that could have failed this gate.
     #[test]
-    fn no_diff_produces_a_pass() {
+    fn no_diff_can_produce_a_pass() {
         let diff_ctx = PrDiffContext {
             repo: "oyatie/anvil".to_string(),
             pr_number: 100,

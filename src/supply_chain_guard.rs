@@ -175,8 +175,10 @@ impl SupplyChainGuard {
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
+                // Not `path.display()`: that put an ephemeral absolute runner
+                // path onto a scorecard with a pinned size budget.
                 return Ok(Self::not_measured(
-                    format!("Cargo.lock could not be read at {}: {e}", path.display()),
+                    format!("no Cargo.lock in the working tree: {e}"),
                     0,
                 ));
             }

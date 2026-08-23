@@ -129,10 +129,10 @@ impl RustLanguagePolicy {
 
         let findings = self.engine.scan_diff(diff_ctx)?;
 
-        let critical_or_high = findings
-            .iter()
-            .any(|f| f.severity == "CRITICAL" || f.severity == "HIGH");
-        let is_idiomatic = !critical_or_high;
+        // Through `RULES` by rule id, not by re-testing the severity string: the
+        // count published beside this ("N rule(s), M of which can block") comes
+        // from the same table, so the sentence and the behaviour cannot disagree.
+        let is_idiomatic = !findings.iter().any(|f| f.blocks());
 
         let blocking = engine::RULES.iter().filter(|r| r.blocks()).count();
         let summary = if is_idiomatic {

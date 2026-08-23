@@ -190,9 +190,11 @@ fn an_unaudited_gate_keeps_its_pass_and_the_size_of_that_exemption_is_published(
         "the count of gates the ceiling does not cover must be the count the gap \
          report publishes, or the exemption is silent"
     );
+    // The delimiters are load-bearing: an unanchored substring check also
+    // matches a summary publishing 13 when the truth is 3.
     assert!(
         gap.summary()
-            .contains(&format!("{} not yet audited", gap.unaudited)),
+            .contains(&format!(", {} not yet audited,", gap.unaudited)),
         "the published summary has to state the real size of the exemption, \
          including when it is zero: {}",
         gap.summary()
@@ -468,9 +470,11 @@ fn the_registry_lookup_answers_for_audited_gates_and_declines_for_the_rest() {
         Some(Fidelity::Partial)
     );
     // A gate nobody has audited must not be given a fidelity by default. The
-    // registry covers the whole corpus as this is written, so naming one gate
-    // here would go stale the moment that changed in either direction; the rule
-    // is stated over the corpus instead, and holds whichever way it moves.
+    // registry covers 69 of the 72 gates as this is written; the three it does
+    // not cover -- cedar, attestation and schema-evolution -- are each being
+    // rewritten in an open PR (#85, #84, #86), so naming one of them here as
+    // the unaudited example would go stale on the day it merged. The rule is
+    // stated over the corpus instead, and holds whichever way coverage moves.
     for gate in gate_names() {
         let has_entry = anvil::fidelity::registry::AUDITED_GATES
             .iter()
@@ -481,5 +485,10 @@ fn the_registry_lookup_answers_for_audited_gates_and_declines_for_the_rest() {
             "{gate} must be answered for exactly when the registry has read it"
         );
     }
+    // Load-bearing, and the part that survives full coverage. Once every gate
+    // in the corpus has an entry the loop above goes vacuous -- `has_entry` is
+    // true for all of them, so a `declared_fidelity` that manufactured a
+    // default for unknown gates would still satisfy it. This line is what
+    // catches that: it asks for a gate the registry cannot have read.
     assert_eq!(fidelity::declared_fidelity("no_such_gate"), None);
 }

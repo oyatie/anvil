@@ -1050,19 +1050,22 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Run the benchmark suite on base and head and refuse a hot-path latency or allocation \
                      regression beyond a published budget.",
         reference: "criterion.rs; Google Fleetbench; continuous benchmarking gates (bencher, CodSpeed)",
-        fidelity: Fidelity::Aspirational,
+        fidelity: Fidelity::Heuristic,
         gap: "Times nothing and counts no allocation: no benchmark harness is declared by this crate and \
               none is invoked, so there is no budget for anything to be within. Two regexes stand in for \
               one. `clone_in_loop_re` (criterion_bench_ratchet.rs:68) fires only where an added line \
-              already carries a trailing hot-path marker the author wrote, and no tracked file outside \
-              this guard and the allocation scanner contains that marker, so it cannot fire on ordinary \
-              code. `unbounded_alloc_re` (criterion_bench_ratchet.rs:66,92) needs a loop header and a \
+              already carries a trailing hot-path marker the author wrote. That marker is rare: the only \
+              tracked occurrence is this guard's own test fixture. But a diff CAN add it, and one has -- \
+              replaying commit 8014e94 (merged PR #1, which added that fixture) through this guard \
+              yields one EXCESSIVE_HOTPATH_CLONE and `is_within_budget` \
+              (criterion_bench_ratchet.rs:105) false. The verdict is therefore not a constant, which is \
+              why this entry is Heuristic and not Aspirational -- but one author-written marker is \
+              the entire check. \
+              `unbounded_alloc_re` (criterion_bench_ratchet.rs:66,92) needs a loop header and a \
               binding of one specific name on the line below it. `hot_paths_evaluated` \
               (criterion_bench_ratchet.rs:64) counts changed paths by fragment and then scopes nothing, \
               since the scan runs over the whole diff either way -- yet the passing summary reports those \
-              paths as evaluated within a latency and leak budget nothing measured. `is_within_budget` \
-              (criterion_bench_ratchet.rs:105) has been true for every change this repository has \
-              produced.",
+              paths as evaluated within a latency and leak budget nothing measured.",
         blocked_on: Some(
             "a benchmark harness and a published trunk baseline; this crate declares neither",
         ),

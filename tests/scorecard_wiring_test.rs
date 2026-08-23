@@ -708,6 +708,42 @@ fn boundary_worst_case_body_fits_a_github_comment_and_beats_the_table() {
     );
 }
 
+/// A blocked scorecard's fidelity note is now the bare label -- `- note:
+/// heuristic fidelity` -- and what that label MEANS lives once per body in
+/// `FIDELITY_FOOTNOTE`. That split turned one self-explanatory sentence into
+/// two independently-deletable pieces and pinned neither: replacing the
+/// footnote emission with `let _ = FIDELITY_FOOTNOTE;` left all 82 test
+/// binaries green while every blocked scorecard rendered ~40 unexplained
+/// `- note:` lines.
+///
+/// A body that carries the label must carry the explanation.
+#[test]
+fn a_note_label_is_never_published_without_the_sentence_that_explains_it() {
+    let mut r = all_passing();
+    // `kani` is registry-recorded below `Measured`, so its finding line is one
+    // that `finding_line` attaches a fidelity note to.
+    r.kani_status = GateStatus::Failed("seeded failure".into());
+    seal(&mut r);
+
+    let published = review::scorecard_comment(&r);
+
+    assert!(
+        published.contains("\n  - note: "),
+        "the fixture must produce a fidelity note, or this test is vacuous:\n{published}"
+    );
+    assert!(
+        published.contains("does not fully measure what its name implies"),
+        "a scorecard carrying a bare `- note: <level> fidelity` label must also \
+         carry the sentence saying what that label means -- otherwise the \
+         disclosure is a word with no referent:\n{published}"
+    );
+    assert!(
+        published.contains("src/fidelity/registry.rs"),
+        "the explanation must point at where each gate's real check is \
+         recorded:\n{published}"
+    );
+}
+
 /// P7  The fidelity registry records that ~21 gates are heuristic or
 ///     aspirational, and `finding_line` attaches that note to the scorecard.
 ///     But `finding_line` runs only for Failed / Errored / NotMeasured /
@@ -745,9 +781,10 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
         .expect("disclosure line")
         .1;
     // `debt-shrink`, then `cell-isolation`, `monorepo` and `idempotency` each
-    // stood here in turn as a gate the registry had not recorded. None is left:
-    // the registry now covers all seventy-two, so there is no gate to name as a
-    // fixed negative example and a hand-written list would only go stale again.
+    // stood here in turn as a gate the registry had not recorded. Three gates
+    // are still unrecorded -- `cedar`, `attestation` and `schema-evolution` --
+    // but each is being rewritten in an open PR (#85, #84, #86), so naming one
+    // here as a fixed negative example would go stale on the day it merged.
     //
     // The property that list was standing in for is stated directly instead --
     // membership of the disclosure is exactly the passing gates the registry
@@ -756,6 +793,11 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
     // catch), on one which names too few, and on one which leaks an
     // aspirational gate into the green list; and it cannot go stale as the
     // registry moves.
+    //
+    // `expected` is mapped through the renderer's own `gate_id` -> published
+    // name transform and compared in the PUBLISHED spelling, so a renderer that
+    // emits `doc_parity` instead of `doc-parity` fails here rather than being
+    // normalised away.
     let disclosed: BTreeSet<&str> = disclosure
         .split_once(". See `src/fidelity/registry.rs`")
         .expect("the disclosure names its own source")
@@ -765,23 +807,22 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
         .1
         .split(", ")
         .collect();
-    let expected: BTreeSet<&str> = anvil::fidelity::registry::AUDITED_GATES
+    let expected: BTreeSet<String> = anvil::fidelity::registry::AUDITED_GATES
         .iter()
         .filter(|e| e.fidelity.may_report_pass() && e.fidelity < Fidelity::Measured)
         .map(|e| {
             e.gate_id
                 .strip_suffix("_status")
                 .unwrap_or(e.gate_id)
-                .trim_end_matches(char::is_whitespace)
+                .replace('_', "-")
         })
         .collect();
-    let disclosed_ids: BTreeSet<String> = disclosed.iter().map(|g| g.replace('-', "_")).collect();
-    let expected_ids: BTreeSet<String> = expected.iter().map(|g| g.to_string()).collect();
     assert_eq!(
-        disclosed_ids, expected_ids,
+        disclosed,
+        expected.iter().map(String::as_str).collect::<BTreeSet<_>>(),
         "the disclosure must name exactly the passing gates the registry \
-         records below Measured -- naming every gate tells a reader nothing, \
-         and omitting one hides it:\n{body}"
+         records below Measured, in the spelling it publishes -- naming every \
+         gate tells a reader nothing, and omitting one hides it:\n{body}"
     );
 
     // `cosign_status` is `Fidelity::Aspirational`. A real certification run
@@ -796,5 +837,32 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
         !disclosure.contains("cosign"),
         "cosign is registry-recorded as aspirational, so it cannot be \
          disclosed as a passing gate that measures imperfectly:\n{body}"
+    );
+
+    // The `Passed | AutoUpdated` filter in `low_fidelity_passing_gates` was
+    // unpinned: deleting it left the whole suite green, and the function would
+    // then list FAILING gates under a heading that reads "N of the PASSING
+    // gates do not fully measure...". The all-passing fixture cannot see that
+    // difference, and neither can the registry-derived `expected` set above,
+    // which mirrors the implementation's fidelity predicate exactly.
+    //
+    // So: fail one low-fidelity gate and require it to leave the disclosure.
+    // The fixture is deliberately NOT sealed -- `is_certified_ready` stays true
+    // so rendering still takes the certified branch, which makes the status
+    // filter the only thing that can keep `kani` out of the list.
+    let mut failing = all_passing();
+    failing.kani_status = GateStatus::Failed("seeded failure".into());
+    let body = publish::scorecard::render(&failing);
+    let disclosure = body
+        .split_once("do not fully measure")
+        .expect("disclosure line")
+        .1
+        .split_once(". See `src/fidelity/registry.rs`")
+        .expect("the disclosure names its own source")
+        .0;
+    assert!(
+        !disclosure.contains("kani"),
+        "kani is registry-recorded as low fidelity but it FAILED, so it must \
+         not be listed among the passing gates that measure imperfectly:\n{body}"
     );
 }

@@ -2614,8 +2614,11 @@ fn neutral_guard_reports() -> NeutralGuardReports {
     let n = || NEUTRAL.to_string();
     NeutralGuardReports {
         cedar: anvil::cedar_guard::CedarGuardReport {
-            is_compliant: true,
-            files_created_or_updated: Vec::new(),
+            // The guard now owns its verdict, so `is_compliant` and
+            // `files_created_or_updated` are gone. `Passed` is the same fixture
+            // intent -- the value that leaves gate 2 acceptable -- expressed in
+            // the field that replaced them.
+            status: GateStatus::Passed,
             summary: n(),
         },
         compliance: anvil::compliance_guard::ComplianceGuardReport {

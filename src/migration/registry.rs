@@ -437,7 +437,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         oyatie_counterpart: "governance/check/image-signing-discipline + libs/oya-governance-image-discipline-kernel \
                             + governance/check/slsa-l3-evidence-grounded",
         counterpart_loc: 1073,
-        evidence: "PURE — infra scan shows no PROC, so it invokes no signing binary and reaches no Rekor; \
+        evidence: "105 lines, PURE — infra scan shows no PROC, so it invokes no signing binary and reaches no Rekor; \
                   the fabricated signature bundle it used to emit is deleted and the gate now reports \
                   that nothing signed. oyatie enforces the real posture: \
                   image-signing-discipline (178) + oya-governance-image-discipline-kernel (431) + \

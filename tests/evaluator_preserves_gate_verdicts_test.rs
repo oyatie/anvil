@@ -33,20 +33,55 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "cosign_report",
 ];
 
+/// The gate id a report's verdict is published under: `cosign_report` ->
+/// `cosign_status`, uniformly for all six.
+fn gate_id_of(report: &str) -> String {
+    report.replace("_report", "_status")
+}
+
+/// Catches: every rebuild shape, not the two that happened to be written first.
+///
+/// This was a *negative* check for `= if {report}.is_`, and a verdict rebuilt as
+/// `= if cosign_report.status.is_acceptable()` walks straight through that -- a
+/// hole demonstrated by exploitation, with all six gates exposed and only the
+/// gate whose author noticed protected by a bespoke assertion. Requiring the one
+/// line that is correct closes it for every shape at once: any rebuild, from a
+/// boolean or from the status itself, leaves the expected line absent.
 #[test]
 fn gates_that_own_a_verdict_have_it_read_not_rebuilt() {
     let src = evaluator_source();
-    let rebuilt: Vec<&str> = GATES_OWNING_A_VERDICT
+    let missing: Vec<String> = GATES_OWNING_A_VERDICT
         .iter()
-        .copied()
-        .filter(|g| src.contains(&format!("= if {}.is_", g)))
+        .map(|g| format!("let {} = {g}.status.clone();", gate_id_of(g)))
+        .filter(|line| !src.contains(line))
         .collect();
 
     assert!(
-        rebuilt.is_empty(),
-        "these reports carry their own GateStatus but the evaluator rebuilds it \
-         from a boolean, discarding NotMeasured: {:?}. Use `report.status.clone()`.",
-        rebuilt
+        missing.is_empty(),
+        "these gates own their GateStatus and the evaluator must carry it \
+         through verbatim; the expected line is not in evaluator.rs, so the \
+         verdict is being rebuilt from something else and NotMeasured is \
+         discarded: {missing:?}"
+    );
+}
+
+/// Catches: the other end of the same wire. An evaluator that mints a gate's
+/// `NotMeasured` itself publishes absence for ever, including after the guard
+/// starts producing a real verdict. Absence is the guard's finding, not the
+/// wiring's opinion.
+#[test]
+fn the_evaluator_mints_no_verdict_for_a_gate_that_owns_one() {
+    let src = evaluator_source();
+    let minted: Vec<String> = GATES_OWNING_A_VERDICT
+        .iter()
+        .map(|g| format!("gate_id: \"{}\"", gate_id_of(g)))
+        .filter(|needle| src.contains(needle))
+        .collect();
+
+    assert!(
+        minted.is_empty(),
+        "the evaluator mints a status for a gate whose guard owns one, so a \
+         real measurement can never reach the report: {minted:?}"
     );
 }
 

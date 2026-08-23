@@ -143,13 +143,23 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
     },
     GateFidelity {
         gate_id: "mutation_status",
-        aspiration: "Inject AST mutations, run the suite against each mutant, and require a kill rate above \
-                     a threshold.",
-        reference: "cargo-mutants; Meta TestInfra mutation testing",
-        fidelity: Fidelity::Heuristic,
-        gap: "Compiles and runs no mutants. Checks whether a changed filename contains \"test\" \
-              (chaos_mutation_guard.rs:57,76).",
-        blocked_on: None,
+        aspiration: "Build a mutant of every function the change touches, run the suite against each one, \
+                     and block on any the suite fails to kill.",
+        reference: "cargo-mutants; Google mutation testing at review time (Petrovic & Ivankovic, ICSE-SEIP \
+                    2018), which surfaces only surviving mutants on changed lines",
+        fidelity: Fidelity::Partial,
+        gap: "The filename match is gone: `run_bounded_for` spawns cargo-mutants with `--in-diff` over \
+              the pull request's own diff (chaos_mutation_guard.rs:284,294), so the suite really is run \
+              against each mutant on the changed lines, and one it fails to kill is published as \
+              `GateStatus::Failed` naming it. A seeded-defect fixture runs the real tool against a \
+              deliberately inadequate suite and requires that failure. Not yet measured everywhere it \
+              runs: this repository's CI installs no cargo-mutants (.github/workflows/ci.yml), and on a \
+              runner without it every run ends `Unavailable` and publishes `NotMeasured` \
+              (chaos_mutation_guard.rs:155). Still missing: no kill-rate threshold, no \
+              equivalent-mutant suppression and no arid-node rules, so every survivor is reported \
+              whether or not it is killable; a run past `MUTATION_BUDGET` reports no partial kill rate \
+              (chaos_mutation_guard.rs:84).",
+        blocked_on: Some("the cargo-mutants binary on the runner"),
     },
     GateFidelity {
         gate_id: "supply_chain_status",

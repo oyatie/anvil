@@ -558,12 +558,13 @@ impl PreMergeGuard {
         // 60. Proactive Dependency Upgrade Train
         let upgrade_train_status = upgrade_train_report.status.clone();
 
-        // 61. AST Chaos Mutation Test Adequacy
-        let mutation_status = if mutation_report.is_adequate {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(mutation_report.summary.clone())
-        };
+        // 61. Mutation Adequacy of the Changed Lines
+        //
+        // Read, not rebuilt: `is_adequate` is false both for a surviving mutant
+        // and for a run that measured nothing, and collapsing the two here
+        // would publish absent evidence as an accusation (or, with the arms the
+        // other way round, as a pass).
+        let mutation_status = mutation_report.gate_status();
 
         // 62. Feature Flag & Dead Branch Lifecycle
         let feature_flag_report_status = if feature_flag_report.is_clean {

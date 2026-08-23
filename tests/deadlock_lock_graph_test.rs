@@ -64,7 +64,7 @@ impl Bank {
         1,
         "one cycle over {{accounts, ledger}} expected, got {findings:?}"
     );
-    let seq = &findings[0].lock_sequence;
+    let seq = &findings[0].locks;
     assert!(
         seq.iter().any(|l| l == "self.accounts") && seq.iter().any(|l| l == "self.ledger"),
         "the finding names both locks in the cycle: {seq:?}"
@@ -131,10 +131,10 @@ fn three(&self) {
     let findings = scan(code);
     assert_eq!(findings.len(), 1, "one 3-cycle expected, got {findings:?}");
     assert_eq!(
-        findings[0].lock_sequence.len(),
+        findings[0].locks.len(),
         3,
         "the cycle names all three locks: {:?}",
-        findings[0].lock_sequence
+        findings[0].locks
     );
 }
 
@@ -187,7 +187,7 @@ fn refresh(&self) {
         1,
         "self-deadlock expected, got {findings:?}"
     );
-    assert_eq!(findings[0].lock_sequence, vec!["self.cache".to_string()]);
+    assert_eq!(findings[0].locks, vec!["self.cache".to_string()]);
 }
 
 /// # Defect this catches
@@ -215,6 +215,132 @@ fn acquire(&self) {
     assert!(
         scan(code).is_empty(),
         "a guard dropped at the end of its block holds nothing afterwards"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 3b. An explicit `drop` releases the guard before its block closes
+// ---------------------------------------------------------------------------
+
+/// # Defect this catches
+///
+/// `binds_a_guard` put a `let`-bound acquisition in `held` until its brace
+/// closed, and nothing removed it on an explicit `drop`. So the idiomatic
+/// release-then-reacquire was reported as a self-deadlock -- in the gate's most
+/// confident sentence, on correct code, with a verdict that blocks the merge
+/// queue and a message the author cannot act on because it is wrong.
+///
+/// Not hypothetical: `src/telemetry_store/mod.rs` already writes `drop(d);`
+/// after `self.data.write().await` twice. Those escape today only because
+/// neither block re-acquires; a change that adds one is blocked.
+#[test]
+fn silent_when_the_guard_is_explicitly_dropped_before_the_second_acquisition() {
+    let code = r#"
+fn a(&self) {
+    let g = self.state.lock();
+    g.push(1);
+    drop(g);
+    let h = self.state.lock();
+    h.push(2);
+}
+"#;
+    assert!(
+        scan(code).is_empty(),
+        "`drop(g)` ends the guard's scope, so the second acquisition waits on \
+         nothing: {:?}",
+        scan(code)
+    );
+}
+
+/// The other direction of the same rule: a `drop` releases the guard it names
+/// and no other. Releasing everything held would be the cheap way to pass the
+/// test above, and it would lose the `alpha -> gamma` edge below -- so the
+/// cycle against `fn b` disappears and a real inversion goes unreported.
+#[test]
+fn a_drop_releases_only_the_guard_it_names() {
+    let code = r#"
+fn a(&self) {
+    let x = self.alpha.lock();
+    let y = self.beta.lock();
+    drop(y);
+    let z = self.gamma.lock();
+    work(x, z);
+}
+fn b(&self) {
+    let z = self.gamma.lock();
+    let x = self.alpha.lock();
+    work(x, z);
+}
+"#;
+    let findings = scan(code);
+    assert_eq!(
+        findings.len(),
+        1,
+        "`x` is still held after `drop(y)`, so `alpha -> gamma` stands and \
+         closes a cycle against `fn b`'s `gamma -> alpha`: {findings:?}"
+    );
+    assert_eq!(
+        findings[0].locks,
+        vec!["self.alpha".to_string(), "self.gamma".to_string()],
+        "beta was dropped before gamma was taken, so it is not on the cycle"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 3c. Braces inside string literals are text, not scope
+// ---------------------------------------------------------------------------
+
+/// # Defect this catches
+///
+/// `brace_delta` counted `{` and `}` over raw bytes. A format-string escape --
+/// `println!("{{")` -- pushed the depth to 2 and a real `}` returned it to 1, so
+/// the guard bound in that function was never released, survived into the next
+/// function, and closed a cycle against an unrelated acquisition there. A
+/// literal in one function invented a lock-order inversion between two.
+#[test]
+fn a_brace_inside_a_string_literal_does_not_leak_a_guard_into_the_next_function() {
+    let code = r#"
+fn a(&self) {
+    let g = self.x.lock();
+    println!("{{");
+}
+fn b(&self) {
+    let h = self.y.lock();
+    let i = self.x.lock();
+    work(h, i);
+}
+"#;
+    assert!(
+        scan(code).is_empty(),
+        "`fn a` closes, so nothing it held reaches `fn b`; the only real edge \
+         is `y -> x` and one edge is not a cycle: {:?}",
+        scan(code)
+    );
+}
+
+/// The pairing: the same shape with a genuine inversion still fires, so the
+/// literal-stripping is not silencing the scanner wholesale.
+#[test]
+fn a_string_literal_does_not_silence_a_real_inversion_around_it() {
+    let code = r#"
+fn a(&self) {
+    let g = self.x.lock();
+    println!("{{ held }}");
+    let h = self.y.lock();
+    work(g, h);
+}
+fn b(&self) {
+    let h = self.y.lock();
+    let g = self.x.lock();
+    work(g, h);
+}
+"#;
+    assert_eq!(
+        scan(code).len(),
+        1,
+        "the pair is acquired in both orders and a format escape between them \
+         changes nothing: {:?}",
+        scan(code)
     );
 }
 
@@ -431,10 +557,23 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
 /// tuned only against its own fixtures would block every pull request in the
 /// repository from the day it merged.
 ///
-/// This is the whole tree, with no exclusions, including the scanner's own
-/// source. If a future change makes the analysis looser, this test is what
-/// notices, and it notices before the gate is pointed at anybody's pull
-/// request.
+/// This is the whole tree under `src/`, with no exclusions, including the
+/// scanner's own source. Say what that is worth, because "282 files, zero
+/// findings" reads stronger than it is: the graph 1.85 MB of Rust produces is
+/// three edges over four nodes, all of them in `account_pool/manager.rs`
+/// (`self.pools -> acc_arc`, `-> existing`, `-> selected_acc`). Every other
+/// file contributes an empty graph -- only 63 lines in the tree contain
+/// `.lock()`, `.read()` or `.write()` at all, across 13 files. So this test
+/// measures that three nesting edges from one file do not form a cycle, not
+/// that a broad adversarial corpus came back clean.
+///
+/// It is still the right test to have, and it is not vacuous: it is what fails
+/// if a future change makes the analysis looser. The evidence for that is the
+/// mutation table -- reporting every edge, or never releasing a guard, turns
+/// *this* test red.
+///
+/// The scanned root is `src/`. Pointing the same scan at `tests/` yields four
+/// findings, which are this file's own firing fixtures.
 #[test]
 fn no_finding_on_this_repository_s_own_source_tree() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

@@ -100,103 +100,68 @@ impl GitManager {
         Ok(repo_dir)
     }
 
-    /// Points a repository at its tracked `.githooks/` directory.
-    ///
-    /// Hooks written into `.git/hooks` are invisible: untracked, unreviewable,
-    /// and silently different on every machine. A tracked `.githooks/` plus
-    /// `core.hooksPath` makes them ordinary reviewed code, and installing them
-    /// is one config write rather than a file copy that can drift.
-    ///
-    /// Anvil runs this on itself as well as on the repositories it manages.
-    /// Every previous hook mechanism here was pointed outward only, which is
-    /// the same defect as a guard that evaluates other people's repositories
-    /// and never its own.
-    pub async fn point_at_tracked_hooks(repo_dir: &Path) -> Result<bool> {
-        if !repo_dir.join(".githooks").is_dir() {
-            return Ok(false);
+    /// Native hooks live in `$(git rev-parse --git-common-dir)/hooks`.
+    /// Worktrees share that directory. `core.hooksPath` stays unset.
+    fn common_hooks_dir(repo_dir: &Path) -> Result<PathBuf> {
+        let out = std::process::Command::new("git")
+            .args(["-C"])
+            .arg(repo_dir)
+            .args(["rev-parse", "--git-common-dir"])
+            .output()
+            .context("git rev-parse --git-common-dir")?;
+        if !out.status.success() {
+            bail!(
+                "git-common-dir failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
+        let common = String::from_utf8(out.stdout)?.trim().to_string();
+        let common_path = Path::new(&common);
+        let common_path = if common_path.is_absolute() {
+            common_path.to_path_buf()
+        } else {
+            repo_dir.join(common_path)
+        };
+        Ok(common_path.join("hooks"))
+    }
+
+    /// Copies the crate-owned hook templates into the common hooks directory
+    /// and leaves `core.hooksPath` unset.
+    pub async fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
+        let hooks_dir = Self::common_hooks_dir(repo_dir)?;
+        tokio::fs::create_dir_all(&hooks_dir)
+            .await
+            .with_context(|| format!("create {}", hooks_dir.display()))?;
+
+        let templates = [
+            ("pre-commit", include_str!("hooks/pre-commit")),
+            ("commit-msg", include_str!("hooks/commit-msg")),
+            ("pre-push", include_str!("hooks/pre-push")),
+        ];
+        for (name, body) in templates {
+            let path = hooks_dir.join(name);
+            tokio::fs::write(&path, body)
+                .await
+                .with_context(|| format!("write {}", path.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                    .with_context(|| format!("chmod {}", path.display()))?;
+            }
+        }
+
         let mut cmd = tokio::process::Command::new("git");
         cmd.arg("-C")
             .arg(repo_dir)
-            .args(["config", "core.hooksPath", ".githooks"])
+            .args(["config", "--unset-all", "core.hooksPath"])
             .stdin(std::process::Stdio::null());
-        let out =
-            crate::exec::run_bounded(cmd, crate::exec::ExecClass::Vcs, "git config hooksPath")
-                .await?;
-        Ok(out.status.success())
-    }
-
-    /// Automatically maintains and updates standard developer inner-loop git hooks in a maintained repository
-    pub async fn install_repo_hooks(repo_dir: &Path) -> Result<()> {
-        let hooks_dir = repo_dir.join(".git").join("hooks");
-        if !hooks_dir.exists() {
-            let _ = tokio::fs::create_dir_all(&hooks_dir).await;
-        }
-
-        let pre_commit_script = r#"#!/bin/bash
-# Anvil Developer Inner-Loop Pre-Commit Hook (Sub-100ms AST Lint & Hygiene Probe)
-set -e
-
-# Run fast formatter and clippy check
-cargo fmt -- --check 2>/dev/null || { echo "❌ [pre-commit] 'cargo fmt' failed. Please format code before committing."; exit 1; }
-cargo clippy --all-targets -- -D warnings 2>/dev/null || { echo "❌ [pre-commit] 'cargo clippy' caught compiler warnings."; exit 1; }
-"#;
-
-        let commit_msg_script = r#"#!/bin/bash
-# Anvil Conventional Commit Format Validator
-set -e
-
-MSG_FILE="$1"
-COMMIT_MSG=$(head -n 1 "$MSG_FILE")
-
-CONVENTIONAL_REGEX="^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)(\([a-zA-Z0-9_\-]+\))?: .+$"
-
-if [[ ! "$COMMIT_MSG" =~ $CONVENTIONAL_REGEX ]] && [[ ! "$COMMIT_MSG" =~ ^Merge ]]; then
-    echo "❌ [commit-msg] Commit message '$COMMIT_MSG' violates Conventional Commits standard."
-    echo "💡 Expected format: <type>(<scope>): <short summary>"
-    echo "💡 Example: feat(orchestrator): add truth verification engine"
-    exit 1
-fi
-"#;
-
-        let pre_push_script = r#"#!/bin/bash
-# Anvil Developer Pre-Push Fast Gate (<30s Verification Suite)
-set -e
-
-echo "🔍 [pre-push] Running Anvil Fast Verification Suite..."
-cargo test --test red_green_gates_test -- --quiet 2>/dev/null || { echo "❌ [pre-push] Quality matrix test failed."; exit 1; }
-"#;
-
-        let post_merge_script = r#"#!/bin/bash
-# Anvil Post-Merge Lockfile & Drift Reconciler
-set -e
-
-if git diff-tree -r --name-only --no-commit-id HEAD@{1} HEAD | grep -q "Cargo.lock"; then
-    echo "📦 [post-merge] Cargo.lock modified in merge. Ensuring deterministic dependencies..."
-    cargo check --quiet 2>/dev/null || true
-fi
-"#;
-
-        let pre_commit_path = hooks_dir.join("pre-commit");
-        let commit_msg_path = hooks_dir.join("commit-msg");
-        let pre_push_path = hooks_dir.join("pre-push");
-        let post_merge_path = hooks_dir.join("post-merge");
-
-        let _ = tokio::fs::write(&pre_commit_path, pre_commit_script).await;
-        let _ = tokio::fs::write(&commit_msg_path, commit_msg_script).await;
-        let _ = tokio::fs::write(&pre_push_path, pre_push_script).await;
-        let _ = tokio::fs::write(&post_merge_path, post_merge_script).await;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o755);
-            let _ = std::fs::set_permissions(&pre_commit_path, perms.clone());
-            let _ = std::fs::set_permissions(&commit_msg_path, perms.clone());
-            let _ = std::fs::set_permissions(&pre_push_path, perms.clone());
-            let _ = std::fs::set_permissions(&post_merge_path, perms);
-        }
-
+        let _ = crate::exec::run_bounded(
+            cmd,
+            crate::exec::ExecClass::Vcs,
+            "git config unset hooksPath",
+        )
+        .await;
         Ok(())
     }
 
@@ -603,10 +568,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn point_at_tracked_hooks_sets_core_hooks_path() {
+    async fn install_repo_hooks_writes_common_dir_and_leaves_hooks_path_unset() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = dir.path();
-        std::fs::create_dir(repo.join(".githooks")).expect("githooks dir");
         let init = std::process::Command::new("git")
             .args(["init"])
             .current_dir(repo)
@@ -614,21 +578,50 @@ mod tests {
             .expect("git init");
         assert!(init.status.success(), "git init failed: {init:?}");
 
-        let pointed = GitManager::point_at_tracked_hooks(repo)
+        GitManager::install_repo_hooks(repo)
             .await
-            .expect("point_at_tracked_hooks");
-        assert!(pointed, "installer must succeed when .githooks exists");
+            .expect("install_repo_hooks");
+
+        let common = std::process::Command::new("git")
+            .args(["-C"])
+            .arg(repo)
+            .args(["rev-parse", "--git-common-dir"])
+            .output()
+            .expect("git-common-dir");
+        let common = String::from_utf8_lossy(&common.stdout).trim().to_string();
+        let hooks = if std::path::Path::new(&common).is_absolute() {
+            std::path::PathBuf::from(&common).join("hooks")
+        } else {
+            repo.join(&common).join("hooks")
+        };
+        for name in ["pre-commit", "commit-msg", "pre-push"] {
+            let p = hooks.join(name);
+            assert!(p.is_file(), "missing {}", p.display());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&p)
+                    .expect("metadata")
+                    .permissions()
+                    .mode();
+                assert!(
+                    mode & 0o111 != 0,
+                    "{} not executable ({mode:o})",
+                    p.display()
+                );
+            }
+        }
 
         let out = std::process::Command::new("git")
             .args(["-C"])
             .arg(repo)
-            .args(["config", "--local", "core.hooksPath"])
+            .args(["config", "--local", "--get", "core.hooksPath"])
             .output()
             .expect("git config");
-        let configured = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        assert_eq!(
-            configured, ".githooks",
-            "managed-clone install must issue `git config core.hooksPath .githooks`"
+        assert!(
+            !out.status.success(),
+            "core.hooksPath must stay unset; got {}",
+            String::from_utf8_lossy(&out.stdout)
         );
     }
 

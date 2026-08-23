@@ -93,10 +93,11 @@ fn ci_and_hooks_build_with_locked_dependencies() {
             "`{step}` in ci.yml must pass --locked: {line}"
         );
     }
-    let pre_push = fs::read_to_string(repo_root().join(".githooks/pre-push")).expect("pre-push");
+    let pre_push =
+        fs::read_to_string(repo_root().join("src/git_manager/hooks/pre-push")).expect("pre-push");
     assert!(
-        pre_push.contains("cargo check") && pre_push.contains("--locked"),
-        "pre-push must `cargo check --locked`"
+        pre_push.contains("rustfmt --check"),
+        "pre-push formats the changed *.rs list; --locked lives in CI, not the hook"
     );
 }
 

@@ -362,9 +362,14 @@ mod tests {
         // it moves with every audit and with every gate added. What must hold
         // either way is that the summary publishes the real number rather than
         // a stale one, including when it reaches zero.
+        //
+        // The surrounding `, ` and `,` are load-bearing, not decoration: an
+        // unanchored `contains("3 not yet audited")` also matches a summary
+        // publishing 13, 23 or 103, so a report could overstate the exemption
+        // by any leading digit and stay green. Do not drop the delimiters.
         assert!(
             r.summary()
-                .contains(&format!("{} not yet audited", r.unaudited)),
+                .contains(&format!(", {} not yet audited,", r.unaudited)),
             "the published summary must state the real unaudited count: {}",
             r.summary()
         );

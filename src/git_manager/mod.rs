@@ -511,6 +511,53 @@ impl GitManager {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
+    /// The subject line of every non-merge commit this pull request adds, in
+    /// `git log` order.
+    ///
+    /// `PrDiffContext` carries no commit message, so the gate that judges commit
+    /// hygiene had none to judge and graded a literal instead. This is where the
+    /// real ones come from; GitHub's pull-request commits endpoint is the other
+    /// source, and returns the same thing.
+    ///
+    /// An unreadable log is an error, not an empty list: returned as
+    /// `Ok(vec![])` it would read as "this pull request has no commits", which
+    /// is exactly the absence the caller must be able to tell apart.
+    pub async fn commit_subjects(
+        &self,
+        repo_dir: &Path,
+        from_ref: &str,
+        to_ref: &str,
+    ) -> Result<Vec<String>> {
+        let mut log_cmd = Command::new("git");
+        log_cmd.current_dir(repo_dir).args([
+            "log",
+            "--no-merges",
+            "--format=%s",
+            &format!("{}..{}", from_ref, to_ref),
+        ]);
+        let output = crate::exec::run_bounded(
+            log_cmd,
+            crate::exec::ExecClass::Quick,
+            "git log --format=%s",
+        )
+        .await
+        .context("Failed to read commit subjects")?;
+
+        if !output.status.success() {
+            bail!(
+                "git log {}..{} failed: {}",
+                from_ref,
+                to_ref,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect())
+    }
+
     async fn get_changed_files(
         &self,
         repo_dir: &Path,
@@ -670,6 +717,62 @@ mod tests {
             !out.status.success(),
             "core.hooksPath must stay unset; got {}",
             String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// The commit source the local-probe gate judges. Without this the plumbing
+    /// is asserted rather than exercised, which is the shape being corrected.
+    #[tokio::test]
+    async fn commit_subjects_returns_the_subjects_the_range_adds_and_skips_merges() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = dir.path();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(repo)
+                .output()
+                .expect("git");
+            assert!(out.status.success(), "git {args:?} failed: {out:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "--initial-branch=main"]);
+        git(&["config", "user.email", "t@example.invalid"]);
+        git(&["config", "user.name", "t"]);
+        std::fs::write(repo.join("a.txt"), "a").expect("write");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "chore: base"]);
+        let base = git(&["rev-parse", "HEAD"]);
+
+        git(&["checkout", "-b", "feature"]);
+        std::fs::write(repo.join("b.txt"), "b").expect("write");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "feat(x): the subject the gate judges"]);
+        std::fs::write(repo.join("c.txt"), "c").expect("write");
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "not a conventional commit"]);
+        let head = git(&["rev-parse", "HEAD"]);
+
+        let gm = GitManager::new(repo.to_path_buf());
+        let subjects = gm
+            .commit_subjects(repo, &base, &head)
+            .await
+            .expect("commit subjects");
+
+        assert_eq!(
+            subjects,
+            vec![
+                "not a conventional commit".to_string(),
+                "feat(x): the subject the gate judges".to_string(),
+            ],
+            "only the commits the range adds, newest first, and no merge subject"
+        );
+
+        // An unresolvable range is an error, not an empty list: a gate handed
+        // `Ok(vec![])` cannot tell "no commits" from "could not read the log".
+        assert!(
+            gm.commit_subjects(repo, "0000000000000000000000000000000000000000", &head)
+                .await
+                .is_err()
         );
     }
 

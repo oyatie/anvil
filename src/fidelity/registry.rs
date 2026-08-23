@@ -714,6 +714,102 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                           already covered by gate 6",
         ),
     },
+    GateFidelity {
+        gate_id: "feature_flag_status",
+        aspiration: "Retire toggles the flag-management system records as stale, and delete the dead \
+                     fallback branch each one guards.",
+        reference: "LaunchDarkly flag health and ld-find-code-refs; Unleash flag lifecycle; Uber piranha",
+        fidelity: Fidelity::Heuristic,
+        gap: "Queries no flag-management system. Staleness is a fact LaunchDarkly, Unleash and \
+              Statsig each compute on their own backend -- from flag age plus evaluation status, or \
+              from an admin-set boolean -- and none of them expects anything in the source at all. \
+              What ran here instead were three rules matching two invented annotations and a year \
+              window that ended in 2025, none of which occurred anywhere outside this module's own \
+              fixture, so the gate published a green no pull request could turn red. \
+              What runs now is the half that has a real counterpart: a regex over the added lines \
+              for a toggle read by a key written at the call site \
+              (feature_flag_ratchet.rs:124), which is what ld-find-code-refs does. It is a proxy \
+              in both directions. The call names are a fixed list -- `is_feature_enabled`, \
+              `useFeatureFlag` and two more -- so a wrapper spelled any other way is invisible, and \
+              a key passed as a variable, a constant or an enum is invisible to any text scan; \
+              equally, a map lookup spelled the same way is counted as a toggle. \
+              Whether a key it finds is stale is answered from a ledger the repository under \
+              review may keep, `LEDGER_PATHS` (feature_flag_ratchet.rs:65), matched by `ledger_records_stale`, \
+              which asks whether the key appears between backticks on a line \
+              (feature_flag_ratchet.rs:245). That ledger is \
+              Anvil's own convention rather than an industry one -- Chromium is the nearest real \
+              precedent and keeps expiry in a JSON metadata file, not in source -- and it is \
+              self-attested by whoever edits it. No tracked file in this repository is such a \
+              ledger, so the gate reports that nothing was looked up. It also reports that when a \
+              ledger exists and the change reads no toggle: an empty scope is not a retired flag. \
+              Neither the dead fallback branch nor its deletion is detected; piranha does that by \
+              tree-sitter AST rewriting, and nothing here parses anything.",
+        blocked_on: Some(
+            "a LaunchDarkly, Unleash or Statsig API to ask; the ledger is a self-attested stand-in",
+        ),
+    },
+    GateFidelity {
+        gate_id: "local_probe_status",
+        aspiration: "Run the checks a developer's pre-commit and commit-msg hooks run -- commit \
+                     message conformance and a credential scan -- against this pull request's own \
+                     commits.",
+        reference: "Conventional Commits 1.0.0; @commitlint/config-conventional; pre-commit commit-msg stage",
+        fidelity: Fidelity::Heuristic,
+        gap: "No AST is built and no parser crate is a dependency, so the AST linting the title \
+              claimed never existed; a Rust file parser needs a whole valid file and the added lines \
+              of a unified diff are not one. The title no longer claims it. \
+              The commit half graded a string this file wrote: the caller passed a hardcoded \
+              message to a check that was `starts_with` on a type prefix, which accepts a header \
+              with no colon and no description and accepts `feature` as a type, none of which \
+              Conventional Commits 1.0.0 admits. The subjects are now read from the clone the \
+              pipeline already holds, by `commit_subjects` (git_manager/mod.rs:532), and judged \
+              against `CONVENTIONAL_HEADER` (fast_validator.rs:24) with commitlint's default type list. Two \
+              gaps remain there: only the subject line is read, so a breaking-change footer and \
+              a body are not checked, and none of commitlint's other default rules -- length, \
+              case, trailing stop -- is enforced. Subjects git generates rather than the author \
+              writes are skipped -- `GENERATED_SUBJECT_PREFIXES` (fast_validator.rs:30), as commitlint's own defaultIgnores skip \
+              them; a pull request made entirely of those is reported unmeasured rather than \
+              clean. \
+              The credential half is a prefix match, `SECRET_MARKERS` (fast_validator.rs:44). Four \
+              fixed vendor prefixes is not a secret scanner: an entropy check, a private key \
+              block, a bare token with no prefix and every other vendor's format all pass it, and \
+              it reads only the diff, so a credential this change does not touch is not seen. \
+              `latency_ms` is now this call's own elapsed time (local_inner_loop/mod.rs:143) \
+              rather than a constant; it times the gate, and says nothing about the pull request \
+              or about any developer's machine.",
+        blocked_on: Some(
+            "nothing external -- the remaining commitlint rules and a real secret scanner are \
+             unwritten, not blocked",
+        ),
+    },
+    GateFidelity {
+        gate_id: "chaos_injection_status",
+        aspiration: "Inject packet loss, DNS latency and a database leader failover into a running \
+                     deployment of this change, and verify the steady state returns.",
+        reference: "Netflix Chaos Monkey; AWS FIS; Gremlin; LitmusChaos; principlesofchaos.org",
+        fidelity: Fidelity::Heuristic,
+        gap: "Injects no fault into anything. Every tool this gate is named for acts on a running \
+              system -- Chaos Monkey terminates live instances through Spinnaker, FIS and Gremlin \
+              act on live resources, LitmusChaos on live workloads -- and a steady-state hypothesis \
+              presupposes a system in a steady state to disturb. Nothing here starts one. \
+              What ran before was worse than absent: three faults were declared and handed to a \
+              simulator that never read the argument, so one two-substring scan produced three \
+              identical verdicts, each carrying a fixed recovery time for an experiment that did \
+              not run, and the blocking sentence named a preview sandbox that is not deployed, \
+              spawned or configured anywhere in this repository. All of that is deleted. \
+              What remains is a lint, published as one: added lines whose text contains \
+              `.await.unwrap()` once whitespace is removed (chaos_injector/mod.rs:141). That is \
+              the property `clippy::unwrap_used` checks, which upstream files under the opt-in \
+              restriction group rather than correctness -- and this gate blocks on it, which is a \
+              stronger stance than clippy's. It is text, not syntax: an occurrence inside a string \
+              literal or a comment counts, an unwrap split across lines does not, and an expect \
+              on the same await is not matched at all. Only added lines are read, as `code_line` \
+              (chaos_injector/mod.rs:136-137), so an unwrap this change leaves untouched is invisible, \
+              and a line in a test module is indistinguishable from one in production code. A diff \
+              with no such line is reported unmeasured, not resilient: nothing was made to fail, so \
+              nothing survived failing.",
+        blocked_on: Some("a running deployment a fault injector can act on"),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

@@ -2,19 +2,27 @@
 //! isolated lane worktree — rewrite, stage, purity-check, gate — print the
 //! result, and tear the lane down. Nothing is committed, nothing is pushed;
 //! opening pull requests is a later change with its own review.
+//!
+//! The selected shards are built concurrently. `select_independent` exists to
+//! produce a set that is touch- and owner-disjoint, and `create_lane` gives
+//! each one its own worktree; running that set one at a time throws the
+//! guarantee away and costs one lane gate (`cargo check`, bounded at 1800s)
+//! per shard in series. N disjoint shards are N lanes, not one lane run N
+//! times.
 
 use crate::change_delivery::adapters::{CargoGate, GitLaneVcs, MechanicalRewrite};
 use crate::change_delivery::facade::plan::{
     manifests_from_tree, owners_from_tree, plan_from_report,
 };
 use crate::change_delivery::ports::{
-    GateResult, LandingPolicy, LocalGate, PurityViolation, RewriteEngine, Shard, VcsPort,
-    select_independent, shard_plan,
+    GateResult, LandingPolicy, LaneError, LaneWorktree, LocalGate, PurityViolation, RewriteEngine,
+    Shard, VcsPort, select_independent, shard_plan,
 };
 use crate::shape::adapters::GitTreeAtRev;
 use crate::shape::facade::measure::{MeasureRequest, measure_repo};
 use crate::shape::ports::TreeSource;
 use anyhow::{Result, anyhow};
+use futures::future::join_all;
 use std::path::{Path, PathBuf};
 
 /// Anvil's own config path for landing policy inside a tenant repository.
@@ -77,60 +85,97 @@ pub async fn deliver_dry_run(
     let vcs = GitLaneVcs::new(req.repo_dir.join(".anvil-lanes"));
     let rewrite = MechanicalRewrite;
     let gate = CargoGate;
-    let mut runs = Vec::new();
+
+    // Binding lanes is serial on purpose: `git worktree add` mutates the
+    // repository's shared administrative directory, and two of them racing
+    // there is a corrupt worktree list rather than a faster dry run. It is
+    // also the cheap half — the cost of a lane is its gate, not its checkout.
+    let mut bound: Vec<(Shard, Result<LaneWorktree, LaneError>)> = Vec::new();
     for shard in selected {
         let lane_id = format!(
             "{}-g{}",
             &shard.key.0[..8.min(shard.key.0.len())],
             shard.generation
         );
-        let lane = match vcs
+        let lane = vcs
             .create_lane(&req.repo_dir, &lane_id, &sha, req.allow_same_repo)
-            .await
-        {
-            Ok(l) => l,
-            Err(e) => {
-                runs.push(ShardRun {
-                    shard,
-                    lane_base: sha.clone(),
-                    rewrite: Err(e.to_string()),
-                    purity: None,
-                    gate: None,
-                    diffstat: String::new(),
-                });
-                continue;
-            }
-        };
-        let mut run = ShardRun {
-            shard: shard.clone(),
-            lane_base: lane.base_rev.clone(),
-            rewrite: Ok(()),
-            purity: None,
-            gate: None,
-            diffstat: String::new(),
-        };
-        match rewrite.apply(&vcs, &lane, &shard).await {
+            .await;
+        bound.push((shard, lane));
+    }
+
+    let runs = build_lanes(&vcs, &rewrite, &gate, &sha, bound).await;
+    Ok((runs, shards, policy))
+}
+
+/// Builds every bound lane concurrently and returns one run per input, in
+/// input order.
+///
+/// Concurrent because the shards are disjoint, not merely because it is
+/// faster: `select_independent` has already established that no two of them
+/// share a touched path or an owner, and each holds its own worktree, so
+/// there is nothing for them to serialise on. Folding them onto one worker
+/// spends `max_open_shape_prs` gate runs in series to produce a result that
+/// is identical except for how long the operator waited.
+///
+/// A lane that could not be bound still yields a run, in its place, saying
+/// why — a shard that vanished from the report would be a shard nobody knows
+/// was refused.
+pub async fn build_lanes(
+    vcs: &dyn VcsPort,
+    rewrite: &dyn RewriteEngine,
+    gate: &dyn LocalGate,
+    base_rev: &str,
+    bound: Vec<(Shard, Result<LaneWorktree, LaneError>)>,
+) -> Vec<ShardRun> {
+    join_all(bound.into_iter().map(|(shard, lane)| async move {
+        match lane {
+            Err(e) => ShardRun {
+                shard,
+                lane_base: base_rev.to_string(),
+                rewrite: Err(e.to_string()),
+                purity: None,
+                gate: None,
+                diffstat: String::new(),
+            },
+            Ok(lane) => build_one_lane(vcs, rewrite, gate, shard, lane).await,
+        }
+    }))
+    .await
+}
+
+/// Rewrite, stage, purity-check and gate one lane, then tear it down.
+async fn build_one_lane(
+    vcs: &dyn VcsPort,
+    rewrite: &dyn RewriteEngine,
+    gate: &dyn LocalGate,
+    shard: Shard,
+    lane: LaneWorktree,
+) -> ShardRun {
+    let mut run = ShardRun {
+        shard: shard.clone(),
+        lane_base: lane.base_rev.clone(),
+        rewrite: Ok(()),
+        purity: None,
+        gate: None,
+        diffstat: String::new(),
+    };
+    match rewrite.apply(vcs, &lane, &shard).await {
+        Err(e) => run.rewrite = Err(e.to_string()),
+        Ok(()) => match vcs.stage(&lane).await {
             Err(e) => run.rewrite = Err(e.to_string()),
             Ok(()) => {
-                let staged = vcs.stage(&lane).await;
-                match staged {
-                    Err(e) => run.rewrite = Err(e.to_string()),
-                    Ok(()) => {
-                        let ns = vcs.name_status(&lane).await.unwrap_or_default();
-                        let diff = vcs.cached_diff(&lane).await.unwrap_or_default();
-                        run.purity = Some(crate::change_delivery::ports::diff_is_structure_only(
-                            &ns, &diff, &shard,
-                        ));
-                        run.diffstat = vcs.diffstat(&lane).await.unwrap_or_default();
-                        run.gate = Some(gate.run(&lane).await);
-                    }
-                }
+                let ns = vcs.name_status(&lane).await.unwrap_or_default();
+                let diff = vcs.cached_diff(&lane).await.unwrap_or_default();
+                run.purity = Some(crate::change_delivery::ports::diff_is_structure_only(
+                    &ns, &diff, &shard,
+                ));
+                run.diffstat = vcs.diffstat(&lane).await.unwrap_or_default();
+                run.gate = Some(gate.run(&lane).await);
             }
-        }
-        let _ = vcs.cleanup(lane).await;
-        runs.push(run);
+        },
     }
-    Ok((runs, shards, policy))
+    let _ = vcs.cleanup(lane).await;
+    run
 }
 
 pub fn render(runs: &[ShardRun], total_shards: usize, policy: &LandingPolicy) -> String {

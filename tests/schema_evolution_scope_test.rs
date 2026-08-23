@@ -342,13 +342,15 @@ fn an_additive_openapi_change_passes() {
     assert!(matches!(report.status, GateStatus::Passed));
 }
 
-/// Catches: any removed YAML key being read as a removed endpoint. Only a path
-/// item is an endpoint; withdrawing a `summary` withdraws no route.
+/// Catches: any removed YAML key being read as a removed endpoint. A path item
+/// starts with `/`; `externalDocs` is a sibling key of `paths` and withdrawing
+/// it withdraws no route. The mapping line is here too, so the scan is pinned
+/// on both the key-shaped and the value-shaped removal.
 #[test]
 fn removing_a_non_path_openapi_key_is_not_removing_an_endpoint() {
     let report = evaluate(&file_diff(
         "openapi/openapi.yaml",
-        "-      summary: liveness probe\n-      description: returns 200",
+        "-  externalDocs:\n-    url: https://example.com/docs\n-      summary: liveness probe",
     ));
 
     assert_eq!(report.breaking_field_changes, 0, "{}", report.summary);

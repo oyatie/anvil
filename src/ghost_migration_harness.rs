@@ -9,9 +9,10 @@ use crate::pre_merge_guard::report::GateStatus;
 
 const GATE_ID: &str = "ghost_migration_status";
 
-const NO_MIGRATION_IN_SCOPE: &str = "no changed file matched the migration marker set (`migration` in the path, or a `.sql` \
-     extension), so no schema change was scanned for exclusive locks, table rewrites or rollback \
-     parity; an empty scope -- and an empty changed-file list -- is not a verified migration";
+const NO_MIGRATION_IN_SCOPE: &str = "no changed file matched the migration marker set (a `.sql` extension, or a `migrations`/\
+     `migrate` path component), so no schema change was scanned for exclusive locks, table \
+     rewrites or rollback parity; an empty scope -- and an empty changed-file list -- is not a \
+     verified migration";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationViolation {
@@ -49,11 +50,20 @@ impl GhostMigrationHarness {
     /// `pub` because the caller must distinguish "read and safe" from "nothing
     /// was in scope"; the predicate was inline and unreachable.
     ///
-    /// It is a guess about filing convention. Rails files migrations under
-    /// `db/migrate/`, which contains neither fragment, and a checked-in
-    /// `schema.rb` or Atlas `*.hcl` carries DDL under neither.
+    /// It is a guess about filing convention: a `.sql` extension, or a path
+    /// component that is exactly `migrations` or `migrate`. A checked-in
+    /// `schema.rb` or an Atlas `*.hcl` carries DDL under neither, so they are
+    /// missed.
+    ///
+    /// The component test is deliberate. `contains("migration")` put
+    /// `src/migration/registry.rs` -- a Rust source file -- into schema scope
+    /// and certified it "evaluated with zero exclusive locks or table
+    /// rewrites", which is the same fabricated green an empty scope produced.
     pub fn is_migration_file(file_path: &str) -> bool {
-        file_path.contains("migration") || file_path.ends_with(".sql")
+        file_path.ends_with(".sql")
+            || file_path
+                .split('/')
+                .any(|component| component == "migrations" || component == "migrate")
     }
 
     /// Evaluates database schema migrations for zero exclusive locks, table rewrites, and rollback parity
@@ -109,7 +119,10 @@ impl GhostMigrationHarness {
                 continue;
             }
 
-            if !current_file.contains("migration") && !current_file.ends_with(".sql") {
+            // Same predicate as the scope filter above, not a second copy of
+            // it: a hunk header naming a file the scope rejected must not be
+            // read as schema.
+            if !Self::is_migration_file(&current_file) {
                 continue;
             }
 

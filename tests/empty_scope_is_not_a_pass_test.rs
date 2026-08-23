@@ -6,8 +6,8 @@
 //! `debt_shrink_status`, `gitops_drift_status`, `migration_orch_status` and
 //! `ghost_migration_status` each decide what to look at by testing a changed
 //! path against a fixed list of substrings -- `deprecated`/`legacy`/`/old/`,
-//! `applicationset`/`application.yaml`, `.sql`, `migration`/`.sql`. None of
-//! those lists matches a single tracked file in this repository:
+//! `applicationset`/`application.yaml`, `.sql`, `migration`/`.sql`. Three of
+//! those lists match no tracked file in this repository:
 //!
 //! ```text
 //! $ git ls-files | grep -icE 'deprecated|legacy|/old/'            0
@@ -15,7 +15,24 @@
 //! $ git ls-files | grep -icE '\.sql$'                             0
 //! ```
 //!
-//! So nothing was ever in scope, `is_empty()` was vacuously true, and each
+//! `ghost_migration_status` was the exception, and its defect ran the other
+//! way. `contains("migration")` matched **eight** tracked files, all of them
+//! Rust:
+//!
+//! ```text
+//! $ git ls-files | grep -ic migration                             8
+//! ```
+//!
+//! so `["src/migration/registry.rs"]` was certified "1 migration(s) evaluated
+//! with zero exclusive locks or table rewrites" -- the same fabricated green,
+//! from an over-broad scope rather than an empty one. The predicate is now a
+//! `.sql` extension or a `migrations`/`migrate` path component, which makes
+//! this repository's scope genuinely empty and the table above true for all
+//! four. See
+//! `ghost_migration_does_not_treat_a_rust_file_named_migration_as_a_migration`.
+//!
+//! With that corrected, nothing is ever in scope, `is_empty()` was vacuously
+//! true, and each
 //! gate published a green: "zero prohibited expansions on deprecating
 //! targets", "all GitOps ApplicationSets maintain declarative integrity", "all
 //! database schema transitions adhere to Expand-Contract lifecycle
@@ -338,6 +355,75 @@ fn ghost_migration_does_not_pass_a_diff_with_no_file_list_at_all() {
 
     assert_unmeasured(&rep.status, "ghost_migration_status", &["migration"]);
     assert!(!rep.is_safe);
+}
+
+/// The scope was `contains("migration")`, a substring over the whole path, so
+/// the eight tracked Rust files with `migration` in their path were schema
+/// migrations to this gate. On `["src/migration/registry.rs"]` it returned
+/// `Passed` -- "1 migration(s) evaluated with zero exclusive locks or table
+/// rewrites" -- about a Rust source file. That is an over-broad scope
+/// manufacturing the same green an empty scope did, and #73 and #76 both touch
+/// that exact file, so it was not hypothetical.
+#[test]
+fn ghost_migration_does_not_treat_a_rust_file_named_migration_as_a_migration() {
+    for path in [
+        "src/migration/registry.rs",
+        "src/migration_orchestrator/mod.rs",
+        "src/ghost_migration_harness.rs",
+        "tests/migration_ledger_test.rs",
+    ] {
+        assert!(
+            !GhostMigrationHarness::is_migration_file(path),
+            "{path} is Rust source, not a schema migration"
+        );
+    }
+
+    let rep = GhostMigrationHarness::new()
+        .evaluate_migrations(
+            Path::new("."),
+            &ctx(
+                "+++ b/src/migration/registry.rs\n+pub fn f() {}",
+                &["src/migration/registry.rs"],
+            ),
+        )
+        .expect("evaluates");
+
+    assert_unmeasured(&rep.status, "ghost_migration_status", &["migration"]);
+    assert_eq!(
+        rep.migrations_evaluated, 0,
+        "a Rust file must not be counted as a migration evaluated"
+    );
+    assert!(!rep.is_safe);
+}
+
+/// The other half of the same predicate: a directory component actually named
+/// `migrations` or `migrate` is in scope and is read.
+#[test]
+fn ghost_migration_scopes_a_migrations_directory_without_a_sql_extension() {
+    assert!(GhostMigrationHarness::is_migration_file(
+        "db/migrate/20260101_add_users.rb"
+    ));
+    assert!(GhostMigrationHarness::is_migration_file(
+        "db/migrations/0001_init.up"
+    ));
+
+    let rep = GhostMigrationHarness::new()
+        .evaluate_migrations(
+            Path::new("."),
+            &ctx(
+                "+++ b/db/migrate/20260101_add_users.rb\n+add_index :users, :email\n\
+                 +execute \"CREATE INDEX idx_users_email ON users(email);\"",
+                &["db/migrate/20260101_add_users.rb"],
+            ),
+        )
+        .expect("evaluates");
+
+    assert!(
+        matches!(rep.status, GateStatus::Failed(_)),
+        "a migrations directory is in scope and its non-concurrent index still fires, got {:?}",
+        rep.status
+    );
+    assert_eq!(rep.violations[0].violation_type, "EXCLUSIVE_INDEX_LOCK");
 }
 
 #[test]

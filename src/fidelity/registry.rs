@@ -559,12 +559,15 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         fidelity: Fidelity::Heuristic,
         gap: "Regex scan for CONCURRENTLY, DROP COLUMN and NOT NULL. Connects to no database and runs \
               no migration, so no lock is ever observed. Scope is the changed-file list filtered by \
-              `is_migration_file`, which matches `migration` in the path or a `.sql` extension \
-              (ghost_migration_harness.rs:56-57) and so misses the directory Rails files its \
-              migrations under, which spells the word differently; an empty result also cannot be \
-              told apart from a changed-file list that never arrived. Both used to return early with \
-              a pass declaring the ghost migration check clean; both now report that nothing was \
-              scanned.",
+              `is_migration_file`, which matched `migration` as a substring anywhere in the path -- \
+              so the eight tracked Rust files spelling that word were schema scope, and \
+              src/migration/registry.rs was certified lock-free. It is now `file_path.ends_with` \
+              on `.sql`, or a path component equal to `migrations` or `migrate` \
+              (ghost_migration_harness.rs:63-66), so no tracked file in this repository is in \
+              scope; a checked-in schema.rb or an Atlas hcl file carries DDL under neither and is \
+              still missed. An empty result also cannot be told apart from a changed-file list that \
+              never arrived. Both used to return early with a pass declaring the ghost migration \
+              check clean; both now report that nothing was scanned.",
         blocked_on: Some("a shadow database"),
     },
 ];

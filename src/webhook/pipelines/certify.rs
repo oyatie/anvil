@@ -119,7 +119,7 @@ pub async fn certify_pull_request(
         .await?;
 
     // 10. DebtShrinkGuard: Deprecation & Reorg Drain Ratchet
-    let debt_report = state
+    let debt_shrink_report = state
         .debt_shrink_guard
         .evaluate_debt_shrink(repo_dir, diff_ctx)?;
 
@@ -544,7 +544,7 @@ pub async fn certify_pull_request(
         &supply_chain_report,
         &clean_arch_report,
         &monorepo_report,
-        &debt_report,
+        &debt_shrink_report,
         &modular_report,
         &coverage_report,
         &rust_skills_report,

@@ -31,6 +31,18 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "remote_cache_report",
     "shadow_traffic_report",
     "cosign_report",
+    // Four marker-scoped gates that now own a GateStatus so an empty scope
+    // reports NotMeasured instead of a pass. Without them here, restoring
+    // `= if debt_shrink_report.is_acceptable` passes CI and the change is
+    // undone in the wiring, where the gate-level tests cannot see it.
+    //
+    // The evaluator's parameter was `debt_report` while its status is
+    // `debt_shrink_status`, which breaks the name rule this list is checked
+    // against. Renamed to `debt_shrink_report` rather than exempting the gate.
+    "debt_shrink_report",
+    "ghost_migration_report",
+    "gitops_drift_report",
+    "migration_orch_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

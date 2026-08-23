@@ -278,11 +278,19 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 "Installing developer inner-loop git hooks in {:?}",
                 target_path
             );
-            crate::git_manager::GitManager::install_repo_hooks(&target_path).await?;
-            println!(
-                "✅ Anvil Git Hooks Installed Successfully in {:?}/.git/hooks/",
-                target_path
-            );
+            // Points at the tracked `.githooks/` rather than copying scripts into
+            // `.git/hooks`. A copy is untracked, unreviewable, and goes stale in
+            // place: the copy this replaced ran a bare `rustfmt` at edition 2015
+            // and rejected every `async fn` in the repository it was installed in,
+            // with nothing in the tree to diff it against.
+            if crate::git_manager::GitManager::point_at_tracked_hooks(&target_path).await? {
+                println!("✅ core.hooksPath -> .githooks in {:?}", target_path);
+            } else {
+                anyhow::bail!(
+                    "{:?} has no tracked .githooks/ directory; nothing to point at",
+                    target_path
+                );
+            }
         }
         Commands::Probe { diff } => {
             let diff_content = if let Some(d) = diff {

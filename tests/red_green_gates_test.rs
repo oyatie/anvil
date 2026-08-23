@@ -874,40 +874,63 @@ fn test_auto_rollback_green_healthy_canary_passes() {
 }
 
 // =========================================================================
-// 26. Automated Git Hook Provisioning & Permissions
+// 26. Git Hook Provisioning Points At Tracked, Reviewable Content
 // =========================================================================
 
+/// Installing hooks must be a `core.hooksPath` write, never a file copy.
+///
+/// This asserted the opposite until now: that `install_repo_hooks` wrote four
+/// scripts into `.git/hooks`. Those copies are untracked, so no review sees
+/// them and no diff catches them going stale -- and one did, running a bare
+/// `rustfmt` at edition 2015 that rejected every `async fn` and blocked three
+/// agents in a day. The writer is deleted; this asserts what replaced it.
 #[tokio::test]
-async fn test_git_hook_provisioning_and_permissions() {
+async fn test_git_hook_provisioning_points_at_tracked_hooks() {
     let temp_dir = tempfile::tempdir().unwrap();
     let repo_path = temp_dir.path();
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()
+        .expect("git init");
 
-    anvil::git_manager::GitManager::install_repo_hooks(repo_path)
+    // No `.githooks/` yet: there is nothing to point at, and saying so is not
+    // the same as succeeding.
+    let pointed = anvil::git_manager::GitManager::point_at_tracked_hooks(repo_path)
         .await
-        .unwrap();
+        .expect("probe must not error when the directory is simply absent");
+    assert!(
+        !pointed,
+        "a repository with no tracked .githooks/ must report that no hooks were installed"
+    );
 
-    let pre_commit = repo_path.join(".git").join("hooks").join("pre-commit");
-    let commit_msg = repo_path.join(".git").join("hooks").join("commit-msg");
-    let pre_push = repo_path.join(".git").join("hooks").join("pre-push");
-    let post_merge = repo_path.join(".git").join("hooks").join("post-merge");
+    std::fs::create_dir(repo_path.join(".githooks")).expect("githooks dir");
+    let pointed = anvil::git_manager::GitManager::point_at_tracked_hooks(repo_path)
+        .await
+        .expect("point_at_tracked_hooks");
+    assert!(pointed, "installer must succeed when .githooks exists");
 
-    assert!(pre_commit.exists(), "pre-commit hook must be created");
-    assert!(commit_msg.exists(), "commit-msg hook must be created");
-    assert!(pre_push.exists(), "pre-push hook must be created");
-    assert!(post_merge.exists(), "post-merge hook must be created");
+    let configured = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(repo_path)
+        .args(["config", "--local", "core.hooksPath"])
+        .output()
+        .expect("git config read");
+    assert_eq!(
+        String::from_utf8_lossy(&configured.stdout).trim(),
+        ".githooks",
+        "provisioning must set core.hooksPath, not copy scripts into .git/hooks"
+    );
 
-    let pre_commit_content = tokio::fs::read_to_string(&pre_commit).await.unwrap();
-    assert!(pre_commit_content.contains("cargo fmt"));
-    assert!(pre_commit_content.contains("cargo clippy"));
-
-    let commit_msg_content = tokio::fs::read_to_string(&commit_msg).await.unwrap();
-    assert!(commit_msg_content.contains("CONVENTIONAL_REGEX"));
-
-    let pre_push_content = tokio::fs::read_to_string(&pre_push).await.unwrap();
-    assert!(pre_push_content.contains("red_green_gates_test"));
-
-    let post_merge_content = tokio::fs::read_to_string(&post_merge).await.unwrap();
-    assert!(post_merge_content.contains("Cargo.lock"));
+    // The mechanism this replaced is gone, not merely unused: nothing may write
+    // an executable hook into the untracked common dir.
+    for hook in ["pre-commit", "commit-msg", "pre-push", "post-merge"] {
+        assert!(
+            !repo_path.join(".git").join("hooks").join(hook).exists(),
+            ".git/hooks/{hook} was written; installing hooks must not copy files \
+             into the untracked hooks directory"
+        );
+    }
 }
 
 // =========================================================================

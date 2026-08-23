@@ -24,10 +24,12 @@ pub async fn run_server(state: AppState) -> Result<()> {
     info!("📁 Local Repos Directory: {:?}", state.config.repos_dir);
     info!("==========================================================");
 
-    if let Err(e) = state.github_client.check_auth().await {
-        warn!("GitHub CLI Auth Warning: {}", e);
-        warn!("Run 'gh auth login' to authenticate with repo & admin:repo_hook permissions.");
-    }
+    // Every action this daemon takes runs through `gh`. Unauthenticated, it
+    // accepts deliveries and then fails one call at a time, which reads as a
+    // pipeline defect rather than a missing login. Fail at boot, and say so.
+    state.github_client.check_auth().await.context(
+        "GitHub CLI is not authenticated. Run `gh auth login` with repo and admin:repo_hook scopes.",
+    )?;
 
     let _ = state.github_client.ensure_webhook_extension().await;
 

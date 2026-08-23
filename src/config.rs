@@ -142,6 +142,25 @@ impl Config {
         }
     }
 
+    /// Boot invariant: the daemon does not serve unless webhook ingress can be
+    /// authenticated.
+    ///
+    /// `webhook_handlers` already refuses every unsigned delivery and its comment
+    /// says the daemon "refuses to boot without the secret". It did not. Anvil
+    /// started, bound the port, answered `/healthz`, and rejected all traffic --
+    /// alive by every external signal and doing nothing, which is the worst of
+    /// the three possible states because it is the one nobody investigates.
+    pub fn assert_webhook_ingress_is_authenticated(&self) -> anyhow::Result<()> {
+        if self.webhook_secret.is_none() {
+            anyhow::bail!(
+                "GITHUB_WEBHOOK_SECRET is not set, so no delivery could be authenticated and every \
+                 webhook would be rejected. Set it to the secret configured on the repository hooks, \
+                 or run the CLI subcommands instead of serving."
+            );
+        }
+        Ok(())
+    }
+
     /// Boot invariant: no managed clone may be the daemon's own source tree.
     ///
     /// Fails closed — a daemon that cannot establish the separation does not
@@ -208,4 +227,38 @@ async fn git_toplevel(dir: &Path) -> Option<PathBuf> {
     }
     let p = PathBuf::from(raw);
     Some(p.canonicalize().unwrap_or(p))
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    /// The daemon used to boot without the ingress secret, bind the port, answer
+    /// `/healthz`, and reject every delivery -- alive by every external signal
+    /// and doing nothing, which is the state nobody investigates.
+    #[test]
+    fn serving_without_the_ingress_secret_is_refused() {
+        let cfg = Config {
+            webhook_secret: None,
+            ..Config::from_env()
+        };
+
+        let err = cfg
+            .assert_webhook_ingress_is_authenticated()
+            .expect_err("a daemon that cannot authenticate any delivery must not serve");
+
+        assert!(
+            err.to_string().contains("GITHUB_WEBHOOK_SECRET"),
+            "the refusal must name the missing variable, not merely fail: {err}"
+        );
+    }
+
+    #[test]
+    fn serving_with_the_ingress_secret_is_allowed() {
+        let cfg = Config {
+            webhook_secret: Some("s".to_string()),
+            ..Config::from_env()
+        };
+        assert!(cfg.assert_webhook_ingress_is_authenticated().is_ok());
+    }
 }

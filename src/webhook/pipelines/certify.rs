@@ -312,7 +312,9 @@ pub async fn certify_pull_request(
     // Nothing builds this tree twice, so there is no second digest to compare.
     // The two literals passed here were the same string, making the equality
     // check true by construction.
-    let hermetic_report = state.hermetic_build.evaluate_without_build_pair();
+    let hermetic_report = state
+        .hermetic_build
+        .scan_for_impurity_without_build_pair(&diff_ctx.diff_content);
 
     // 47. OpenVexReachabilityScanner: Callgraph-Pruned Dead-Code Exploitability
     // No advisory feed is read. The placeholders passed here named a CVE that
@@ -383,7 +385,7 @@ pub async fn certify_pull_request(
 
     // 60. DeterministicReplayHarness: Production Dark-Trace Record-and-Replay Gate
     // No production trace corpus is collected. The empty slice passed here was
-    // answered with a hardcoded count of five replayed fixtures.
+    // answered vacuously: an empty slice trivially satisfies the payload check.
     let replay_report = state.replay_harness.evaluate_without_trace_source();
 
     // 61. ProactiveUpgradeTrain: Proactive Dependency & Security Upgrade Train Gate

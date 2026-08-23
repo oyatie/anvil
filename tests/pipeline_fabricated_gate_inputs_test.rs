@@ -717,8 +717,14 @@ fn no_gate_in_the_pipeline_is_invoked_with_a_fabricated_argument() {
         let src = std::fs::read_to_string(rel).expect("pipeline source is readable");
         let code = code_only(&src);
 
-        // Join continuations so a multi-line call is one subject.
-        let flat = code.replace('\n', " ");
+        // Join continuations so a multi-line call is one subject, then close up
+        // the whitespace before a `.` so the receiver and its field are
+        // adjacent. Without this second step the scan matched only calls
+        // rustfmt happened to leave on one line -- 15 of 72 in `certify.rs`,
+        // with the other 57 written as `state` / `.gate` / `.method(..)` and
+        // therefore invisible. Which side a call landed on was decided by
+        // formatting, not by whether it fabricated.
+        let flat = collapse_before_dot(&code.replace('\n', " "));
         let mut rest = flat.as_str();
 
         while let Some(at) = rest.find("state.") {
@@ -727,6 +733,15 @@ fn no_gate_in_the_pipeline_is_invoked_with_a_fabricated_argument() {
             let head = &rest[..open];
             // `state.<field>.<method>` and nothing more exotic.
             if head.contains(')') || head.contains(';') || head.matches('.').count() != 1 {
+                continue;
+            }
+            // Only gate evaluations. The first version of this scan matched any
+            // `state.<field>.<method>(..)`, and immediately flagged
+            // `upsert_pr_comment(repo, pr_number, "<!-- marker -->", ..)` --
+            // a literal that is the marker, not a measurement. A rule that
+            // fires on honest code is one someone deletes.
+            let method = head.rsplit('.').next().unwrap_or("").trim();
+            if !GATE_CALL_VERBS.iter().any(|v| method.starts_with(v)) {
                 continue;
             }
             let Some(close) = matching_paren(rest, open) else {
@@ -750,6 +765,37 @@ fn no_gate_in_the_pipeline_is_invoked_with_a_fabricated_argument() {
          a literal that makes its check true by construction.",
         offenders.join("\n  ")
     );
+}
+
+/// The verbs a gate evaluation is spelled with in the certification pipeline.
+///
+/// Taken from the 72 distinct methods called on `state` fields in
+/// `certify.rs`: every gate is `evaluate_*`, `audit_*`, `scan_*`, `inject_*`
+/// or `execute_sandboxed_*`. The rest -- `ensure_repo_cloned`,
+/// `prepare_pr_diff`, `fetch_pr_metadata`, `upsert_pr_comment`,
+/// `acquire_pr_lock` -- are plumbing, and plumbing may legitimately take a
+/// constant.
+const GATE_CALL_VERBS: &[&str] = &[
+    "evaluate_",
+    "audit_",
+    "scan_",
+    "inject_",
+    "execute_sandboxed",
+];
+
+/// Removes whitespace sitting between a receiver and its `.`, so a call split
+/// across lines reads as one subject.
+fn collapse_before_dot(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for c in src.chars() {
+        if c == '.' {
+            while out.ends_with(char::is_whitespace) {
+                out.pop();
+            }
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// True when ANY argument is a literal.

@@ -366,7 +366,9 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         aspiration: "Build twice and compare the binaries byte for byte.",
         reference: "Reproducible Builds; Bazel hermeticity",
         fidelity: Fidelity::Heuristic,
-        gap: "Builds nothing. Checks the diff for the literals SystemTime::now() and env!(\"HOME\") \
+        gap: "Builds nothing, so the byte-for-byte comparison the name claims is unmeasured and the \
+              gate withholds it. The impurity half is real and fires: it checks the diff for the \
+              literals SystemTime::now() and env!(\"HOME\") \
               (hermetic_build/reproducibility_checker.rs:29).",
         blocked_on: None,
     },

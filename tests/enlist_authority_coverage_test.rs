@@ -271,9 +271,8 @@ fn report_from_the_corpus(
         errored: None,
     };
     let cedar_report = anvil::cedar_guard::CedarGuardReport {
-        is_compliant: true,
-        files_created_or_updated: Vec::new(),
-        summary: "cedar policies are in parity".to_string(),
+        status: GateStatus::Passed,
+        summary: "the Cedar policy set parses".to_string(),
     };
     let api_contract_report = anvil::api_contract_guard::ApiContractReport {
         is_intact: true,

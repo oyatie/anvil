@@ -18,7 +18,7 @@ The table below is a representative selection, not the full corpus.
 | Quality Gate | Description |
 |---|---|
 | **Documentation & ADR Parity** | Verifies public APIs and platform doctrine (`DocGuard`). Amends owned pages (README, doctrine, ADRs, OpenAPI, CLI copy) so published gate counts match `TOTAL_GATES`. If it cannot write an honest page, the gate fails closed. |
-| **Cedar Policy & IAM Boundaries** | Verifies AWS Cedar authorization policy coverage & tenant bounds (`CedarGuard`) |
+| **Cedar Policy & IAM Boundaries** | Parses the `.cedar` policy files a PR touches with `cedar check-parse`; coverage and tenant bounds need a schema this repo does not have (`CedarGuard`) |
 | **Systematic Regulatory & Statutory Compliance** | Dynamic temporal multi-jurisdiction regulatory engine (`ComplianceGuard`) |
 | **OpenAPI & Wire Contract Integrity** | Validates OpenAPI schemas & auto-syncs route definitions (`ApiContractGuard`) |
 | **Cell Boundary & Tenant Isolation** | Enforces multi-tenant query scoping & zero cross-cell DB leaks (`CellIsolationGuard`) |

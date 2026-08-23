@@ -3,7 +3,7 @@
 //!
 //! # The defect, restated from source
 //!
-//! `KaniGuard::evaluate_unsafe_invariants` (`src/kani_guard/mod.rs`) splits the
+//! `KaniGuard::lint_unsafe_safety_comments` (`src/kani_guard/mod.rs`) splits the
 //! diff on `diff --git`, skips chunks whose text does not contain `.rs`, matches
 //! added lines against `^\+\s*unsafe\s*(\{|fn|impl|trait)`, and asks whether
 //! `//\s*SAFETY:` appears on the matched line or the five before it. That is the
@@ -47,7 +47,8 @@
 //!    supply it. Without this row, `all_documented = false` hardcoded passes
 //!    row 1 forever and blocks every pull request.
 //! 3. **No claim beyond the measurement.** No published sentence, no serialized
-//!    field name, and no matrix row may use the vocabulary of verification
+//!    field name, no public item name, and no matrix row may use the
+//!    vocabulary of verification
 //!    (`proof`, `verified`, `formal`, `mathematical`, `invariant`, `guarantee`)
 //!    for a check that establishes only that a comment is present.
 //! 4. **The disclosure.** The two passing sentences -- the paths on which a
@@ -85,7 +86,7 @@ fn diff(body: &str) -> PrDiffContext {
 
 fn run(body: &str) -> KaniGuardReport {
     KaniGuard::new()
-        .evaluate_unsafe_invariants(Path::new("."), &diff(body))
+        .lint_unsafe_safety_comments(Path::new("."), &diff(body))
         .expect("the guard reads the diff")
 }
 
@@ -313,6 +314,63 @@ fn no_serialized_field_name_asserts_a_proof() {
         "the count must survive the rename: {:?}",
         obj.keys().collect::<Vec<_>>()
     );
+}
+
+/// Catches: the claim moved out of the serialized keys and into the API. The
+/// method that runs this lint was called `evaluate_unsafe_invariants` while
+/// `invariant` sat on the list above, and the suite stayed green because
+/// `no_serialized_field_name_asserts_a_proof` reads the JSON keys only. Item
+/// names are published too -- rustdoc, call sites, every stack trace -- and the
+/// exemption this gate claims covers the gate id and the module name, which
+/// predate the correction, not names it is free to choose.
+#[test]
+fn no_public_item_name_asserts_a_proof() {
+    let mut names: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir("src/kani_guard").expect("the module directory is readable") {
+        let path = entry.expect("readable entry").path();
+        if path.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("the module is readable");
+        for line in src.lines() {
+            let line = line.trim();
+            if line.starts_with("//") {
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("pub ") else {
+                continue;
+            };
+            // `pub fn foo`, `pub struct Foo`, ... and bare `pub foo: T` fields.
+            let rest = [
+                "fn ", "struct ", "enum ", "trait ", "type ", "const ", "mod ", "use ",
+            ]
+            .iter()
+            .find_map(|kw| rest.strip_prefix(kw))
+            .unwrap_or(rest);
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+    }
+
+    assert!(
+        names.len() >= 8,
+        "the scan found {} public names, so it is no longer reading the API \
+         surface and would pass on anything: {names:?}",
+        names.len()
+    );
+    for name in &names {
+        let bad = overclaims(name);
+        assert!(
+            bad.is_empty(),
+            "public item `{name}` claims {bad:?}; the gate establishes only \
+             that a `// SAFETY:` comment is present. Scanned: {names:?}"
+        );
+    }
 }
 
 /// Catches: the sentence and the fields made honest while the row a reviewer

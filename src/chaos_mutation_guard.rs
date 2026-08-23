@@ -54,12 +54,28 @@
 //! [`MUTATION_BUDGET`] bounds the wall clock. Overrunning the budget is
 //! `NotMeasured` -- a partial mutation run is not a kill rate. Where
 //! cargo-mutants is not installed the gate costs one process spawn that fails
-//! in tens of milliseconds, and a change that touches no Rust costs nothing at
-//! all because the spawn never happens.
+//! in 17-23 ms, and a change that touches no Rust costs nothing at all because
+//! the spawn never happens.
+//!
+//! Where it IS installed this is a minutes-scale gate, not a milliseconds one.
+//! Measured on this repository with cargo-mutants 27.1.0: `--list --in-diff`
+//! over this change's own diff finds **41 mutants**, and each costs an
+//! incremental build (18 s here) plus a suite run (16 s warm on a laptop,
+//! 58.7 s on the reviewer's runner). That is 20-50 minutes against a 600 s
+//! budget. See [`MUTATION_BUDGET`].
+//!
+//! A budget kill reaps the direct child only. `kill_on_drop` (`exec/mod.rs`)
+//! kills the `cargo mutants` process; the `cargo build` and `cargo test` it
+//! forked per mutant, and the `$TMPDIR/cargo-mutants-*` tree copies they run
+//! in, are not its children and survive it. Every other bounded spawn in this
+//! tree is one process -- this one is N builds, so a timeout leaves work
+//! running and disk allocated on a runner that has just reported
+//! `NotMeasured`. Reaping the process group is the fix; it belongs in
+//! `exec::run_bounded_for`, where every caller gets it, not here.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
@@ -78,8 +94,14 @@ pub const MUTATION_GATE_ID: &str = "mutation_status";
 /// Ten minutes, not [`crate::exec::ExecClass::Build`]'s thirty: this is the
 /// most expensive gate in the matrix and it runs on every pull request, so the
 /// answer to "how much does it add" has to be a number a reviewer will accept.
-/// At roughly a build plus a suite per mutant it buys on the order of twenty
-/// mutants on a warm runner. A run that does not finish inside it reports
+/// It is not enough for a change this size, and the number is measured rather
+/// than estimated. A mutant costs one incremental build (18 s here) plus one
+/// suite run (16 s warm on a laptop, 58.7 s on the reviewer's runner), so 600 s
+/// buys **8-17 mutants**, while `cargo mutants --list --in-diff` over this
+/// change's own diff finds **41**. The realistic outcome on a runner that has
+/// the tool is therefore ten minutes burned and then `NotMeasured` -- correct,
+/// and expensive. Raising the budget or capping the mutant count so it declines
+/// cheaply is the follow-up; a run that does not finish inside it reports
 /// `NotMeasured`, never a partial kill rate.
 pub const MUTATION_BUDGET: Duration = Duration::from_secs(600);
 
@@ -195,8 +217,9 @@ impl ChaosMutationGuard {
         Self
     }
 
-    /// Legacy synchronous entry point, retained only so the call sites this
-    /// lane does not own keep compiling.
+    /// Legacy synchronous entry point, retained for its one caller:
+    /// `tests/enlist_authority_coverage_test.rs:404`, which builds every gate's
+    /// report synchronously.
     ///
     /// cargo-mutants cannot be spawned from a synchronous function under the
     /// bounded-exec invariant, so this reports absent evidence rather than the
@@ -338,7 +361,8 @@ impl ChaosMutationGuard {
 
         if mutants_tested == 0 {
             return MutationAdequacyReport::nothing_to_measure(
-                "cargo-mutants generated no mutant on the lines this pull request changed.",
+                "cargo-mutants generated no viable mutant on the lines this pull request \
+                 changed.",
             );
         }
 
@@ -426,18 +450,35 @@ fn touches_rust_source(diff_ctx: &PrDiffContext) -> bool {
 /// That is a clean nothing, and returning empty lists makes it
 /// `NothingToMeasure` rather than an absence of evidence.
 ///
+/// The exit codes that say a mutant was NOT killed are read only when a list
+/// names one. "Some list is readable" is not enough: with `caught.txt` read and
+/// `missed.txt` not -- a non-UTF8 byte in a path, a truncated write, an fs
+/// error, a layout change touching one filename -- an empty `missed` would
+/// publish `Passed` over the tool's own statement that a mutant survived. An
+/// exit code claiming survivors can only produce `Failed` or `NotMeasured`.
+///
 /// Split out from the spawn so the discrimination that decides pass, fail and
 /// no-claim is exercised by the unit suite without a mutation toolchain.
 fn outcome_from_run(code: Option<i32>, lists: [Option<String>; 3], stderr: &str) -> MutantsOutcome {
     let [caught, missed, timed_out] = lists;
-    let wrote_nothing = caught.is_none() && missed.is_none() && timed_out.is_none();
+    // 2 and 3 are the tool saying a mutant was not killed. Their evidence is
+    // `missed.txt`/`timeout.txt`, and only those: a readable `caught.txt` is
+    // not permission to read the other two as empty. Without a named mutant to
+    // show for the exit code the run measured nothing, so it declines.
+    let a_survivor_is_named = [&missed, &timed_out].into_iter().any(|l| {
+        l.as_deref()
+            .is_some_and(|s| outcome_lines(s).next().is_some())
+    });
     match code {
-        Some(0) if wrote_nothing => MutantsOutcome::Reported {
-            caught: String::new(),
-            missed: String::new(),
-            timed_out: String::new(),
+        // 0 is "every viable mutant was caught", so an unreadable list cannot
+        // be hiding a survivor -- including the `--in-diff` no-op, where the
+        // filter matched nothing and no list exists at all.
+        Some(0) => MutantsOutcome::Reported {
+            caught: caught.unwrap_or_default(),
+            missed: missed.unwrap_or_default(),
+            timed_out: timed_out.unwrap_or_default(),
         },
-        Some(0 | 2 | 3) if !wrote_nothing => MutantsOutcome::Reported {
+        Some(2 | 3) if a_survivor_is_named => MutantsOutcome::Reported {
             caught: caught.unwrap_or_default(),
             missed: missed.unwrap_or_default(),
             timed_out: timed_out.unwrap_or_default(),
@@ -453,15 +494,13 @@ fn outcome_from_run(code: Option<i32>, lists: [Option<String>; 3], stderr: &str)
     }
 }
 
-/// cargo-mutants writes its lists under `<--output>/mutants.out/`. The bare
-/// directory is accepted too, so a layout change in the tool degrades to
-/// `Unavailable` only if BOTH are absent -- and `Unavailable` is `NotMeasured`,
-/// never a pass.
+/// cargo-mutants writes its lists under `<--output>/mutants.out/`. `None` is a
+/// list that was not read -- absent, not empty -- which is the distinction
+/// `outcome_from_run` needs to tell "no mutant survived" from "no run
+/// happened". A layout change in the tool degrades to `Unavailable`, which is
+/// `NotMeasured`, never a pass.
 fn read_outcome_list(out_dir: &Path, name: &str) -> Option<String> {
-    let candidates: [PathBuf; 2] = [out_dir.join("mutants.out").join(name), out_dir.join(name)];
-    candidates
-        .iter()
-        .find_map(|p| std::fs::read_to_string(p).ok())
+    std::fs::read_to_string(out_dir.join("mutants.out").join(name)).ok()
 }
 
 fn outcome_lines(list: &str) -> impl Iterator<Item = &str> {
@@ -777,7 +816,7 @@ mod tests {
         assert_eq!(report.measurement, MutationMeasurement::NothingToMeasure);
         assert_eq!(report.gate_status(), GateStatus::Passed);
         assert!(
-            report.summary.contains("no mutant"),
+            report.summary.contains("no viable mutant"),
             "the reader must be told nothing was mutated: {}",
             report.summary
         );
@@ -869,14 +908,51 @@ mod tests {
 
     #[test]
     fn the_exit_codes_that_carry_a_measurement_are_read_from_the_lists() {
-        for code in [0, 2, 3] {
+        // Each code paired with the evidence it claims: 0 caught everything,
+        // 2 missed a mutant, 3 hung on one.
+        for (code, l) in [
+            (0, lists(A_KILLED, "", "")),
+            (2, lists(A_KILLED, A_SURVIVOR, "")),
+            (3, lists(A_KILLED, "", A_SURVIVOR)),
+        ] {
             assert!(
                 matches!(
-                    outcome_from_run(Some(code), lists(A_KILLED, "", ""), ""),
+                    outcome_from_run(Some(code), l, ""),
                     MutantsOutcome::Reported { .. }
                 ),
                 "exit {code} carries a mutation result and must be read"
             );
+        }
+    }
+
+    #[test]
+    fn a_survivor_exit_code_with_only_the_caught_list_readable_is_not_a_pass() {
+        // The asymmetric absence: `caught.txt` read, `missed.txt` did not --
+        // a non-UTF8 byte in a mutated path, a truncated write, an fs error on
+        // one file. All three lists absent was already covered; this is the
+        // partial set, where `wrote_nothing` is false and an exit code saying a
+        // mutant survived would otherwise be read as "all caught" and certify.
+        for code in [2, 3] {
+            for l in [
+                [Some(A_KILLED.to_string()), None, None],
+                [Some(A_KILLED.to_string()), Some(String::new()), None],
+                [None, None, Some(String::new())],
+            ] {
+                let outcome = outcome_from_run(Some(code), l.clone(), "");
+                assert!(
+                    matches!(outcome, MutantsOutcome::Unavailable(_)),
+                    "exit {code} says a mutant was not killed; with no list naming \
+                     one there is nothing to certify: {l:?} -> {outcome:?}"
+                );
+                let report =
+                    ChaosMutationGuard::new().report_from_outcome(outcome, &a_branch_in_src());
+                assert_ne!(
+                    report.gate_status(),
+                    GateStatus::Passed,
+                    "exit {code} with a partial list set must never certify: {l:?}"
+                );
+                assert_absent_evidence(&report, &format!("exit {code}, partial lists"));
+            }
         }
     }
 

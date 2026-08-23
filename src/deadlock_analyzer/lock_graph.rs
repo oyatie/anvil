@@ -31,6 +31,18 @@
 //!   mutually exclusive branches of the same `if` are correctly not paired, but
 //!   two locks whose exclusivity comes from a runtime flag rather than the
 //!   syntax are paired.
+//! - Scope is tracked one line at a time with no state between lines, so a raw
+//!   string or a block comment spanning several lines is read as code, and a
+//!   `drop(g)` sharing a line with the acquisition it precedes releases one
+//!   statement late.
+//! - A guard rebound by shadowing (`let g = a.lock(); let g = b.lock();`) is
+//!   not released by the shadowing; both stay held until the block closes.
+//!
+//! This list is the disclosed set, not a claim to be exhaustive. Two entries
+//! were added after review found them live: `drop` was not tracked at all, so
+//! the idiomatic early release read as a self-deadlock, and braces inside
+//! string literals corrupted the depth, so a format escape in one function
+//! could manufacture a cycle against another.
 //!
 //! The bias is deliberately toward silence, because a false red on this gate
 //! blocks a merge. An acquisition is only treated as *held* when it is bound by
@@ -45,7 +57,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockOrderFinding {
-    pub lock_sequence: Vec<String>,
+    /// The locks on the cycle, as a set in `BTreeSet` order.
+    ///
+    /// Not a sequence. `cycles()` returns a strongly connected component --
+    /// which locks lie on a cycle together -- and nothing reconstructs a
+    /// witness path through it, so the order these are emitted in is
+    /// alphabetical, not the order they are acquired in. The field was called
+    /// `lock_sequence`, which claimed the ordering the mechanism does not
+    /// produce, in a gate whose whole subject is that class of fault.
+    pub locks: Vec<String>,
     pub file_path: String,
     pub description: String,
 }
@@ -55,10 +75,13 @@ pub struct LockOrderFinding {
 const ACQUISITIONS: [&str; 3] = [".lock()", ".read()", ".write()"];
 
 /// A guard that is still in scope, and the brace depth of the block that owns
-/// it. It is released when that block closes.
+/// it. It is released when that block closes, or earlier by an explicit
+/// `drop(binding)`.
 struct HeldGuard {
     lock: String,
     depth: i32,
+    /// The name the guard was `let`-bound to, so `drop(g)` can find it.
+    binding: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -80,7 +103,7 @@ impl LockOrderGraph {
             .into_iter()
             .map(|locks| LockOrderFinding {
                 description: describe(&locks),
-                lock_sequence: locks,
+                locks,
                 file_path: file_path.to_string(),
             })
             .collect()
@@ -104,18 +127,30 @@ impl LockOrderGraph {
                 }
                 DiffLine::Removed => continue,
             };
-            let line = line.split("//").next().unwrap_or("");
+            let line = &without_literals(line);
 
             for acq in acquisitions(line, depth) {
                 for guard in &held {
                     edges.insert((guard.lock.clone(), acq.lock.clone()));
                 }
-                if acq.bound {
+                if let Some(binding) = acq.bound {
                     held.push(HeldGuard {
                         lock: acq.lock,
                         depth: acq.depth,
+                        binding,
                     });
                 }
+            }
+            // `drop(g)` ends the guard's scope before its block does. Not
+            // honouring it turns the idiomatic early release -- which
+            // `telemetry_store/mod.rs` already writes twice -- into a
+            // self-deadlock accusation.
+            //
+            // Applied after the line's acquisitions, so a `drop(g); let h =`
+            // written on one line releases `g` one statement late. Line
+            // granularity is the ceiling of the whole scanner.
+            for name in dropped_bindings(line) {
+                held.retain(|g| g.binding != name);
             }
 
             depth += brace_delta(line);
@@ -160,6 +195,94 @@ fn diff_payload(raw: &str) -> DiffLine<'_> {
     }
 }
 
+/// The line with string and character literal contents removed, and anything
+/// after a `//` outside a literal cut.
+///
+/// Both halves are the same problem: text that looks like code and is not. A
+/// `println!("{{")` pushed the brace depth to 2 and returned it to 1, so a
+/// guard bound in that function was never released, survived into the next one,
+/// and manufactured an edge -- and a cycle -- between two unrelated functions.
+/// The comment cut used to be `line.split("//")`, which is the same bug in the
+/// other direction: a `//` inside a string truncated the line.
+///
+/// Raw strings and literals spanning several lines are not handled; this is a
+/// line scanner with no state between lines. A `'` that is not a complete
+/// character literal is left alone, because it is a lifetime.
+fn without_literals(line: &str) -> String {
+    let b = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'/' if b.get(i + 1) == Some(&b'/') => break,
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+                out.push_str("\"\"");
+            }
+            b'\'' => {
+                // `'a'`, `'\n'` -- but not `&'a T`, where the quote opens a
+                // lifetime and never closes.
+                let end = if b.get(i + 1) == Some(&b'\\') {
+                    b[i + 2..]
+                        .iter()
+                        .position(|&c| c == b'\'')
+                        .map(|p| i + 3 + p)
+                } else if b.get(i + 2) == Some(&b'\'') {
+                    Some(i + 3)
+                } else {
+                    None
+                };
+                match end {
+                    Some(end) => {
+                        out.push_str("''");
+                        i = end;
+                    }
+                    None => {
+                        out.push('\'');
+                        i += 1;
+                    }
+                }
+            }
+            _ => {
+                let ch = line[i..].chars().next().expect("index is a char boundary");
+                out.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+    }
+    out
+}
+
+/// The names passed to a `drop(...)` call on this line, when the argument is a
+/// plain identifier. `drop(v[0])` and `drop(foo())` name no binding, and
+/// `self.drop(x)` is not `mem::drop`.
+fn dropped_bindings(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.find("drop(") {
+        let follows_a_path = rest[..at]
+            .bytes()
+            .next_back()
+            .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.');
+        let arg = &rest[at + "drop(".len()..];
+        rest = arg;
+        let Some(close) = arg.find(')') else { continue };
+        let name = arg[..close].trim();
+        if !follows_a_path
+            && !name.is_empty()
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && !name.as_bytes()[0].is_ascii_digit()
+        {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
 fn brace_delta(line: &str) -> i32 {
     line.bytes()
         .map(|b| match b {
@@ -172,9 +295,10 @@ fn brace_delta(line: &str) -> i32 {
 
 struct Acquisition {
     lock: String,
-    /// Bound by a plain `let`, so the guard lives to the end of its block. An
-    /// unbound acquisition is a temporary, dropped at the end of its statement.
-    bound: bool,
+    /// The name a plain `let` bound the guard to, so the guard lives to the end
+    /// of its block and `drop` can name it. `None` for an unbound acquisition,
+    /// which is a temporary dropped at the end of its statement.
+    bound: Option<String>,
     /// Brace depth *at the acquisition*, not at the start of the line, so
     /// `if x { let g = a.lock(); }` releases `g` when that line ends.
     depth: i32,
@@ -193,27 +317,29 @@ fn acquisitions(line: &str, line_depth: i32) -> Vec<Acquisition> {
         };
         out.push(Acquisition {
             lock,
-            bound: binds_a_guard(prefix),
+            bound: guard_binding(prefix),
             depth: (line_depth + brace_delta(prefix)).max(0),
         });
     }
     out
 }
 
-/// Whether the acquisition ending this prefix is bound to a name.
+/// The name the acquisition ending this prefix is bound to, if any.
 ///
 /// `let g = x.lock()` holds until its block ends. A bare `x.lock()` is a
 /// temporary dropped at the end of the statement, and `let _ = x.lock()` is
 /// dropped immediately -- `_` is a wildcard pattern, not a binding, which is
 /// the classic Rust guard bug. None of the three can be told apart by looking
 /// at the call alone.
-fn binds_a_guard(prefix: &str) -> bool {
+fn guard_binding(prefix: &str) -> Option<String> {
     let statement = prefix.rsplit(';').next().unwrap_or("").trim_start();
-    let Some(pattern) = statement.strip_prefix("let ") else {
-        return false;
-    };
+    let pattern = statement.strip_prefix("let ")?;
     let pattern = pattern.split('=').next().unwrap_or("").trim();
-    !pattern.is_empty() && pattern != "_"
+    let name = pattern.strip_prefix("mut ").unwrap_or(pattern).trim();
+    (!name.is_empty()
+        && name != "_"
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+    .then(|| name.to_string())
 }
 
 /// The dotted path immediately left of an acquisition -- `self.pools`,

@@ -108,17 +108,26 @@ fn finding_line(gate_id: &str, kind: &str, detail: &str) -> String {
     s
 }
 
-/// The passing gates the fidelity registry records as below `Measured`.
+/// The passing gates the fidelity registry records as `Heuristic` or `Partial`.
 ///
 /// A gate can pass on a keyword scan; the registry is where that is written
 /// down. Naming them next to the score is what stops "72/72" from being read
 /// as 72 measurements.
+///
+/// `Aspirational` is excluded rather than merely absent in practice.
+/// `withhold_aspirational_passes` turns such a gate's pass into `NotMeasured`
+/// before the report is sealed, so it is disclosed on the `unmeasured_gates`
+/// path instead; naming it here as well would put one gate on the scorecard
+/// under two incompatible descriptions -- "passed, but does not fully measure"
+/// and "produced no measurement".
 fn low_fidelity_passing_gates(report: &PreMergeCertificationReport) -> Vec<String> {
     report
         .named_statuses()
         .into_iter()
         .filter(|(_, status)| matches!(status, GateStatus::Passed | GateStatus::AutoUpdated))
-        .filter(|(gate_id, _)| fidelity_for(gate_id).is_some_and(|f| f < Fidelity::Measured))
+        .filter(|(gate_id, _)| {
+            fidelity_for(gate_id).is_some_and(|f| f.may_report_pass() && f < Fidelity::Measured)
+        })
         .map(|(gate_id, _)| gate_name(gate_id))
         .collect()
 }

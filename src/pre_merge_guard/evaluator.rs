@@ -116,7 +116,7 @@ impl PreMergeGuard {
         supply_chain_report: &SupplyChainReport,
         clean_arch_report: &CleanArchitectureReport,
         monorepo_report: &MonorepoGuardReport,
-        debt_report: &DebtShrinkReport,
+        debt_shrink_report: &DebtShrinkReport,
         modular_report: &ModularizationReport,
         coverage_report: &CoverageReport,
         rust_skills_report: &RustSkillsReport,
@@ -258,11 +258,7 @@ impl PreMergeGuard {
         };
 
         // 9. Debt Shrink Guard
-        let debt_shrink_status = if debt_report.is_acceptable {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(debt_report.summary.clone())
-        };
+        let debt_shrink_status = debt_shrink_report.status.clone();
 
         // 10. Modularization Guard
         let modularization_status = if modular_report.is_modular {
@@ -285,8 +281,8 @@ impl PreMergeGuard {
             GateStatus::Failed(rust_skills_report.summary.clone())
         };
 
-        // 13. Kani Formal Verification
-        let kani_status = if kani_report.is_verified {
+        // 13. `// SAFETY:` comment lint over added unsafe blocks
+        let kani_status = if kani_report.all_unsafe_blocks_documented {
             GateStatus::Passed
         } else {
             GateStatus::Failed(kani_report.summary.clone())
@@ -337,11 +333,7 @@ impl PreMergeGuard {
         let finops_status = finops_report.status.clone();
 
         // 21. Ghost DB Migration & Zero Exclusive Locks
-        let ghost_migration_status = if ghost_migration_report.is_safe {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(ghost_migration_report.summary.clone())
-        };
+        let ghost_migration_status = ghost_migration_report.status.clone();
 
         // 22. GitOps Immutable Digest Pinning
         let gitops_promo_status = if gitops_promo_report.is_pinned {
@@ -351,11 +343,7 @@ impl PreMergeGuard {
         };
 
         // 23. GitOps ArgoCD Manifest Parity
-        let gitops_drift_status = if gitops_drift_report.is_safe {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(gitops_drift_report.summary.clone())
-        };
+        let gitops_drift_status = gitops_drift_report.status.clone();
 
         // 24. Progressive Canary Burn-Rate Circuit Breaker
         let canary_status = if canary_report.is_healthy {
@@ -368,21 +356,13 @@ impl PreMergeGuard {
         let cluster_audit_status = cluster_audit_report.status.clone();
 
         // 26. Database Expand-Contract Lifecycle
-        let migration_orch_status = if migration_orch_report.is_ordered {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(migration_orch_report.summary.clone())
-        };
+        let migration_orch_status = migration_orch_report.status.clone();
 
         // 27. CI Wallclock & Compute Cost Ratchet
         let ci_wallclock_status = ci_wallclock_report.status.clone();
 
         // 28. DAG Predictive Test Selection
-        let predictive_test_status = if predictive_test_report.is_optimized {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(predictive_test_report.summary.clone())
-        };
+        let predictive_test_status = predictive_test_report.status.clone();
 
         // 29. Compile-Time & Macro Bloat Profiler
         let compile_profile_status = if compile_profile_report.is_lean {
@@ -442,12 +422,12 @@ impl PreMergeGuard {
             GateStatus::Failed(local_probe_report.summary.clone())
         };
 
-        // 39. Semantic ABI & Interface Stability
-        let semantic_abi_status = if semantic_abi_report.is_abi_stable {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(semantic_abi_report.summary.clone())
-        };
+        // 39. Public Function Signature Stability
+        // Published unchanged: the ratchet distinguishes "compared and clean"
+        // from "the change touches a layout this gate cannot compute", and a
+        // status rebuilt from `is_abi_stable` here would collapse the second
+        // into a pass.
+        let semantic_abi_status = semantic_abi_report.status.clone();
 
         // 40. Zero-Day Vulnerability Auto-Patcher
         let zero_day_status = if zero_day_report.is_clean {
@@ -466,11 +446,19 @@ impl PreMergeGuard {
         };
 
         // 42. Lock Graph & Deadlock Prevention
+        // The message carries the cycle the scanner actually found. A fixed
+        // sentence would name locks it never looked at, and an author cannot
+        // act on an accusation that does not say which locks it is about.
         let deadlock_status = if deadlock_report.passed {
             GateStatus::Passed
         } else {
             GateStatus::Failed(
-                "Lock graph analyzer detected circular lock order inversion.".to_string(),
+                deadlock_report
+                    .findings
+                    .iter()
+                    .map(|f| f.description.clone())
+                    .collect::<Vec<_>>()
+                    .join(" "),
             )
         };
 
@@ -497,11 +485,11 @@ impl PreMergeGuard {
         let openvex_status = openvex_report.status.clone();
 
         // 47. Cosign & Sigstore Provenance Signing
-        let cosign_status = if cosign_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed("Cosign keyless OIDC transparency log signing failed.".to_string())
-        };
+        // This rebuilt the status from `cosign_report.passed`, which was the
+        // constant `true` carried out of a fabricated signature bundle. The
+        // guard owns the verdict now, so a real Sigstore backend replaces it
+        // without touching this wiring.
+        let cosign_status = cosign_report.status.clone();
 
         // 48. Pre-Merge Chaos Injection
         let chaos_injection_status = if chaos_inj_report.passed {
@@ -552,11 +540,7 @@ impl PreMergeGuard {
         };
 
         // 56. Flaky-Test Quarantine Lifecycle
-        let flake_quarantine_status = if flake_quarantine_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(flake_quarantine_report.summary.clone())
-        };
+        let flake_quarantine_status = flake_quarantine_report.status.clone();
 
         // 57. Zero-Trust SPIFFE Workload Identity
         let zero_trust_workload_status = if zero_trust_report.passed {
@@ -574,12 +558,13 @@ impl PreMergeGuard {
         // 60. Proactive Dependency Upgrade Train
         let upgrade_train_status = upgrade_train_report.status.clone();
 
-        // 61. AST Chaos Mutation Test Adequacy
-        let mutation_status = if mutation_report.is_adequate {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(mutation_report.summary.clone())
-        };
+        // 61. Mutation Adequacy of the Changed Lines
+        //
+        // Read, not rebuilt: `is_adequate` is false both for a surviving mutant
+        // and for a run that measured nothing, and collapsing the two here
+        // would publish absent evidence as an accusation (or, with the arms the
+        // other way round, as a pass).
+        let mutation_status = mutation_report.gate_status();
 
         // 62. Feature Flag & Dead Branch Lifecycle
         let feature_flag_report_status = if feature_flag_report.is_clean {
@@ -766,6 +751,11 @@ impl PreMergeGuard {
                 head_sha: diff_ctx.head_sha.clone(),
             }),
         };
+        // A gate the fidelity registry records as Aspirational implements none
+        // of the capability its name claims, so whatever it just reported, it
+        // has nothing to pass on. Before the verdict, so the withheld gates are
+        // in `unmeasured_gates` and in the matrix rather than behind them.
+        report.withhold_aspirational_passes();
         // The verdict and the unmeasured list are derived from the statuses just
         // assigned — every field, including the two self-directed gates — so
         // neither can drift from the matrix it summarises.

@@ -1080,7 +1080,7 @@ fn test_modularization_green_acyclic_dag() {
 }
 
 // =========================================================================
-// 33. Kani Formal Verification Guard: Undocumented Unsafe
+// 33. Kani Guard (`kani_status`): Undocumented Unsafe -- `// SAFETY:` comment lint
 // =========================================================================
 
 #[test]
@@ -1091,10 +1091,10 @@ fn test_kani_red_flag_undocumented_unsafe_block() {
         "+ unsafe fn raw_copy(dst: *mut u8, src: *const u8, len: usize) { std::ptr::copy(src, dst, len); }",
     );
     let report = guard
-        .evaluate_unsafe_invariants(std::path::Path::new("."), &bad_diff)
+        .lint_unsafe_safety_comments(std::path::Path::new("."), &bad_diff)
         .unwrap();
     assert!(
-        !report.is_verified,
+        !report.all_unsafe_blocks_documented,
         "Expected False Green prevention: Undocumented unsafe must FAIL"
     );
 }
@@ -1107,11 +1107,11 @@ fn test_kani_green_safe_rust_or_documented_safety() {
         "+ // SAFETY: dst and src are guaranteed non-null, properly aligned, and len <= buffer capacity.\n+ unsafe fn safe_copy(dst: *mut u8, src: *const u8, len: usize) { std::ptr::copy(src, dst, len); }",
     );
     let report = guard
-        .evaluate_unsafe_invariants(std::path::Path::new("."), &good_diff)
+        .lint_unsafe_safety_comments(std::path::Path::new("."), &good_diff)
         .unwrap();
     assert!(
-        report.is_verified,
-        "Expected False Red prevention: Formally documented unsafe must PASS"
+        report.all_unsafe_blocks_documented,
+        "Expected False Red prevention: a documented unsafe block must PASS"
     );
 }
 

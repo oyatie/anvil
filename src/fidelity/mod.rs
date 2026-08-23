@@ -295,8 +295,8 @@ mod tests {
 
     #[test]
     fn invoking_an_absent_tool_is_only_heuristic() {
-        // kani_guard's exact shape: it shells out, but falls back to a regex
-        // when the binary is missing, so the fallback is what really runs.
+        // The shape a gate takes when it names a tool it never reaches: the
+        // fallback is what really runs, so the fallback is what it may claim.
         assert_eq!(
             observed_fidelity(Evidence {
                 tool_available: false,

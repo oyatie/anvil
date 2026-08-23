@@ -97,16 +97,6 @@ impl QueueHealer {
         state.trim().eq_ignore_ascii_case("open")
     }
 
-    /// Arguments that stage the repair but exclude Anvil's own receipts, so a
-    /// stray receipt never becomes a "healed" commit.
-    ///
-    /// Delegates rather than spelling the pathspec a second time: the
-    /// certification pipeline had its own staging site with no exclusion at
-    /// all, which is exactly what two copies of a rule produce.
-    pub fn heal_add_args() -> Vec<String> {
-        crate::attestation_guard::git_add_args_excluding_receipts()
-    }
-
     /// Comment body for a pushed heal; says only what was actually done.
     ///
     /// `enlistment` is the outcome of the re-enlistment this note used to
@@ -350,8 +340,7 @@ impl QueueHealer {
         }
 
         // 6. Stage the repair, excluding Anvil's own receipts
-        let mut add_cmd = Command::new("git");
-        add_cmd.current_dir(work_dir).args(Self::heal_add_args());
+        let add_cmd = crate::git_manager::stage_excluding_receipts(work_dir);
         let add_out = crate::exec::run_bounded(
             add_cmd,
             crate::exec::ExecClass::Quick,
@@ -729,17 +718,6 @@ mod tests {
         assert!(!QueueHealer::pr_is_healable("MERGED"));
         assert!(!QueueHealer::pr_is_healable("CLOSED"));
         assert!(!QueueHealer::pr_is_healable(""));
-    }
-
-    #[test]
-    fn heal_commit_excludes_anvil_receipts() {
-        let args = QueueHealer::heal_add_args();
-        assert_eq!(&args[..4], &["add", "-A", "--", "."]);
-        assert!(args.contains(&format!(
-            ":(exclude){}",
-            crate::attestation_guard::ANVIL_RECEIPTS_DIR
-        )));
-        assert!(args.contains(&":(exclude).cursor/receipts".to_string()));
     }
 
     #[test]

@@ -100,12 +100,6 @@ use anyhow::Result;
 /// drained of load-bearing content.
 pub const ANVIL_RECEIPTS_DIR: &str = ".anvil/receipts";
 
-/// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes
-/// carries what the change produced, never Anvil's own bookkeeping
-/// (`.cursor/receipts` is the legacy location, still present in older
-/// checkouts).
-const ANVIL_OWNED_PATHS: &[&str] = &[ANVIL_RECEIPTS_DIR, ".cursor/receipts"];
-
 use crate::pre_merge_guard::report::GateStatus;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -124,25 +118,6 @@ const NO_PROVENANCE_BACKEND: &str = "no provenance backend is configured: the re
      is built, no signature is produced because the crate holds no signing key, and no \
      transparency log records it. Nothing here could be checked by a third party who does not \
      already trust the producer";
-
-/// Arguments that stage a change but leave Anvil's own receipts out of it.
-///
-/// One spelling for both staging sites. `certify.rs` wrote a receipt into the
-/// clone and then staged it with a bare sweep of the whole tree, sixteen lines
-/// under a comment saying it must never do that, while `QueueHealer` had the
-/// exclusion; the two drifted precisely because each spelled its own arguments.
-pub fn git_add_args_excluding_receipts() -> Vec<String> {
-    let mut args = vec![
-        "add".to_string(),
-        "-A".to_string(),
-        "--".to_string(),
-        ".".to_string(),
-    ];
-    for p in ANVIL_OWNED_PATHS {
-        args.push(format!(":(exclude){}", p));
-    }
-    args
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaneReceipt {
@@ -354,21 +329,6 @@ mod tests {
         )
         .expect("readable");
         assert!(!body.contains("CERTIFIED_READY"));
-    }
-
-    /// The exclusion has to name every path Anvil owns, not just the current
-    /// one: a checkout carried over from before the move still has the legacy
-    /// directory, and staging that is the same defect.
-    #[test]
-    fn the_add_pathspec_excludes_every_path_anvil_owns() {
-        let args = git_add_args_excluding_receipts();
-        assert_eq!(&args[..4], &["add", "-A", "--", "."]);
-        for p in ANVIL_OWNED_PATHS {
-            assert!(
-                args.contains(&format!(":(exclude){}", p)),
-                "{p} would be staged into somebody else's commit: {args:?}"
-            );
-        }
     }
 }
 

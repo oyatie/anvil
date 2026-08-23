@@ -1,6 +1,17 @@
 use crate::ai_driver::{ModelExecutionConfig, ModelProvider};
 use std::path::{Path, PathBuf};
 
+/// Anvil's own repository slug: the one repository whose published documents
+/// this daemon owns and may rewrite.
+///
+/// One literal, in one place. `self_repo` below lets `SELF_REPO` override the
+/// *runtime* identity (a fork, a staging deployment), while
+/// `doc_guard::corpus_sync` compares against this constant directly, because an
+/// environment variable that decides whose documents get rewritten is issue #27
+/// reached by a second route. Two literals would let those two answers diverge
+/// silently the moment `SELF_REPO` is set.
+pub const SELF_REPO: &str = "oyatie/anvil";
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub host: String,
@@ -123,7 +134,7 @@ impl Config {
         let webhook_secret_previous = std::env::var("GITHUB_WEBHOOK_SECRET_PREVIOUS")
             .ok()
             .filter(|s| !s.is_empty());
-        let self_repo = std::env::var("SELF_REPO").unwrap_or_else(|_| "oyatie/anvil".to_string());
+        let self_repo = std::env::var("SELF_REPO").unwrap_or_else(|_| SELF_REPO.to_string());
 
         Self {
             host,

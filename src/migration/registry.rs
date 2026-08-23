@@ -270,22 +270,16 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   os/core/network-domain); no fault-injection capability.",
     },
     MigrationEntry {
-        component: "chaos_mutation_guard (dir)",
-        verdict: Verdict::Migrating,
-        confidence: Confidence::Verified,
-        oyatie_counterpart: "none found",
-        counterpart_loc: 0,
-        evidence: "109 lines, PURE. AstMutatorEngine generating AST mutations. grep -rilE 'mutation \
-                  testing' and 'mutant' over oyatie *.rs both returned ZERO hits.",
-    },
-    MigrationEntry {
         component: "chaos_mutation_guard.rs",
-        verdict: Verdict::Migrating,
+        verdict: Verdict::Rewired,
         confidence: Confidence::Verified,
         oyatie_counterpart: "none found",
         counterpart_loc: 0,
-        evidence: "178 lines, PURE. Mutation-adequacy scoring. Same verified negative: no mutation-testing \
-                  capability anywhere in oyatie.",
+        evidence: "PROC+ASYNC: run_cargo_mutants spawns `cargo mutants --in-diff` and reads its \
+                  outcome lists -- a real mutation measurement. The chaos_mutation_guard/ directory \
+                  (AstMutatorEngine, str::replace over lines nothing compiled) is deleted. Same \
+                  verified negative as before: no mutation-testing capability anywhere in oyatie, \
+                  so only the subprocess seam swaps.",
     },
     MigrationEntry {
         component: "ci_runner_economics",

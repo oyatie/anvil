@@ -608,13 +608,13 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               `fs::write`, and the gate's pass used to be rebuilt in the wiring from a boolean \
               whose one production value was a literal, which made the failure arm unreachable. \
               The guard now owns the verdict and publishes `NO_PROVENANCE_BACKEND` \
-              (attestation_guard.rs:122,234-236). A hash-chained receipt log was considered and \
+              (attestation_guard.rs:116,209-211). A hash-chained receipt log was considered and \
               rejected rather than shipped: the chain would be unkeyed, so recomputing it after \
               an edit is the write path rather than an attack on it, and receipts are per-pull-\
               request files overwritten in place inside a per-run clone, so there is no \
               append-only log to chain in the first place. The receipt was also swept onto the \
-              pull request by the certification pipeline's own staging sweep; both staging sites \
-              now share `git_add_args_excluding_receipts` (attestation_guard.rs:134).",
+              pull request by the certification pipeline's own staging sweep; all four staging \
+              sites now share `stage_excluding_receipts` (git_manager/mod.rs:32).",
         blocked_on: Some(
             "a signing identity and a log to publish to -- a key or an OIDC issuer plus Fulcio, \
              and a transparency log; none is reachable from here",

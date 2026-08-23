@@ -90,14 +90,16 @@
 //!     believes the gate merely failed to run this time.
 //!     -> `the_matrix_row_claims_no_cryptography`.
 //! P6. The receipt is written into the clone and then swept into a commit by
-//!     the pipeline's `git add -A`, under the comment saying it must not be.
-//!     -> `the_certification_pipeline_stages_no_anvil_receipt` for the wiring
-//!        and `the_receipt_exclusion_pathspec_excludes_receipts_and_nothing_else`
-//!        for the pathspec itself, run against a real repository.
+//!     a `git add -A`, under the comment saying it must not be. Four production
+//!     sites staged that clone and each spelled its own arguments; a fifth
+//!     spelling lands the same way.
+//!     -> `no_production_site_spells_its_own_whole_tree_git_add` for the
+//!        crate-wide rule and
+//!        `the_receipt_exclusion_pathspec_excludes_receipts_and_nothing_else`
+//!        for the command itself, run against a real repository.
 
-use anvil::attestation_guard::{
-    ANVIL_RECEIPTS_DIR, AttestationGuard, git_add_args_excluding_receipts,
-};
+use anvil::attestation_guard::{ANVIL_RECEIPTS_DIR, AttestationGuard};
+use anvil::git_manager::stage_excluding_receipts;
 use anvil::pre_merge_guard::{GateStatus, PreMergeCertificationReport};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -400,6 +402,20 @@ fn the_matrix_row_claims_no_cryptography() {
             );
         }
     }
+    // The row's *title* is the line a reader sees on the scorecard, and it must
+    // not keep the word the summary is forbidden to use. The detail may say
+    // "nothing signs or attests it", which is the denial, not the claim.
+    let lowered_title = title.to_lowercase();
+    for banned in ["provenance", "attest"] {
+        assert!(
+            !lowered_title.contains(banned),
+            "the scorecard row title claims `{banned}` over a plain file write: {title}"
+        );
+    }
+    assert!(
+        !title.contains('🔏'),
+        "a padlock over a gate that locks nothing: {title}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -489,34 +505,62 @@ fn the_registry_records_what_this_gate_is_blocked_on() {
 // P6. The receipt must not be swept into a commit on the pull request.
 // ---------------------------------------------------------------------------
 
-/// `certify.rs` writes the receipt into the clone and then, sixteen lines
-/// later and directly under a comment saying "NEVER push attestation receipts
-/// in a loop", ran `git add -A` over that same clone. `QueueHealer` had the
-/// exclusion and the certification pipeline did not.
+/// `certify.rs` wrote the receipt into the clone and then, a few lines later
+/// and directly under a comment saying "NEVER push attestation receipts in a
+/// loop", ran `git add -A` over that same clone. So did `fixer` and
+/// `pr_self_healer`, over the same clone, from the same `ensure_repo_cloned`.
+/// Only `QueueHealer` carried the exclusion.
+///
+/// The rule is crate-wide rather than scoped to the site that was reported,
+/// because the defect is a *spelling*: four copies of `["add", "-A"]` drifted
+/// because there were four copies. Staging now goes through
+/// `git_manager::stage_excluding_receipts`, which hands back the built
+/// `Command` -- a caller cannot take the arguments and drop half of them --
+/// and the only production files permitted to write the whole-tree flag
+/// themselves are the two listed here, each of which must carry an exclusion.
+///
+/// A scan is a proxy; what the command actually stages is measured for real by
+/// `the_receipt_exclusion_pathspec_excludes_receipts_and_nothing_else`.
 #[test]
-fn the_certification_pipeline_stages_no_anvil_receipt() {
-    let src = production_source("src/webhook/pipelines/certify.rs");
+fn no_production_site_spells_its_own_whole_tree_git_add() {
+    /// The only production files allowed to spell `-A` themselves. Adding a
+    /// file here is a deliberate act a reviewer sees; adding a staging site
+    /// that reaches for `["add", "-A"]` is the mistake this pins shut.
+    const MAY_SPELL_THEIR_OWN_STAGING: &[&str] = &[
+        // The shared builder every other site calls.
+        "src/git_manager/mod.rs",
+        // Lane staging: excludes the receipts dir *and* the lane lease file,
+        // through a different exec path (`LaneError`, not `anyhow`).
+        "src/change_delivery/adapters/git_vcs.rs",
+    ];
+
+    let mut files = Vec::new();
+    rs_files(&repo_root().join("src"), &mut files);
+    assert!(files.len() > 50, "the src scan found almost nothing");
+
     let mut offenders = Vec::new();
-    let mut rest = src.as_str();
-    while let Some(at) = rest.find("\"add\"") {
-        // The argument list this `"add"` sits in, up to the closing bracket.
-        let tail = &rest[at..];
-        let end = tail.find(']').map(|i| i + 1).unwrap_or(tail.len());
-        let args = &tail[..end];
-        if !args.contains(":(exclude)") {
-            offenders.push(args.to_string());
+    for (path, _) in &files {
+        let rel = path
+            .strip_prefix(repo_root())
+            .expect("under repo root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let src = code_only(&production_source(&rel));
+        if !src.contains("\"-A\"") {
+            continue;
         }
-        rest = &rest[at + 5..];
+        if !MAY_SPELL_THEIR_OWN_STAGING.contains(&rel.as_str()) {
+            offenders.push(format!("{rel}: stages a whole tree without going through git_manager::stage_excluding_receipts"));
+        } else if !src.contains(":(exclude)") {
+            offenders.push(format!(
+                "{rel}: spells its own `git add -A` with no exclusion"
+            ));
+        }
     }
     assert!(
         offenders.is_empty(),
-        "the certification pipeline stages the clone it just wrote a receipt \
-         into, so the receipt is committed onto the pull request: {offenders:?}"
-    );
-    assert!(
-        src.contains("git_add_args_excluding_receipts"),
-        "the pipeline must stage through the shared exclusion pathspec rather \
-         than spelling its own, so the two staging sites cannot drift"
+        "a staging site sweeps the clone Anvil writes its receipts into, so the \
+         receipt is committed onto the pull request: {offenders:#?}"
     );
 }
 
@@ -552,9 +596,13 @@ fn the_receipt_exclusion_pathspec_excludes_receipts_and_nothing_else() {
     std::fs::create_dir_all(root.join("docs")).expect("docs dir");
     std::fs::write(root.join("docs/policy.md"), "# policy\n").expect("doc");
 
-    let args = git_add_args_excluding_receipts();
-    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
-    git(&borrowed);
+    let staging = stage_excluding_receipts(root);
+    let out = staging
+        .as_std()
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    git(&out.iter().map(String::as_str).collect::<Vec<_>>());
 
     let staged = git(&["diff", "--cached", "--name-only"]);
     let staged: Vec<&str> = staged.lines().collect();

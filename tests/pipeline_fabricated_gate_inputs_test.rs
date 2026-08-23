@@ -661,7 +661,11 @@ fn evaluator_reads_these_gate_verdicts_instead_of_rebuilding_them() {
 /// blocked PR, in production, to someone who cannot act on it.
 #[test]
 fn unmeasured_gate_ids_are_registered_and_may_not_claim_a_pass() {
-    for gate_id in ["automated_canary_status", "microbench_status"] {
+    for gate_id in [
+        "automated_canary_status",
+        "microbench_status",
+        "zero_day_status",
+    ] {
         let entry = anvil::fidelity::registry::AUDITED_GATES
             .iter()
             .find(|e| e.gate_id == gate_id)

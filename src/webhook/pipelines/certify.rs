@@ -104,10 +104,11 @@ pub async fn certify_pull_request(
         .cell_isolation_guard
         .evaluate_cell_isolation(diff_ctx)?;
 
-    // 7. SupplyChainGuard: SLSA L2+ Dependency Security Audit
+    // 7. SupplyChainGuard: Cargo.lock resolved against the OSV advisory database
     let supply_chain_report = state
         .supply_chain_guard
-        .audit_supply_chain(repo_dir, diff_ctx)?;
+        .audit_supply_chain(repo_dir, diff_ctx)
+        .await?;
 
     // 8. CleanArchitectureGuard: Core -> Ports -> Adapters Boundary Enforcement
     let clean_arch_report = state.clean_arch_guard.evaluate_architecture(diff_ctx)?;
@@ -274,7 +275,7 @@ pub async fn certify_pull_request(
         .semantic_abi_ratchet
         .evaluate_abi_stability(repo_dir, diff_ctx)?;
 
-    // 41. ZeroDayAutoPatcher: Upstream Zero-Day Vulnerability Auto-Patcher Gate
+    // 41. ZeroDayAutoPatcher: abstains -- no advisory feed, no patch writer
     let zero_day_report = state
         .zero_day_patcher
         .evaluate_zero_day_patches(repo_dir, diff_ctx)?;

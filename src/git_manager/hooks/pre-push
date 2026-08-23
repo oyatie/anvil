@@ -1,0 +1,22 @@
+#!/bin/sh
+# *.rs on this push vs the push base: rustfmt --check on that file list.
+set -eu
+if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
+if base=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) && [ -n "$base" ]; then
+  :
+elif git rev-parse --verify --quiet origin/dev >/dev/null; then
+  base=origin/dev
+else
+  echo "pre-push: no upstream or origin/dev" >&2
+  exit 1
+fi
+if ! git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*.rs' | grep -q .; then
+  exit 0
+fi
+if [ -f rustfmt.toml ]; then
+  git diff --name-only -z --diff-filter=ACMR "$base"...HEAD -- '*.rs' \
+    | xargs -0 rustfmt --check --config-path rustfmt.toml --
+else
+  git diff --name-only -z --diff-filter=ACMR "$base"...HEAD -- '*.rs' \
+    | xargs -0 rustfmt --check --
+fi

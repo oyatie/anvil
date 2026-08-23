@@ -1,0 +1,27 @@
+#!/bin/sh
+# Staged *.rs: rustfmt --check on that file list. Also refuse agent-dir
+# and gitignored paths in the index.
+set -eu
+if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
+if [ -n "$(git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' || true)" ]; then
+  echo "pre-commit: staged path under an agent directory" >&2
+  git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' >&2
+  exit 1
+fi
+git diff --cached --name-only --diff-filter=ACM | while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  if git check-ignore -q "$f" 2>/dev/null; then
+    echo "pre-commit: gitignored path is staged: $f" >&2
+    exit 1
+  fi
+done
+if ! git diff --cached --name-only --diff-filter=ACMR -- '*.rs' | grep -q .; then
+  exit 0
+fi
+if [ -f rustfmt.toml ]; then
+  git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' \
+    | xargs -0 rustfmt --check --config-path rustfmt.toml --
+else
+  git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' \
+    | xargs -0 rustfmt --check --
+fi

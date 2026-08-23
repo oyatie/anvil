@@ -569,12 +569,11 @@ impl PreMergeGuard {
             GateStatus::Warning(bench_report.summary.clone())
         };
 
-        // 64. Cryptographic Provenance Attestation
-        let attestation_status = if attestation_report.is_attested {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(attestation_report.summary.clone())
-        };
+        // 64. Lane Receipt. The guard owns this verdict: it was rebuilt here
+        // from `is_attested`, whose only production value was the literal
+        // `true`, so the gate passed on every pull request and the `Failed` arm
+        // was unreachable.
+        let attestation_status = attestation_report.status.clone();
 
         // 65. Secret & Sensitive Data Scan
         let security_scan_status = PreMergeScanner::scan_for_secrets(&diff_ctx.diff_content);

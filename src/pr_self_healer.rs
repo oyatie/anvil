@@ -75,12 +75,12 @@ impl PrSelfHealer {
         }
 
         // Pass 4: Stage, Commit & Push Auto-Heal Diff
-        let mut add_cmd = Command::new("git");
-        add_cmd.args(["add", "-A"]).current_dir(repo_dir);
+        // Same clone as `review.rs`, so a bare sweep staged the lane receipt.
+        let add_cmd = crate::git_manager::stage_excluding_receipts(repo_dir);
         let _ = crate::exec::run_bounded(
             add_cmd,
             crate::exec::ExecClass::Quick,
-            "git add -A (self heal)",
+            "git add (self heal)",
         )
         .await;
 

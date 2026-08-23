@@ -281,7 +281,20 @@ pub async fn certify_pull_request(
         .git_mgr
         .commit_subjects(repo_dir, &diff_ctx.base_sha, &diff_ctx.head_sha)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            // `commit_subjects` returns Err rather than Ok(vec![]) precisely so
+            // "unreadable" and "no commits" stay distinguishable. Collapsing
+            // them here is deliberate -- one certification run does not fail on
+            // an unresolvable range -- but silently would leave a permanently
+            // unmeasured gate with nothing in the logs to explain it.
+            warn!(
+                base_sha = %diff_ctx.base_sha,
+                head_sha = %diff_ctx.head_sha,
+                error = %e,
+                "commit log unreadable; local_probe_status judges no subjects this run"
+            );
+            Vec::new()
+        });
     let local_probe_report =
         state
             .local_inner_loop

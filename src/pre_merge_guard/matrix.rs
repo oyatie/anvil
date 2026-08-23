@@ -355,8 +355,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "attestation_status",
-        "🔏 Cryptographic Provenance Attestation",
-        "Stamped verification receipts in .anvil/receipts",
+        "🔏 Lane Receipt & Provenance",
+        "Receipt recorded in .anvil/receipts; nothing signs or attests it",
     ),
     (
         "security_scan_status",

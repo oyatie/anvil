@@ -56,7 +56,7 @@
 //!
 //! A report the corpus produces is not admissible in this tree, for reasons
 //! that are facts about the deployment rather than about any pull request:
-//! eighteen gates at this commit have no data source configured and report
+//! nineteen gates at this commit have no data source configured and report
 //! `NotMeasured` -- four more than before, since the empty-scope gates stopped
 //! certifying corpora they never had -- and
 //! `brand_absence_status` scans Anvil's own `src/` and reports `Failed` on the
@@ -291,9 +291,15 @@ fn report_from_the_corpus(
         summary: "no unresolved review threads".to_string(),
     };
     let attestation_report = anvil::attestation_guard::AttestationReport {
-        is_attested: true,
+        // What a satisfied stamper actually returns: the receipt is written and
+        // nothing signs it, so the gate reports `NotMeasured`. There is no
+        // `Passed` for the corpus to stand in for.
+        status: anvil::pre_merge_guard::GateStatus::NotMeasured {
+            gate_id: "attestation_status".to_string(),
+            reason: "no provenance backend".to_string(),
+        },
         stamped_receipt_path: None,
-        summary: "receipt stamped".to_string(),
+        summary: "receipt recorded".to_string(),
     };
 
     let compliance_report = anvil::compliance_guard::ComplianceGuard::new()

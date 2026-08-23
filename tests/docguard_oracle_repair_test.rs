@@ -2914,6 +2914,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         schema_evo: anvil::schema_evolution::SchemaEvolutionReport {
+            status: GateStatus::Passed,
             passed: true,
             breaking_field_changes: 0,
             tag_renumbering_detected: false,

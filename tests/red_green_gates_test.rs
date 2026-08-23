@@ -370,9 +370,17 @@ fn test_carbon_aware_green_efficient_compute() {
 #[test]
 fn test_deadlock_analyzer_red_flag_lock_inversion() {
     let analyzer = DeadlockStaticAnalyzer::new();
-    // RED: Thread acquires inner session lock before outer global_state lock
-    let bad_diff =
-        "+ let _s = self.session_lock.lock().await;\n+ let _g = self.global_state.lock().await;";
+    // RED: the same two locks are acquired in opposite orders at two sites,
+    // which is a cycle in the lock-order graph. No lock name is privileged --
+    // the inversion is what makes it a finding.
+    let bad_diff = "+ fn credit(&self) {\n\
+                    +     let a = self.accounts.lock();\n\
+                    +     let l = self.ledger.lock();\n\
+                    + }\n\
+                    + fn audit(&self) {\n\
+                    +     let l = self.ledger.lock();\n\
+                    +     let a = self.accounts.lock();\n\
+                    + }\n";
     let report = analyzer.evaluate_deadlock_invariants("oyatie/anvil", bad_diff);
     assert!(
         !report.passed,
@@ -383,9 +391,16 @@ fn test_deadlock_analyzer_red_flag_lock_inversion() {
 #[test]
 fn test_deadlock_analyzer_green_ordered_locks() {
     let analyzer = DeadlockStaticAnalyzer::new();
-    // GREEN: Canonical ordered lock acquisition across all code paths
-    let good_diff =
-        "+ let _g = self.global_state.lock().await;\n+ let _s = self.session_lock.lock().await;";
+    // GREEN: canonical ordered lock acquisition at every site. Holding two
+    // locks at once is not a defect; holding them in inconsistent orders is.
+    let good_diff = "+ fn credit(&self) {\n\
+                     +     let a = self.accounts.lock();\n\
+                     +     let l = self.ledger.lock();\n\
+                     + }\n\
+                     + fn debit(&self) {\n\
+                     +     let a = self.accounts.lock();\n\
+                     +     let l = self.ledger.lock();\n\
+                     + }\n";
     let report = analyzer.evaluate_deadlock_invariants("oyatie/anvil", good_diff);
     assert!(
         report.passed,

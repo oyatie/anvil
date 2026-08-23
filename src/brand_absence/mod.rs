@@ -208,6 +208,69 @@ pub struct BrandAbsenceReport {
     pub summary: String,
 }
 
+impl BrandAbsenceReport {
+    /// The verdict this gate publishes, decided here and carried unchanged.
+    ///
+    /// `src/trace_context_guard/mod.rs` is the precedent, and its reasoning is
+    /// the reason this method exists: a gate that hands the evaluator a
+    /// `Vec<BrandViolation>` and lets the wiring rebuild a severity from it has
+    /// no say in its own severity. That is exactly what happened. The module
+    /// declared itself advisory in [`BrandAbsenceReport::is_blocking`] and the
+    /// evaluator published `GateStatus::Failed` on any new violation, so the
+    /// severity a reader saw was stricter than the one the module computed, and
+    /// the field that says otherwise was decoration.
+    ///
+    /// The severity tracks [`WARN_ONLY`] through `is_blocking`, so flipping that
+    /// switch -- the documented way to make new violations fatal -- moves the
+    /// published verdict with it and needs no second edit anywhere else.
+    ///
+    /// Advisory is the right level for what this gate is, not merely for what
+    /// its ledger currently holds: [`BrandAbsenceGate::scan_tree`] is pointed at
+    /// Anvil's own tree by `CARGO_MANIFEST_DIR`, so the verdict is a constant
+    /// with respect to the pull request being certified. A finding whose subject
+    /// is another repository, and whose remediation is an edit no author of the
+    /// change under review can make, is not something to withhold their merge
+    /// over. It is something to say out loud.
+    /// Distinct `(path, line, kind, stamp)` sites among the new violations.
+    ///
+    /// `new_violations` is one entry per *occurrence*, because the ledger in
+    /// `finish` is a per-`(path, stamp)` occurrence ceiling and needs that
+    /// granularity to spend itself down. The published sentence is not the
+    /// ledger. Reporting the occurrence count as a count of names or strings
+    /// inflates it -- on this tree, twelve occurrences are six sites, five of
+    /// them one stamp repeated inside a single string literal on one line, all
+    /// carrying byte-identical evidence. A reader shown "12" and handed six
+    /// findings has been given a number that counts something else.
+    fn distinct_sites(&self) -> usize {
+        let mut seen: Vec<(&str, usize, BrandViolationKind, &str)> = self
+            .new_violations
+            .iter()
+            .map(|v| (v.path.as_str(), v.line, v.kind, v.stamp.as_str()))
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.len()
+    }
+
+    pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
+        use crate::pre_merge_guard::report::GateStatus;
+        if self.new_violations.is_empty() {
+            return GateStatus::Passed;
+        }
+        let sentence = format!(
+            "{} site(s) in Anvil's own tree, {} occurrence(s) in all, stamp an aspiration \
+             instead of naming what the code verifies",
+            self.distinct_sites(),
+            self.new_violations.len()
+        );
+        if self.is_blocking {
+            GateStatus::Failed(sentence)
+        } else {
+            GateStatus::Warning(sentence)
+        }
+    }
+}
+
 /// The gate itself.
 pub struct BrandAbsenceGate {
     allowlist: Vec<AllowlistedDebt>,

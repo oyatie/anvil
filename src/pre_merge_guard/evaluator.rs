@@ -607,19 +607,15 @@ impl PreMergeGuard {
         // against the pull request's repository; these run against Anvil's own
         // tree, because a rule enforced only on other people's code is an
         // assertion about them rather than a property of us.
-        let brand_absence_status = {
-            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-            let rep = crate::brand_absence::BrandAbsenceGate::new().scan_tree(repo_root);
-            if rep.new_violations.is_empty() {
-                GateStatus::Passed
-            } else {
-                GateStatus::Failed(format!(
-                    "{} name(s) or PR-visible string(s) stamp an aspiration instead of naming \
-                     what the code verifies",
-                    rep.new_violations.len()
-                ))
-            }
-        };
+        //
+        // The severity is the module's, not this wiring's. Rebuilding it here
+        // from `new_violations` published `Failed` for a gate whose own
+        // `is_blocking` is always false -- a module that had decided not to
+        // block, blocking anyway, over a scan of Anvil's own tree that no
+        // author of the pull request under review can act on.
+        let brand_absence_report = crate::brand_absence::BrandAbsenceGate::new()
+            .scan_tree(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+        let brand_absence_status = brand_absence_report.gate_status();
 
         let migration_boundary_status = match crate::migration::live_tree_violations() {
             Ok(v) if v.is_empty() => GateStatus::Passed,

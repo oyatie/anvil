@@ -238,6 +238,33 @@ fn a_result_list_shorter_than_the_query_list_is_an_error() {
     );
 }
 
+/// Catches: a truncated advisory list published as though it were the answer.
+/// OSV paginates a batch result past its own vulnerability thresholds and hands
+/// back a `next_page_token`. Deserialising only `vulns` dropped it silently, so
+/// the gate would name the first page of advisories and nothing would say the
+/// rest existed -- on a gate whose entire value is naming what to fix.
+#[test]
+fn a_paginated_batch_is_an_error_not_a_shorter_advisory_list() {
+    let body = r#"{"results":[{"vulns":[{"id":"RUSTSEC-2020-0071"}],
+                   "next_page_token":"ct1"},{},{}]}"#;
+    let err = OsvAdvisoryStream::parse_batch_response(body, &packages())
+        .expect_err("a paginated result cannot be read as the complete answer");
+    assert!(
+        err.contains("incomplete"),
+        "the error must say the advisory list is incomplete: {err}"
+    );
+}
+
+/// Catches: the abstention above swallowing the ordinary case. Every clean and
+/// every complete result carries no token, and those must still parse.
+#[test]
+fn an_unpaginated_batch_still_parses() {
+    let body = r#"{"results":[{"vulns":[{"id":"RUSTSEC-2020-0071"}]},{},{}]}"#;
+    let found = OsvAdvisoryStream::parse_batch_response(body, &packages())
+        .expect("a complete batch parses");
+    assert_eq!(found.len(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // The HTTP status curl reports -- rate limits, outages, and a missing status
 // ---------------------------------------------------------------------------
@@ -540,8 +567,13 @@ fn the_gate_asks_the_advisory_database_rather_than_answering_from_itself() {
         "the query no longer goes through the bounded executor with a budget"
     );
     assert!(
-        transport.contains("run_bounded_for(cmd, budget"),
-        "a per-PR network call without run_bounded_for has no deadline (invariant I5)"
+        // `run_bounded` and not `run_bounded_for(cmd, budget`: the invariant is
+        // that the subprocess is bounded, and `run_bounded(cmd, ExecClass::Api,
+        // ..)` satisfies it too. Pinning one spelling would turn this guard RED
+        // for a change that breaks nothing.
+        transport.contains("run_bounded"),
+        "a per-PR network call outside the bounded executor has no deadline \
+         (invariant I5)"
     );
     assert!(
         // The exact argument, not the mention: `body_of`'s own doc comment

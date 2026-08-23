@@ -179,8 +179,14 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         gap: "No SBOM is produced -- neither syft nor cargo-cyclonedx is invoked -- no provenance is \
               signed, and no deny.toml license or ban policy is evaluated. The audit half is real: \
               `query_batch` sends every locked version to the OSV advisory database \
-              (supply_chain_guard.rs:188), and a runner that cannot reach it publishes NotMeasured \
-              rather than a pass.",
+              (supply_chain_guard.rs:192), and a runner that cannot reach it publishes NotMeasured \
+              rather than a pass. It reads one lockfile and only one: repo_dir.join with Cargo.lock \
+              (supply_chain_guard.rs:174). Every repository in the fleet that is not a Cargo \
+              workspace is therefore permanently NotMeasured on this gate -- a narrowing, since the \
+              regex this replaced at least read a package.json filename -- and the reference tool \
+              reads any recognised lockfile. Advisory lists are complete or absent, never short: a \
+              next_page_token in any result aborts the audit (osv_stream.rs:175) rather than \
+              publishing a truncated first page as the answer.",
         blocked_on: Some(
             "an SBOM generator and a hosted signing platform; the advisory half is done",
         ),

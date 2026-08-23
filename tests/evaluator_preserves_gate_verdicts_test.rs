@@ -44,6 +44,11 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "gitops_drift_report",
     "migration_orch_report",
     "mutation_report",
+    // Gate 6 measures a real dependency graph against a real advisory database
+    // and gate 40 abstains; rebuilding either from a boolean in the wiring
+    // restores the two verdicts this lane removed.
+    "supply_chain_report",
+    "zero_day_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

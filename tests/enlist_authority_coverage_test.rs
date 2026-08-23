@@ -255,7 +255,7 @@ const A_PULL_REQUEST: (&str, u64, &str) = (
 /// doors compute for themselves, and the two the corpus turns into gate
 /// statuses. Varying them is how these tests reach the report shapes that
 /// matter without inventing a report.
-fn report_from_the_corpus(
+async fn report_from_the_corpus(
     work_dir: &Path,
     verification_gate: Option<bool>,
     review_verdict: &str,
@@ -304,6 +304,7 @@ fn report_from_the_corpus(
         .expect("the cell isolation guard reads the diff");
     let supply_chain_report = anvil::supply_chain_guard::SupplyChainGuard::new()
         .audit_supply_chain(dir, d)
+        .await
         .expect("the supply chain guard reads the diff");
     let clean_arch_report = anvil::clean_architecture_guard::CleanArchitectureGuard::new()
         .evaluate_architecture(d)
@@ -562,10 +563,10 @@ fn a_working_tree() -> tempfile::TempDir {
 ///   - every gate the cheap pre-flight names as unmeasurable in this build is
 ///     in fact one this run could not measure, so the doors are not refusing in
 ///     advance on a claim the corpus does not bear out.
-#[test]
-fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
+#[tokio::test]
+async fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
     let work = a_working_tree();
-    let report = report_from_the_corpus(work.path(), Some(true), "APPROVE");
+    let report = report_from_the_corpus(work.path(), Some(true), "APPROVE").await;
 
     let subject = report
         .subject()
@@ -686,8 +687,8 @@ fn a_change_that_moves_through_certification_is_answered_for_by_that_report() {
 /// — `run_local_test_gate` is `pub(crate)`, and `local_verification_gate` takes
 /// a `GitManager` and produces an ephemeral worktree from a clone — so the
 /// `TestGate::Errored` -> `None` mapping is pinned nowhere in `tests/`.
-#[test]
-fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
+#[tokio::test]
+async fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
     let work = a_working_tree();
 
     let mut runs: Vec<(Option<bool>, PreMergeCertificationReport)> = Vec::new();
@@ -700,7 +701,7 @@ fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
         ),
         (None, "NotMeasured", "a gate that never completed"),
     ] {
-        let report = report_from_the_corpus(work.path(), gate_said, "APPROVE");
+        let report = report_from_the_corpus(work.path(), gate_said, "APPROVE").await;
         let actual = match status_of(&report, "test_suite_status") {
             GateStatus::Passed => "Passed",
             GateStatus::Failed(_) => "Failed",
@@ -763,10 +764,11 @@ fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
 /// The `unmeasured_gates` note below is a sanity check, not a second claim:
 /// `Errored` is the shape `is_admissible()` cannot see, which is why the door
 /// asks `admission_refusal` and not the weaker predicate.
-#[test]
-fn a_review_that_did_not_complete_is_absent_evidence_not_a_blocking_verdict() {
+#[tokio::test]
+async fn a_review_that_did_not_complete_is_absent_evidence_not_a_blocking_verdict() {
     let work = a_working_tree();
-    let errored = report_from_the_corpus(work.path(), Some(true), anvil::reviewer::VERDICT_ERRORED);
+    let errored =
+        report_from_the_corpus(work.path(), Some(true), anvil::reviewer::VERDICT_ERRORED).await;
 
     assert!(
         matches!(
@@ -789,7 +791,7 @@ fn a_review_that_did_not_complete_is_absent_evidence_not_a_blocking_verdict() {
     // A review that did judge the code adversely is a different answer, and the
     // report has to tell them apart: one is a finding against the pull request,
     // the other is a run that did not happen.
-    let rejected = report_from_the_corpus(work.path(), Some(true), "REQUEST_CHANGES");
+    let rejected = report_from_the_corpus(work.path(), Some(true), "REQUEST_CHANGES").await;
     assert!(
         matches!(
             status_of(&rejected, "review_verdict_status"),
@@ -1075,10 +1077,10 @@ fn every_gate_is_published_under_its_own_name() {
 /// real diff and asks what the pull request would actually have been told —
 /// which is the only place the seven were visible, because a hand-built report
 /// says whatever it was handed.
-#[test]
-fn no_aspirational_gate_publishes_a_pass_on_the_change_the_corpus_measured() {
+#[tokio::test]
+async fn no_aspirational_gate_publishes_a_pass_on_the_change_the_corpus_measured() {
     let work = a_working_tree();
-    let report = report_from_the_corpus(work.path(), Some(true), "APPROVE");
+    let report = report_from_the_corpus(work.path(), Some(true), "APPROVE").await;
 
     let aspirational: Vec<&str> = anvil::fidelity::registry::AUDITED_GATES
         .iter()

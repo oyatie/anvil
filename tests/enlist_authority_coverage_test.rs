@@ -429,8 +429,8 @@ fn report_from_the_corpus(
         "symbol_none",
         &d.diff_content,
     );
-    let cosign_report = anvil::cosign_signer::CosignProvenanceSigner::new()
-        .generate_cosign_attestation(&d.head_sha);
+    let cosign_report =
+        anvil::cosign_signer::CosignProvenanceSigner::new().evaluate_without_signing_backend();
     let chaos_inj_report =
         anvil::chaos_injector::ChaosFaultInjector::new().inject_synthetic_chaos(&d.diff_content);
     let stacked_report =

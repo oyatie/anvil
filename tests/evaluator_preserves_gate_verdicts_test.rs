@@ -30,6 +30,7 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "ci_wallclock_report",
     "remote_cache_report",
     "shadow_traffic_report",
+    "cosign_report",
 ];
 
 #[test]

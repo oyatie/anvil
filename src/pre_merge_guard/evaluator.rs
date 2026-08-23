@@ -493,11 +493,11 @@ impl PreMergeGuard {
         let openvex_status = openvex_report.status.clone();
 
         // 47. Cosign & Sigstore Provenance Signing
-        let cosign_status = if cosign_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed("Cosign keyless OIDC transparency log signing failed.".to_string())
-        };
+        // This rebuilt the status from `cosign_report.passed`, which was the
+        // constant `true` carried out of a fabricated signature bundle. The
+        // guard owns the verdict now, so a real Sigstore backend replaces it
+        // without touching this wiring.
+        let cosign_status = cosign_report.status.clone();
 
         // 48. Pre-Merge Chaos Injection
         let chaos_injection_status = if chaos_inj_report.passed {

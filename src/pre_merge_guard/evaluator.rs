@@ -758,6 +758,11 @@ impl PreMergeGuard {
                 head_sha: diff_ctx.head_sha.clone(),
             }),
         };
+        // A gate the fidelity registry records as Aspirational implements none
+        // of the capability its name claims, so whatever it just reported, it
+        // has nothing to pass on. Before the verdict, so the withheld gates are
+        // in `unmeasured_gates` and in the matrix rather than behind them.
+        report.withhold_aspirational_passes();
         // The verdict and the unmeasured list are derived from the statuses just
         // assigned — every field, including the two self-directed gates — so
         // neither can drift from the matrix it summarises.

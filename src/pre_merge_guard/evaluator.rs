@@ -378,11 +378,7 @@ impl PreMergeGuard {
         let ci_wallclock_status = ci_wallclock_report.status.clone();
 
         // 28. DAG Predictive Test Selection
-        let predictive_test_status = if predictive_test_report.is_optimized {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(predictive_test_report.summary.clone())
-        };
+        let predictive_test_status = predictive_test_report.status.clone();
 
         // 29. Compile-Time & Macro Bloat Profiler
         let compile_profile_status = if compile_profile_report.is_lean {
@@ -552,11 +548,7 @@ impl PreMergeGuard {
         };
 
         // 56. Flaky-Test Quarantine Lifecycle
-        let flake_quarantine_status = if flake_quarantine_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Warning(flake_quarantine_report.summary.clone())
-        };
+        let flake_quarantine_status = flake_quarantine_report.status.clone();
 
         // 57. Zero-Trust SPIFFE Workload Identity
         let zero_trust_workload_status = if zero_trust_report.passed {

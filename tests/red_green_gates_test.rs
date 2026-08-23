@@ -300,28 +300,41 @@ fn test_wasm_sandbox_green_safe_wasm_policy() {
 // 9. Flaky-Test Quarantine Lifecycle
 // =========================================================================
 
+/// The red/green pair this replaces tested nothing.
+///
+/// The "RED" half asserted `quarantined_tests_isolated > 0` for a path
+/// containing "flaky" -- which asserts a substring was found in a filename,
+/// not that the gate goes red. The "GREEN" half asserted `report.passed`,
+/// which was the literal `true`, so it held for every input including the
+/// flaky one. A pair where the red case never reddens and the green case
+/// cannot fail is worse than no test: it is the evidence someone cites when
+/// asking whether this gate works.
+///
+/// Anvil retains no test-run history, so no input distinguishes a flaky test
+/// from a stable one. The gate reports that, and these pin it.
 #[test]
-fn test_flake_quarantine_red_flag_unrehabilitated_flaky_test() {
+fn flake_quarantine_has_no_input_that_produces_a_verdict() {
     let manager = FlakeQuarantineLifecycle::new();
-    // RED: Modifying a known flaky test without rehabilitation tag
-    let changed_files = vec!["tests/flaky_network_test.rs".to_string()];
-    let report = manager.evaluate_quarantine_lifecycle(&changed_files);
-    assert!(
-        report.quarantined_tests_isolated > 0,
-        "Expected False Green prevention: Flaky test must be isolated to quarantine"
-    );
-}
 
-#[test]
-fn test_flake_quarantine_green_nominal_unit_test() {
-    let manager = FlakeQuarantineLifecycle::new();
-    // GREEN: Normal, non-flaky test
-    let changed_files = vec!["tests/unit_calculator_test.rs".to_string()];
-    let report = manager.evaluate_quarantine_lifecycle(&changed_files);
-    assert!(
-        report.passed,
-        "Expected False Red prevention: Clean unit test must PASS"
-    );
+    let flaky_named =
+        manager.evaluate_quarantine_lifecycle(&["tests/flaky_network_test.rs".to_string()]);
+    let clean_named =
+        manager.evaluate_quarantine_lifecycle(&["tests/unit_calculator_test.rs".to_string()]);
+
+    for (label, report) in [("flaky-named", &flaky_named), ("clean-named", &clean_named)] {
+        assert_eq!(
+            report.status.unmeasured_gate_id(),
+            Some("flake_quarantine_status"),
+            "{label}: a filename says nothing about non-determinism"
+        );
+        assert!(!report.passed, "{label}: nothing measured is not a pass");
+    }
+
+    // The name heuristic still reports what it saw -- it is retained as data,
+    // not as a verdict -- so the two inputs remain distinguishable in the
+    // counters even though neither yields a pass.
+    assert!(flaky_named.quarantined_tests_isolated > 0);
+    assert_eq!(clean_named.quarantined_tests_isolated, 0);
 }
 
 // =========================================================================

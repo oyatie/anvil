@@ -284,10 +284,26 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
     GateFidelity {
         gate_id: "zero_trust_workload_status",
         aspiration: "Verify workload identity via SPIFFE/SPIRE issued mTLS certificates.",
-        reference: "SPIFFE/SPIRE",
+        reference: "SPIFFE/SPIRE; Istio PeerAuthentication STRICT. For the lint this actually is: \
+                    CWE-319, gosec G107, semgrep insecure-transport",
         fidelity: Fidelity::Heuristic,
-        gap: "Checks for the substring \"http://\" in the diff \
-              (zero_trust_workload/identity_auditor.rs:15).",
+        gap: "Observes no SPIFFE ID, no SVID, no certificate and no mesh policy. All four are \
+              runtime state -- a URI SAN inside an X.509 document handed to a process over the \
+              Workload API after an agent attested its PID, a PeerAuthentication object in STRICT \
+              mode inside a cluster -- and none of them can appear in a diff. Neither direction of \
+              inference holds either: a tree with no plaintext URL can be running a mesh in \
+              PERMISSIVE mode with no workload identity at all. What runs is a CWE-319 \
+              cleartext-transport lint over added lines. It was the substring \"http://\", which \
+              failed a merge for a licence URL in a doc comment; it now drops the comment tail in \
+              code_before_comment (identity_auditor.rs:109), skips prose and fixture paths in \
+              path_is_out_of_scope (identity_auditor.rs:98), and requires the authority after the \
+              scheme to open with is_ascii_alphanumeric and not be one of the LOOPBACK_HOSTS \
+              (identity_auditor.rs:147-148). Unlike the lints of that class it names, it is not \
+              sink-anchored: there is no parser here, so it cannot tell a URL that reaches an HTTP \
+              client from one that does not, and a URL assembled across lines or read from \
+              configuration this diff does not touch is invisible to it. The scorecard name and \
+              the published summary no longer claim otherwise; the gate id is unchanged, so the \
+              id alone still reads as a stronger claim than the check supports.",
         blocked_on: Some("a SPIFFE/SPIRE control plane"),
     },
     GateFidelity {
@@ -591,6 +607,35 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               never arrived. Both used to return early with a pass declaring the ghost migration \
               check clean; both now report that nothing was scanned.",
         blocked_on: Some("a shadow database"),
+    },
+    GateFidelity {
+        gate_id: "security_scan_status",
+        aspiration: "Detect credentials a change leaks, and block the merge on a credential that \
+                     is live.",
+        reference: "TruffleHog, whose distinguishing feature is calling the issuing provider to \
+                    confirm the key is active; gitleaks per-rule entropy and allowlists; GitHub \
+                    secret scanning push protection with partner validation",
+        fidelity: Fidelity::Heuristic,
+        gap: "Calls no provider and verifies nothing, which is the whole of what separates this \
+              from the reference tool: a finding here is a shape that resembles a credential, \
+              never a credential confirmed to be live, so it cannot tell a rotated key from a \
+              working one. Seven regexes over added lines in SECRET_RULES (scanner.rs:59). Four \
+              carry a provider-issued prefix and are conclusive on their own, so they run with \
+              min_entropy: 0.0 and no filtering (scanner.rs:63). Two had no anchor and were the \
+              two that produced this gate's false merge blocks; each now captures the candidate \
+              rather than the line and filters it -- `sk-[A-Za-z0-9]{24,}` at min_entropy: 3.5 \
+              (scanner.rs:97,99) and a quoted value of eight or more characters after the word \
+              password at min_entropy: 3.0 (scanner.rs:118,120). shannon_entropy is a real \
+              logarithm (scanner.rs:136) and the file had none before, but it is the last filter \
+              and not the decision: is_credential_shaped rejects a candidate made only of \
+              is_ascii_alphabetic characters and identifier punctuation before entropy is ever \
+              consulted (scanner.rs:161,170), because entropy alone cannot reject a \
+              kebab-case identifier. The reference config additionally anchors its own key rule on \
+              the literal marker T3BlbkFJ that every issued key of that vendor embeds; this rule \
+              does not, so a long enough base62 run behind the prefix is a finding whoever issued \
+              it. Nothing here reads git history, so a credential added by an earlier commit and \
+              merely retained by this one is outside the scan.",
+        blocked_on: Some("network egress to the issuing providers, for verification"),
     },
 ];
 

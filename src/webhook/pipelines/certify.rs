@@ -380,7 +380,7 @@ pub async fn certify_pull_request(
     // 58. ZeroTrustWorkloadGate: Zero-Trust SPIFFE/SPIRE Workload Identity & mTLS Gate
     let zero_trust_report = state
         .zero_trust_workload
-        .evaluate_workload_identity(&diff_ctx.diff_content);
+        .evaluate_cleartext_transport(&diff_ctx.diff_content);
 
     // 59. CarbonAwareComputeRatchet: GreenOps Carbon-Aware Compute Efficiency Ratchet
     // Nothing meters CPU time or grid intensity; the two literals passed here

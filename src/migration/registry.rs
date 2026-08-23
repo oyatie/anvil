@@ -1401,7 +1401,9 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                             iam/adapters/identity-workload-svid-{trustd,operator-k8s} + \
                             iam/facade/identity-workload-rest",
         counterpart_loc: 9000,
-        evidence: "119 lines, PURE. audit_spiffe_and_mtls + IdentityAuditor. Searched by CONCEPT, not \
+        evidence: "202 lines, PURE. audit_cleartext_transport + IdentityAuditor -- renamed from \
+                  audit_spiffe_and_mtls, which named a property no text scan can observe. \
+                  Searched by CONCEPT, not \
                   vendor name: oyatie implements SPIFFE as identity-workload-svid-*. \
                   iam/core/identity-workload-svid-kernel (586) has SpiffeId::parse, WorkloadPath, \
                   trust_domain_authority, bind_caller_tenant, X509Svid, SvidRequest; plus \

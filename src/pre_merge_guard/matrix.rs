@@ -320,8 +320,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "zero_trust_workload_status",
-        "🔐 Zero-Trust SPIFFE Workload Identity",
-        "Cryptographic SPIFFE ID workload attestation & mTLS encryption",
+        "🔓 Cleartext Transport Lint (CWE-319)",
+        "Added lines free of plaintext endpoints; no SPIFFE or mTLS is observed",
     ),
     (
         "carbon_compute_status",
@@ -361,7 +361,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "security_scan_status",
         "🔐 Secret & Credential Scan",
-        "Deep entropy scan for leaked credentials",
+        "Provider-anchored regex plus Shannon entropy; no live key verification",
     ),
     (
         "schema_compat_status",

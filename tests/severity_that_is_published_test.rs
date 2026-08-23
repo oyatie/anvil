@@ -171,14 +171,50 @@ fn the_advisory_status_carries_the_count_and_the_sentence() {
             report.gate_status()
         );
     };
-    assert!(
-        sentence.contains(&report.new_violations.len().to_string()),
-        "the sentence must state how many violations were found, or a reader \
-         cannot tell one from twelve: {sentence}"
+    assert_eq!(
+        sentence,
+        "2 site(s) in Anvil's own tree, 2 occurrence(s) in all, stamp an aspiration \
+         instead of naming what the code verifies",
+        "the sentence must state what was found, in full. `contains(\"1\")` on a \
+         one-violation fixture is satisfied by almost any string"
     );
+}
+
+/// Catches: the published count counting occurrences and calling them findings.
+///
+/// `new_violations` is one entry per occurrence because the ledger in `finish`
+/// spends a per-`(path, stamp)` occurrence ceiling down one hit at a time. The
+/// sentence is not the ledger, and on this repository's own tree the difference
+/// is a factor of two: twelve occurrences at six sites, five of them the same
+/// stamp repeated inside one string literal on one line, every one of them
+/// carrying byte-identical evidence. That sentence is now composed in
+/// `gate_status` and rendered on every certified pull request in the fleet, so
+/// the number in it is this gate's to stand behind.
+#[test]
+fn the_advisory_sentence_counts_sites_not_repeated_occurrences() {
+    let gate = BrandAbsenceGate::with_allowlist(vec![]);
+    let report = gate.scan_source(
+        "src/synthetic/new_module.rs",
+        "info!(\"hyperscaler hyperscaler hyperscaler\");\n",
+    );
+
+    assert_eq!(
+        report.new_violations.len(),
+        3,
+        "fixture sanity: one line, one stamp, three occurrences -- got {:?}",
+        report.new_violations
+    );
+
+    let GateStatus::Warning(sentence) = report.gate_status() else {
+        panic!(
+            "expected an advisory status, got {:?}",
+            report.gate_status()
+        );
+    };
     assert!(
-        !sentence.trim().is_empty() && sentence.len() > 20,
-        "an advisory status with no sentence is a row with nothing in it: {sentence}"
+        sentence.starts_with("1 site(s) in Anvil's own tree, 3 occurrence(s) in all,"),
+        "one line carrying one stamp three times is one finding a reader can go \
+         and look at, not three: {sentence}"
     );
 }
 

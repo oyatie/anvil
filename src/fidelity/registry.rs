@@ -256,17 +256,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: None,
     },
     GateFidelity {
-        gate_id: "predictive_test_status",
-        aspiration: "Select the minimal set of affected test targets from a real dependency graph, and \
-                     report the pruning ratio actually achieved.",
-        reference: "Google TAP affected-targets analysis; Meta Predictive Test Selection (arXiv:1810.05286)",
-        fidelity: Fidelity::Heuristic,
-        gap: "Computes a package DAG, but then sets is_optimized to true (predictive_test_selector/mod.rs:64) \
-              so the guard reports PASSED regardless of the subprocess outcome. run_sync_bounded handles \
-              metadata subprocesses (predictive_test_selector/workspace_dag.rs:17).",
-        blocked_on: None,
-    },
-    GateFidelity {
         gate_id: "unresolved_review_status",
         aspiration: "Block on unresolved review threads using authoritative thread state.",
         reference: "GitHub GraphQL pullRequest.reviewThreads.nodes { isResolved }",
@@ -438,6 +427,31 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               `evaluate_without_sandbox_runtime` is now the only path \
               (ephemeral_sandbox/mod.rs:37).",
         blocked_on: Some("a container or microVM runtime the review pipeline can drive"),
+    },
+    GateFidelity {
+        gate_id: "flake_quarantine_status",
+        aspiration: "Detect non-deterministic tests from run history and isolate them into a \
+                     quarantine lane so they stop blocking merges.",
+        reference: "Google flaky-test infrastructure; Meta's Probabilistic Flakiness Score",
+        fidelity: Fidelity::Aspirational,
+        gap: "Nothing retains test-run history, so no test can be shown to be non-deterministic and \
+              there is no lane to isolate one into. The verdict used to be a literal, and the \
+              counters come from a substring match for \"flaky\" against changed file paths -- \
+              retained as data, not as evidence (flake_quarantine/quarantine_manager.rs:14).",
+        blocked_on: Some("per-test run history across attempts, which Anvil does not record"),
+    },
+    GateFidelity {
+        gate_id: "predictive_test_status",
+        aspiration: "Select the tests a change can affect from the dependency graph and hold PR \
+                     test wall-clock under a budget.",
+        reference: "Bazel target determination; Google's affected-target selection",
+        fidelity: Fidelity::Partial,
+        gap: "The package DAG selection is real, but nothing times a test run, so the wall-clock \
+              claim is unmeasured; the verdict is now whether the selection pruned anything at all \
+              rather than the literal it was. Discovery used to invent a package when it found \
+              none; the verdict is now `let is_optimized = skipped > 0;` \
+              (predictive_test_selector/mod.rs:84).",
+        blocked_on: Some("a timed test run to measure the wall-clock budget against"),
     },
 ];
 

@@ -31,9 +31,16 @@
 //! which upstream files under the opt-in `restriction` group — and it is
 //! published as one.
 //!
-//! A hit is [`GateStatus::Failed`], because it is measured evidence read off the
-//! change itself. No hit is [`GateStatus::NotMeasured`], not `Passed`: nothing
-//! was made to fail, so nothing survived failing.
+//! A hit is [`GateStatus::Warning`]. It is measured evidence read off the change
+//! itself, but the scan cannot tell a test from production code, clippy files
+//! the same property under the opt-in `restriction` group rather than a default
+//! deny, and the first version of this gate that blocked was red on ten hits in
+//! its own diff with no true positive among them. Debt, surfaced; not a refused
+//! merge. The feature-flag gate in this same change reasons its way to exactly
+//! this conclusion for exactly this reason.
+//!
+//! No hit is [`GateStatus::NotMeasured`], not `Passed`: nothing was made to
+//! fail, so nothing survived failing.
 
 use serde::{Deserialize, Serialize};
 
@@ -58,9 +65,6 @@ pub struct UnhandledAwait {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChaosInjectorReport {
     pub status: GateStatus,
-    /// Whether a fault was injected AND the system handled it. False always,
-    /// today: no fault is injected. A clean lint is not a survived experiment.
-    pub passed: bool,
     pub unhandled_awaits: Vec<UnhandledAwait>,
     pub summary: String,
 }
@@ -90,7 +94,6 @@ impl ChaosFaultInjector {
                     gate_id: GATE_ID.to_string(),
                     reason: NO_RUNNING_SYSTEM.to_string(),
                 },
-                passed: false,
                 unhandled_awaits,
                 summary: NO_RUNNING_SYSTEM.to_string(),
             };
@@ -99,7 +102,7 @@ impl ChaosFaultInjector {
         let summary = format!(
             "{} added line(s) unwrap the result of an awaited call, which panics when that \
              call fails. No fault was injected; this is a lint over the diff, the property \
-             clippy::unwrap_used checks: {}",
+             clippy::unwrap_used checks, and it cannot tell a test from production code: {}",
             unhandled_awaits.len(),
             unhandled_awaits
                 .iter()
@@ -109,8 +112,7 @@ impl ChaosFaultInjector {
         );
 
         ChaosInjectorReport {
-            status: GateStatus::Failed(summary.clone()),
-            passed: false,
+            status: GateStatus::Warning(summary.clone()),
             unhandled_awaits,
             summary,
         }
@@ -121,9 +123,12 @@ impl ChaosFaultInjector {
     /// `.query().await.unwrap()`, so a panic on any other awaited call was
     /// invisible to it.
     ///
-    /// Text, not syntax: `.await` inside a string literal or a comment on an
-    /// added line counts, and an unwrap split across lines does not. The
-    /// registry gap says so.
+    /// Text, not syntax, but only over [`code_only`]: an occurrence inside a
+    /// comment or a string literal is prose ABOUT the property, not the
+    /// property. Scanning the raw line made this gate red on its own
+    /// implementation, on its own tests' fixture strings, and on the registry
+    /// sentence describing it -- ten hits, none of them an unwrapped await. An
+    /// unwrap split across lines is still invisible; the registry gap says so.
     fn unwraps_on_awaited_calls(diff_content: &str) -> Vec<UnhandledAwait> {
         let mut out = Vec::new();
         let mut current_file = String::new();
@@ -137,7 +142,10 @@ impl ChaosFaultInjector {
                 continue;
             }
             let code_line = line[1..].trim();
-            let squashed: String = code_line.chars().filter(|c| !c.is_whitespace()).collect();
+            let squashed: String = code_only(code_line)
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
             if squashed.contains(".await.unwrap()") {
                 out.push(UnhandledAwait {
                     file_path: current_file.clone(),
@@ -149,6 +157,41 @@ impl ChaosFaultInjector {
     }
 }
 
+/// One line of Rust with its commentary and its string-literal CONTENTS removed,
+/// so a scan over it sees code and nothing else.
+///
+/// A `//` comment truncates the line. A string literal keeps its quotes and
+/// loses its body, so `contains(".await.unwrap()")` no longer matches the source
+/// line of a scan looking for that text, nor a test fixture quoting it. Escapes
+/// are honoured so `"\""` does not leave the scanner inside a string forever.
+///
+/// Character-level, not a parser: raw strings (`r#"..."#`) and a `//` inside a
+/// character literal are not modelled. Both would have to be added to this
+/// module's own diff to matter, and this is a lint, not a compiler.
+pub fn code_only(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        match c {
+            // The escaped character is part of the literal body, so it is
+            // dropped with the rest of it -- and `\"` must not be read as the
+            // closing quote.
+            '\\' if in_string => {
+                chars.next();
+            }
+            '"' => {
+                in_string = !in_string;
+                out.push('"');
+            }
+            '/' if !in_string && chars.peek() == Some(&'/') => break,
+            _ if !in_string => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,7 +201,7 @@ mod tests {
         let report = ChaosFaultInjector::new().scan_for_unhandled_await_without_a_running_system(
             "+++ b/src/net.rs\n+ let resp = client.send().await.unwrap();",
         );
-        assert!(matches!(report.status, GateStatus::Failed(_)));
+        assert!(matches!(report.status, GateStatus::Warning(_)));
         assert_eq!(report.unhandled_awaits.len(), 1);
     }
 
@@ -167,6 +210,28 @@ mod tests {
         let report = ChaosFaultInjector::new()
             .scan_for_unhandled_await_without_a_running_system("+ let n = 1;");
         assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
-        assert!(!report.passed);
+        assert!(report.unhandled_awaits.is_empty());
+    }
+
+    #[test]
+    fn test_prose_about_the_property_is_not_the_property() {
+        // Every line below is one this module's own diff adds. Scanning the raw
+        // text made the gate red on all of them.
+        let own_diff = concat!(
+            "+++ b/src/chaos_injector/mod.rs\n",
+            "+    /// `.send().await.unwrap()` and `.query().await.unwrap()`\n",
+            "+        if squashed.contains(\".await.unwrap()\") {\n",
+            "+++ b/tests/gates_that_cannot_fire_test.rs\n",
+            "+        \"+++ b/src/net.rs\\n+ let resp = client.send().await.unwrap();\",\n",
+            "+    let n = 1; // client.send().await.unwrap() used to live here\n",
+        );
+        let report =
+            ChaosFaultInjector::new().scan_for_unhandled_await_without_a_running_system(own_diff);
+        assert_eq!(
+            report.unhandled_awaits,
+            vec![],
+            "comments and string literals are prose about the lint, not a hit"
+        );
+        assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
     }
 }

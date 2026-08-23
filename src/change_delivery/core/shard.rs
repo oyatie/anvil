@@ -10,8 +10,8 @@ use super::policy::LandingPolicy;
 #[path = "occupancy.rs"]
 pub mod occupancy;
 pub use occupancy::{
-    admit_spawn, anvil_hubs, is_open_test_crate, occupy_move, path_sets_disjoint, SpawnKind,
-    SpawnRefused,
+    SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, is_open_test_crate, occupy_move,
+    path_sets_disjoint,
 };
 use std::collections::{BTreeMap, BTreeSet};
 

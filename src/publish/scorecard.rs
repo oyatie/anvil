@@ -174,6 +174,28 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         }
         headline.push_str(".\n");
         s.push_str(&headline);
+        // A finding on a certified pull request is still a finding.
+        //
+        // `findings` was built above on both branches and emitted on one. A
+        // `Warning` is `is_acceptable()`, so a report whose only findings are
+        // warnings certifies -- the warning could not reach the blocked branch
+        // by itself, and was discarded on the only branch it could reach. All
+        // seventy-two gates were exposed: the two capped scanner gates, and
+        // `trace_context_guard`, which chose `Warning` over `Passed` in so many
+        // words *to avoid* rendering as a bare tick.
+        //
+        // Under a heading that says what the block is: an unlabelled finding
+        // beneath a green verdict reads as a defect that blocked nothing for no
+        // stated reason, and a reader learns to skip it. Nothing is emitted when
+        // there is nothing to say, so a clean scorecard is unchanged.
+        if !findings.is_empty() {
+            s.push_str(&format!(
+                "\n⚠️ {} advisory finding(s) — acceptable, not blocking this merge:\n\n",
+                findings.len()
+            ));
+            s.push_str(&findings.join("\n"));
+            s.push('\n');
+        }
         // A passing gate produces no finding line, so it never carried the
         // fidelity note that `finding_line` attaches. That put the disclosure
         // only on the failure path -- and the green path is the one moment a

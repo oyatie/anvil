@@ -31,7 +31,7 @@ fi
 # through `tail` is exactly how the first version of this check would have
 # swallowed the failure.
 echo "[pre-push] checking clippy -D warnings..."
-clippy_out=$(cargo clippy --all-targets --quiet -- -D warnings 2>&1)
+clippy_out=$(cargo clippy --all-targets --locked --quiet -- -D warnings 2>&1)
 clippy_rc=$?
 if [ "$clippy_rc" -ne 0 ]; then
     echo "$clippy_out" | tail -20

@@ -340,8 +340,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "mutation_status",
-        "💥 AST Chaos Mutation Test Adequacy",
-        "Critical branches verified against surviving mutants",
+        "💥 Mutation Adequacy of the Changed Lines",
+        "Runs cargo-mutants over the changed lines; blocks on a mutant the suite fails to kill",
     ),
     (
         "feature_flag_status",

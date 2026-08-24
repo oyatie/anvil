@@ -406,11 +406,18 @@ fn an_advisory_finding_does_not_turn_the_verdict_red() {
     let report = certified_with_one_warning("performance_concurrency_status", "a timing risk");
     let body = publish::scorecard::render(&report);
 
+    // The verdict stays green. The count does not say 72/72, because a
+    // `Warning` is no longer scored as a pass: `gate_counts` used to fold
+    // `Warning` and `NotMeasured` into "passed" via `is_acceptable()`, so the
+    // headline claimed a clean sweep over a corpus that had neither. Certified
+    // and unanimous are different claims, and this test asserts the first.
     assert!(
         body.contains(&format!(
-            "✅ Certified — {TOTAL_GATES}/{TOTAL_GATES} gates passed."
+            "✅ Certified — {}/{TOTAL_GATES} gates passed (1 warned).",
+            TOTAL_GATES - 1
         )),
-        "the verdict line must be unchanged; the pull request is certified:\n{body}"
+        "the verdict must stay certified, with the warned gate counted as warned \
+         rather than as a pass:\n{body}"
     );
     assert!(
         !body.contains("❌ Blocked"),

@@ -8,8 +8,17 @@ use crate::git_manager::PrDiffContext;
 pub mod orphan_sweeper;
 pub use orphan_sweeper::{OrphanManifestFinding, OrphanSweeper};
 
+use crate::pre_merge_guard::report::GateStatus;
+
+const GATE_ID: &str = "gitops_drift_status";
+
+const NO_MANIFEST_IN_SCOPE: &str = "no changed file matched the GitOps manifest marker set (`applicationset`, \
+     `application.yaml`), so no desired-state deletion was scanned; an empty scope is not a \
+     reconciled one";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitOpsDriftReport {
+    pub status: GateStatus,
     pub is_safe: bool,
     pub orphan_findings: Vec<OrphanManifestFinding>,
     pub summary: String,
@@ -45,6 +54,40 @@ impl GitOpsDriftReconciler {
         let orphan_findings = self
             .sweeper
             .scan_orphan_risk(&diff_ctx.changed_files, &diff_ctx.diff_content);
+
+        // Nothing in scope is not the same as nothing wrong. The marker set is
+        // two path fragments, so a repository that files its manifests anywhere
+        // else can never put one in scope, and a pass would certify a
+        // reconciliation never performed.
+        //
+        // ArgoCD is not the precedent for this at its reporting layer -- the
+        // opposite. `controller/state.go` starts at `SyncStatusCodeSynced` and
+        // only downgrades inside the loop over target resources, so an
+        // Application with no targets displays green; ArgoCD's own issue #26038
+        // records the consequence, that "it is not possible to know if the
+        // Application actually contained 0 resources ... or the cache was
+        // unavailable". Where ArgoCD does refuse an empty scope is the *action*
+        // layer: auto-sync declines when every managed resource would be pruned
+        // ("auto-sync will wipe out all resources") unless `allowEmpty` is set
+        // explicitly. That is the shape here. `NotMeasured` is
+        // `is_acceptable()`, so the badge does not accuse the pull request of a
+        // defect; `admission_refusal` withholds the merge.
+        if !diff_ctx
+            .changed_files
+            .iter()
+            .any(|f| OrphanSweeper::is_gitops_manifest(f))
+        {
+            return Ok(GitOpsDriftReport {
+                status: GateStatus::NotMeasured {
+                    gate_id: GATE_ID.to_string(),
+                    reason: NO_MANIFEST_IN_SCOPE.to_string(),
+                },
+                is_safe: false,
+                orphan_findings,
+                summary: NO_MANIFEST_IN_SCOPE.to_string(),
+            });
+        }
+
         let is_safe = orphan_findings.is_empty();
 
         let summary = if is_safe {
@@ -57,6 +100,11 @@ impl GitOpsDriftReconciler {
         };
 
         Ok(GitOpsDriftReport {
+            status: if is_safe {
+                GateStatus::Passed
+            } else {
+                GateStatus::Warning(summary.clone())
+            },
             is_safe,
             orphan_findings,
             summary,
@@ -87,6 +135,11 @@ mod tests {
         let rep = rec
             .evaluate_gitops_drift(Path::new("."), &diff_ctx)
             .unwrap();
-        assert!(rep.is_safe);
+
+        // This asserted `rep.is_safe` for a diff touching a Helm values file,
+        // which is never in the manifest scope -- so it certified the vacuous
+        // pass rather than testing the sweep. Out of scope is now unmeasured.
+        assert_eq!(rep.status.unmeasured_gate_id(), Some(GATE_ID));
+        assert!(!rep.is_safe);
     }
 }

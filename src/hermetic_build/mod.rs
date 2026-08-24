@@ -33,6 +33,38 @@ impl HermeticBuildValidator {
     ///
     /// The pipeline passed the literal `"sha256_clean"` as both digests, so
     /// the equality check compared a string to itself.
+    /// The impurity scan, without the digest comparison.
+    ///
+    /// The gate has two halves. Comparing two build digests is unmeasured --
+    /// nothing builds this tree twice, and the two literals the pipeline used
+    /// to pass were the same string. But the diff scan for `SystemTime::now()`
+    /// and `env!("HOME")` is real, fires on code someone would plausibly write,
+    /// and is why the registry grades this gate `Heuristic` rather than
+    /// `Aspirational`. Reporting `NotMeasured` for the whole gate threw that
+    /// half away; this keeps it and withholds only the half nothing measured.
+    pub fn scan_for_impurity_without_build_pair(&self, source_diff: &str) -> HermeticBuildReport {
+        match self.checker.check_build_artifacts("", "", source_diff) {
+            // An impurity the scan can name is a measurement, and it fails.
+            result @ ReproducibilityResult::NonDeterministic { .. }
+                if source_diff.contains("SystemTime::now()")
+                    || source_diff.contains("env!(\"HOME\")") =>
+            {
+                HermeticBuildReport {
+                    status: GateStatus::Failed(
+                        "Non-hermetic input in the diff: a build embedding wall-clock time or an \
+                         ambient path cannot reproduce byte for byte."
+                            .to_string(),
+                    ),
+                    passed: false,
+                    result,
+                }
+            }
+            // No impurity found is not a reproducible build: nothing compared
+            // two binaries, so the property the gate is named for is unknown.
+            _ => self.evaluate_without_build_pair(),
+        }
+    }
+
     pub fn evaluate_without_build_pair(&self) -> HermeticBuildReport {
         HermeticBuildReport {
             status: GateStatus::NotMeasured {

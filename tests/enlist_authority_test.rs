@@ -1741,7 +1741,7 @@ fn a_report_carries_back_the_status_each_named_gate_was_given() {
         report.unmeasured_gates
     );
     assert_ne!(
-        report.gate_counts(),
+        (report.gate_counts().passed, report.gate_counts().failed),
         (TOTAL_GATES, 0),
         "a ragged corpus counted as a clean sweep means the counts are derived \
          from something other than the statuses"
@@ -1899,7 +1899,7 @@ fn a_report_no_certification_run_produced_is_refused_however_well_it_reads() {
          the predicate the fabricator was built to satisfy"
     );
     assert_eq!(
-        forged.gate_counts(),
+        (forged.gate_counts().passed, forged.gate_counts().failed),
         (TOTAL_GATES, 0),
         "fixture sanity: nothing that counts gates can tell this report from one \
          the run produced. Provenance is the only thing that separates them"
@@ -2852,13 +2852,23 @@ fn an_endorsement_accounts_for_the_gate_that_did_not_simply_pass() {
         .iter()
         .filter(|s| matches!(s, GateStatus::Passed | GateStatus::AutoUpdated))
         .count();
+    let counts = report.gate_counts();
     assert_eq!(
-        (report.gate_counts().0, clean_passes),
-        (TOTAL_GATES, TOTAL_GATES - 1),
-        "fixture sanity: gate_counts() scores a Warning as acceptable, so its \
-         ready-made figure here is the whole corpus while the number of gates that \
-         actually passed is one fewer. Publishing the first as what passed is P10, \
-         and the two numbers are how this test tells them apart"
+        (counts.passed, clean_passes),
+        (TOTAL_GATES - 1, TOTAL_GATES - 1),
+        "gate_counts() once scored a Warning as acceptable, so its figure here was \
+         the whole corpus while the gates that actually passed were one fewer, and \
+         publishing the first as what passed was P10. The tally is now split four \
+         ways, so the two numbers agree and there is no second answer to publish."
+    );
+    assert_eq!(
+        counts.warned, 1,
+        "the warned gate must still be visible, not folded into either bucket"
+    );
+    assert_eq!(
+        counts.total(),
+        TOTAL_GATES,
+        "the four buckets must still partition the corpus"
     );
 
     // Emptiness is not an available answer. Anvil publishing nothing at all is

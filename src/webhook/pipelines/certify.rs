@@ -15,7 +15,6 @@ use tracing::{info, warn};
 use super::review::execute_pr_review;
 use crate::git_manager::PrDiffContext;
 use crate::pre_merge_guard::report::PreMergeCertificationReport;
-use crate::progressive_rollout::DeploymentRing;
 use crate::webhook::AppState;
 
 /// How long an enlist door waits behind another run of the corpus for the same
@@ -160,9 +159,13 @@ pub async fn certify_pull_request(
         .evaluate_adr_parity(repo_dir, diff_ctx)?;
 
     // 17. ShuffleShardSimulator: Cell Shuffle-Sharding & Combinatorial Blast-Radius Gate
+    // A tenant-to-cell assignment is control-plane state and nothing here reads
+    // one; a pull request diff carries no tenant table. The gate used to write
+    // its own two-tenant topology four lines above measuring it, so the overlap
+    // it found was a property of that literal and not of the pull request.
     let shuffle_report = state
         .shuffle_shard_simulator
-        .evaluate_shuffle_sharding(repo_dir, diff_ctx)?;
+        .evaluate_without_topology_source();
 
     // 18. TraceContextGuard: W3C Distributed Tracing & Span Invariant Gate
     let trace_report = state
@@ -200,9 +203,11 @@ pub async fn certify_pull_request(
         .evaluate_gitops_drift(repo_dir, diff_ctx)?;
 
     // 25. CanaryRolloutGuard: Deterministic Traffic Shifter & Burn Breaker Gate
-    let canary_report = state
-        .canary_rollout_guard
-        .evaluate_rollout_health(repo_dir, diff_ctx)?;
+    // No canary is deployed and no metrics endpoint is reachable -- this crate
+    // has no HTTP client -- so there is no error budget burn rate to compare.
+    // The guard used to write the reading, the ceiling and the latency bound
+    // together, deciding the branch at compile time.
+    let canary_report = state.canary_rollout_guard.evaluate_without_metrics_source();
 
     // 26. ClusterStateAuditor: Deterministic Live Readback vs Git Desired-State Gate
     let cluster_audit_report = state
@@ -329,15 +334,15 @@ pub async fn certify_pull_request(
     let aca_report = state.automated_canary.evaluate_without_metrics_source();
 
     // 45. ProgressiveRingOrchestrator: 4-Ring Progressive Rollout Schedule
-    // Consumes the canary verdict. `is_acceptable()` is true for NotMeasured:
-    // an unqueried canary is not an unhealthy one, and halting every ring on
-    // absent telemetry would be a fabricated accusation. This gate therefore
-    // inherits the canary's lack of evidence; `automated_canary_status` in the
-    // fidelity registry records what is missing.
-    let ring_report = state.progressive_rollout.evaluate_ring_rollout(
-        &DeploymentRing::Ring0Canary,
-        aca_report.status.is_acceptable(),
-    );
+    // This used to inherit the canary's acceptability, which is true for
+    // NotMeasured -- so an unqueried canary advanced the ring. Azure Safe
+    // Deployment Practices runs the other way: a phase begins only once health
+    // checks pass, and the absence of a negative signal is not an affirmative
+    // one. Judging the advance needs rollout state -- an elapsed bake clock and
+    // the regions currently taking the rollout -- and a diff carries neither,
+    // so the gate reports what is missing instead of inheriting a verdict about
+    // something else.
+    let progressive_ring_report = state.progressive_rollout.evaluate_without_rollout_state();
 
     // 46. HermeticBuildValidator: Deterministic Bit-for-Bit Reproducibility
     // Nothing builds this tree twice, so there is no second digest to compare.
@@ -619,7 +624,7 @@ pub async fn certify_pull_request(
         &formal_report,
         &deadlock_report,
         &aca_report,
-        &ring_report,
+        &progressive_ring_report,
         &hermetic_report,
         &openvex_report,
         &cosign_report,

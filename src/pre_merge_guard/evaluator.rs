@@ -151,7 +151,7 @@ impl PreMergeGuard {
         formal_report: &FormalVerificationReport,
         deadlock_report: &DeadlockReport,
         aca_report: &AutomatedCanaryReport,
-        ring_report: &ProgressiveRingReport,
+        progressive_ring_report: &ProgressiveRingReport,
         hermetic_report: &HermeticBuildReport,
         openvex_report: &OpenVexReport,
         cosign_report: &CosignReport,
@@ -286,11 +286,11 @@ impl PreMergeGuard {
         let adr_status = adr_report.status.clone();
 
         // 16. Cell Shuffle Sharding
-        let shuffle_status = if shuffle_report.is_isolated {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(shuffle_report.summary.clone())
-        };
+        // The guard used to write the topology it then measured, so `is_isolated`
+        // was decided at compile time. It owns a GateStatus now and this carries
+        // it through: rebuilding from a boolean would collapse NotMeasured --
+        // no mapping table was read -- back into a pass.
+        let shuffle_status = shuffle_report.status.clone();
 
         // 17. W3C TraceContext Distributed Tracing
         // The guard composes four sentences and decides between four statuses.
@@ -331,11 +331,9 @@ impl PreMergeGuard {
         let gitops_drift_status = gitops_drift_report.status.clone();
 
         // 24. Progressive Canary Burn-Rate Circuit Breaker
-        let canary_status = if canary_report.is_healthy {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(canary_report.summary.clone())
-        };
+        // Same shape as gate 16: the burn rate was written four lines above the
+        // ceiling it was compared against. The guard owns the verdict now.
+        let canary_status = canary_report.status.clone();
 
         // 25. Live Cluster Readback & Drift Auditor
         let cluster_audit_status = cluster_audit_report.status.clone();
@@ -451,13 +449,12 @@ impl PreMergeGuard {
         let automated_canary_status = aca_report.status.clone();
 
         // 44. Progressive Rollout Rings
-        let progressive_ring_status = if ring_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(
-                "Progressive ring deployment halted due to unverified canary signals.".to_string(),
-            )
-        };
+        // The boolean this rebuilt from arrived as a constant threaded through
+        // three calls and was `true` in all four match arms of the scheduler.
+        // Both ends are gone; the guard's own verdict is carried through, and
+        // the `else` branch here -- an accusation about "unverified canary
+        // signals" over a canary nobody queried -- goes with it.
+        let progressive_ring_status = progressive_ring_report.status.clone();
 
         // 45. Hermetic Build Reproducibility
         let hermetic_build_status = hermetic_report.status.clone();

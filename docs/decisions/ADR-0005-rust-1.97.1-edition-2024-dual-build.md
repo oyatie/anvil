@@ -23,7 +23,8 @@ and treats Cargo as the merge path with Buck2 as local hermeticity (ADR-0716).
 2. **Lockfile is authoritative**: every CI and hook invocation passes
    `--locked`; `Cargo.lock` stays at format `version = 4`.
 3. **The release profile is compile-checked post-submit**: `cargo build
-   --release --locked` runs on push to trunk. It uploads nothing and deploys
+   --release --locked` runs on push to the trunk (`dev`) and to every promotion
+   rung — `ci.yml` triggers on all of them. It uploads nothing and deploys
    nothing — `scripts/start.sh` builds its own binary on the host. Its only job
    is to prove the release profile still compiles, which the pre-merge legs
    (`cargo nextest` + clippy, dev profile, amd64) do not cover. It is not a

@@ -195,6 +195,34 @@ impl GateProvenance {
 /// seven strings lie.
 pub const TOTAL_GATES: usize = 72;
 
+/// Gate outcomes, split four ways.
+///
+/// Previously this was a `(passed, failed)` pair where `passed` counted
+/// `GateStatus::is_acceptable()`. That is true for `Warning` and for
+/// `NotMeasured`, so a report in which nothing was measured published as
+/// "72 passed, 0 failed" -- the strongest claim the system can make, produced
+/// by the total absence of evidence. `is_admissible()` was never fooled, because
+/// it also requires `unmeasured_gates` to be empty; only the published number
+/// was. A gate that did not run is not a gate that passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GateCounts {
+    /// Measured, acceptable, and silent.
+    pub passed: usize,
+    /// Measured and acceptable, but carrying a warning.
+    pub warned: usize,
+    /// Did not produce a measurement. Never a pass.
+    pub unmeasured: usize,
+    /// Measured and not acceptable, or errored.
+    pub failed: usize,
+}
+
+impl GateCounts {
+    /// Every gate accounted for exactly once.
+    pub fn total(&self) -> usize {
+        self.passed + self.warned + self.unmeasured + self.failed
+    }
+}
+
 impl PreMergeCertificationReport {
     /// Every gate status on this report, in declaration order.
     pub fn all_statuses(&self) -> Vec<&GateStatus> {
@@ -370,10 +398,17 @@ impl PreMergeCertificationReport {
     /// exactly one failed gate regardless of how many actually failed, and the
     /// resulting "95% of PRs stuck at 69/70" in telemetry was an artefact of
     /// that constant, not a measurement (invariant I2).
-    pub fn gate_counts(&self) -> (usize, usize) {
-        let all = self.all_statuses();
-        let passed = all.iter().filter(|s| s.is_acceptable()).count();
-        (passed, all.len() - passed)
+    pub fn gate_counts(&self) -> GateCounts {
+        let mut c = GateCounts::default();
+        for status in self.all_statuses() {
+            match status {
+                GateStatus::Passed | GateStatus::AutoUpdated => c.passed += 1,
+                GateStatus::Warning(_) => c.warned += 1,
+                GateStatus::NotMeasured { .. } => c.unmeasured += 1,
+                GateStatus::Failed(_) | GateStatus::Errored(_) => c.failed += 1,
+            }
+        }
+        c
     }
 
     /// Recomputes `unmeasured_gates` from the current gate statuses.
@@ -1037,17 +1072,24 @@ mod tests {
     fn gate_counts_reflect_reality_not_a_constant() {
         let mut r = sample_report();
         // Every gate passing; pinned to the corpus constant, not a literal.
-        let (p, f) = r.gate_counts();
-        assert_eq!((p, f), (TOTAL_GATES, 0));
+        let c = r.gate_counts();
+        assert_eq!((c.passed, c.failed), (TOTAL_GATES, 0));
+        assert_eq!(
+            c.unmeasured, 0,
+            "a fully passing corpus measured everything"
+        );
 
         // Three genuinely failing gates must report three, not the old constant 1.
         r.cedar_status = GateStatus::Failed("policy gap".into());
         r.coverage_status = GateStatus::Failed("below threshold".into());
         r.slo_status = GateStatus::Errored("probe timed out".into());
-        let (p, f) = r.gate_counts();
-        assert_eq!(f, 3, "must count every failing gate, not a hardcoded 1");
-        assert_eq!(p, TOTAL_GATES - 3, "the rest still pass");
-        assert_eq!(p + f, r.all_statuses().len());
+        let c = r.gate_counts();
+        assert_eq!(
+            c.failed, 3,
+            "must count every failing gate, not a hardcoded 1"
+        );
+        assert_eq!(c.passed, TOTAL_GATES - 3, "the rest still pass");
+        assert_eq!(c.total(), r.all_statuses().len());
     }
 
     #[test]

@@ -72,7 +72,7 @@ fn matrix_for(r: &PreMergeCertificationReport) -> String {
 /// Rebuilds the derived fields after mutating gate statuses, so a fixture can
 /// never disagree with itself.
 fn seal(r: &mut PreMergeCertificationReport) {
-    let (_, failed) = r.gate_counts();
+    let failed = r.gate_counts().failed;
     r.is_certified_ready = failed == 0;
     r.recompute_unmeasured();
     r.summary_markdown = matrix_for(r);

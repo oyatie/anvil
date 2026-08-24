@@ -121,6 +121,36 @@ fn n_worktrees_on_open_test_paths_merge() {
     let seed = String::from_utf8(seed.stdout).unwrap();
     let seed = seed.trim().to_string();
 
+    // Lane setup happens here, serially, before any thread starts.
+    //
+    // It used to run inside each thread. Two consequences, both bad. `git
+    // worktree add` mutates the shared `.git/worktrees` directory and is not
+    // safe to run concurrently against one repository -- eight simultaneous
+    // adds can race and fail with "failed to read .git/worktrees/wtN/commondir".
+    // And because the add sat before `barrier.wait()`, a thread that panicked
+    // there never reached the barrier, so the other seven blocked forever: the
+    // test did not fail, it HUNG. A hanging test is worse than a failing one,
+    // because it is indistinguishable from a slow one and CI reports nothing.
+    //
+    // Creating a lane is not the property under test. Holding N lanes live at
+    // once is, and that is still measured by `peak` across the concurrent
+    // section below.
+    for i in 0..n {
+        let wt = root.join(format!("wt{i}"));
+        run(
+            root,
+            &[
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &format!("lane-{i}"),
+                wt.to_str().unwrap(),
+            ],
+        );
+    }
+
     let barrier = Arc::new(Barrier::new(n));
     let peak = Arc::new(AtomicUsize::new(0));
     let live = Arc::new(AtomicUsize::new(0));
@@ -132,18 +162,6 @@ fn n_worktrees_on_open_test_paths_merge() {
         let live = Arc::clone(&live);
         joins.push(std::thread::spawn(move || {
             let wt = root.join(format!("wt{i}"));
-            run(
-                &root,
-                &[
-                    "git",
-                    "worktree",
-                    "add",
-                    "-q",
-                    "-b",
-                    &format!("lane-{i}"),
-                    wt.to_str().unwrap(),
-                ],
-            );
             let now = live.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(now, Ordering::SeqCst);
             barrier.wait();

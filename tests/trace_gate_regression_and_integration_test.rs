@@ -505,8 +505,7 @@ mod stub {
             errored: None,
         };
         let cedar = CedarGuardReport {
-            is_compliant: true,
-            files_created_or_updated: Vec::new(),
+            status: GateStatus::Passed,
             summary: STUB.to_string(),
         };
         let jittered = JitteredBackoffReport {

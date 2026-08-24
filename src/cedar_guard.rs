@@ -161,7 +161,19 @@ pub fn no_policy_in_scope() -> CedarGuardReport {
 /// of this match, so no exit can be added that quietly certifies. An empty
 /// scope ignores the outcome entirely -- a checker that ran and was happy has
 /// said nothing about a pull request whose policy files it never saw.
-pub fn verify(policy_files: &[String], outcome: &CedarToolOutcome) -> CedarGuardReport {
+///
+/// `policy_files` is the scope: what the pull request touched. `parsed_files`
+/// is what the checker actually read, which is the smaller list whenever the
+/// change deleted a policy -- its path is in the diff and nothing is on disk.
+/// A pass is over `parsed_files` and names only those. The two were the same
+/// list once, and a pass over one file published "accepted 2 Cedar policy
+/// file(s)" naming a file that did not exist: the same vacuously-clean shape
+/// `combine_outcomes` guards at zero, at one-of-two instead of none-of-any.
+pub fn verify(
+    policy_files: &[String],
+    parsed_files: &[String],
+    outcome: &CedarToolOutcome,
+) -> CedarGuardReport {
     if policy_files.is_empty() {
         return no_policy_in_scope();
     }
@@ -169,11 +181,12 @@ pub fn verify(policy_files: &[String], outcome: &CedarToolOutcome) -> CedarGuard
     let named = policy_files.join(", ");
     match outcome {
         CedarToolOutcome::Accepted => {
+            let named = parsed_files.join(", ");
             let summary = format!(
                 "cedar check-parse accepted {} Cedar policy file(s): {named}. That is a parse \
                  of the policy set and nothing further -- no schema exists here, so no policy \
                  was type-checked and no request was decided against an entity store.",
-                policy_files.len()
+                parsed_files.len()
             );
             CedarGuardReport {
                 status: GateStatus::Passed,
@@ -240,8 +253,8 @@ impl CedarGuard {
         if in_scope.is_empty() {
             return no_policy_in_scope();
         }
-        let outcome = check_parse_all(repo_dir, &in_scope).await;
-        verify(&in_scope, &outcome)
+        let (parsed, outcome) = check_parse_all(repo_dir, &in_scope).await;
+        verify(&in_scope, &parsed, &outcome)
     }
 }
 
@@ -251,19 +264,20 @@ impl CedarGuard {
 /// produced is evidence, and discarding it because a later file timed out would
 /// lose the only finding there was. An unavailability short-circuits the loop,
 /// because a checker that could not be spawned once will not be spawned twice.
-async fn check_parse_all(repo_dir: &Path, in_scope: &[String]) -> CedarToolOutcome {
+async fn check_parse_all(repo_dir: &Path, in_scope: &[String]) -> (Vec<String>, CedarToolOutcome) {
     let mut rejections: Vec<String> = Vec::new();
     let mut unavailable: Option<String> = None;
-    let mut checked = 0usize;
+    let mut parsed: Vec<String> = Vec::new();
 
     for file in in_scope {
         // A policy file this pull request *deleted* is in the changed list and
         // not on disk. There is nothing to parse, and nothing to hold against
-        // the change either.
+        // the change either -- and nothing to claim a pass over, which is why
+        // the paths that were read are returned rather than counted.
         let Ok(source) = tokio::fs::read_to_string(repo_dir.join(file)).await else {
             continue;
         };
-        checked += 1;
+        parsed.push(file.clone());
         match check_parse(&source).await {
             CedarToolOutcome::Accepted => {}
             CedarToolOutcome::Rejected(diagnostics) => {
@@ -276,7 +290,8 @@ async fn check_parse_all(repo_dir: &Path, in_scope: &[String]) -> CedarToolOutco
         }
     }
 
-    combine_outcomes(&rejections, unavailable.as_deref(), checked)
+    let outcome = combine_outcomes(&rejections, unavailable.as_deref(), parsed.len());
+    (parsed, outcome)
 }
 
 /// Folds what the checker said about each file into one answer for the set.
@@ -318,8 +333,14 @@ pub fn combine_outcomes(
 /// reads the policy set from stdin, which is documented behaviour and does not
 /// depend on a flag name that could be renamed under us -- and a renamed flag
 /// is exactly the usage error that must not read as a policy defect.
-async fn check_parse(source: &str) -> CedarToolOutcome {
+pub async fn check_parse(source: &str) -> CedarToolOutcome {
     let mut cmd = Command::new("cedar");
+    // `cedar` renders diagnostics through miette's graphical handler and does
+    // not gate it on a TTY; neither NO_COLOR nor TERM=dumb suppresses it, so
+    // raw ANSI escapes were reaching `GateStatus::Failed` and the scorecard.
+    // `--error-format` is a top-level flag, so it does not disturb the stdin
+    // fallback the subcommand takes when it is given no policy path.
+    cmd.arg("--error-format").arg("plain");
     cmd.arg("check-parse");
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -344,6 +365,9 @@ async fn check_parse(source: &str) -> CedarToolOutcome {
                 )),
             }
         }
-        Err(e) => CedarToolOutcome::Unavailable(e.to_string()),
+        Err(e) => CedarToolOutcome::Unavailable(format!(
+            "{e}. The checker is `cedar-policy-cli`; install it with \
+             `cargo install cedar-policy-cli`."
+        )),
     }
 }

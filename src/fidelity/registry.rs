@@ -641,7 +641,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               an `ends_with` test on the extension a parser can read (cedar_guard.rs:102). The verdict \
               used to be a literal on all three exits, including the one reached after the model this \
               gate paid had answered non-compliant; `verify` is now total over what the checker \
-              returned, and the model is deleted (cedar_guard.rs:164). Where the checker is not \
+              returned, and the model is deleted (cedar_guard.rs:172). Where the checker is not \
               installed, and where it rejects Anvil own invocation rather than the policy, the gate \
               measures nothing and says so: `interpret_cedar_outcome` keeps those two exit codes apart \
               so a flag renamed here cannot read as a policy defect there (cedar_guard.rs:115).",

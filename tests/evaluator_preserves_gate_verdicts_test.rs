@@ -57,6 +57,14 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     // it could not be reached. Without this entry, restoring that rebuild
     // passes CI.
     "attestation_report",
+    // Gate 53. Its scope is now the wire schema files a pull request touches,
+    // and this repository contains none, so `NotMeasured` is its ordinary
+    // verdict. Rebuilding from `passed` republishes that as a wire break.
+    //
+    // The evaluator's parameter was `schema_evo_report` while its status is
+    // `schema_evolution_status`, which breaks the name rule this list is
+    // checked against. Renamed rather than exempted, as above.
+    "schema_evolution_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

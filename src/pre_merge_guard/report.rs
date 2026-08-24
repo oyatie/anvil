@@ -681,6 +681,110 @@ impl PreMergeCertificationReport {
         self.recompute_unmeasured();
         self.is_certified_ready = self.all_statuses().iter().all(|s| s.is_acceptable());
     }
+
+    /// Withholds the pass of every gate the fidelity registry records as
+    /// `Aspirational`, replacing it with `NotMeasured` naming the registry.
+    ///
+    /// `Fidelity::Aspirational` means "named only; no implementation of the
+    /// claimed capability exists", and `Fidelity::may_report_pass()` has said
+    /// since it was written that such a gate must report
+    /// `GateStatus::NotMeasured`. Nothing called it. The rule was stated in the
+    /// enum's doc comment, encoded in a method and enforced nowhere, so seven
+    /// aspirational gates published `Passed` on every certified pull request.
+    /// This is that method's production consumer.
+    ///
+    /// Three boundaries, each pinned by
+    /// `tests/aspirational_gates_cannot_pass_test.rs`:
+    ///
+    /// - **Only a pass is withheld.** `Failed`, `Warning`, `Errored` and a
+    ///   gate's own `NotMeasured` come through untouched. Erasing a finding
+    ///   behind a fidelity rule would hide the very defect the rule exists for,
+    ///   and overwriting a guard's own account of why it could not measure
+    ///   would replace something specific with something generic.
+    /// - **Only an aspirational gate.** A `Heuristic`, `Partial` or `Measured`
+    ///   gate measured something; taking its pass away deletes real evidence.
+    /// - **Only an audited gate.** A gate with no registry entry is left exactly
+    ///   as its guard reported it. The registry has not read it, so it has no
+    ///   opinion, and manufacturing a `NotMeasured` for a gate nobody examined
+    ///   is the symmetric violation of I1 -- a fabricated absence in place of a
+    ///   fabricated pass. That exemption covers thirty-seven of the seventy-two
+    ///   gates and is not silent: `fidelity::gap_report().unaudited` publishes
+    ///   its size.
+    ///
+    /// Applied by `evaluate_pre_merge_gates` before it seals, so the withheld
+    /// gates land in `unmeasured_gates`, in the verdict and in the matrix. Why
+    /// the rule lives here and not inside `seal()` is argued in the pull
+    /// request that added it.
+    ///
+    /// Ends by sealing, so the method is total: `is_certified_ready` and
+    /// `unmeasured_gates` are derived from the statuses this just rewrote, and
+    /// leaving them carried across from before the rewrite would hand a caller
+    /// a report whose verdict disagrees with its own matrix.
+    ///
+    /// `from_gate_outcomes` does not apply this ceiling, so a report built
+    /// through that door can be all-green, carry the certification mark and
+    /// still contain aspirational passes; what keeps production off that door
+    /// is the source scan
+    /// `every_door_hands_the_merge_queue_evidence_a_certification_run_produced`,
+    /// which is a lint rather than an invariant.
+    pub fn withhold_aspirational_passes(&mut self) {
+        // Rewritten through `build()` rather than by mutating each field:
+        // `build` is the one place the seventy-two fields are written down, and
+        // a `named_statuses_mut()` would be a third copy of that list. The cost
+        // is that the fields `build` does not set have to be carried across by
+        // hand below, which
+        // `withholding_carries_across_every_field_that_is_not_a_gate_status`
+        // pins against the struct's own source.
+        let mut held: std::collections::HashMap<&'static str, GateStatus> = self
+            .named_statuses()
+            .into_iter()
+            .map(|(gate, status)| (gate, status.clone()))
+            .collect();
+
+        let mut rebuilt = Self::build(&mut |gate| {
+            // `named_statuses` and `build` are two hand-written spellings of one
+            // field list. They agree, and several tests pin that they do -- but
+            // a disagreement must not panic a live certification run, so it
+            // fails closed the way `from_gate_outcomes` does: `Errored` is not
+            // acceptable, so the report does not certify and nothing is admitted
+            // on a status this could not read back.
+            let Some(status) = held.remove(gate) else {
+                return GateStatus::Errored(format!(
+                    "`{gate}` is a field on this report and `named_statuses()` does not name \
+                     it, so its status could not be read back"
+                ));
+            };
+            match crate::fidelity::declared_fidelity(gate) {
+                Some(declared)
+                    if !declared.may_report_pass()
+                        && matches!(status, GateStatus::Passed | GateStatus::AutoUpdated) =>
+                {
+                    GateStatus::NotMeasured {
+                        gate_id: gate.to_string(),
+                        reason: format!(
+                            "src/fidelity/registry.rs records this gate as {}: no implementation \
+                             of the capability it is named for exists, so it has nothing to pass \
+                             on and its pass is withheld",
+                            declared.label()
+                        ),
+                    }
+                }
+                _ => status,
+            }
+        });
+
+        rebuilt.is_certified_ready = self.is_certified_ready;
+        rebuilt.unmeasured_gates = std::mem::take(&mut self.unmeasured_gates);
+        rebuilt.summary_markdown = std::mem::take(&mut self.summary_markdown);
+        rebuilt.provenance = self.provenance;
+        rebuilt.subject = self.subject.take();
+        *self = rebuilt;
+        // The carries above make the rebuild lossless for every field `build()`
+        // does not set. Two of them are derived from the statuses that were just
+        // rewritten, so re-derive them rather than publishing the pre-rewrite
+        // values: `seal` is idempotent and the evaluator seals again right after.
+        self.seal();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

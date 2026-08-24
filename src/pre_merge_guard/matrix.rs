@@ -80,8 +80,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "kani_status",
-        "🔬 Kani Formal Verification & Unsafe Proofs",
-        "Mathematical memory safety & SAFETY: invariant proofs",
+        "🔬 Unsafe Block `// SAFETY:` Comment Lint",
+        "Added unsafe blocks carry a `// SAFETY:` comment; no model checker runs",
     ),
     (
         "slo_status",
@@ -225,8 +225,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "deadlock_status",
-        "🔒 Lock Order Keyword Scan",
-        "Scans for a fixed set of known lock-name inversions; not a graph analysis",
+        "🔒 Lock Order Cycle Scan",
+        "Cycles in a lock-order graph keyed on receiver text; no types, no call edges",
     ),
     (
         "review_verdict_status",
@@ -340,8 +340,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "mutation_status",
-        "💥 AST Chaos Mutation Test Adequacy",
-        "Critical branches verified against surviving mutants",
+        "💥 Mutation Adequacy of the Changed Lines",
+        "Runs cargo-mutants over the changed lines; blocks on a mutant the suite fails to kill",
     ),
     (
         "feature_flag_status",

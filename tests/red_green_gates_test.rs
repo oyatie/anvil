@@ -300,28 +300,41 @@ fn test_wasm_sandbox_green_safe_wasm_policy() {
 // 9. Flaky-Test Quarantine Lifecycle
 // =========================================================================
 
+/// The red/green pair this replaces tested nothing.
+///
+/// The "RED" half asserted `quarantined_tests_isolated > 0` for a path
+/// containing "flaky" -- which asserts a substring was found in a filename,
+/// not that the gate goes red. The "GREEN" half asserted `report.passed`,
+/// which was the literal `true`, so it held for every input including the
+/// flaky one. A pair where the red case never reddens and the green case
+/// cannot fail is worse than no test: it is the evidence someone cites when
+/// asking whether this gate works.
+///
+/// Anvil retains no test-run history, so no input distinguishes a flaky test
+/// from a stable one. The gate reports that, and these pin it.
 #[test]
-fn test_flake_quarantine_red_flag_unrehabilitated_flaky_test() {
+fn flake_quarantine_has_no_input_that_produces_a_verdict() {
     let manager = FlakeQuarantineLifecycle::new();
-    // RED: Modifying a known flaky test without rehabilitation tag
-    let changed_files = vec!["tests/flaky_network_test.rs".to_string()];
-    let report = manager.evaluate_quarantine_lifecycle(&changed_files);
-    assert!(
-        report.quarantined_tests_isolated > 0,
-        "Expected False Green prevention: Flaky test must be isolated to quarantine"
-    );
-}
 
-#[test]
-fn test_flake_quarantine_green_nominal_unit_test() {
-    let manager = FlakeQuarantineLifecycle::new();
-    // GREEN: Normal, non-flaky test
-    let changed_files = vec!["tests/unit_calculator_test.rs".to_string()];
-    let report = manager.evaluate_quarantine_lifecycle(&changed_files);
-    assert!(
-        report.passed,
-        "Expected False Red prevention: Clean unit test must PASS"
-    );
+    let flaky_named =
+        manager.evaluate_quarantine_lifecycle(&["tests/flaky_network_test.rs".to_string()]);
+    let clean_named =
+        manager.evaluate_quarantine_lifecycle(&["tests/unit_calculator_test.rs".to_string()]);
+
+    for (label, report) in [("flaky-named", &flaky_named), ("clean-named", &clean_named)] {
+        assert_eq!(
+            report.status.unmeasured_gate_id(),
+            Some("flake_quarantine_status"),
+            "{label}: a filename says nothing about non-determinism"
+        );
+        assert!(!report.passed, "{label}: nothing measured is not a pass");
+    }
+
+    // The name heuristic still reports what it saw -- it is retained as data,
+    // not as a verdict -- so the two inputs remain distinguishable in the
+    // counters even though neither yields a pass.
+    assert!(flaky_named.quarantined_tests_isolated > 0);
+    assert_eq!(clean_named.quarantined_tests_isolated, 0);
 }
 
 // =========================================================================
@@ -357,9 +370,17 @@ fn test_carbon_aware_green_efficient_compute() {
 #[test]
 fn test_deadlock_analyzer_red_flag_lock_inversion() {
     let analyzer = DeadlockStaticAnalyzer::new();
-    // RED: Thread acquires inner session lock before outer global_state lock
-    let bad_diff =
-        "+ let _s = self.session_lock.lock().await;\n+ let _g = self.global_state.lock().await;";
+    // RED: the same two locks are acquired in opposite orders at two sites,
+    // which is a cycle in the lock-order graph. No lock name is privileged --
+    // the inversion is what makes it a finding.
+    let bad_diff = "+ fn credit(&self) {\n\
+                    +     let a = self.accounts.lock();\n\
+                    +     let l = self.ledger.lock();\n\
+                    + }\n\
+                    + fn audit(&self) {\n\
+                    +     let l = self.ledger.lock();\n\
+                    +     let a = self.accounts.lock();\n\
+                    + }\n";
     let report = analyzer.evaluate_deadlock_invariants("oyatie/anvil", bad_diff);
     assert!(
         !report.passed,
@@ -370,9 +391,16 @@ fn test_deadlock_analyzer_red_flag_lock_inversion() {
 #[test]
 fn test_deadlock_analyzer_green_ordered_locks() {
     let analyzer = DeadlockStaticAnalyzer::new();
-    // GREEN: Canonical ordered lock acquisition across all code paths
-    let good_diff =
-        "+ let _g = self.global_state.lock().await;\n+ let _s = self.session_lock.lock().await;";
+    // GREEN: canonical ordered lock acquisition at every site. Holding two
+    // locks at once is not a defect; holding them in inconsistent orders is.
+    let good_diff = "+ fn credit(&self) {\n\
+                     +     let a = self.accounts.lock();\n\
+                     +     let l = self.ledger.lock();\n\
+                     + }\n\
+                     + fn debit(&self) {\n\
+                     +     let a = self.accounts.lock();\n\
+                     +     let l = self.ledger.lock();\n\
+                     + }\n";
     let report = analyzer.evaluate_deadlock_invariants("oyatie/anvil", good_diff);
     assert!(
         report.passed,
@@ -1038,17 +1066,41 @@ fn test_debt_shrink_red_flag_blanket_allow() {
 #[test]
 fn test_debt_shrink_green_clean_code() {
     let guard = anvil::debt_shrink_guard::DebtShrinkGuard::new();
+    // This used to hand the guard `src/lib.rs` -- a path no marker in the
+    // deprecation scope can ever match -- and assert the pass that came back.
+    // That is the vacuous green the guard now refuses: it certified a debt
+    // ratchet over an empty corpus. A green here has to be earned by a
+    // deprecating target that was actually read and actually shrank.
     let good_diff = create_test_diff_context(
-        "src/lib.rs",
-        "+ pub fn process_event() -> Result<(), Error> { Ok(()) }",
+        "src/legacy/old_auth_handler.rs",
+        "- pub fn dead_path() {}\n- pub fn also_dead() {}",
     );
     let report = guard
         .evaluate_debt_shrink(std::path::Path::new("."), &good_diff)
         .unwrap();
     assert!(
         report.is_acceptable,
-        "Expected False Red prevention: Clean code must PASS"
+        "Expected False Red prevention: a deprecating target that only shrank must PASS"
     );
+    assert_eq!(report.total_debt_shrunk, 2);
+}
+
+#[test]
+fn test_debt_shrink_red_flag_empty_scope_is_not_a_pass() {
+    let guard = anvil::debt_shrink_guard::DebtShrinkGuard::new();
+    let out_of_scope = create_test_diff_context(
+        "src/lib.rs",
+        "+ pub fn process_event() -> Result<(), Error> { Ok(()) }",
+    );
+    let report = guard
+        .evaluate_debt_shrink(std::path::Path::new("."), &out_of_scope)
+        .unwrap();
+    assert_eq!(
+        report.status.unmeasured_gate_id(),
+        Some("debt_shrink_status"),
+        "Expected False Green prevention: no deprecating target in scope must NOT pass"
+    );
+    assert!(!report.is_acceptable);
 }
 
 // =========================================================================
@@ -1085,7 +1137,7 @@ fn test_modularization_green_acyclic_dag() {
 }
 
 // =========================================================================
-// 33. Kani Formal Verification Guard: Undocumented Unsafe
+// 33. Kani Guard (`kani_status`): Undocumented Unsafe -- `// SAFETY:` comment lint
 // =========================================================================
 
 #[test]
@@ -1096,10 +1148,10 @@ fn test_kani_red_flag_undocumented_unsafe_block() {
         "+ unsafe fn raw_copy(dst: *mut u8, src: *const u8, len: usize) { std::ptr::copy(src, dst, len); }",
     );
     let report = guard
-        .evaluate_unsafe_invariants(std::path::Path::new("."), &bad_diff)
+        .lint_unsafe_safety_comments(std::path::Path::new("."), &bad_diff)
         .unwrap();
     assert!(
-        !report.is_verified,
+        !report.all_unsafe_blocks_documented,
         "Expected False Green prevention: Undocumented unsafe must FAIL"
     );
 }
@@ -1112,11 +1164,11 @@ fn test_kani_green_safe_rust_or_documented_safety() {
         "+ // SAFETY: dst and src are guaranteed non-null, properly aligned, and len <= buffer capacity.\n+ unsafe fn safe_copy(dst: *mut u8, src: *const u8, len: usize) { std::ptr::copy(src, dst, len); }",
     );
     let report = guard
-        .evaluate_unsafe_invariants(std::path::Path::new("."), &good_diff)
+        .lint_unsafe_safety_comments(std::path::Path::new("."), &good_diff)
         .unwrap();
     assert!(
-        report.is_verified,
-        "Expected False Red prevention: Formally documented unsafe must PASS"
+        report.all_unsafe_blocks_documented,
+        "Expected False Red prevention: a documented unsafe block must PASS"
     );
 }
 

@@ -56,7 +56,7 @@ pub async fn execute_pr_certify(state: &AppState, repo: &str, pr_number: u64) ->
 /// where the repository offers none -- which reports `NotMeasured` rather than
 /// inventing either answer.
 ///
-/// This function mutates the caller's working tree (`git add -A`, `git commit`)
+/// This function mutates the caller's working tree (`git add` excluding Anvil's receipts, `git commit`)
 /// and the caller is responsible for holding `acquire_pr_lock` across it. It
 /// does not take the lock itself: `execute_pr_review` already holds it here and
 /// the mutex is not reentrant.
@@ -440,18 +440,22 @@ pub async fn certify_pull_request(
         // Staging is bounded and fails CLOSED: a hang, a spawn failure or a non-zero
         // exit aborts the review instead of letting the pipeline certify a PR whose
         // auto-synced governance files were never actually committed.
-        let mut add_cmd = Command::new("git");
-        add_cmd.current_dir(repo_dir).args(["add", "-A"]);
+        //
+        // The staging command is shared with every other site that stages a
+        // clone. This one swept the whole tree, so the lane receipt written
+        // into `repo_dir` just above was staged and committed onto the pull
+        // request -- the exact loop the comment above forbids.
+        let add_cmd = crate::git_manager::stage_excluding_receipts(repo_dir);
         let add_out = crate::exec::run_bounded(
             add_cmd,
             crate::exec::ExecClass::Quick,
-            "git add -A for domain guard auto-sync",
+            "git add for domain guard auto-sync",
         )
         .await
         .context("Failed to stage auto-synced documentation & cedar policies")?;
         if !add_out.status.success() {
             anyhow::bail!(
-                "git add -A failed while staging auto-synced governance files on PR #{}: {}",
+                "git add failed while staging auto-synced governance files on PR #{}: {}",
                 pr_number,
                 String::from_utf8_lossy(&add_out.stderr).trim()
             );

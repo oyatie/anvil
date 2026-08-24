@@ -546,9 +546,8 @@ mod stub {
         };
         let zero_trust = ZeroTrustWorkloadReport {
             passed: true,
-            spiffe_id_verified: true,
-            mtls_enforced: true,
-            unauthenticated_endpoints: 0,
+            cleartext_transport_findings: 0,
+            violations: Vec::new(),
             summary: STUB.to_string(),
         };
         let carbon = CarbonComputeReport {

@@ -30,8 +30,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "compliance_status",
-        "🏛️ Systematic Regulatory Compliance",
-        "Dynamic temporal KR PIPA, FSS & HIPAA engine",
+        "🏛️ Regulatory Rule-Pack Scan",
+        "Added lines vs rules in force today; KR PIPA/전상법, HIPAA, PCI-DSS",
     ),
     (
         "api_contract_status",
@@ -90,8 +90,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "adr_status",
-        "📑 Living ADR 5-Field Schema Ratchet",
-        "Mandatory achieves, origin, rule, ensure, overturn_when",
+        "📑 Living ADR Field-Schema Ratchet",
+        "Touched ADRs carry every field docs/decisions/adr-schema.json declares",
     ),
     (
         "shuffle_status",
@@ -180,8 +180,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "cross_service_status",
-        "🌐 Monorepo Cross-Service Blast-Radius",
-        "Wire contract compatibility proven across microservices",
+        "🌐 Wire Contract Required-Field Ratchet",
+        "Changed API contracts lose no required field; consumers not derived",
     ),
     (
         "ephemeral_secret_status",

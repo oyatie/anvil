@@ -894,6 +894,104 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: Some("a running deployment a fault injector can act on"),
     },
     GateFidelity {
+        gate_id: "adr_status",
+        aspiration: "Bind every architectural change to a decision record, and hold each record to the \
+                     field schema its repository requires.",
+        reference: "Nygard's ADR format; MADR 4.0; adr-tools; Structured MADR's JSON-Schema CI action",
+        fidelity: Fidelity::Heuristic,
+        gap: "Presence of a key, not conformance of a decision. The five field names were a Rust literal \
+              matched word-by-word against the whole pull request diff, so achieves, origin, rule and \
+              ensure were satisfied by ordinary English in any file the change touched, and only \
+              overturn-when was rare enough to ever go red. The list is now read from the repository \
+              under review, from one of `SCHEMA_PATHS` (adr_drift_ratchet.rs:154); a repository \
+              declaring none reports `GateStatus::NotMeasured` (adr_drift_ratchet.rs:217); and a field is a key before a colon rather than a word, \
+              which is what `declared_key` (adr_drift_ratchet.rs:108) decides -- it strips heading, \
+              list and bold marks and compares alphanumerics only, so Overturn-When: is a field and \
+              the sentence this rule achieves parity is not. What no part of that reads is the \
+              decision. Whether the rule line states a rule, whether the change under review obeys it, \
+              and whether the overturn-when condition has already occurred are all outside what a key \
+              scan can see; this is the presence lint Structured MADR is, not the fitness function \
+              Ford and Parsons describe, and no tool in the survey derives one from an ADR \
+              mechanically. The record is read off disk when it is there and off the hunks via \
+              `added_lines_for` when it is not (adr_drift_ratchet.rs:245), and only when the read \
+              failed with `NotFound`, so an ADR that exists but is untouched by this pull request \
+              is never checked at all and a record this diff deletes is skipped rather than charged \
+              five missing fields. A change arriving with no \
+              record fills `architectural_changes_without_adr` (adr_drift_ratchet.rs:188) and is not \
+              charged: the predicate is a filename guess -- lib.rs, ports, adapters -- that this \
+              repository's own history trips without any decision going unrecorded, and the branch it \
+              replaces published an auto-scaffolded verdict naming a file nothing wrote.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "compliance_status",
+        aspiration: "Evaluate a change against the statutes in force for it, across jurisdictions, on the \
+                     date it is reviewed.",
+        reference: "Google Cloud Sensitive Data Protection infoTypes; Microsoft Presidio; Semgrep registry rulesets",
+        fidelity: Fidelity::Heuristic,
+        gap: "A regex scan of added lines against five rules, presented as an engine spanning five \
+              jurisdictions. The evaluation date is now `chrono::Utc::now()` \
+              (compliance_guard/mod.rs:104) rather than a literal that had stopped moving; \
+              `read_rule_pack` is called on the tree under review on every run \
+              (compliance_guard/mod.rs:119) rather than by nothing; `statutes_evaluated` is built from \
+              the rules that ran (compliance_guard/mod.rs:130) rather than from a list advertising \
+              seventeen; and `r.pattern_regex.is_some()` now keeps a rule the engine cannot \
+              evaluate out of the count published beside the verdict \
+              (compliance_guard/upstream_sync.rs:58). The pack is returned by `load_rule_pack` \
+              (compliance_guard/upstream_sync.rs:78) rather than written into shared state, so one \
+              repository's rules do not judge the next, and a pack rule claiming a rule id already \
+              enforced is rejected into `pack.rejected` (compliance_guard/upstream_sync.rs:119) \
+              rather than \
+              replacing the statute that would have judged the change adding it. A match can be \
+              waived by a line naming the rule, `SUPPRESSION_MARKER` \
+              (compliance_guard/engine.rs:37) -- the escape hatch every oracle here has and without \
+              which a repository cannot carry a test PAN in a fixture -- and each waiver is counted \
+              into the published sentence rather than being silent. What remains is still pattern \
+              matching. \
+              Sensitive Data Protection reaches a graded likelihood by combining a pattern with a \
+              checksum and surrounding context, and Presidio routes every regex hit through a \
+              validator that can zero the score; neither step exists here, so \
+              `4[0-9]{12}(?:[0-9]{3})?` (compliance_guard/upstream_sync.rs:253) accepts any \
+              sixteen-digit number opening with a four as a card number, with no Luhn check and no \
+              context word. The ePHI rule is three literal column names, \
+              `patient_icd10|medical_record_number|clinical_diagnosis` \
+              (compliance_guard/upstream_sync.rs:229), which is a spelling list rather than a \
+              detector: a schema abbreviating the medical record number is invisible to it. Scope is \
+              added lines only, so a statute violated by code this pull request leaves alone is never \
+              seen, and the pack is plain files with no version, no signature and none of the \
+              staleness bound Grype imposes on its database.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "cross_service_status",
+        aspiration: "Prove a schema change breaks no downstream consumer, against the contracts those \
+                     consumers registered.",
+        reference: "buf breaking against a stored image; Pact Broker can-i-deploy; Confluent Schema Registry compatibility modes",
+        fidelity: Fidelity::Heuristic,
+        gap: "Names a removed field; proves nothing about a consumer. The predicate was a path holding \
+              api or proto and the diff holding a minus sign, three spaces and required: -- three \
+              exactly, which matches no line in this repository, whose every required: sits at eight \
+              or fourteen -- and on a hit it published two invented service names as the impacted \
+              services. Both are gone. What runs is a set difference over the names a required: key \
+              carries on each side of a hunk, `let before = required_names` \
+              (cross_service_impact/contract_scan.rs:131), read by `required_names` \
+              (cross_service_impact/contract_scan.rs:84), which reads no column, so re-indenting a \
+              block is not a break. That is a text scan of hunks, not the model comparison the oracles \
+              perform: buf compiles both sides to a descriptor set and oasdiff parses both to an \
+              OpenAPI model, so both see a reference resolved, a schema moved between files, and a \
+              type narrowed, and none of those is visible here. Request and response direction are not \
+              told apart, so a relaxed request schema is reported alongside a broken response one. \
+              Scope is whatever `is_wire_contract` (cross_service_impact/contract_scan.rs:67) admits, \
+              a filename and extension guess -- narrowed to YAML, because `.proto` and `.json` were \
+              admitted by a parser that reads neither spelling, so a JSON Schema losing a required \
+              field produced no finding under a sentence saying the file had been read. And the consumer set is not derived at all: \
+              `NO_CONSUMER_REGISTRY` (cross_service_impact/contract_scan.rs:43) is the sentence the \
+              finding carries instead, because Pact learns consumers from published pacts, Confluent \
+              from a subject's registered versions and buf from a stored image, and none of those is \
+              configured here.",
+        blocked_on: Some("a Pact broker, schema registry or module graph naming the consumers"),
+    },
+    GateFidelity {
         gate_id: "security_scan_status",
         aspiration: "Detect credentials a change leaks, and block the merge on a credential that \
                      is live.",

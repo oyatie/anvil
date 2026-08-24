@@ -12,7 +12,27 @@ pub struct BlastRadiusMetrics {
     pub cells_per_tenant: usize,
     pub total_combinations: usize,
     pub max_tenant_overlap: usize,
-    pub single_cell_outage_impact_ratio: f64,
+    /// Blast radius as the AWS Builders' Library and the Route 53 infima
+    /// javadoc define it: 1/C(n,k), the chance that two tenants drawn
+    /// UNIFORMLY AT RANDOM land on the identical shuffle shard.
+    ///
+    /// This field used to hold cells-per-tenant over total-cells. That number
+    /// is real, but it is one tenant's infrastructure footprint, and it RISES
+    /// as isolation improves — Route 53 gives every domain four of 2048 name
+    /// servers, a footprint of 0.2% and a blast radius of one in 730 billion.
+    /// Publishing the footprint as the blast radius inverted the sign of the
+    /// claim.
+    ///
+    /// It is a property of `total_cells` and `cells_per_tenant` ALONE: the name
+    /// says `uniform_random` because `compute_metrics` never reads
+    /// `allocations` to derive it. Two tenants handed the identical shard still
+    /// see 1/70 here while their observed full-shard overlap is 1. The observed
+    /// quantity in this struct is `max_tenant_overlap`, which does read the
+    /// table; this is the ceiling a well-drawn table is measured against.
+    ///
+    /// `f64::NAN` when no shard is combinatorially possible (`k > n`), which
+    /// the caller is expected to reject before publishing anything.
+    pub uniform_random_shard_collision_ratio: f64,
 }
 
 pub struct ShuffleShardMath;
@@ -58,10 +78,10 @@ impl ShuffleShardMath {
     ) -> BlastRadiusMetrics {
         let total_combinations = Self::calculate_combinations(total_cells, cells_per_tenant);
         let max_tenant_overlap = Self::evaluate_overlap(allocations);
-        let single_cell_outage_impact_ratio = if total_cells > 0 {
-            cells_per_tenant as f64 / total_cells as f64
+        let uniform_random_shard_collision_ratio = if total_combinations == 0 {
+            f64::NAN
         } else {
-            1.0
+            (total_combinations as f64).recip()
         };
 
         BlastRadiusMetrics {
@@ -69,7 +89,7 @@ impl ShuffleShardMath {
             cells_per_tenant,
             total_combinations,
             max_tenant_overlap,
-            single_cell_outage_impact_ratio,
+            uniform_random_shard_collision_ratio,
         }
     }
 

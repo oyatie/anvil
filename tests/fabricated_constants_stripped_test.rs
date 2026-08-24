@@ -1,5 +1,13 @@
-//! Lane `strip-fabricated-constants`: the five gates that fabricate their own
-//! inputs and are therefore unfailable by arithmetic.
+//! Lane `strip-fabricated-constants`: the gates that fabricate their own inputs
+//! and are therefore unfailable by arithmetic.
+//!
+//! Five when this file was written. Three more were found later --
+//! `canary_status`, `shuffle_status` and `progressive_ring_status` -- and the
+//! way they were missed matters more than the fact of them: every mechanism
+//! below was already general enough to catch all three, and every one of them
+//! was pointed at a hardcoded list of five module directories. A ratchet is only
+//! as wide as its scan. Sections 6, 7 and 8 add those gates, and the scan lists
+//! now carry all eight.
 //!
 //! # Premortem
 //!
@@ -55,14 +63,19 @@
 
 // (no blanket allow: an import that stops being exercised is a test that stopped testing)
 
+use anvil::canary_rollout::{CanaryMetricsSnapshot, CanaryRolloutGuard};
 use anvil::ci_wallclock_ratchet::CiWallclockEconomicsRatchet;
 use anvil::cluster_state_auditor::{ClusterDiffEvaluator, ClusterStateAuditor};
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::GateStatus;
+use anvil::progressive_rollout::{
+    DeploymentRing, ProgressiveRingOrchestrator, RingConfig, RolloutManifest,
+};
 use anvil::remote_cache_optimizer::{CacheHitMetrics, CacheHitRateRatchet, RemoteCacheOptimizer};
 use anvil::shadow_traffic_harness::{
     ShadowTrafficHarness, ShadowTrafficMetrics, TrafficMirrorComparator,
 };
+use anvil::shuffle_shard_simulator::{ShuffleShardAllocation, ShuffleShardSimulator};
 use anvil::slo_canary_guard::SloCanaryGuard;
 use std::path::Path;
 
@@ -215,10 +228,49 @@ fn code_only(line: &str) -> String {
 ///   - comparisons (`>=`, `<=`, `==`, `!=`) are excluded: a threshold compared
 ///     against a *measured* value is legitimate, a fabricated input is not;
 ///   - `= 0` and `= 1` are excluded: initialising a counter is not a measurement.
+///   - a `const` or `static` declaration whose NAME says it is a bound is
+///     excluded: `MIN_ACCEPTABLE_CACHE_HIT_RATE_PCT` is the same thing as the
+///     `3.0` ceiling a caller passes in, and the exemption for comparisons
+///     above already says a bound is legitimate. Firing on it would make this
+///     rule fire on honest code, which is how a rule gets deleted rather than
+///     satisfied. What is NOT exempt is the value flowing anywhere else: into a
+///     `let`, into a struct field, into an argument. A reading arrives; a bound
+///     is declared.
+///
+///     The exemption is keyed on the name and not on the `const` keyword,
+///     because "move the reading into a `const` and read it back" is otherwise
+///     wide open: `pub const OBSERVED_P99_LATENCY_MS: f64 = 137.5;` in
+///     `slo_canary_guard` is a fabricated reading wearing a keyword, and a
+///     keyword-only exemption cannot see it. `no_owned_gate_reports_passed_without_a_data_source`
+///     is the behavioural backstop, but it only fires once a gate reaches
+///     `Passed`; a gate that abstains while carrying a fabricated number in its
+///     report is exactly the shape this scan exists to catch, and is invisible
+///     to it. So: `MIN_`/`MAX_`/`_THRESHOLD`/`_CEILING`/`_LIMIT`/`_BUDGET` name
+///     a bound and pass, and every other `const` is scanned like any other line.
 fn assigned_numeric_literals(rel: &str) -> Vec<String> {
+    /// A `const` naming one of these is declaring a bound, not recording a
+    /// reading. Anything else is scanned.
+    const BOUND_NAME_MARKERS: [&str; 6] = [
+        "MIN_",
+        "MAX_",
+        "_THRESHOLD",
+        "_CEILING",
+        "_LIMIT",
+        "_BUDGET",
+    ];
+
     let mut hits = Vec::new();
     for line in production_source(rel).lines() {
         let code: Vec<char> = code_only(line).chars().collect();
+        let declared_bound = {
+            let t: String = code.iter().collect();
+            let t = t.trim().trim_start_matches("pub ").trim_start();
+            (t.starts_with("const ") || t.starts_with("static "))
+                && BOUND_NAME_MARKERS.iter().any(|m| t.contains(m))
+        };
+        if declared_bound {
+            continue;
+        }
         for i in 0..code.len() {
             if !code[i].is_ascii_digit() {
                 continue;
@@ -911,6 +963,27 @@ fn all_owned_statuses(tmp: &Path) -> Vec<(&'static str, GateStatus)> {
                 .expect("shadow")
                 .status,
         ),
+        // The three gates added by the `unfailable-by-arithmetic` lane. None
+        // takes the fixture: each one's abstaining constructor takes no
+        // argument at all, which is the point -- there is nothing to hand it.
+        (
+            "canary_status",
+            CanaryRolloutGuard::new()
+                .evaluate_without_metrics_source()
+                .status,
+        ),
+        (
+            "shuffle_status",
+            ShuffleShardSimulator::new()
+                .evaluate_without_topology_source()
+                .status,
+        ),
+        (
+            "progressive_ring_status",
+            ProgressiveRingOrchestrator::new()
+                .evaluate_without_rollout_state()
+                .status,
+        ),
     ]
 }
 
@@ -1028,6 +1101,31 @@ fn test_owned_gate_sources_declare_no_fabricated_measurement_constants() {
             &["replicas:", "_manifest = \""],
         ),
         ("src/shadow_traffic_harness", &["5000", "99.98"]),
+        // The three gates the first pass of this lane did not reach. Their
+        // constants sat in modules this table never named, which is how a
+        // check written for exactly this defect class walked past three
+        // instances of it.
+        (
+            "src/canary_rollout",
+            &["= CanaryMetricsSnapshot {", "28.5", "150.0"],
+        ),
+        (
+            "src/shuffle_shard_simulator",
+            &[
+                "tenant-primary",
+                "tenant-secondary",
+                "assigned_cells: vec!",
+                "single_cell_outage_impact_ratio",
+            ],
+        ),
+        (
+            "src/progressive_rollout",
+            &[
+                "is_healthy",
+                "impl Default for RolloutManifest",
+                "us-east-1",
+            ],
+        ),
     ];
     for (dir, needles) in banned {
         assert_absent_from_module(dir, needles);
@@ -1040,22 +1138,33 @@ fn test_owned_gate_callers_assign_no_numeric_literal_measurements() {
     // do not catch the seventh: swapping `142` for `137`, or `5000` for `4711`,
     // satisfies every one of them and leaves the gate exactly as unfailable.
     //
-    // This is the mechanism that does not need updating (I22): in the five
-    // caller modules -- the files that are supposed to OBTAIN a measurement,
-    // not state one -- no numeric literal may be assigned into a variable or a
-    // struct field at all. A measurement arrives from a data source; a literal
-    // is the absence of one.
+    // This is the mechanism that does not need updating (I22): in the owned
+    // modules -- the files that are supposed to OBTAIN a measurement, not state
+    // one -- no numeric literal may be assigned into a variable or a struct
+    // field at all. A measurement arrives from a data source; a literal is the
+    // absence of one.
+    //
+    // Scoped to `mod.rs` when first written, which is half of why three further
+    // instances of this defect survived it: `burn_rate_5m` was in a caller this
+    // list did not name, and a sibling file was never scanned for numbers at
+    // all. It now walks every `.rs` file under each owned module directory, the
+    // same breadth `assert_absent_from_module` already had.
     // Reported over all five at once, so a partial fix cannot look complete.
     let mut offenders: Vec<String> = Vec::new();
-    for rel in [
-        "src/slo_canary_guard/mod.rs",
-        "src/remote_cache_optimizer/mod.rs",
-        "src/ci_wallclock_ratchet/mod.rs",
-        "src/cluster_state_auditor/mod.rs",
-        "src/shadow_traffic_harness/mod.rs",
+    for dir in [
+        "src/slo_canary_guard",
+        "src/remote_cache_optimizer",
+        "src/ci_wallclock_ratchet",
+        "src/cluster_state_auditor",
+        "src/shadow_traffic_harness",
+        "src/canary_rollout",
+        "src/shuffle_shard_simulator",
+        "src/progressive_rollout",
     ] {
-        for hit in assigned_numeric_literals(rel) {
-            offenders.push(format!("{rel}: {hit}"));
+        for (rel, _) in module_production_sources(dir) {
+            for hit in assigned_numeric_literals(&rel) {
+                offenders.push(format!("{rel}: {hit}"));
+            }
         }
     }
     assert!(
@@ -1064,4 +1173,554 @@ fn test_owned_gate_callers_assign_no_numeric_literal_measurements() {
          measurement nobody took (I2): {offenders:#?}",
         offenders.len()
     );
+}
+
+// =========================================================================
+// 6. CanaryRolloutGuard -- gate_id `canary_status`
+//    Fabricated: `burn_rate_5m: 0.2` written four lines above its comparison
+//    against `3.0`, and published as "5m burn rate 0.20x < 3.0x threshold".
+//    Missing data source: a reachable Prometheus / OpenTelemetry endpoint and
+//    a canary deployment to point it at.
+//
+//    Oracle: Argo Rollouts marks an unreachable provider `Error` and aborts the
+//    rollout; Flagger refuses to start a canary when `IsOnline()` is false and
+//    counts a no-data query as a failed check; Kayenta fails the canary at score
+//    0 once half the metrics classify `Nodata`. Not one treats "could not
+//    measure" as "measured healthy".
+// =========================================================================
+
+#[test]
+fn test_canary_rollout_reports_not_measured_without_a_metrics_endpoint() {
+    let status = CanaryRolloutGuard::new()
+        .evaluate_without_metrics_source()
+        .status;
+    assert_not_measured(
+        &status,
+        "canary_status",
+        &[
+            "prometheus",
+            "opentelemetry",
+            "metrics",
+            "canary deployment",
+        ],
+    );
+    assert_no_accusation(&status);
+}
+
+/// P2/P6: the number and the sentence that published it must both be gone.
+/// `0.2` re-valued to `0.15` defeats a needle list, so the numeric-literal scan
+/// at the bottom of this file is the durable half; these needles pin the exact
+/// strings the defect was written with, so a revert is loud.
+#[test]
+fn test_canary_rollout_false_green_prevention_burn_rate_constants_are_absent_from_source() {
+    assert_absent_from_module(
+        "src/canary_rollout",
+        &[
+            "= CanaryMetricsSnapshot {",
+            "burn rate {:.2}x < 3.0x threshold",
+            "28.5",
+            "150.0",
+        ],
+    );
+}
+
+/// P4: the circuit breaker is the honest half and must survive. It is the seam
+/// a real Prometheus query plugs into, and it has to be demonstrably able to
+/// fail -- otherwise the gate satisfies its absence test by measuring nothing
+/// and has no measuring path at all.
+///
+/// Pinned at, one below and one above the burn-rate ceiling, and again on p99,
+/// so a mutant that flips `>` to `>=` or drops a branch is red.
+#[test]
+fn test_canary_rollout_measuring_path_still_trips_the_breaker_at_the_boundary() {
+    let guard = CanaryRolloutGuard::new();
+    let at = |burn: f64, p99: f64| {
+        guard
+            .evaluate_metrics_snapshot(
+                &CanaryMetricsSnapshot {
+                    step_traffic_percent: 5,
+                    p99_latency_ms: p99,
+                    error_rate_percent: 0.5,
+                    burn_rate_5m: burn,
+                },
+                3.0,
+                150.0,
+            )
+            .status
+    };
+
+    assert!(
+        matches!(at(3.0, 100.0), GateStatus::Passed),
+        "exactly at the burn-rate ceiling must pass -- the breaker trips above it"
+    );
+    assert!(
+        matches!(at(3.01, 100.0), GateStatus::Failed(_)),
+        "one above the burn-rate ceiling must FAIL"
+    );
+    assert!(
+        matches!(at(2.99, 100.0), GateStatus::Passed),
+        "one below the burn-rate ceiling must pass"
+    );
+    assert!(
+        matches!(at(1.0, 150.01), GateStatus::Failed(_)),
+        "one above the p99 ceiling must FAIL"
+    );
+    assert!(
+        matches!(at(1.0, 150.0), GateStatus::Passed),
+        "exactly at the p99 ceiling must pass"
+    );
+}
+
+/// P1 restated for this gate: a measuring path that cannot tell a supplied
+/// reading apart from an absent one is the defect wearing a new signature. The
+/// failure reason must carry the reading it judged, and the report must carry
+/// the snapshot, so a number on the scorecard traces to where it came from.
+#[test]
+fn test_canary_rollout_failure_names_the_reading_it_judged() {
+    let report = CanaryRolloutGuard::new().evaluate_metrics_snapshot(
+        &CanaryMetricsSnapshot {
+            step_traffic_percent: 25,
+            p99_latency_ms: 40.0,
+            error_rate_percent: 4.0,
+            burn_rate_5m: 14.4,
+        },
+        3.0,
+        150.0,
+    );
+    let GateStatus::Failed(reason) = &report.status else {
+        panic!("a burn rate of 14.4x against a 3.0x ceiling must FAIL: {report:?}");
+    };
+    assert!(
+        reason.contains("14.4"),
+        "the accusation must quote the reading it was made from; got: {reason}"
+    );
+    assert!(
+        report.observed.is_some(),
+        "a judged snapshot must be carried on the report"
+    );
+    assert!(
+        CanaryRolloutGuard::new()
+            .evaluate_without_metrics_source()
+            .observed
+            .is_none(),
+        "nothing was read, so there is no snapshot to carry"
+    );
+}
+
+// =========================================================================
+// 7. ShuffleShardSimulator -- gate_id `shuffle_status`
+//    Fabricated: a two-tenant topology written in the gate, eight cells, four
+//    cells per tenant, tenants on [1,2,3,4] and [3,4,5,6]. Overlap is 2 on
+//    every pull request against a `> 2` threshold, and "blast radius limited to
+//    50.0%" is one literal divided by another.
+//    Missing data source: a tenant-to-cell mapping table.
+//
+//    Oracle: the AWS Builders' Library gives blast radius as 1/C(n,k) -- the
+//    fraction of the customer population sharing a tenant's whole shard --
+//    which for n=8, k=4 is 1/70. Cells-per-tenant over total-cells is the
+//    infrastructure footprint of one tenant, and it RISES as isolation improves
+//    (Route 53 gives every domain four of 2048 name servers), so publishing it
+//    as blast radius inverts the sign of the claim.
+// =========================================================================
+
+#[test]
+fn test_shuffle_shard_reports_not_measured_without_a_topology_source() {
+    let status = ShuffleShardSimulator::new()
+        .evaluate_without_topology_source()
+        .status;
+    assert_not_measured(
+        &status,
+        "shuffle_status",
+        &["topology", "tenant", "mapping", "control plane"],
+    );
+    assert_no_accusation(&status);
+}
+
+#[test]
+fn test_shuffle_shard_false_green_prevention_topology_constants_are_absent_from_source() {
+    assert_absent_from_module(
+        "src/shuffle_shard_simulator",
+        &[
+            "tenant-primary",
+            "tenant-secondary",
+            "assigned_cells: vec!",
+            // The sign-inverted metric. Cells-per-tenant over total-cells is not
+            // blast radius under any AWS source; banning the identifier stops it
+            // coming back under the name it was published as.
+            "single_cell_outage_impact_ratio",
+        ],
+    );
+}
+
+/// P4: `ShuffleShardMath` is honest combinatorics and is the seam a real
+/// mapping table plugs into. Pinned at, one below and one above the overlap
+/// bound, over a topology the TEST supplies -- which is the whole point: the
+/// same gate must pass and fail depending on its input, not on its source.
+#[test]
+fn test_shuffle_shard_measuring_path_still_fails_an_overlapping_topology() {
+    let sim = ShuffleShardSimulator::new();
+    let judge = |b: Vec<usize>| {
+        sim.evaluate_topology(
+            8,
+            4,
+            &[
+                ShuffleShardAllocation {
+                    tenant_id: "tenant-a".to_string(),
+                    assigned_cells: vec![1, 2, 3, 4],
+                },
+                ShuffleShardAllocation {
+                    tenant_id: "tenant-b".to_string(),
+                    assigned_cells: b,
+                },
+            ],
+            2,
+        )
+        .status
+    };
+
+    assert!(
+        matches!(judge(vec![5, 6, 7, 8]), GateStatus::Passed),
+        "disjoint shards overlap in 0 cells and must pass"
+    );
+    assert!(
+        matches!(judge(vec![3, 4, 5, 6]), GateStatus::Passed),
+        "exactly at the overlap bound must pass -- Route 53's guarantee is \
+         'never MORE than two'"
+    );
+    assert!(
+        matches!(judge(vec![2, 3, 4, 5]), GateStatus::Failed(_)),
+        "one above the overlap bound -- three shared cells -- must FAIL"
+    );
+    assert!(
+        matches!(judge(vec![1, 2, 3, 4]), GateStatus::Failed(_)),
+        "two tenants on an identical shard is total overlap and must FAIL"
+    );
+}
+
+/// P6 for this gate: the published blast radius must be the oracle's quantity,
+/// not the one that reads well. C(8,4) is 70 shuffle shards, so the fraction of
+/// the tenant population sharing any one tenant's whole shard is 1/70.
+#[test]
+fn test_shuffle_shard_publishes_the_blast_radius_the_oracle_defines() {
+    let report = ShuffleShardSimulator::new().evaluate_topology(
+        8,
+        4,
+        &[
+            ShuffleShardAllocation {
+                tenant_id: "tenant-a".to_string(),
+                assigned_cells: vec![1, 2, 3, 4],
+            },
+            ShuffleShardAllocation {
+                tenant_id: "tenant-b".to_string(),
+                assigned_cells: vec![5, 6, 7, 8],
+            },
+        ],
+        2,
+    );
+    let metrics = report.metrics.expect("a supplied topology yields metrics");
+    assert_eq!(
+        metrics.total_combinations, 70,
+        "C(8,4) is 70 shuffle shards"
+    );
+    let expected = 1.0_f64 / 70.0;
+    assert!(
+        (metrics.uniform_random_shard_collision_ratio - expected).abs() < 1e-12,
+        "blast radius is 1/C(n,k) = {expected}, not cells-per-tenant over total-cells \
+         (which would be 0.5 here); got {}",
+        metrics.uniform_random_shard_collision_ratio
+    );
+}
+
+/// A topology that cannot exist is not a clean one, and an empty one is not a
+/// measured one. Four cells per tenant out of two cells gives C(n,k) = 0, and
+/// 1/0 is the `NaN` this repository already paid for once on the coverage gate.
+#[test]
+fn test_shuffle_shard_absent_evidence_an_impossible_or_empty_topology_is_not_a_pass() {
+    let sim = ShuffleShardSimulator::new();
+
+    let impossible = sim
+        .evaluate_topology(
+            2,
+            4,
+            &[ShuffleShardAllocation {
+                tenant_id: "tenant-a".to_string(),
+                assigned_cells: vec![1, 2],
+            }],
+            2,
+        )
+        .status;
+    assert!(
+        matches!(impossible, GateStatus::Errored(_)),
+        "four cells per tenant out of two cells is not a topology; got {impossible:?}"
+    );
+
+    for (label, allocations) in [
+        ("an empty topology", Vec::new()),
+        (
+            "a single tenant",
+            vec![ShuffleShardAllocation {
+                tenant_id: "tenant-a".to_string(),
+                assigned_cells: vec![1, 2, 3, 4],
+            }],
+        ),
+    ] {
+        let status = sim.evaluate_topology(8, 4, &allocations, 2).status;
+        assert!(
+            !status.is_measured(),
+            "{label} yields no pair of shards to compare, so the overlap bound was \
+             never tested against anything -- an empty scope is not a pass (I1); \
+             got {status:?}"
+        );
+        assert_no_accusation(&status);
+    }
+}
+
+// =========================================================================
+// 8. ProgressiveRingOrchestrator -- gate_id `progressive_ring_status`
+//    Fabricated: the ring's health was a struct literal `true` in all four
+//    match arms, driven by a constant that `NotMeasured.is_acceptable()` made
+//    true. The two validators that check something real --
+//    `validate_bake_window` and `validate_geo_paired_exclusion` -- had zero
+//    production call sites.
+//    Missing data source: rollout state -- an elapsed bake clock and the set of
+//    regions currently receiving the rollout.
+//
+//    Oracle: Azure Safe Deployment Practices -- "Deployments must pass health
+//    checks before each phase of progressive exposure can begin", bake times
+//    "measured in hours and days rather than minutes", and region pairs updated
+//    sequentially. An affirmative health check is required to advance; the
+//    absence of a negative one is not one.
+// =========================================================================
+
+#[test]
+fn test_progressive_ring_reports_not_measured_without_rollout_state() {
+    let status = ProgressiveRingOrchestrator::new()
+        .evaluate_without_rollout_state()
+        .status;
+    assert_not_measured(
+        &status,
+        "progressive_ring_status",
+        &["rollout", "bake", "region", "deploy"],
+    );
+    assert_no_accusation(&status);
+}
+
+#[test]
+fn test_progressive_ring_false_green_prevention_health_literal_is_absent_from_source() {
+    assert_absent_from_module(
+        "src/progressive_rollout",
+        &[
+            // The fabricated field itself, in all four arms.
+            "is_healthy",
+            // "Moved, not removed" into the manifest's own Default impl, which
+            // is where the bake minutes and the region strings lived.
+            "impl Default for RolloutManifest",
+            // AWS region codes in a gate named for an Azure practice: Azure
+            // pairs East US with West US, and AWS publishes no pair map at all.
+            "us-east-1",
+            "ap-northeast-1",
+        ],
+    );
+}
+
+/// P4, and the reason this gate is the interesting one: both validators were
+/// written, unit-tested and never called. Wiring them is what gives the gate a
+/// measuring path at all, so each is pinned here through the production entry
+/// point rather than through the validator in isolation -- a helper with a unit
+/// test and no caller is exactly what was already there.
+#[test]
+fn test_progressive_ring_measuring_path_still_holds_the_ring_on_a_short_bake() {
+    let orch = ProgressiveRingOrchestrator::new();
+    let manifest = bake_manifest();
+    let regions = vec!["eastus".to_string()];
+    let at = |elapsed: u64| {
+        orch.evaluate_ring_advance(&DeploymentRing::Ring0Canary, elapsed, &regions, &manifest)
+            .status
+    };
+
+    assert!(
+        matches!(at(59), GateStatus::Failed(_)),
+        "one minute short of the declared bake window must FAIL"
+    );
+    assert!(
+        matches!(at(60), GateStatus::Passed),
+        "exactly at the declared bake window must pass"
+    );
+    assert!(
+        matches!(at(61), GateStatus::Passed),
+        "one minute past the declared bake window must pass"
+    );
+}
+
+#[test]
+fn test_progressive_ring_measuring_path_still_refuses_a_paired_region_rollout() {
+    let orch = ProgressiveRingOrchestrator::new();
+    let manifest = bake_manifest();
+    let judge = |regions: Vec<String>| {
+        orch.evaluate_ring_advance(&DeploymentRing::Ring0Canary, 600, &regions, &manifest)
+            .status
+    };
+
+    assert!(
+        matches!(
+            judge(vec!["eastus".to_string(), "northeurope".to_string()]),
+            GateStatus::Passed
+        ),
+        "two regions that are not a pair may take the rollout together"
+    );
+    assert!(
+        matches!(
+            judge(vec!["eastus".to_string(), "westus".to_string()]),
+            GateStatus::Failed(_)
+        ),
+        "East US and West US are an Azure region pair and are updated \
+         sequentially, never together"
+    );
+    assert!(
+        matches!(
+            judge(vec!["northeurope".to_string(), "westeurope".to_string()]),
+            GateStatus::Failed(_)
+        ),
+        "North Europe and West Europe are an Azure region pair"
+    );
+}
+
+/// The advance itself must come from the manifest, not from a literal written
+/// beside the match arm. The scheduler published a traffic percentage of 20 for
+/// a ring the manifest declared at 25: two schedules, disagreeing, one of them
+/// hardcoded.
+#[test]
+fn test_progressive_ring_traffic_percentage_comes_from_the_manifest() {
+    let mut manifest = bake_manifest();
+    manifest.rings[1].traffic_percentage = 7;
+
+    let state = ProgressiveRingOrchestrator::new()
+        .evaluate_ring_advance(
+            &DeploymentRing::Ring0Canary,
+            600,
+            &["eastus".to_string()],
+            &manifest,
+        )
+        .state
+        .expect("an advancing ring carries the state it advances to");
+
+    assert_eq!(state.target_ring, DeploymentRing::Ring1Dogfood);
+    assert_eq!(
+        state.traffic_pct, 7,
+        "the traffic percentage must be read from the manifest's own RingConfig"
+    );
+}
+
+/// A manifest that declares no config for the ring under evaluation is not a
+/// satisfied bake window. The absence of a rule is not compliance with it --
+/// the same inversion, one level down.
+#[test]
+fn test_progressive_ring_absent_evidence_an_undeclared_ring_is_not_baked() {
+    let manifest = RolloutManifest {
+        service_name: "svc".to_string(),
+        geo_paired_exclusion_enabled: true,
+        rings: Vec::new(),
+    };
+    let status = ProgressiveRingOrchestrator::new()
+        .evaluate_ring_advance(
+            &DeploymentRing::Ring0Canary,
+            600,
+            &["eastus".to_string()],
+            &manifest,
+        )
+        .status;
+    assert!(
+        !matches!(status, GateStatus::Passed),
+        "a ring the manifest never declares has no bake window to have satisfied; \
+         got {status:?}"
+    );
+}
+
+/// A rollout manifest is a deployment artefact a caller supplies. A `Default`
+/// impl is a manifest the gate wrote for itself -- the fabrication in its most
+/// respectable disguise, and where the bake minutes and the region strings
+/// lived.
+fn bake_manifest() -> RolloutManifest {
+    RolloutManifest {
+        service_name: "anvil".to_string(),
+        geo_paired_exclusion_enabled: true,
+        rings: vec![
+            RingConfig {
+                ring: DeploymentRing::Ring0Canary,
+                traffic_percentage: 1,
+                min_bake_minutes: 60,
+                regions: vec!["eastus".to_string()],
+            },
+            RingConfig {
+                ring: DeploymentRing::Ring1Dogfood,
+                traffic_percentage: 5,
+                min_bake_minutes: 360,
+                regions: vec!["northeurope".to_string()],
+            },
+        ],
+    }
+}
+
+// =========================================================================
+// 9. The wiring. Three honest guards whose abstaining constructor nobody calls
+//    are three gates that still publish a fabricated pass.
+// =========================================================================
+
+/// Catches the failure mode that ships this whole change green and changes
+/// nothing: the guards learn to say `NotMeasured` and the certification
+/// pipeline keeps calling the measuring entry point with values it wrote.
+///
+/// This is not hypothetical for these three. `progressive_ring_status` received
+/// its constant as a *call argument* -- `aca_report.status.is_acceptable()`,
+/// which is `true` for `NotMeasured` -- so it evaded
+/// `no_gate_in_the_pipeline_is_invoked_with_a_fabricated_argument`, which looks
+/// for literals. A gate with no data source must be called through a door that
+/// takes no measurement at all.
+#[test]
+fn test_the_certification_pipeline_supplies_no_topology_metrics_or_rollout_state() {
+    // Comments are stripped: the comment beside each of these calls explains why
+    // the gate abstains and names the entry point it is NOT allowed to use, so a
+    // scan over raw text would be satisfied by the prose and tripped by it in
+    // turn.
+    let src: String = production_source("src/webhook/pipelines/certify.rs")
+        .lines()
+        .map(code_only)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    for (call, gate) in [
+        ("evaluate_without_metrics_source()", "canary_status"),
+        ("evaluate_without_topology_source()", "shuffle_status"),
+        (
+            "evaluate_without_rollout_state()",
+            "progressive_ring_status",
+        ),
+    ] {
+        assert!(
+            src.contains(call),
+            "{gate} has no data source, so the pipeline must reach it through \
+             `{call}` rather than through a measuring entry point handed values \
+             nobody read"
+        );
+    }
+
+    for (call, why) in [
+        (
+            "evaluate_metrics_snapshot(",
+            "a canary snapshot the pipeline can only have written itself",
+        ),
+        (
+            "evaluate_topology(",
+            "a tenant-to-cell topology the pipeline can only have written itself",
+        ),
+        (
+            "evaluate_ring_advance(",
+            "a bake clock and a live region set the pipeline cannot read",
+        ),
+    ] {
+        assert!(
+            !src.contains(call),
+            "the certification pipeline calls `{call}`, which takes {why}"
+        );
+    }
 }

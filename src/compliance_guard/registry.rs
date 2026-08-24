@@ -56,19 +56,11 @@ pub struct DynamicRegulatoryRule {
     pub official_reference_url: Option<String>,
     pub title: String,
     pub requirement_spec: String,
-    pub trigger_paths: Vec<String>, // e.g. ["src/auth/**", "src/billing/**", "migrations/**"]
     pub trigger_extensions: Vec<String>, // e.g. ["rs", "ts", "tsx", "go", "sql"]
+    /// `None` means the engine has nothing to evaluate, so the rule is not
+    /// enforceable and is excluded from the enforceable set rather than
+    /// inflating the count published beside it.
     pub pattern_regex: Option<String>,
     pub required_controls: Vec<String>,
     pub severity: String, // "CRITICAL", "HIGH", "MEDIUM", "ADVISORY"
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DynamicRegistrySnapshot {
-    pub schema_version: String,
-    pub last_synced_timestamp: String,
-    pub upstream_source: String,
-    pub active_jurisdictions: Vec<String>,
-    pub total_rules: usize,
-    pub rules: Vec<DynamicRegulatoryRule>,
 }

@@ -92,6 +92,10 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     // `new_violations` regardless, so the published severity was stricter than
     // the one the module computed. Listed here so the rebuild cannot return.
     "brand_absence_report",
+    // The ADR field schema is declared by the repository under review, not by
+    // Anvil. A repository that declares none is `NotMeasured`: neither a pass
+    // nor an accusation, and not expressible as `is_compliant`.
+    "adr_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

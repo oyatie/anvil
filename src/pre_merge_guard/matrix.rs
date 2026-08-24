@@ -96,7 +96,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "shuffle_status",
         "🎲 Cell Shuffle-Sharding & Blast-Radius",
-        "Combinatorial tenant isolation & bounded cell outage impact",
+        "Combinatorial tenant isolation & bounded shared-shard blast radius",
     ),
     (
         "trace_status",
@@ -136,7 +136,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "canary_status",
         "🐤 Progressive Canary Traffic & Burn Breaker",
-        "5m error budget burn rate < 3.0x threshold",
+        "Error budget burn rate and tail latency against a canary deployment",
     ),
     (
         "cluster_audit_status",

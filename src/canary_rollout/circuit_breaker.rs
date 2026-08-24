@@ -14,6 +14,10 @@ pub struct CircuitBreakerDecision {
     pub reason: Option<String>,
 }
 
+/// The honest half of this module and the seam a real metrics query plugs into:
+/// it decides nothing about where its operands came from, which is why it
+/// survived the fabrication that surrounded it.
+#[derive(Debug, Clone, Copy)]
 pub struct CanaryCircuitBreaker;
 
 impl Default for CanaryCircuitBreaker {

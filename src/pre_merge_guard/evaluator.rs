@@ -526,7 +526,7 @@ impl PreMergeGuard {
         let flake_quarantine_status = flake_quarantine_report.status.clone();
 
         // 57. Zero-Trust SPIFFE Workload Identity
-        let zero_trust_workload_status = if zero_trust_report.passed {
+        let cleartext_transport_status = if zero_trust_report.passed {
             GateStatus::Passed
         } else {
             GateStatus::Failed(zero_trust_report.summary.clone())
@@ -701,7 +701,7 @@ impl PreMergeGuard {
             wasm_sandbox_status,
             consistency_status,
             flake_quarantine_status,
-            zero_trust_workload_status,
+            cleartext_transport_status,
             carbon_compute_status,
             replay_harness_status,
             upgrade_train_status,

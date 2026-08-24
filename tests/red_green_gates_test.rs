@@ -755,16 +755,36 @@ fn test_formal_verification_green_scoped_least_privilege() {
 // 22. Living ADR Drift Ratchet
 // =========================================================================
 
+/// A working tree that declares the five-field house schema, plus the record
+/// itself on disk.
+///
+/// Gate 22's field list is no longer a Rust literal: it is read from the
+/// repository under review, so `PathBuf::from(".")` -- which declares none --
+/// now yields `NotMeasured` rather than a verdict. These rows therefore have to
+/// supply a repository that states the rule they are testing.
+fn adr_repo_with(record: &str, body: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("docs/decisions")).expect("mkdir");
+    std::fs::write(
+        dir.path().join("docs/decisions/adr-schema.json"),
+        r#"["achieves", "origin", "rule", "ensure", "overturn_when"]"#,
+    )
+    .expect("write schema");
+    let record = dir.path().join(record);
+    std::fs::create_dir_all(record.parent().expect("a parent")).expect("mkdir");
+    std::fs::write(record, body).expect("write record");
+    dir
+}
+
 #[test]
 fn test_adr_drift_red_flag_missing_mandatory_field() {
     let ratchet = AdrDriftRatchet::new();
     // RED: ADR missing the mandatory "Overturn-When:" field
-    let bad_adr_diff = create_test_diff_context(
-        "docs/adr/0002_cache_strategy.md",
-        "+ # ADR-0002: Cache Strategy\n+ Achieves: Sub-millisecond read latency\n+ Origin: RFC-102\n+ Rule: Use Redis\n+ Ensure: TTL <= 300s",
-    );
+    let body = "# ADR-0002: Cache Strategy\nAchieves: Sub-millisecond read latency\nOrigin: RFC-102\nRule: Use Redis\nEnsure: TTL <= 300s\n";
+    let repo = adr_repo_with("docs/adr/0002_cache_strategy.md", body);
+    let bad_adr_diff = create_test_diff_context("docs/adr/0002_cache_strategy.md", body);
     let report = ratchet
-        .evaluate_adr_parity(&PathBuf::from("."), &bad_adr_diff)
+        .evaluate_adr_parity(repo.path(), &bad_adr_diff)
         .unwrap();
     assert!(
         !report.is_compliant,
@@ -776,12 +796,11 @@ fn test_adr_drift_red_flag_missing_mandatory_field() {
 fn test_adr_drift_green_complete_5_field_adr() {
     let ratchet = AdrDriftRatchet::new();
     // GREEN: ADR with all 5 required fields
-    let good_adr_diff = create_test_diff_context(
-        "docs/adr/0002_cache_strategy.md",
-        "+ # ADR-0002: Cache Strategy\n+ Achieves: Sub-millisecond read latency\n+ Origin: RFC-102\n+ Rule: Use Redis\n+ Ensure: TTL <= 300s\n+ Overturn-When: Embedded RocksDB satisfies multi-region replication",
-    );
+    let body = "# ADR-0002: Cache Strategy\nAchieves: Sub-millisecond read latency\nOrigin: RFC-102\nRule: Use Redis\nEnsure: TTL <= 300s\nOverturn-When: Embedded RocksDB satisfies multi-region replication\n";
+    let repo = adr_repo_with("docs/adr/0002_cache_strategy.md", body);
+    let good_adr_diff = create_test_diff_context("docs/adr/0002_cache_strategy.md", body);
     let report = ratchet
-        .evaluate_adr_parity(&PathBuf::from("."), &good_adr_diff)
+        .evaluate_adr_parity(repo.path(), &good_adr_diff)
         .unwrap();
     assert!(
         report.is_compliant,
@@ -1304,13 +1323,14 @@ fn test_subtle_rust_skills_empty_expect_evasion() {
 #[test]
 fn test_subtle_adr_drift_missing_validation_evidence() {
     let ratchet = AdrDriftRatchet::new();
-    // SUBTLE RED: ADR with Context and Decision but missing mandatory Validation Evidence section
-    let subtle_bad_diff = create_test_diff_context(
-        "docs/adr/0002-cache.md",
-        "+ # ADR-0002: Cache Architecture\n+ ## Context\n+ Needed caching.\n+ ## Decision\n+ Use Redis.",
-    );
+    // SUBTLE RED: a plain MADR record in a repository that declares the
+    // five-field house schema. Every declared field is absent.
+    let body =
+        "# ADR-0002: Cache Architecture\n## Context\nNeeded caching.\n## Decision\nUse Redis.\n";
+    let repo = adr_repo_with("docs/adr/0002-cache.md", body);
+    let subtle_bad_diff = create_test_diff_context("docs/adr/0002-cache.md", body);
     let report = ratchet
-        .evaluate_adr_parity(std::path::Path::new("."), &subtle_bad_diff)
+        .evaluate_adr_parity(repo.path(), &subtle_bad_diff)
         .unwrap();
     assert!(
         !report.is_compliant,

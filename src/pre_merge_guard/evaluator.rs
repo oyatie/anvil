@@ -280,11 +280,10 @@ impl PreMergeGuard {
         let slo_status = slo_report.status.clone();
 
         // 15. Living ADR Drift Ratchet
-        let adr_status = if adr_report.is_compliant {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(adr_report.summary.clone())
-        };
+        // The required field list is read from the repository under review, so
+        // a repository declaring none is `NotMeasured` -- a third outcome no
+        // boolean can carry.
+        let adr_status = adr_report.status.clone();
 
         // 16. Cell Shuffle Sharding
         let shuffle_status = if shuffle_report.is_isolated {

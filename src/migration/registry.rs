@@ -465,7 +465,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         confidence: Confidence::Verified,
         oyatie_counterpart: "ci/facade/affected-target-set + ci/facade/service-catalog-parity",
         counterpart_loc: 11203,
-        evidence: "164 lines, PURE; ServiceGraphValidator over a diff. oyatie's affected-target-set (10456) \
+        evidence: "164 lines, PURE; RequiredFieldChecker over a diff. oyatie's affected-target-set (10456) \
                   derives the exact buck2 target set from a merge-base diff, and service-catalog-parity \
                   (747) validates the service graph itself — both strictly more capable.",
     },

@@ -5,8 +5,8 @@ use tracing::info;
 
 use crate::git_manager::PrDiffContext;
 
-pub mod service_graph;
-pub use service_graph::{CrossServiceFinding, ServiceGraphValidator};
+pub mod contract_scan;
+pub use contract_scan::{CrossServiceFinding, NO_CONSUMER_REGISTRY};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceImpactReport {
@@ -15,9 +15,7 @@ pub struct ServiceImpactReport {
     pub summary: String,
 }
 
-pub struct CrossServiceImpactEngine {
-    validator: ServiceGraphValidator,
-}
+pub struct CrossServiceImpactEngine;
 
 impl Default for CrossServiceImpactEngine {
     fn default() -> Self {
@@ -27,11 +25,13 @@ impl Default for CrossServiceImpactEngine {
 
 impl CrossServiceImpactEngine {
     pub fn new() -> Self {
-        let validator = ServiceGraphValidator::new();
-        Self { validator }
+        Self
     }
 
-    /// 100% Deterministic evaluation of monorepo cross-service blast radius
+    /// Reports required schema fields a changed wire contract lost.
+    ///
+    /// The impacted consumer set is not part of the answer: see
+    /// [`NO_CONSUMER_REGISTRY`].
     pub fn evaluate_cross_service_impact(
         &self,
         _repo_dir: &Path,
@@ -53,19 +53,44 @@ impl CrossServiceImpactEngine {
                 current_file = path.trim_start_matches("b/").to_string();
             }
 
-            let file_findings = self
-                .validator
-                .evaluate_service_contracts(&current_file, file_diff);
-            breaking_findings.extend(file_findings);
+            breaking_findings.extend(contract_scan::removed_required_fields(
+                &current_file,
+                file_diff,
+            ));
         }
 
         let is_compatible = breaking_findings.is_empty();
+        let contracts_read: Vec<&String> = diff_ctx
+            .changed_files
+            .iter()
+            .filter(|f| contract_scan::is_wire_contract(f))
+            .collect();
+
         let summary = if is_compatible {
-            "✅ PASSED (Cross-service wire contract compatibility verified across all monorepo microservices)".to_string()
+            format!(
+                "No required schema field was removed from the {} changed wire contract(s) read ({}). Nothing else about compatibility is measured, and {}.",
+                contracts_read.len(),
+                if contracts_read.is_empty() {
+                    "none in this diff".to_string()
+                } else {
+                    contracts_read
+                        .iter()
+                        .map(|f| f.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+                NO_CONSUMER_REGISTRY
+            )
         } else {
             format!(
-                "❌ FAILED ({} cross-service breaking wire contract change(s) detected)",
-                breaking_findings.len()
+                "{} required schema field(s) removed from a wire contract: {}. {}.",
+                breaking_findings.len(),
+                breaking_findings
+                    .iter()
+                    .map(|f| format!("{} lost `{}`", f.contract_file, f.removed_required_field))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                NO_CONSUMER_REGISTRY
             )
         };
 
@@ -82,7 +107,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cross_service_nominal() {
+    fn a_diff_touching_no_wire_contract_is_compatible() {
         let engine = CrossServiceImpactEngine::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
@@ -101,5 +126,6 @@ mod tests {
             .evaluate_cross_service_impact(Path::new("."), &diff_ctx)
             .unwrap();
         assert!(rep.is_compatible);
+        assert!(rep.summary.contains("none in this diff"));
     }
 }

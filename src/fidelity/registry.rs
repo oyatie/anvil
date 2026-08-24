@@ -592,6 +592,34 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               check clean; both now report that nothing was scanned.",
         blocked_on: Some("a shadow database"),
     },
+    GateFidelity {
+        gate_id: "attestation_status",
+        aspiration: "Emit a signed provenance statement binding this artefact, by digest, to how it \
+                     was produced, and record it where a third party who does not trust the \
+                     producer can verify it.",
+        reference: "in-toto attestation v1 (subject digest, predicateType); DSSE PAE envelopes; \
+                    cosign attest with Fulcio and Rekor; SLSA v1.0 build levels; RFC 6962 \
+                    transparency logs",
+        fidelity: Fidelity::Aspirational,
+        gap: "Attests nothing. No digest is computed over any artefact, no DSSE envelope is built, \
+              no signature is produced -- the crate holds no signing key and no X.509 or ECDSA \
+              dependency -- and no transparency log is written or read, so there is no verifier \
+              here and nothing for one to check. What runs is `serde_json::to_string_pretty` and \
+              `fs::write`, and the gate's pass used to be rebuilt in the wiring from a boolean \
+              whose one production value was a literal, which made the failure arm unreachable. \
+              The guard now owns the verdict and publishes `NO_PROVENANCE_BACKEND` \
+              (attestation_guard.rs:116,209-211). A hash-chained receipt log was considered and \
+              rejected rather than shipped: the chain would be unkeyed, so recomputing it after \
+              an edit is the write path rather than an attack on it, and receipts are per-pull-\
+              request files overwritten in place inside a per-run clone, so there is no \
+              append-only log to chain in the first place. The receipt was also swept onto the \
+              pull request by the certification pipeline's own staging sweep; all four staging \
+              sites now share `stage_excluding_receipts` (git_manager/mod.rs:32).",
+        blocked_on: Some(
+            "a signing identity and a log to publish to -- a key or an OIDC issuer plus Fulcio, \
+             and a transparency log; none is reachable from here",
+        ),
+    },
 ];
 
 /// Gate ids whose implementation has NOT been read.

@@ -205,8 +205,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "local_probe_status",
-        "⚡ Sub-100ms Inner-Loop Local Probe",
-        "Instant pre-commit AST linting & conventional commit hygiene",
+        "⚡ Pre-Commit Conventional-Commit & Secret Probe",
+        "Conventional Commits 1.0.0 headers on this PR's commits; credential prefixes in the diff",
     ),
     (
         "semantic_abi_status",
@@ -275,8 +275,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "chaos_injection_status",
-        "💥 Pre-Merge Simulated Chaos Injection",
-        "Synthetic packet loss, DNS jitter & DB failover certification",
+        "💥 Unhandled-Await Lint",
+        "Added lines that unwrap an awaited call; no fault is injected into any system",
     ),
     (
         "stacked_diffs_status",
@@ -345,8 +345,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "feature_flag_status",
-        "🚩 Feature Flag & Dead Branch Lifecycle",
-        "Zero stale or dead toggle fallback branches",
+        "🚩 Feature Flag Lifecycle",
+        "Flag keys read at call sites, checked against a stale-flag ledger",
     ),
     (
         "bench_status",

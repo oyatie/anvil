@@ -58,11 +58,12 @@
 //! that are facts about the deployment rather than about any pull request:
 //! nineteen gates at this commit have no data source configured and report
 //! `NotMeasured` -- four more than before, since the empty-scope gates stopped
-//! certifying corpora they never had -- and
-//! `brand_absence_status` scans Anvil's own `src/` and reports `Failed` on the
-//! naming debt recorded there. So a corpus run is always refused here, whatever
-//! the pull request is, and the integration tests below assert the refusal
-//! rather than branching on it.
+//! certifying corpora they never had. `brand_absence_status` scans Anvil's own
+//! `src/` and reports the naming debt recorded there; it is advisory, so it no
+//! longer withholds admission on its own, and the `NotMeasured` gates are what
+//! does. So a corpus run is always refused here, whatever the pull request is,
+//! and the integration tests below assert the refusal rather than branching on
+//! it.
 //!
 //! The admitted shapes are reached the cheap way instead, by handing gate
 //! outcomes to `from_gate_outcomes` — the spec suite's own route, and the only
@@ -621,10 +622,9 @@ async fn a_change_that_moves_through_certification_is_answered_for_by_that_repor
     // message goes stale the moment a gate changes verdict, and this suite's
     // whole subject is claims outliving the thing they describe.
     let why_refused = format!(
-        "{} gates in this build have no data source and `brand_absence_status` \
-         reports Anvil's own naming debt, so no corpus run here can admit a \
-         pull request. If that changed, this test is now asserting the wrong \
-         half of the wiring",
+        "{} gates in this build have no data source, so no corpus run here can \
+         admit a pull request. If that changed, this test is now asserting the \
+         wrong half of the wiring",
         recorded.len()
     );
     let refusal = MergeEnlister::admission_refusal(Some(&report))

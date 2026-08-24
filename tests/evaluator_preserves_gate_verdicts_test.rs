@@ -82,6 +82,11 @@ const GATES_OWNING_A_VERDICT: &[&str] = &[
     "local_probe_report",
     "chaos_injection_report",
     "feature_flag_report",
+    // The self-directed gate that ships advisory. Its module sets
+    // `is_blocking: !WARN_ONLY`, and the evaluator rebuilt a `Failed` from
+    // `new_violations` regardless, so the published severity was stricter than
+    // the one the module computed. Listed here so the rebuild cannot return.
+    "brand_absence_report",
 ];
 
 /// The gate id a report's verdict is published under: `cosign_report` ->

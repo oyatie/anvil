@@ -134,8 +134,9 @@ fn low_fidelity_passing_gates(report: &PreMergeCertificationReport) -> Vec<Strin
 
 /// Renders the scorecard body, signature included.
 pub fn render(report: &PreMergeCertificationReport) -> String {
-    let (passed, failed) = report.gate_counts();
-    let total = passed + failed;
+    let counts = report.gate_counts();
+    let passed = counts.passed;
+    let total = counts.total();
 
     let mut findings: Vec<String> = Vec::new();
     for (gate_id, status) in report.named_statuses() {
@@ -155,10 +156,24 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
 
     let mut s = String::new();
     if report.is_admissible() {
-        s.push_str(&format!(
-            "✅ Certified — {}/{} gates passed.\n",
-            passed, total
-        ));
+        // The tally is stated in full rather than collapsed to "passed".
+        // `gate_counts` once scored `is_acceptable()`, which is true for both
+        // `Warning` and `NotMeasured`, so a corpus that measured nothing
+        // rendered here as every gate passing. A reader cannot discount what
+        // the number never showed them.
+        let mut headline = format!("✅ Certified — {passed}/{total} gates passed");
+        let mut qualifiers = Vec::new();
+        if counts.warned > 0 {
+            qualifiers.push(format!("{} warned", counts.warned));
+        }
+        if counts.unmeasured > 0 {
+            qualifiers.push(format!("{} unmeasured", counts.unmeasured));
+        }
+        if !qualifiers.is_empty() {
+            headline.push_str(&format!(" ({})", qualifiers.join(", ")));
+        }
+        headline.push_str(".\n");
+        s.push_str(&headline);
         // A passing gate produces no finding line, so it never carried the
         // fidelity note that `finding_line` attaches. That put the disclosure
         // only on the failure path -- and the green path is the one moment a

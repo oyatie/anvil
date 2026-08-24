@@ -186,7 +186,8 @@ pub async fn execute_pr_review(
     // gate no matter how many actually failed -- which is why the accumulated
     // telemetry showed ~95% of PRs "stuck at 69/70". That was the constant, not
     // a measurement (invariant I2).
-    let (gates_passed, gates_failed) = cert_report.gate_counts();
+    let gate_counts = cert_report.gate_counts();
+    let (gates_passed, gates_failed) = (gate_counts.passed, gate_counts.failed);
 
     // Record WHICH gates failed, not just how many. `record_gate_failure` and
     // GateFailureRecord already existed but had no callers, so the gate_failures

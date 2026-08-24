@@ -889,7 +889,7 @@ fn a_gate_that_was_auto_corrected_is_not_counted_among_the_gates_that_passed() {
          really happens"
     );
     assert_eq!(
-        report.gate_counts().0,
+        report.gate_counts().passed,
         TOTAL_GATES,
         "fixture sanity: the ready-made count scores an auto-correction as a \
          pass, which is what makes publishing it a claim about a tree that will \

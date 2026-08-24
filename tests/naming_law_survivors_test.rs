@@ -625,14 +625,14 @@ fn is_identifier_shaped(token: &str) -> bool {
 /// strings against still cannot drift away from the corpus unnoticed.
 fn live_gate_count() -> usize {
     let report = PreMergeCertificationReport::unmeasured("counting the live corpus");
-    let (passed, failed) = report.gate_counts();
+    let counts = report.gate_counts();
     assert_eq!(
-        passed + failed,
+        counts.total(),
         report.all_statuses().len(),
         "gate_counts() and all_statuses() disagree about the corpus size; the API has two \
          answers and the strings cannot be checked against either"
     );
-    passed + failed
+    counts.total()
 }
 
 /// # Defect this catches

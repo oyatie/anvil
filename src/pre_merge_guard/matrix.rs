@@ -75,8 +75,8 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     ),
     (
         "rust_skills_status",
-        "🦀 Rust 2024 Edition Quality (rust-skills)",
-        "380 Rust rules: zero unwrap panics & zero-copy",
+        "🦀 Rust Idiom Scan (regex over added lines)",
+        "Deterministic rules over added lines; the count is in the gate's own summary",
     ),
     (
         "kani_status",
@@ -376,7 +376,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "test_suite_status",
         "🧪 Automated Test Suite",
-        "Result of a suite run, when one was run; not measured in the PR pipeline",
+        "`cargo test` / `npm test` on an ephemeral worktree at the PR head",
     ),
 ];
 

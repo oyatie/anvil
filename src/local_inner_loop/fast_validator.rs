@@ -1,6 +1,6 @@
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::harness::judgement::ConventionalHeader;
 use crate::pre_merge_guard::report::GateStatus;
 use crate::pre_merge_guard::scanner::PreMergeScanner;
 
@@ -11,45 +11,8 @@ pub struct ProbeFinding {
     pub message: String,
 }
 
-/// The Conventional Commits 1.0.0 header, with commitlint's
-/// `@commitlint/config-conventional` type list.
-///
-/// The specification requires `<type>[(scope)][!]: <description>`: the colon and
-/// the space after it are mandatory and the description may not be empty, so
-/// `feat` and `feat:` are both invalid. The type list is commitlint's default
-/// `type-enum`, which is convention rather than specification — the base spec
-/// only gives `feat` and `fix` a defined meaning and permits others — and it is
-/// matched case-sensitively, which is commitlint's `type-case: lower-case`.
-///
-/// One deliberate relaxation: more than one space after the colon is accepted.
-/// The specification says one, and rejecting the second would be a red an author
-/// cannot learn anything from.
-///
-/// One addition: `promote`. `type-enum` is configuration precisely because it is
-/// per-project, and the base specification permits types beyond `feat` and
-/// `fix`. This repository's promotion ladder writes `promote(dev): ...` and
-/// `promote(staging): ...`; hardcoding commitlint's default and calling it the
-/// grammar made the check red on the convention the project actually follows --
-/// which is the same shape of invented vocabulary this module exists to delete.
-const CONVENTIONAL_HEADER: &str =
-    r"^(build|chore|ci|docs|feat|fix|perf|promote|refactor|revert|style|test)(\([^()]+\))?!?: +\S";
-
-/// Subjects git writes rather than the author, taken from commitlint's own
-/// `defaultIgnores`. Judging these is a false red nobody can fix: the text is
-/// generated, and rewriting it means rewriting history.
-const GENERATED_SUBJECT_PREFIXES: &[&str] = &[
-    "Merge branch",
-    "Merge pull request",
-    "Merge remote-tracking branch",
-    "Merge tag",
-    "fixup!",
-    "squash!",
-    "amend!",
-    "Revert \"",
-];
-
 pub struct FastValidator {
-    header_re: Regex,
+    header: ConventionalHeader,
 }
 
 impl Default for FastValidator {
@@ -61,8 +24,7 @@ impl Default for FastValidator {
 impl FastValidator {
     pub fn new() -> Self {
         Self {
-            header_re: Regex::new(CONVENTIONAL_HEADER)
-                .expect("the conventional-commit header pattern is a compile-time constant"),
+            header: ConventionalHeader::new(),
         }
     }
 
@@ -71,29 +33,16 @@ impl FastValidator {
     /// `None` means the subject is one git generated and there is nothing to
     /// judge — which is not the same as a subject that passed, and the caller
     /// must not treat it as one.
+    ///
+    /// The grammar itself moved to [`crate::harness::judgement`]: this gate is
+    /// `Superseded` and the harness rule that shares the judgement is not, so
+    /// the dependency runs inward rather than out.
     pub fn check_commit_header(&self, commit_msg: &str) -> Option<ProbeFinding> {
-        let subject = commit_msg.lines().next().unwrap_or("").trim_end();
-        if GENERATED_SUBJECT_PREFIXES
-            .iter()
-            .any(|p| subject.starts_with(p))
-        {
-            return None;
-        }
-
-        let is_valid = self.header_re.is_match(subject);
+        let verdict = self.header.judge(commit_msg)?;
         Some(ProbeFinding {
             check_name: "Conventional Commit Header".to_string(),
-            is_valid,
-            message: if is_valid {
-                format!("`{subject}` is a valid conventional commit header.")
-            } else {
-                format!(
-                    "`{subject}` is not a conventional commit header: Conventional Commits \
-                     1.0.0 requires <type>[(scope)][!]: <description>, with the colon, the \
-                     space and a non-empty description all present, and a type from \
-                     build|chore|ci|docs|feat|fix|perf|promote|refactor|revert|style|test."
-                )
-            },
+            is_valid: verdict.valid,
+            message: verdict.message,
         })
     }
 

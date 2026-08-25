@@ -48,6 +48,7 @@ use std::num::NonZeroUsize;
 
 pub mod apply;
 pub mod corpus;
+pub mod judgement;
 pub mod rules;
 
 pub use apply::{Edit, Plan, Refused, plan};
@@ -71,10 +72,34 @@ pub enum Requires {
     PathsOnly,
     /// Pre-commit. File contents, no build.
     FileContents,
+    /// Pre-commit. The change under review: two revisions and the patch text
+    /// between them.
+    ///
+    /// This rung is why roughly half the shipped gates could not be expressed
+    /// here at all. A corpus of the working tree answers "is this file wrong";
+    /// most of the pre-merge gates ask "does this change make it wrong", which
+    /// is a question about a pair of revisions and cannot be asked of one.
+    Changeset,
     /// Pre-push. Cargo manifests.
     Manifests,
+    /// Pre-push. The commit subjects the change adds, as `git log base..head`
+    /// reports them.
+    ///
+    /// Separate from [`Requires::Changeset`] because the range can be present
+    /// while the log is not, and a gate that read an absent log as an empty one
+    /// published an accusation at every pull request whose commits never
+    /// reached it.
+    History,
     /// Presubmit. The resolved dependency graph.
     BuildGraph,
+    /// Presubmit. A toolchain the rule may invoke -- cargo, clippy, buck2.
+    Toolchain,
+    /// Merge queue. Remote state: pull request status, checks, registries.
+    ///
+    /// The most expensive rung and the only one that can fail for reasons
+    /// unrelated to the change. A rule here must be withheld on a network
+    /// error, never passed.
+    Network,
 }
 
 impl Requires {
@@ -82,9 +107,10 @@ impl Requires {
     pub fn stage(self) -> &'static str {
         match self {
             Requires::PathsOnly => "editor",
-            Requires::FileContents => "pre-commit",
-            Requires::Manifests => "pre-push",
-            Requires::BuildGraph => "presubmit",
+            Requires::FileContents | Requires::Changeset => "pre-commit",
+            Requires::Manifests | Requires::History => "pre-push",
+            Requires::BuildGraph | Requires::Toolchain => "presubmit",
+            Requires::Network => "merge-queue",
         }
     }
 }

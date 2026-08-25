@@ -6,6 +6,7 @@
 //! rather than by each rule remembering to check.
 
 use super::Requires;
+use crate::git_manager::diff_context::PrDiffContext;
 use std::collections::BTreeMap;
 
 /// One thing a rule examines.
@@ -43,8 +44,27 @@ pub struct Corpus {
     pub contents: BTreeMap<String, String>,
     /// Path -> parsed manifest text.
     pub manifests: BTreeMap<String, String>,
+    /// The change under review: base and head revisions, the patch text, and
+    /// the changed paths.
+    ///
+    /// This is [`PrDiffContext`] itself rather than a harness-local retelling
+    /// of it. The gates being migrated already take that struct, so a gate
+    /// moves into the harness without a translation layer -- and a translation
+    /// layer is exactly where the third `Fix` vocabulary came from.
+    pub changeset: Option<PrDiffContext>,
+    /// Commit subjects the change adds, as `git log base..head` reports them.
+    ///
+    /// `Option`, and the distinction is the point: `Some(vec![])` is a range
+    /// that legitimately adds no non-merge commits, `None` is a log that was
+    /// never supplied. Collapsing the two is the defect this harness exists to
+    /// make unspellable.
+    pub commit_subjects: Option<Vec<String>>,
     /// Whether a resolved build graph was supplied.
     pub build_graph: bool,
+    /// Whether a toolchain (cargo, clippy, buck2) is available to invoke.
+    pub toolchain: bool,
+    /// Whether remote state may be reached.
+    pub network: bool,
 }
 
 impl Corpus {
@@ -53,6 +73,54 @@ impl Corpus {
             subjects: paths.iter().map(|p| Subject::at(p)).collect(),
             ..Default::default()
         }
+    }
+
+    /// A corpus over the change a pull request proposes.
+    ///
+    /// Subjects come from `changed_files`, so a rule that only needs paths runs
+    /// against this corpus at the cheapest rung without asking for the diff.
+    pub fn of_changeset(ctx: PrDiffContext) -> Self {
+        Corpus {
+            subjects: ctx.changed_files.iter().map(|p| Subject::at(p)).collect(),
+            changeset: Some(ctx),
+            ..Default::default()
+        }
+    }
+
+    /// A corpus over a bare patch, for a rule that reads only the diff text.
+    ///
+    /// `repo` and `pr_number` are left empty deliberately. They are remote
+    /// identity, which is [`Requires::Network`]; a rule declaring
+    /// [`Requires::Changeset`] and reading them is lying about its rung, and
+    /// leaving them empty is what makes that lie visible instead of silent.
+    pub fn of_diff(paths: &[&str], diff: &str) -> Self {
+        Corpus::of_changeset(PrDiffContext {
+            repo: String::new(),
+            pr_number: 0,
+            base_branch: String::new(),
+            base_sha: String::new(),
+            head_sha: String::new(),
+            is_incremental: false,
+            previous_head_sha: None,
+            diff_content: diff.to_string(),
+            changed_files: paths.iter().map(|p| p.to_string()).collect(),
+            repo_working_dir: std::path::PathBuf::new(),
+        })
+    }
+
+    pub fn with_commits(mut self, subjects: Vec<String>) -> Self {
+        self.commit_subjects = Some(subjects);
+        self
+    }
+
+    pub fn with_toolchain(mut self) -> Self {
+        self.toolchain = true;
+        self
+    }
+
+    pub fn with_network(mut self) -> Self {
+        self.network = true;
+        self
     }
 
     pub fn with_contents(mut self, path: &str, body: &str) -> Self {
@@ -74,8 +142,12 @@ impl Corpus {
         match needs {
             Requires::PathsOnly => true,
             Requires::FileContents => !self.contents.is_empty(),
+            Requires::Changeset => self.changeset.is_some(),
             Requires::Manifests => !self.manifests.is_empty(),
+            Requires::History => self.commit_subjects.is_some(),
             Requires::BuildGraph => self.build_graph,
+            Requires::Toolchain => self.toolchain,
+            Requires::Network => self.network,
         }
     }
 }

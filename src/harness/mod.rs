@@ -46,9 +46,11 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+pub mod apply;
 pub mod corpus;
 pub mod rules;
 
+pub use apply::{Edit, Plan, Refused, plan};
 pub use corpus::{Corpus, Subject};
 
 /// What a rule needs in order to run, and therefore the cheapest stage that can

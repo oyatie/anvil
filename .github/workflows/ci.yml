@@ -9,6 +9,113 @@ on:
     types: [checks_requested]
 
 jobs:
+  # Path occupancy. Two hops combine iff their write-sets are disjoint;
+  # hub files are N=1 at trunk HEAD. The verdict is `admit_spawn`, reached
+  # through `cargo run --bin occupancy`, so the rule has one home.
+  #
+  # This job is first in the graph on purpose. `fast-checks` waits on it,
+  # so a refused overlap costs one debug build of the library and never
+  # reaches clippy, the test suite or the release build.
+  #
+  # The merge_group skip below is deliberate, not an oversight. Do not
+  # "fix" it by adding merge_group to the condition. The queue builds a
+  # merge-group SHA that already holds this hop combined with the entries
+  # ahead of it, and that SHA is the combination test — git is the
+  # combiner, not a coordinator. Occupancy re-run there would compare the
+  # group against the very pull requests it was built from and refuse
+  # every entry for overlapping with itself.
+  occupancy:
+    name: occupancy
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.97.1"
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+
+      - name: Collect the write-sets in flight on this trunk
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Every failure below is a hard exit. A rate limit, a network
+          # error or a body that does not parse must never leave an empty
+          # path list behind, because an empty list reads as "occupies
+          # nothing", which reads as "no overlap". Nothing here swallows a
+          # non-zero exit, and this job sets no continue-on-error.
+
+          # The open set on this trunk, from GraphQL. `changed_files` here
+          # is the second reading: the REST files endpoint below is asked
+          # for the same PR and the two counts must agree. One API is not
+          # evidence when the other can disagree with it.
+          gh pr list --repo "${GITHUB_REPOSITORY}" --base "${BASE}" \
+            --state open --limit 500 \
+            --json number,changedFiles \
+            --jq '.[] | "\(.number)\t\(.changedFiles)"' > open.tsv
+
+          if ! cut -f1 open.tsv | grep -qx "${PR}"; then
+            echo "occupancy: this pull request is absent from the open listing;"
+            echo "the listing is truncated or the forge did not answer. Refusing."
+            exit 1
+          fi
+
+          # Names only, from the files endpoint. The unified-diff media
+          # type answers 406 past 20k lines, so the whole-diff route is
+          # not usable here. `previous_filename` is the old name of a
+          # rename: a `git mv` occupies both ends.
+          : > this.txt
+          : > in-flight.txt
+          while IFS="$(printf '\t')" read -r n declared; do
+            raw="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${n}/files" \
+              --jq '.[] | "F\t\(.filename)", (.previous_filename // empty | "P\t\(.)")')"
+            counted="$(printf '%s\n' "${raw}" | awk -F'\t' '$1 == "F" { n++ } END { print n + 0 }')"
+            if [ "${counted}" -ne "${declared}" ]; then
+              echo "occupancy: pull request ${n} reports ${declared} changed files but the"
+              echo "files endpoint named ${counted}. The two readings disagree. Refusing."
+              exit 1
+            fi
+            paths="$(printf '%s\n' "${raw}" | cut -f2- | sed '/^[[:space:]]*$/d')"
+            if [ "${n}" = "${PR}" ]; then
+              printf '%s\n' "${paths}" | sed '/^$/d' >> this.txt
+            else
+              printf '%s\n' "${paths}" | sed '/^$/d' | sed "s|^|pr-${n}\t|" >> in-flight.txt
+            fi
+          done < open.tsv
+
+          # Hub files are N=1 at trunk HEAD: a hub edited from a stale
+          # merge-base is refused, because the combination it was written
+          # against is no longer the one the queue will build.
+          git fetch --no-tags origin "+refs/heads/${BASE}:refs/remotes/origin/${BASE}"
+          git fetch --no-tags origin "${HEAD_SHA}"
+          merge_base="$(git merge-base "${HEAD_SHA}" "origin/${BASE}")"
+          trunk_head="$(git rev-parse "origin/${BASE}")"
+          if [ "${merge_base}" = "${trunk_head}" ]; then
+            echo true > at-trunk.txt
+          else
+            echo false > at-trunk.txt
+          fi
+
+      - name: Admit or refuse this path-set
+        run: |
+          set -euo pipefail
+          cargo run --bin occupancy --locked -- \
+            --this this.txt \
+            --in-flight in-flight.txt \
+            --merge-base-is-trunk "$(cat at-trunk.txt)"
+
   fmt:
     name: fmt
     runs-on: ubuntu-24.04
@@ -60,8 +167,30 @@ jobs:
     name: fast-checks
     runs-on: ubuntu-24.04
     if: always()
-    needs: [fmt, test]
+    needs: [fmt, test, occupancy]
     steps:
+      # First step, before checkout, before the toolchain, before cargo:
+      # nothing is compiled until occupancy has admitted the path-set.
+      - name: Occupancy verdict
+        env:
+          OCCUPANCY: ${{ needs.occupancy.result }}
+        run: |
+          set -eu
+          case "${OCCUPANCY}" in
+            success)
+              echo "occupancy admitted this path-set"
+              ;;
+            skipped)
+              echo "occupancy does not run outside pull_request; on merge_group the"
+              echo "merge-group SHA is itself the combination test"
+              ;;
+            *)
+              echo "occupancy did not admit this path-set: ${OCCUPANCY}"
+              echo "refusing before rustc starts"
+              exit 1
+              ;;
+          esac
+
       - name: Fan-in
         run: |
           [ "${{ needs.fmt.result }}" = "success" ] && [ "${{ needs.test.result }}" = "success" ]

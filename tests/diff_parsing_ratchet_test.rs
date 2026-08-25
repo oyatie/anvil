@@ -34,17 +34,18 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-/// Sites present when this gate was written, measured on the tree it landed on.
+/// Sites present when this gate was written, counted AFTER the allowlist.
 ///
-/// LOWER THIS when a change removes one. It is the whole point of the number:
-/// a ceiling that is never lowered stops being a ratchet and becomes a budget.
+/// EXACT, not a ceiling. `<=` leaves slack, and slack is what let a seeded
+/// fourteenth parser through the first draft of this gate untripped: the
+/// constant was the raw total while the assertion counted the allowlisted set,
+/// so two sites of headroom existed and nothing said so.
 ///
-/// Counted AFTER the allowlist, because that is how the assertion counts.
-/// Setting it to the raw total (25) instead of the counted total (23) left two
-/// slack, and a seeded fourteenth parser slipped in under the ceiling without
-/// tripping anything -- a gate that was green for a defect it exists to catch.
-/// That was found by seeding one, not by reading the code.
-const CEILING: usize = 23;
+/// Exact also removes the need for a reminder to lower it. That reminder was a
+/// `println!`, which `cargo test` captures and hides on a passing test -- anvil
+/// reviewed this gate and pointed out the note would never be seen. A number
+/// that must be updated by the change that moves it needs no reminder.
+const CEILING: usize = 28;
 
 /// Functions allowed to walk a diff, with the reason.
 ///
@@ -70,6 +71,35 @@ const ALLOWED: &[(&str, &str)] = &[
     ),
 ];
 
+/// The strings that only appear in code reading a unified diff by hand.
+///
+/// The LITERAL, not the method called on it. Anvil's own review of this gate
+/// found the first draft keyed on `strip_prefix("+++ b/")` and
+/// `split("diff --git")` exactly, so `starts_with("+++ b/")`, `split_once`, a
+/// raw string or a regex all walked straight past. Matching the literal closes
+/// every one of those at once, and a raw string `r"+++ b/"` contains it too.
+const DIFF_MARKERS: &[&str] = &["+++ b/", "diff --git"];
+
+/// Everything that can introduce a function definition.
+///
+/// Also from that review: the first draft keyed on `pub`/`async` and dropped a
+/// bare `unsafe fn` or `extern "C" fn` entirely, so a parser written either way
+/// was invisible to the gate that exists to see it.
+const FN_INTRODUCERS: &[&str] = &[
+    "fn ",
+    "pub fn ",
+    "pub(crate) fn ",
+    "async fn ",
+    "pub async fn ",
+    "pub(crate) async fn ",
+    "unsafe fn ",
+    "pub unsafe fn ",
+    "const fn ",
+    "pub const fn ",
+    "extern ",
+    "pub extern ",
+];
+
 fn rust_sources() -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![PathBuf::from("src")];
@@ -87,51 +117,129 @@ fn rust_sources() -> Vec<PathBuf> {
     out
 }
 
+/// Removes `#[cfg(test)]` items by matching braces.
+///
+/// The first draft truncated the file at the first occurrence of the string.
+/// Anvil's review pointed out that a doc comment, an inner module, or a string
+/// literal carrying that text near the top of a file blinds the scan to every
+/// production function below it -- a gate that silently stops looking, which is
+/// the defect this whole class is made of.
+fn without_test_modules(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("#[cfg(test)]") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i..];
+        let Some(open) = after.find('{') else {
+            return out;
+        };
+        let mut depth = 0i32;
+        let mut end = None;
+        for (k, c) in after[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open + k + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match end {
+            Some(e) => rest = &after[e..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A path written with `/` on every platform.
+///
+/// `display()` emits `\` on Windows, so every POSIX key in `ALLOWED` would fail
+/// to match there and the exemptions would evaporate silently.
+fn posix_rel(path: &std::path::Path) -> String {
+    path.strip_prefix("src")
+        .unwrap_or(path)
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The byte offsets at which a function definition begins, with its name.
+fn function_starts(body: &str) -> Vec<(usize, String)> {
+    let mut out: Vec<(usize, String)> = Vec::new();
+    for (off, line) in line_offsets(body) {
+        let t = line.trim_start();
+        if !FN_INTRODUCERS.iter().any(|k| t.starts_with(k)) {
+            continue;
+        }
+        // `extern "C" fn name` and `extern crate` both start with `extern `;
+        // only the one that reaches an `fn` is a definition.
+        let Some(fi) = t.find("fn ") else {
+            continue;
+        };
+        let name: String = t[fi + 3..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        out.push((off + (line.len() - t.len()), name));
+    }
+    out
+}
+
+fn line_offsets(body: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut off = 0usize;
+    for line in body.split_inclusive('\n') {
+        out.push((off, line.trim_end_matches('\n')));
+        off += line.len();
+    }
+    out
+}
+
+/// The code of `chunk`, without its commentary.
+///
+/// A marker inside a comment is PROSE, not a parser. This mattered immediately:
+/// a function's span runs to the start of the next `fn`, which sweeps in that
+/// next function's doc comment -- so `schema_evolution::new` was reported as a
+/// diff parser because the comment describing the function BELOW it says
+/// "one file at a time". Two false positives, both from attributing a
+/// neighbour's prose to a function, which is the same misattribution shape the
+/// gate exists to prevent.
+fn code_only(chunk: &str) -> String {
+    chunk
+        .lines()
+        .map(|l| match l.find("//") {
+            Some(i) if !l[..i].contains('"') => &l[..i],
+            _ => l,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Every function that walks a unified diff itself.
 ///
-/// The two markers are the ones every copy of the block used: a `+++ b/`
-/// header read by hand, or a split on `diff --git`. Test modules are cut off
-/// first -- a fixture that spells a diff is not a parser.
+/// Test modules are removed first: a fixture that spells a diff is not a parser.
 fn hand_rolled_parsers() -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     for path in rust_sources() {
         let text = fs::read_to_string(&path).unwrap_or_default();
-        let body = match text.find("#[cfg(test)]") {
-            Some(i) => &text[..i],
-            None => &text[..],
-        };
-        let rel = path
-            .strip_prefix("src")
-            .unwrap_or(&path)
-            .display()
-            .to_string();
+        let body = without_test_modules(&text);
+        let rel = posix_rel(&path);
 
-        // Split into functions so the finding names one, rather than the file.
-        let starts: Vec<(usize, String)> = body
-            .match_indices("fn ")
-            .filter(|(i, _)| {
-                body[..*i].rsplit('\n').next().is_some_and(|l| {
-                    l.trim_start().starts_with("fn ")
-                        || l.contains("fn ")
-                        || l.trim().is_empty()
-                        || l.contains("pub")
-                        || l.contains("async")
-                })
-            })
-            .map(|(i, _)| {
-                let name: String = body[i + 3..]
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-                (i, name)
-            })
-            .collect();
-
+        let starts = function_starts(&body);
         for (idx, (start, name)) in starts.iter().enumerate() {
             let end = starts.get(idx + 1).map(|(s, _)| *s).unwrap_or(body.len());
-            let chunk = &body[*start..end];
-            if chunk.contains("strip_prefix(\"+++ b/\")") || chunk.contains("split(\"diff --git\")")
-            {
+            let chunk = code_only(&body[*start..end]);
+            if DIFF_MARKERS.iter().any(|m| chunk.contains(m)) {
                 found.insert(format!("{rel}::{name}"));
             }
         }
@@ -140,7 +248,7 @@ fn hand_rolled_parsers() -> BTreeSet<String> {
 }
 
 #[test]
-fn hand_rolled_diff_parsing_may_fall_but_never_rise() {
+fn hand_rolled_diff_parsing_is_exactly_what_was_recorded() {
     let found = hand_rolled_parsers();
 
     // Coverage, asserted rather than assumed. A scan that read nothing would
@@ -157,14 +265,18 @@ fn hand_rolled_diff_parsing_may_fall_but_never_rise() {
         .filter(|s| !allowed.contains(s.as_str()))
         .collect();
 
-    assert!(
-        counted.len() <= CEILING,
-        "{} function(s) parse a diff by hand, ceiling is {CEILING}.\n\
-         A new one may not be added: take the files from \
+    assert_eq!(
+        counted.len(),
+        CEILING,
+        "{} function(s) parse a diff by hand; CEILING records {CEILING}.\n\
+         If this ROSE: a new one may not be added. Take the files from \
          `diff_context::diffs_by_path`, which reads the path from a header that \
-         states it and attributes nothing to a hunk that names no file.\n\
-         Thirteen gates published a path they had not read out of the diff, \
-         because thirteen places each parsed one.\n  {}",
+         states it and attributes nothing to a hunk naming no file. Thirteen \
+         gates published a path they had not read out of the diff, because \
+         thirteen places each parsed one.\n\
+         If this FELL: lower CEILING to {} in this same change -- that is what \
+         makes it a ratchet rather than a budget.\n  {}",
+        counted.len(),
         counted.len(),
         counted
             .iter()
@@ -172,26 +284,6 @@ fn hand_rolled_diff_parsing_may_fall_but_never_rise() {
             .collect::<Vec<_>>()
             .join("\n  ")
     );
-}
-
-#[test]
-fn the_ceiling_is_not_a_budget() {
-    // A ceiling that is never lowered stops being a ratchet. This does not fail
-    // when the count drops -- that would block the very change that improves it
-    // -- but it does make the drift visible in the output the moment it opens.
-    let allowed: BTreeSet<&str> = ALLOWED.iter().map(|(k, _)| *k).collect();
-    let count = hand_rolled_parsers()
-        .iter()
-        .filter(|s| !allowed.contains(s.as_str()))
-        .count();
-
-    if count < CEILING {
-        println!(
-            "NOTE: {count} hand-rolled diff parsers remain but CEILING is {CEILING}. \
-             Lower CEILING to {count} in the change that removed them."
-        );
-    }
-    assert!(count <= CEILING);
 }
 
 #[test]

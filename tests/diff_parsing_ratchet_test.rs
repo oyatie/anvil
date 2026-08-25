@@ -45,7 +45,7 @@ use std::path::PathBuf;
 /// `println!`, which `cargo test` captures and hides on a passing test -- anvil
 /// reviewed this gate and pointed out the note would never be seen. A number
 /// that must be updated by the change that moves it needs no reminder.
-const CEILING: usize = 25;
+const CEILING: usize = 19;
 
 /// Functions allowed to walk a diff, with the reason.
 ///

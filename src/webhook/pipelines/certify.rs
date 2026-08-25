@@ -88,7 +88,7 @@ pub async fn certify_pull_request(
     // Deliberately not `?`. This guard used to propagate its error, so a
     // missing binary failed the whole certification run rather than one gate;
     // it now returns a report whose `NotMeasured` says the same thing without
-    // taking the other seventy-one gates down.
+    // taking every other gate down.
     let cedar_report = state
         .cedar_guard
         .evaluate_cedar_policies(repo_dir, diff_ctx)

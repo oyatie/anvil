@@ -78,15 +78,23 @@ impl RegulatoryEngine {
                 Some((rule, *grace, Regex::new(pattern).ok()?))
             })
             .collect();
-        let mut current_file = diff_ctx.changed_files.first().cloned().unwrap_or_default();
-        let mut current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
+        // `None` until the diff names a file. Seeding it with the first changed
+        // file filed every pre-header finding against a real, innocent path --
+        // see the note in `rust_language_policy::engine`, which carried the
+        // identical seed.
+        let mut current: Option<(String, String)> = None;
 
         for line in diff_ctx.diff_content.lines() {
             if let Some(stripped) = line.strip_prefix("+++ b/") {
-                current_file = stripped.trim().to_string();
-                current_ext = current_file.rsplit('.').next().unwrap_or("").to_lowercase();
+                let path = stripped.trim().to_string();
+                let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+                current = Some((path, ext));
                 continue;
             }
+
+            let Some((current_file, current_ext)) = current.as_ref() else {
+                continue;
+            };
 
             if line.starts_with('+') && !line.starts_with("+++") {
                 let added_code = &line[1..].trim();
@@ -95,10 +103,7 @@ impl RegulatoryEngine {
                     // Check file extension trigger if extension is known
                     if !current_ext.is_empty()
                         && !rule.trigger_extensions.is_empty()
-                        && !rule
-                            .trigger_extensions
-                            .iter()
-                            .any(|ext| ext == &current_ext)
+                        && !rule.trigger_extensions.iter().any(|ext| ext == current_ext)
                     {
                         continue;
                     }

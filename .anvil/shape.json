@@ -32,6 +32,7 @@
       { "id": "cargo-manifest", "kind": "exact", "value": "Cargo.toml" },
       { "id": "cargo-lock", "kind": "exact", "value": "Cargo.lock" },
       { "id": "rust-toolchain", "kind": "exact", "value": "rust-toolchain.toml" },
+      { "id": "cargo-deny", "kind": "exact", "value": "deny.toml" },
       { "id": "readme", "kind": "prefix_dot", "value": "README" },
       { "id": "changelog", "kind": "exact", "value": "CHANGELOG.md" },
       { "id": "rules", "kind": "exact", "value": "rules.md" },

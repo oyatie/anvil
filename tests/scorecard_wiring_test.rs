@@ -283,8 +283,15 @@ fn false_green_prevention_an_unmeasured_gate_is_never_published_as_certified() {
          pass:\n{published}"
     );
     assert!(
-        published.contains("1 gate(s) produced no measurement"),
+        published.contains("- **kani** — not measured"),
         "Expected False Green prevention: the unmeasured gate must be stated:\n{published}"
+    );
+    // `kani_status` is outside `admission::ABSENCE_POLICY`, so its absence is a
+    // measurement failure and still blocks. The headline counts what a reader
+    // must act on rather than the size of the corpus.
+    assert!(
+        published.contains("1 finding(s) need action"),
+        "a blocking absence must be counted in the headline:\n{published}"
     );
 }
 
@@ -484,9 +491,17 @@ fn absent_evidence_a_missing_tool_renders_as_not_measured_never_failed() {
     r.summary_markdown = matrix_for(&r);
 
     let published = review::scorecard_comment(&r);
+    // `cosign_status` is declared NOT PROVISIONED -- this deployment has no
+    // Sigstore backend -- so its absence is folded rather than listed as a
+    // finding a reader could act on. Folded, never dropped: hiding it is how a
+    // corpus quietly stops measuring.
     assert!(
-        published.contains("- **cosign** — not measured: cosign binary not found on PATH"),
-        "absent evidence must be published as not measured:\n{published}"
+        published.contains("1 gate absent by declaration"),
+        "a declared absence must still be counted:\n{published}"
+    );
+    assert!(
+        published.contains("cosign"),
+        "a declared absence must still be named:\n{published}"
     );
     assert!(
         !published.contains("- **cosign** — failed"),
@@ -568,7 +583,7 @@ fn boundary_zero_findings_certifies_and_one_finding_blocks() {
 fn boundary_unmeasured_gate_count_is_reported_exactly() {
     let zero = review::scorecard_comment(&all_passing());
     assert!(
-        !zero.contains("produced no measurement"),
+        !zero.contains("need action") && !zero.contains("absent by declaration"),
         "zero unmeasured gates must say nothing:\n{zero}"
     );
 
@@ -580,8 +595,8 @@ fn boundary_unmeasured_gate_count_is_reported_exactly() {
     one.recompute_unmeasured();
     let one_body = review::scorecard_comment(&one);
     assert!(
-        one_body.contains("1 gate(s) produced no measurement"),
-        "{one_body}"
+        one_body.contains("1 finding(s) need action"),
+        "one blocking absence, counted exactly:\n{one_body}"
     );
 
     let mut two = all_passing();
@@ -595,8 +610,11 @@ fn boundary_unmeasured_gate_count_is_reported_exactly() {
     };
     two.recompute_unmeasured();
     let two_body = review::scorecard_comment(&two);
+    // Two absences of different kinds, counted separately because they mean
+    // different things: kani could have measured, cosign could not.
     assert!(
-        two_body.contains("2 gate(s) produced no measurement"),
+        two_body.contains("1 finding(s) need action")
+            && two_body.contains("1 gate absent by declaration"),
         "{two_body}"
     );
 }

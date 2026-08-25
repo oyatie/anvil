@@ -163,20 +163,35 @@ impl TraceContextGuard {
             // view about, and the gate says exactly that rather than publishing
             // the word "verified" over a measurement it never took.
             //
-            // `Warning` rather than `Passed`: `Passed` is a unit variant, so the
-            // sentence would be discarded before any reader saw it, and the
-            // scorecard would render the row as a bare tick counted in
-            // "N/N gates passed" -- the claim issue #14 filed. `Warning` is
-            // `is_acceptable()`, so it neither blocks the merge queue nor
-            // accuses this change of anything; it does not follow
-            // `src/slo_canary_guard/mod.rs` into `NotMeasured`, because a diff
-            // that crosses no boundary is not absent evidence -- the evidence is
-            // complete and it is empty.
+            // `NotMeasured`, declared `NotApplicable`.
+            //
+            // This was `Warning`, and the reasoning written here was sound
+            // under the rule it was written against: `Passed` is a unit variant
+            // so the sentence would be discarded, and `NotMeasured` blocked
+            // merge-queue admission unconditionally, so a diff crossing no
+            // async boundary would have been unmergeable. `Warning` was the
+            // only variant left that carried the sentence and blocked nothing.
+            //
+            // `admission::ABSENCE_POLICY` removed that constraint. A gate that
+            // searched a named subject set and found it empty is
+            // `NotApplicable`: it does not block, it is not a pass, and it is
+            // folded rather than listed. So the status can now say what
+            // actually happened instead of choosing the least-wrong variant.
+            //
+            // It matters to a reader. As a `Warning` this appeared among the
+            // findings needing action on every pull request that touches no
+            // async boundary -- which is most of them -- next to real failures.
             let summary = format!(
-                "➖ NOTHING TO MEASURE (no task boundary in {SCOPE}; lines outside those hunks \
-                 were not read)"
+                "no task boundary in {SCOPE}, so no span propagation was judged; lines outside \
+                 those hunks were not read"
             );
-            (GateStatus::Warning(summary.clone()), summary)
+            (
+                GateStatus::NotApplicable {
+                    gate_id: "trace_status".to_string(),
+                    subject: summary.clone(),
+                },
+                summary,
+            )
         } else {
             // Boundaries were inspected, every region was established, and every
             // one carries a span. This is the one arm entitled to be silent: the

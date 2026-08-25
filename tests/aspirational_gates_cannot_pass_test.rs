@@ -280,10 +280,54 @@ fn a_withheld_pass_is_published_in_the_unmeasured_list_and_withholds_admission()
              so nothing a reader sees says the gate produced no measurement"
         );
     }
+    // What withholding a pass does, and no longer does.
+    //
+    // It publishes the gate as unmeasured -- asserted above, and that is the
+    // half that matters: a withheld pass must never read as a pass.
+    //
+    // It does not withhold the merge. An aspirational gate has no
+    // implementation, so it can never measure for any pull request, and
+    // blocking on it blocks every merge forever rather than making any of them
+    // safer. `admission::ABSENCE_POLICY` declares it NOT PROVISIONED, and the
+    // test below pins that every aspirational gate is so declared -- an
+    // undeclared one would shut the queue permanently.
+    assert!(
+        report.is_admissible(),
+        "an aspirational gate cannot measure for any pull request; withholding \
+         its pass must not withhold every merge"
+    );
+
+    // The sharpened invariant, in the direction that still bites: a gate this
+    // deployment COULD measure, absent, still shuts the door.
+    report.kani_status = GateStatus::NotMeasured {
+        gate_id: "kani_status".to_string(),
+        reason: "kani is not installed on this runner".to_string(),
+    };
+    report.seal();
     assert!(
         !report.is_admissible(),
-        "eighteen gates produced no measurement and the report still admits the \
-         pull request to the merge queue"
+        "an undeclared absence must still withhold the merge"
+    );
+}
+
+/// Every aspirational gate must be declared unprovisionable.
+///
+/// An aspirational gate has no implementation of the capability it is named
+/// for, so it produces no measurement for any pull request in any run. If one
+/// is missing from `admission::ABSENCE_POLICY` it is `Provisioned` by default
+/// and shuts the merge queue permanently -- which is the state this repository
+/// was actually in, for every pull request, until the policy existed.
+#[test]
+fn every_aspirational_gate_is_declared_unprovisionable() {
+    let undeclared: Vec<&str> = gates_at(Fidelity::Aspirational)
+        .into_iter()
+        .filter(|g| anvil::pre_merge_guard::absence_blocks(g))
+        .collect();
+    assert!(
+        undeclared.is_empty(),
+        "{} aspirational gate(s) are not declared in ABSENCE_POLICY, so their \
+         absence blocks every merge forever: {undeclared:?}",
+        undeclared.len()
     );
 }
 
@@ -374,13 +418,21 @@ fn withholding_does_not_strip_the_certification_mark_or_the_rendered_matrix() {
         "the rendered matrix was discarded by the ceiling"
     );
 
-    // `admission_refusal` is the only reader of the provenance mark. It must
-    // refuse this report for the eighteen withheld gates, never for having lost
-    // the mark that says a certification run produced it.
+    // `admission_refusal` is the only reader of the provenance mark, and this
+    // test uses it to check the mark survived. It needs a refusal to read, and
+    // the withheld gates no longer supply one: `admission::ABSENCE_POLICY`
+    // declares an aspirational gate's absence NOT PROVISIONED, which does not
+    // block. So the probe is an absence nobody has declared -- `shape_status`
+    // is outside the policy -- and the assertion below is unchanged: whatever
+    // the refusal says, it must not be about a lost certification mark.
+    report.shape_status = GateStatus::NotMeasured {
+        gate_id: "shape_status".to_string(),
+        reason: "probe for the provenance mark".to_string(),
+    };
     report.seal();
     let refusal = report
         .admission_refusal()
-        .expect_err("the withheld gates produced no measurement and must be refused")
+        .expect_err("an undeclared absence must be refused")
         .to_string();
     assert!(
         !refusal.contains("certification run"),

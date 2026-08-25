@@ -711,6 +711,7 @@ async fn the_verification_gate_reaches_the_report_as_what_it_actually_did() {
             GateStatus::Passed => "Passed",
             GateStatus::Failed(_) => "Failed",
             GateStatus::NotMeasured { .. } => "NotMeasured",
+            GateStatus::NotApplicable { .. } => "NotApplicable",
             GateStatus::Errored(_) => "Errored",
             GateStatus::Warning(_) => "Warning",
             GateStatus::AutoUpdated => "AutoUpdated",

@@ -138,21 +138,62 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
     let passed = counts.passed;
     let total = counts.total();
 
+    // Rule 1 -- findings only, the rest counted -- applied to ABSENCES as well
+    // as to passes. The rule was written for the 68-row table in which sixty
+    // `PASSED` rows buried the two that mattered, and absence had exactly the
+    // same effect: 34 "not measured" paragraphs, each several lines long, with
+    // the three findings a reader could act on somewhere inside them.
+    //
+    // An absence `admission::ABSENCE_POLICY` declares is not a finding. Nobody
+    // can act on "no Prometheus endpoint is configured" from a pull request,
+    // and nobody should have to scroll past it to reach the failure that
+    // blocks them. It is counted, named in one folded line, and kept -- because
+    // hiding it entirely is how a corpus quietly stops measuring anything.
     let mut findings: Vec<String> = Vec::new();
+    let mut declared_absent: Vec<String> = Vec::new();
     for (gate_id, status) in report.named_statuses() {
         let line = match status {
             GateStatus::Failed(r) => Some(finding_line(gate_id, "failed", r)),
             GateStatus::Errored(r) => Some(finding_line(gate_id, "errored", r)),
             GateStatus::NotMeasured { reason, .. } => {
-                Some(finding_line(gate_id, "not measured", reason))
+                if crate::pre_merge_guard::absence_blocks(gate_id) {
+                    Some(finding_line(gate_id, "not measured", reason))
+                } else {
+                    declared_absent.push(format!("- **{}** — {reason}", gate_name(gate_id)));
+                    None
+                }
             }
             GateStatus::Warning(r) => Some(finding_line(gate_id, "warning", r)),
+            // The gate ran and its subject set was empty. Folded with the
+            // declared absences: nobody can act on "this change contains no
+            // async task boundary", and it used to render as a WARNING sitting
+            // among the real failures on every pull request that touches none.
+            GateStatus::NotApplicable { subject, .. } => {
+                declared_absent.push(format!("- **{}** — {subject}", gate_name(gate_id)));
+                None
+            }
             GateStatus::Passed | GateStatus::AutoUpdated => None,
         };
         if let Some(l) = line {
             findings.push(l);
         }
     }
+
+    // One line, folded, naming the gates and why they are absent. Deterministic
+    // ordering, per rule 5.
+    let absence_note = |plural: bool| -> String {
+        if declared_absent.is_empty() {
+            return String::new();
+        }
+        format!(
+            "\n<details><summary>{} gate{} absent by declaration \u{2014} the capability is not \
+             provisioned here, or this change carries no subject for them</summary>\n\n{}\n\
+             </details>\n",
+            declared_absent.len(),
+            if plural { "s" } else { "" },
+            declared_absent.join("\n")
+        )
+    };
 
     let mut s = String::new();
     if report.is_admissible() {
@@ -167,7 +208,16 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
             qualifiers.push(format!("{} warned", counts.warned));
         }
         if counts.unmeasured > 0 {
-            qualifiers.push(format!("{} unmeasured", counts.unmeasured));
+            // Said as what it is. "unmeasured" alone invites a reader to
+            // discount a real measurement failure alongside a capability this
+            // deployment simply does not have.
+            let blocking_absences = counts.unmeasured - declared_absent.len();
+            if blocking_absences > 0 {
+                qualifiers.push(format!("{blocking_absences} unmeasured"));
+            }
+            if !declared_absent.is_empty() {
+                qualifiers.push(format!("{} absent by declaration", declared_absent.len()));
+            }
         }
         if !qualifiers.is_empty() {
             headline.push_str(&format!(" ({})", qualifiers.join(", ")));
@@ -238,20 +288,19 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
             ));
         }
     } else {
-        let unmeasured = report.unmeasured_gates.len();
+        // The headline is what needs action, not the size of the corpus. It
+        // used to read "38 finding(s) across 72 gates; 34 gate(s) produced no
+        // measurement", of which four were things a reader could do something
+        // about.
         s.push_str(&format!(
-            "❌ Blocked — {} finding(s) across {} gates{}.\n\n",
-            findings.len(),
-            total,
-            if unmeasured > 0 {
-                format!("; {} gate(s) produced no measurement", unmeasured)
-            } else {
-                String::new()
-            }
+            "❌ Blocked — {} finding(s) need action; {passed}/{total} gates passed.\n\n",
+            findings.len()
         ));
         s.push_str(&findings.join("\n"));
         s.push('\n');
     }
+
+    s.push_str(&absence_note(declared_absent.len() != 1));
 
     let action = if report.is_admissible() {
         AnvilAction::Certified

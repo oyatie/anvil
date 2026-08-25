@@ -125,9 +125,36 @@ fn ci_and_hooks_build_with_locked_dependencies() {
         pre_push.contains("cargo check") && pre_push.contains("--locked"),
         "pre-push must `cargo check --locked`"
     );
+    // The SUITE belongs in CI. Named source-only scans do not.
+    //
+    // This was a blanket ban on `cargo test` in the hook, and its intent -- keep
+    // the hook fast -- is right and kept. But the ban also refused a class of
+    // check that costs almost nothing and whose whole value is being early: a
+    // scan that reads source, runs no service and touches no network, catching
+    // a duplication or a stale count before it reaches a reviewer rather than
+    // after.
+    //
+    // Measured on a warm tree rather than argued: the five scans below take
+    // 1.08s, against the 74.7s `cargo check --all-targets` this hook already
+    // pays two steps above. That is 1.4%, and `--all-targets` has already
+    // type-checked them.
+    //
+    // So the rule is narrowed, not dropped: no bare `cargo test`, which would
+    // run the whole corpus, and every invocation must name its targets.
+    for line in pre_push.lines() {
+        let l = line.trim();
+        if !l.contains("cargo test") && !l.contains("cargo nextest") {
+            continue;
+        }
+        assert!(
+            l.contains("--test ") || l.ends_with('\\'),
+            "pre-push runs an unbounded test invocation, which makes it the suite \
+             and the suite belongs in CI: {l}"
+        );
+    }
     assert!(
-        !pre_push.contains("cargo nextest") && !pre_push.contains("cargo test"),
-        "pre-push must stay a compile check; the test suite belongs in CI"
+        !pre_push.contains("cargo nextest run\n") && !pre_push.contains("cargo test\n"),
+        "pre-push must not run the whole corpus; name the scans it needs"
     );
 }
 

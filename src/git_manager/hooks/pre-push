@@ -67,4 +67,33 @@ if [ "$clippy_rc" -ne 0 ]; then
     exit 1
 fi
 
+# The governance scans that need no network and no service.
+#
+# These were CI-only, and a class caught in CI has already been written,
+# committed, pushed and put in front of a reviewer -- the run reports that it
+# happened, and every report is another wave of fixes. They read source and
+# nothing else, so the only reason they are here rather than in `pre-commit` is
+# that they need the test harness compiled, which this hook has already paid
+# for one step above.
+#
+# Named individually rather than running the suite: this hook must stay in
+# seconds once the tree is warm, and the full corpus is minutes.
+echo "[pre-push] governance scans (duplication, prose counts, attribution)..."
+set +e
+scan_out=$(cargo test --locked --quiet \
+    --test diff_parsing_ratchet_test \
+    --test prose_counts_test \
+    --test source_scan_test \
+    --test removals_are_not_reachable_by_accident_test \
+    --test postmortem_ledger_test 2>&1)
+scan_rc=$?
+set -e
+if [ "$scan_rc" -ne 0 ]; then
+    echo "$scan_out" | tail -30
+    echo "[pre-push] REFUSED: a governance scan failed."
+    echo "           These read source only. Failing here costs seconds; failing in CI costs"
+    echo "           a round trip and a second wave of fixes."
+    exit 1
+fi
+
 exit 0

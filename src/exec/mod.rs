@@ -64,6 +64,41 @@ impl ExecClass {
 /// drops it with no output at all.
 pub const AGY_PRINT_TIMEOUT_MARGIN: Duration = Duration::from_secs(30);
 
+/// One budget for a supervised model turn, yielding BOTH deadlines.
+///
+/// A supervisor bounded more tightly than the work it supervises does not
+/// supervise it -- it truncates it, and then reports the failure it caused. The
+/// doc-parity probe handed agy `--print-timeout 120s` and wrapped it in a
+/// watchdog hardcoded to 30, so a healthy call was killed at thirty seconds and
+/// the gate published `Errored`, which blocks merge-queue admission. Nothing
+/// related the two numbers, so nothing could notice they disagreed.
+///
+/// They are one value now. `supervisor()` is what bounds the turn and
+/// `tool_arg()` is what the tool is told, derived from it by subtracting
+/// [`AGY_PRINT_TIMEOUT_MARGIN`] -- so the tool always ends its own turn first,
+/// with a message, rather than being dropped silently. The two cannot drift
+/// because there is only one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SupervisedTurn(Duration);
+
+impl SupervisedTurn {
+    /// A turn bounded at `limit`.
+    pub const fn bounded_at(limit: Duration) -> Self {
+        Self(limit)
+    }
+
+    /// The budget for the watchdog around the call.
+    pub const fn supervisor(self) -> Duration {
+        self.0
+    }
+
+    /// The `--print-timeout` argument for the tool itself, strictly inside the
+    /// supervisor's budget.
+    pub fn tool_arg(self) -> String {
+        agy_print_timeout_arg(self.0)
+    }
+}
+
 /// agy's `--print-timeout` value (Go duration syntax) for a turn Anvil bounds
 /// at `limit`.
 ///

@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::diffs_by_path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -44,16 +45,16 @@ impl PsaAdmissionGuard {
 
         let mut findings = Vec::new();
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "infra/ns.yaml".to_string();
-            if let Some(first_line) = lines.first()
-                && let Some(path) = first_line.split_whitespace().last()
-            {
-                current_file = path.trim_start_matches("b/").to_string();
-            }
+        for file in diffs_by_path(&diff_ctx.diff_content) {
+            // The path is the one the diff states. It used to default to the
+            // literal "infra/ns.yaml", a plausible path this gate published
+            // as the location of a finding that was not found there.
+            //
+            // `all` -- additions plus the context they sit in, removals excluded. The
+            // rule asks what the file says after this change, and a line the
+            // change DELETES is not part of that.
 
-            let file_findings = self.rules.evaluate_psa_manifest(&current_file, file_diff);
+            let file_findings = self.rules.evaluate_psa_manifest(&file.path, &file.all);
             findings.extend(file_findings);
         }
 

@@ -264,8 +264,9 @@ pub async fn execute_pr_review(
     // Reported, not decided: the admission decision is taken once, below, by
     // `enlist_into_merge_queue`. This line used to say the pull request was
     // "withheld from merge queue" for every unmeasured gate, which stopped
-    // being true when `admission::ABSENCE_POLICY` split absence into three --
-    // 34 gates here produce no measurement and one of them withholds anything.
+    // being true when `admission::ABSENCE_POLICY` split absence into three: on
+    // this repository's own pull requests most gates produce no measurement and
+    // barely any of them withhold anything.
     // An operator-facing line that names a consequence the code does not
     // produce is the same defect as a gate publishing a finding it did not
     // make, so it says which of the two it is.

@@ -2330,6 +2330,12 @@ fn every_sentence_the_guard_composes_is_carried_by_the_status_it_hands_over() {
             GateStatus::Passed | GateStatus::AutoUpdated => None,
             GateStatus::Warning(s) | GateStatus::Failed(s) | GateStatus::Errored(s) => Some(s),
             GateStatus::NotMeasured { reason, .. } => Some(reason),
+            // The empty-scope arm. It was `Warning` while `NotMeasured` blocked
+            // admission unconditionally; now that a subject set found empty has
+            // its own variant, the guard says what happened instead of picking
+            // the least-wrong status. The sentence still travels, which is what
+            // this test pins.
+            GateStatus::NotApplicable { subject, .. } => Some(subject),
         };
         if name == "clean" {
             // A measurement that ran and found every boundary instrumented has

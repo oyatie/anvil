@@ -159,11 +159,19 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
                 if crate::pre_merge_guard::absence_blocks(gate_id) {
                     Some(finding_line(gate_id, "not measured", reason))
                 } else {
-                    declared_absent.push(gate_name(gate_id));
+                    declared_absent.push(format!("- **{}** — {reason}", gate_name(gate_id)));
                     None
                 }
             }
             GateStatus::Warning(r) => Some(finding_line(gate_id, "warning", r)),
+            // The gate ran and its subject set was empty. Folded with the
+            // declared absences: nobody can act on "this change contains no
+            // async task boundary", and it used to render as a WARNING sitting
+            // among the real failures on every pull request that touches none.
+            GateStatus::NotApplicable { subject, .. } => {
+                declared_absent.push(format!("- **{}** — {subject}", gate_name(gate_id)));
+                None
+            }
             GateStatus::Passed | GateStatus::AutoUpdated => None,
         };
         if let Some(l) = line {
@@ -183,7 +191,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
              </details>\n",
             declared_absent.len(),
             if plural { "s" } else { "" },
-            declared_absent.join(", ")
+            declared_absent.join("\n")
         )
     };
 

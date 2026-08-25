@@ -261,14 +261,47 @@ pub async fn execute_pr_review(
     // predicate over the same fields — `is_admissible()`, which cannot see
     // `Errored` and cannot see provenance — was a weaker question asked
     // immediately before the stricter one, and the two agreed only by accident.
+    // Reported, not decided: the admission decision is taken once, below, by
+    // `enlist_into_merge_queue`. This line used to say the pull request was
+    // "withheld from merge queue" for every unmeasured gate, which stopped
+    // being true when `admission::ABSENCE_POLICY` split absence into three --
+    // 34 gates here produce no measurement and one of them withholds anything.
+    // An operator-facing line that names a consequence the code does not
+    // produce is the same defect as a gate publishing a finding it did not
+    // make, so it says which of the two it is.
     if !cert_report.unmeasured_gates.is_empty() {
-        warn!(
-            "PR {}#{} withheld from merge queue: {} gate(s) produced no measurement: {}",
-            repo,
-            pr_number,
-            cert_report.unmeasured_gates.len(),
-            cert_report.unmeasured_gates.join(", ")
-        );
+        let (blocking, declared): (Vec<&String>, Vec<&String>) = cert_report
+            .unmeasured_gates
+            .iter()
+            .partition(|g| crate::pre_merge_guard::absence_blocks(g));
+        if !blocking.is_empty() {
+            warn!(
+                "PR {}#{} has {} gate(s) that could have measured and did not: {}",
+                repo,
+                pr_number,
+                blocking.len(),
+                blocking
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if !declared.is_empty() {
+            info!(
+                "PR {}#{}: {} gate(s) are absent by declaration and do not withhold the \
+                 merge -- the capability is not provisioned here, or this change carries no \
+                 subject for them: {}",
+                repo,
+                pr_number,
+                declared.len(),
+                declared
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
     }
     let enlistment = state
         .merge_enlister

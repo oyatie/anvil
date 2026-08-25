@@ -231,8 +231,8 @@ impl CedarGuard {
     /// Returns a report rather than a `Result`. The previous signature
     /// propagated its error through `certify.rs`, so an absent `agy` binary --
     /// `run_bounded` bails with "failed to run: No such file or directory" --
-    /// did not fail gate 2, it ended the certification run and the other
-    /// seventy-one gates never executed. A probe that could not run is
+    /// did not fail gate 2, it ended the certification run and every other
+    /// gate never executed. A probe that could not run is
     /// `NotMeasured`; it is not an outage, and the type now says so.
     pub async fn evaluate_cedar_policies(
         &self,

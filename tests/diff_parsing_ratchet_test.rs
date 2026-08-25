@@ -65,6 +65,15 @@ const ALLOWED: &[(&str, &str)] = &[
          attributes no finding, so it has no path to get wrong",
     ),
     (
+        "harness/rules.rs::fixture",
+        "CONSTRUCTS a diff, it does not read one: `Rule::fixture` builds the \
+         seeded defect and its conformant twin, and a fixture that spells a \
+         `+++ b/` header contains the literal without parsing anything. This is \
+         the cost of matching the literal rather than the call syntax -- the fix \
+         for the evasion vectors anvil's own review found -- and it is paid \
+         here, once, by name",
+    ),
+    (
         "change_delivery/core/purity.rs::diff_is_structure_only",
         "a whole-diff predicate about the change's shape, not a per-file scan; \
          it produces no finding and therefore names no file",

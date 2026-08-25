@@ -109,6 +109,19 @@ struct Citation {
     /// Inclusive line spans. `N` becomes `(N, N)`; `N-M` becomes `(N, M)`;
     /// `N,M` becomes two spans.
     spans: Vec<(usize, usize)>,
+    /// The symbol a `path.rs::name` citation points at.
+    ///
+    /// Line numbers rot. Every edit above a cited line invalidates it and
+    /// moving code invalidates all of them at once -- that happened four times
+    /// in a single day of gate work, each repair a hand-edit of numbers nobody
+    /// can verify by reading. A symbol survives any edit that does not delete
+    /// the thing it names.
+    ///
+    /// The parser used to walk over `path.rs::name` SILENTLY: it matched the
+    /// `.rs:` prefix, found no digits after it, and dropped the citation. So
+    /// writing one was not an error, it was invisible -- worse than the rot it
+    /// was meant to replace.
+    symbol: Option<String>,
     /// Byte range of `raw` inside the gap string, so it can be blanked out
     /// before identifier/number extraction (a line number is not a constant).
     at: (usize, usize),
@@ -116,6 +129,50 @@ struct Citation {
 
 fn is_path_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'/' || b == b'-'
+}
+
+/// Keywords that introduce a definition a citation can point at.
+const DEF_KEYWORDS: &[&str] = &[
+    "fn ", "struct ", "enum ", "const ", "static ", "trait ", "type ",
+];
+
+/// The lines of `sym`'s definition, located rather than counted.
+///
+/// This is the whole difference from a line citation. The window is FOUND by
+/// searching for the definition, so an edit above it moves the definition and
+/// the window moves with it. A line span cannot do that: it is a number written
+/// down once and invalidated by the next insertion above it.
+///
+/// Deliberately syntactic and deliberately strict about the start: it looks for
+/// a definition keyword immediately before the name, so a symbol merely
+/// MENTIONED in a comment does not satisfy a citation.
+///
+/// The end is the first line at or below the definition's indent that closes a
+/// block, or the end of the file. Crude, and adequate -- the window only has to
+/// contain the definition's own body for the quoted evidence to be found in it.
+fn symbol_window(lines: &[&str], sym: &str) -> Option<(usize, usize)> {
+    let a = lines.iter().position(|l| {
+        let t = l.trim_start();
+        DEF_KEYWORDS.iter().any(|kw| {
+            t.starts_with(&format!("{kw}{sym}")) || t.starts_with(&format!("pub {kw}{sym}"))
+        }) || t.starts_with(&format!("{sym}:"))
+    })?;
+    let indent = lines[a].len() - lines[a].trim_start().len();
+    let z = lines[a + 1..]
+        .iter()
+        .position(|l| {
+            !l.trim().is_empty()
+                && l.len() - l.trim_start().len() <= indent
+                && l.trim_start().starts_with('}')
+        })
+        .map(|k| a + 1 + k + 1)
+        .unwrap_or(lines.len());
+    Some((a, z.min(lines.len())))
+}
+
+/// Whether `text` defines `sym`.
+fn defines(text: &str, sym: &str) -> bool {
+    symbol_window(&text.lines().collect::<Vec<_>>(), sym).is_some()
 }
 
 fn parse_citations(gap: &str) -> Vec<Citation> {
@@ -133,6 +190,26 @@ fn parse_citations(gap: &str) -> Vec<Citation> {
             start -= 1;
         }
         let fragment = gap[start..i + 3].to_string();
+
+        // Symbol form: `path.rs::name`.
+        if b.get(i + 4) == Some(&b':') {
+            let ss = i + 5;
+            let mut se = ss;
+            while se < b.len() && (b[se].is_ascii_alphanumeric() || b[se] == b'_') {
+                se += 1;
+            }
+            if se > ss {
+                out.push(Citation {
+                    raw: gap[start..se].to_string(),
+                    fragment,
+                    spans: Vec::new(),
+                    symbol: Some(gap[ss..se].to_string()),
+                    at: (start, se),
+                });
+                i = se;
+                continue;
+            }
+        }
 
         // Parse the line list that follows the colon.
         let mut j = i + 4;
@@ -174,6 +251,7 @@ fn parse_citations(gap: &str) -> Vec<Citation> {
             raw: gap[start..j].to_string(),
             fragment,
             spans,
+            symbol: None,
             at: (start, j),
         });
         i = j.max(i + 4);
@@ -424,6 +502,22 @@ fn every_cited_file_exists_and_every_cited_line_is_within_it() {
                 }
             };
             let text = std::fs::read_to_string(&path).expect("cited file is readable");
+
+            // A symbol citation names a definition, and the check is that the
+            // definition is there. Nothing about it can go stale under an edit
+            // elsewhere in the file, which is the entire reason for the form.
+            if let Some(sym) = &c.symbol {
+                if !defines(&text, sym) {
+                    failures.push(format!(
+                        "{}: cites `{}` but {} defines no `{sym}`",
+                        entry.gate_id,
+                        c.raw,
+                        path.display()
+                    ));
+                }
+                continue;
+            }
+
             let total = text.lines().count();
             for (a, z) in &c.spans {
                 if *a == 0 || *z > total {
@@ -582,6 +676,25 @@ fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
             }
 
             let mut window = String::new();
+            if let Some(sym) = &c.symbol {
+                match symbol_window(&lines, sym) {
+                    Some((a, z)) => {
+                        for line in &lines[a..z] {
+                            window.push_str(code_only(line));
+                            window.push('\n');
+                        }
+                    }
+                    None => {
+                        failures.push(format!(
+                            "{}: cites `{}` but no definition of `{sym}` was found in {}",
+                            entry.gate_id,
+                            c.raw,
+                            path.display()
+                        ));
+                        continue;
+                    }
+                }
+            }
             for (a, z) in &c.spans {
                 let lo = a.saturating_sub(1 + ANCHOR_TOLERANCE);
                 let hi = (z + ANCHOR_TOLERANCE).min(lines.len());
@@ -630,4 +743,124 @@ fn code_only_strips_commentary_but_keeps_string_literals() {
     // The evidence this check exists to protect: a real decision line survives.
     let decision = "        if !source_code.contains(vuln_symbol) {";
     assert_eq!(code_only(decision), decision);
+}
+
+// ---------------------------------------------------------------------------
+// Symbol anchors
+// ---------------------------------------------------------------------------
+
+/// Line-anchored citations present when the symbol form was added.
+///
+/// It may fall and must never rise. Not a ban: 132 of them exist, they are all
+/// currently correct, and rewriting every one in a single change would be a
+/// diff nobody can review against a file every gate pull request already
+/// conflicts on. New citations use `path.rs::symbol`; the old ones convert as
+/// their gaps are edited anyway.
+const LINE_CITATION_CEILING: usize = 132;
+
+fn line_citation_count() -> usize {
+    AUDITED_GATES
+        .iter()
+        .flat_map(|e| parse_citations(e.gap))
+        .filter(|c| c.symbol.is_none())
+        .count()
+}
+
+#[test]
+fn a_symbol_citation_is_parsed_rather_than_silently_dropped() {
+    // The defect that made this worth doing carefully: the old parser matched
+    // the `.rs:` prefix, found no digits, and dropped the citation. Writing
+    // `foo.rs::bar` was not an error -- it produced NO citation, so nothing was
+    // checked and nothing said so.
+    let cites = parse_citations("see harness/judgement.rs::scan_for_secrets for the rules");
+    assert_eq!(cites.len(), 1, "{cites:?}");
+    assert_eq!(cites[0].fragment, "harness/judgement.rs");
+    assert_eq!(cites[0].symbol.as_deref(), Some("scan_for_secrets"));
+    assert!(cites[0].spans.is_empty());
+}
+
+#[test]
+fn the_two_forms_still_parse_side_by_side() {
+    let cites = parse_citations("a.rs:12 and b.rs::thing and c.rs:3-9 and d.rs:1,2");
+    let kinds: Vec<(&str, Option<&str>, usize)> = cites
+        .iter()
+        .map(|c| (c.fragment.as_str(), c.symbol.as_deref(), c.spans.len()))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ("a.rs", None, 1),
+            ("b.rs", Some("thing"), 0),
+            ("c.rs", None, 1),
+            ("d.rs", None, 2),
+        ]
+    );
+}
+
+#[test]
+fn a_symbol_window_moves_with_the_code_and_a_line_span_does_not() {
+    // The entire argument for the form, as an assertion rather than a claim.
+    let before: Vec<&str> = vec![
+        "fn first() {",
+        "    let a = 1;",
+        "}",
+        "fn target() {",
+        "    let evidence = 2;",
+        "}",
+    ];
+    let (a, z) = symbol_window(&before, "target").expect("found");
+    assert!(before[a..z].iter().any(|l| l.contains("evidence")));
+
+    // Insert twelve lines ABOVE the definition. A line citation of `4` now
+    // points at unrelated code; the symbol window still contains the evidence.
+    let mut after: Vec<&str> = vec!["// added"; 12];
+    after.extend(before.iter().copied());
+    let (a2, z2) = symbol_window(&after, "target").expect("still found");
+    assert_ne!(a, a2, "the definition moved");
+    assert!(
+        after[a2..z2].iter().any(|l| l.contains("evidence")),
+        "the window followed the definition"
+    );
+    assert!(
+        !after[3..4].iter().any(|l| l.contains("evidence")),
+        "the old line number now points at something else"
+    );
+}
+
+#[test]
+fn a_symbol_that_is_only_mentioned_does_not_satisfy_a_citation() {
+    // Otherwise a gap could cite a symbol that the file merely talks about,
+    // which is the same unearned green as a line span pointing at a comment.
+    let text = "// scan_for_secrets is described here\nfn other() {}\n";
+    assert!(!defines(text, "scan_for_secrets"));
+    assert!(defines(
+        "fn scan_for_secrets(d: &str) {}\n",
+        "scan_for_secrets"
+    ));
+    assert!(defines(
+        "pub const SECRET_RULES: &[u8] = &[];\n",
+        "SECRET_RULES"
+    ));
+}
+
+#[test]
+fn line_anchored_citations_may_fall_but_never_rise() {
+    let count = line_citation_count();
+    assert!(
+        count > 0,
+        "no citations were parsed at all, so this gate did not run"
+    );
+    assert!(
+        count <= LINE_CITATION_CEILING,
+        "{count} line-anchored citation(s), ceiling is {LINE_CITATION_CEILING}.\n\
+         A line number is invalidated by the next insertion above it -- that \
+         happened four times in one day. Cite `path.rs::symbol` instead; the \
+         window is located rather than counted, so it moves with the code."
+    );
+    if count < LINE_CITATION_CEILING {
+        println!(
+            "NOTE: {count} line-anchored citations remain but the ceiling is \
+             {LINE_CITATION_CEILING}. Lower it in the change that converted them."
+        );
+    }
 }

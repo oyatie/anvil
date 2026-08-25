@@ -742,9 +742,13 @@ impl PreMergeCertificationReport {
     ///   as its guard reported it. The registry has not read it, so it has no
     ///   opinion, and manufacturing a `NotMeasured` for a gate nobody examined
     ///   is the symmetric violation of I1 -- a fabricated absence in place of a
-    ///   fabricated pass. That exemption covers thirty-seven of the seventy-two
-    ///   gates and is not silent: `fidelity::gap_report().unaudited` publishes
-    ///   its size.
+    ///   fabricated pass. The exemption is not silent: its size is published by
+    ///   `fidelity::gap_report().unaudited`, and this sentence deliberately does
+    ///   NOT restate it. It used to say "thirty-seven of the seventy-two", which
+    ///   was true when written and was 18 by the time anyone read it again --
+    ///   every gate audited since moved the number and nothing checked the
+    ///   prose. A count that a symbol already derives has exactly one honest
+    ///   home, and it is the symbol.
     ///
     /// Applied by `evaluate_pre_merge_gates` before it seals, so the withheld
     /// gates land in `unmeasured_gates`, in the verdict and in the matrix. Why

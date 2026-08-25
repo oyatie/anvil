@@ -1,6 +1,16 @@
 //! Occupancy on this tree: hubs are N=1; `tests/*.rs` is N-wide.
-//! The git worktree proof uses a throwaway repo so this hop does not
-//! edit `src/main.rs` or `docs/doctrine.md`.
+//!
+//! `n_worktrees_on_open_test_paths_merge` is a local demonstration in a
+//! throwaway repo, not a proof. It shows that eight commits on eight
+//! distinct `tests/*.rs` paths merge into one seed commit without a
+//! conflict — a fact about git's merge, run on a tree nobody else was
+//! writing to. It occupies no pull request, meets no merge queue and no
+//! required check, and so establishes nothing about behaviour under a
+//! forge where the hops are hostile. The evidence for that is a green
+//! `occupancy` context on real pull requests; see
+//! `tests/occupancy_required_check.rs` for the check that produces it.
+//! The throwaway repo also keeps this hop from editing `src/main.rs` or
+//! `docs/doctrine.md`, which are hubs.
 
 use anvil::change_delivery::core::shard::{
     SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, is_open_test_crate, occupy_move,

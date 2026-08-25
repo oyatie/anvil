@@ -123,7 +123,7 @@ impl Rule for PackageNameNotCanonical {
                     key: format!("{owner}/{leaf}"),
                     subject: subject.path.clone(),
                     detail: format!("package `{name}` is neither `{leaf}` nor `{owner}-{leaf}`"),
-                    fix: Some(Fix::RenameSymbol {
+                    fix: Some(Fix::Rename {
                         from: name.to_string(),
                         to: format!("{owner}-{leaf}"),
                     }),

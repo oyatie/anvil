@@ -750,6 +750,18 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   cover digest pinning and deploy parity; promotion-tier state machine has no counterpart.",
     },
     MigrationEntry {
+        component: "harness",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "pipeline/core/admission (rules) + no counterpart (the harness itself)",
+        counterpart_loc: 0,
+        evidence: "PURE. The rule-running harness: Evaluated makes a measurement over zero subjects \
+                  unconstructible, and every rule proves itself against a seeded defect before its \
+                  verdict is trusted. oyatie's admission crate holds equivalent RULES but no \
+                  equivalent harness -- its checks are two binaries each re-implementing the runner, \
+                  which is the N+1 this replaces. Moves as source; the rules move with it.",
+    },
+    MigrationEntry {
         component: "hermetic_build",
         verdict: Verdict::Rewired,
         confidence: Confidence::Probable,

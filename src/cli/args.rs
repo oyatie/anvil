@@ -39,7 +39,10 @@ pub enum Commands {
         #[arg(short, long, help = "Pull Request number")]
         pr: u64,
     },
-    /// Run Pre-Merge Quality Certification and Domain Gates on a PR (21 gates)
+    /// Run Pre-Merge Quality Certification and Domain Gates on a PR
+    ///
+    /// The count is not restated here. This line said "(21 gates)" -- user
+    /// visible, in `--help`, against a matrix that holds seventy-two.
     Certify {
         #[arg(short, long, help = "Repository (e.g. oyatie/oyatie)")]
         repo: String,

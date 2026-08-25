@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::diffs_by_path;
 use serde::{Deserialize, Serialize};
 
 pub mod policy_scanner;
@@ -67,28 +68,23 @@ impl FormalVerificationGuard {
         let mut findings = Vec::new();
         let mut policy_files_seen = Vec::new();
         let mut added = String::new();
-        let mut current: Option<&str> = None;
 
-        for line in diff_content.lines() {
-            if let Some(path) = line.strip_prefix("+++ b/") {
-                current = Some(path.trim());
+        // `diffs_by_path`, not a fourteenth hand-rolled parser.
+        //
+        // This function walked `+++ b/` headers itself, because it was written
+        // before the shared parser existed. The ratchet caught it the moment
+        // the two met on a merged tree -- 19 sites became 20 -- which is
+        // precisely the job it was added to do, and a better outcome than
+        // raising the number.
+        //
+        // A path is recorded only when the change actually ADDS a line to it:
+        // a policy file with deletions alone gives this scan nothing.
+        for file in diffs_by_path(diff_content) {
+            if !is_policy_path(&file.path) || file.added.is_empty() {
                 continue;
             }
-            if line.starts_with("--- ") || line.starts_with("+++ ") {
-                continue;
-            }
-            let Some(body) = line.strip_prefix('+') else {
-                continue;
-            };
-            // A path is recorded only when the change actually ADDS a line to
-            // it: a policy file with deletions alone gives this scan nothing.
-            if let Some(path) = current.filter(|p| is_policy_path(p)) {
-                if !policy_files_seen.iter().any(|s| s == path) {
-                    policy_files_seen.push(path.to_string());
-                }
-                added.push_str(body);
-                added.push('\n');
-            }
+            policy_files_seen.push(file.path.clone());
+            added.push_str(&file.added);
         }
 
         match self.solver.scan_policy_text(&added) {

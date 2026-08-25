@@ -155,7 +155,14 @@ fn symbol_window(lines: &[&str], sym: &str) -> Option<(usize, usize)> {
         let t = l.trim_start();
         DEF_KEYWORDS.iter().any(|kw| {
             t.starts_with(&format!("{kw}{sym}")) || t.starts_with(&format!("pub {kw}{sym}"))
-        }) || t.starts_with(&format!("{sym}:"))
+        })
+            // A struct field is a definition a gap can legitimately cite, and
+            // the visibility prefix is part of how it is spelled. Without these
+            // two, `mod.rs::policy_files_seen` reported "no definition found"
+            // for a field sitting in plain sight.
+            || t.starts_with(&format!("{sym}:"))
+            || t.starts_with(&format!("pub {sym}:"))
+            || t.starts_with(&format!("pub(crate) {sym}:"))
     })?;
     let indent = lines[a].len() - lines[a].trim_start().len();
     let z = lines[a + 1..]

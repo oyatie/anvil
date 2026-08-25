@@ -122,29 +122,7 @@ fn production_source(rel: &str) -> String {
     }
 }
 
-/// The code in `src`, with every `//` comment dropped and every string literal
-/// kept. Line-by-line, tracking `"` so a `//` inside a literal is not read as a
-/// comment opener.
-fn code_only(src: &str) -> String {
-    src.lines()
-        .map(|line| {
-            let bytes = line.as_bytes();
-            let mut in_string = false;
-            let mut i = 0;
-            while i < bytes.len() {
-                match bytes[i] {
-                    b'\\' if in_string => i += 1,
-                    b'"' => in_string = !in_string,
-                    b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
-                    _ => {}
-                }
-                i += 1;
-            }
-            line
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+use anvil::source_scan::code_only;
 
 fn rs_files(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
     let entries = std::fs::read_dir(dir)

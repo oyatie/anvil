@@ -180,11 +180,16 @@ pub const FIX_CLASSES: &[FixClass] = &[
                 },
             },
             Remedy {
-                layer: Layer::PreCommit,
+                layer: Layer::PrePush,
                 mechanism: Mechanism::Mechanical,
-                what: "refuse a fourteenth hand-rolled parser before it is a commit; the ratchet \
-                       is a source scan needing no build and runs in under a second",
-                status: Status::Missing,
+                what: "the ratchet runs in `pre-push`, so a fourteenth parser never reaches the \
+                       remote. Not `pre-commit`: the scan reads source and needs no network, but \
+                       it needs the test harness compiled, and that hook is seconds-only. \
+                       Moving it earlier means extracting the scan into a binary that shares its \
+                       logic with the test rather than re-spelling it",
+                status: Status::Live {
+                    named: "src/git_manager/hooks/pre-push",
+                },
             },
             Remedy {
                 layer: Layer::Unspellable,
@@ -320,11 +325,14 @@ pub const FIX_CLASSES: &[FixClass] = &[
                 },
             },
             Remedy {
-                layer: Layer::PreCommit,
+                layer: Layer::PrePush,
                 mechanism: Mechanism::Mechanical,
-                what: "refuse a stale count in prose before it is a commit; the scan reads source \
-                       and needs no build",
-                status: Status::Missing,
+                what: "the prose-count scan runs in `pre-push`, so a stale count never reaches a \
+                       reviewer. Same reason it is not `pre-commit`: source-only, but it needs \
+                       the harness built",
+                status: Status::Live {
+                    named: "src/git_manager/hooks/pre-push",
+                },
             },
             Remedy {
                 layer: Layer::Ci,
@@ -352,9 +360,14 @@ pub const FIX_CLASSES: &[FixClass] = &[
             Remedy {
                 layer: Layer::Unspellable,
                 mechanism: Mechanism::Mechanical,
-                what: "derive both deadlines from one value, so there is nothing to disagree \
-                       about; today they are the same constant by convention only",
-                status: Status::Missing,
+                what: "`SupervisedTurn` is one value yielding every deadline for a turn -- the \
+                       watchdog's budget, the process bound, and the tool's own `--print-timeout` \
+                       derived by subtracting the margin. There were THREE numbers in three \
+                       places with nothing relating them; now none can be tightened without the \
+                       others",
+                status: Status::Live {
+                    named: "src/exec/mod.rs::SupervisedTurn",
+                },
             },
             Remedy {
                 layer: Layer::Ci,
@@ -408,7 +421,18 @@ pub const FIX_CLASSES: &[FixClass] = &[
 /// EXACT, and it must fall. This is the number the doctrine is about: a class
 /// counted here is observed rather than prevented, and every observation is
 /// another wave of fixes.
-pub const CLASSES_ONLY_CAUGHT_AFTER_THE_FACT: usize = 1;
+///
+/// It is ZERO. Every class recorded from this session is now refused before CI
+/// -- four of them at the type level, where the defect has no spelling, and two
+/// in `pre-push`, where they never reach a reviewer.
+///
+/// Zero here does NOT mean the work is finished, and the number must not be
+/// read that way. It means no class is caught *only* after the fact.
+/// `missing_remedies()` is the live backlog: remedies named, argued for, and
+/// not yet built -- chiefly the obligation that the seventy-two hand-wired
+/// gates demonstrate they fire, which `Rule::fixture` already makes unspellable
+/// for anything on the harness and which nothing forces on the rest.
+pub const CLASSES_ONLY_CAUGHT_AFTER_THE_FACT: usize = 0;
 
 /// The classes still waiting for a remedy earlier than CI.
 pub fn awaiting_early_remedy() -> Vec<&'static FixClass> {

@@ -224,23 +224,7 @@ fn line_offsets(body: &str) -> Vec<(usize, &str)> {
 
 /// The code of `chunk`, without its commentary.
 ///
-/// A marker inside a comment is PROSE, not a parser. This mattered immediately:
-/// a function's span runs to the start of the next `fn`, which sweeps in that
-/// next function's doc comment -- so `schema_evolution::new` was reported as a
-/// diff parser because the comment describing the function BELOW it says
-/// "one file at a time". Two false positives, both from attributing a
-/// neighbour's prose to a function, which is the same misattribution shape the
-/// gate exists to prevent.
-fn code_only(chunk: &str) -> String {
-    chunk
-        .lines()
-        .map(|l| match l.find("//") {
-            Some(i) if !l[..i].contains('"') => &l[..i],
-            _ => l,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+use anvil::source_scan::without_commentary as code_only;
 
 /// Every function that walks a unified diff itself.
 ///

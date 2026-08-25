@@ -48,7 +48,8 @@ pub struct DocGuardReport {
 /// merge-queue admission. A supervisor that is tighter than the thing it
 /// supervises does not supervise it; it truncates it, and reports a failure it
 /// caused.
-const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const DOC_PARITY_PROBE: crate::exec::SupervisedTurn =
+    crate::exec::SupervisedTurn::bounded_at(std::time::Duration::from_secs(120));
 
 /// Where `evaluate_doc_parity` gets its judgement from.
 ///
@@ -399,9 +400,7 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         crate::watchdog::PipelineWatchdog::run_with_watchdog(
             "DocGuardEvaluation",
             &target,
-            // The same constant the probe hands agy below. A supervisor must
-            // outlive what it supervises.
-            DOC_PARITY_PROBE_TIMEOUT,
+            DOC_PARITY_PROBE.supervisor(),
             move || async move {
                 let mut cmd = Command::new("agy");
                 // Match the invocation form used by every other agy call site
@@ -413,7 +412,7 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                     "--effort",
                     &agy_effort,
                     "--print-timeout",
-                    &crate::exec::agy_print_timeout_arg(DOC_PARITY_PROBE_TIMEOUT),
+                    &DOC_PARITY_PROBE.tool_arg(),
                     // Required for agy to read the repository at all. Omitting it
                     // in the Phase 0a rewrite made every doc-parity probe fail
                     // with "permission check failed for command", which the
@@ -432,7 +431,11 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
 
                 match crate::exec::run_bounded_for(
                     cmd,
-                    DOC_PARITY_PROBE_TIMEOUT,
+                    // The third consumer of the same budget: the process bound,
+                    // alongside the watchdog above and agy's own
+                    // `--print-timeout`. Three deadlines for one turn, from one
+                    // value, so none can be tightened without the others.
+                    DOC_PARITY_PROBE.supervisor(),
                     "doc parity probe",
                 )
                 .await

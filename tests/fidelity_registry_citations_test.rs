@@ -623,13 +623,7 @@ fn every_constant_quoted_in_a_gap_still_exists_in_a_file_that_gap_cites() {
 /// and it is the only one that fires when a file is edited far above the cited
 /// range and every line number below shifts.
 ///
-/// Prompting cannot prevent it because nobody edits line numbers on purpose;
-/// they are invalidated as a side effect of an unrelated insertion.
-/// A file's code with every `//` comment removed, for the same reason as
-/// [`code_only`]: a quotation is evidence only when the code contains it.
-fn code_only_body(body: &str) -> String {
-    body.lines().map(code_only).collect::<Vec<_>>().join("\n")
-}
+use anvil::source_scan::without_commentary as code_only_body;
 
 /// The code on a line, with any trailing `//` comment removed.
 ///
@@ -640,23 +634,13 @@ fn code_only_body(body: &str) -> String {
 /// lines above the cited line. The decision they described lived in another
 /// file entirely.
 ///
-/// Quotes inside string literals are kept -- a gap quoting a literal the code
-/// really contains is exactly what this check is for -- so the scan tracks
-/// whether it is inside a `"` before treating `//` as a comment opener.
-fn code_only(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut in_string = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if in_string => i += 1,
-            b'"' => in_string = !in_string,
-            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
-            _ => {}
-        }
-        i += 1;
-    }
-    line
+/// One line as code, commentary gone and string literals kept.
+///
+/// Delegates to the shared scanner. It returns an owned `String` where this
+/// returned a slice, which is why the wrapper stays: the call sites compare
+/// trimmed text and a borrow would not outlive the temporary.
+fn code_only(line: &str) -> String {
+    anvil::source_scan::without_commentary(line)
 }
 
 #[test]
@@ -687,7 +671,7 @@ fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
                 match symbol_window(&lines, sym) {
                     Some((a, z)) => {
                         for line in &lines[a..z] {
-                            window.push_str(code_only(line));
+                            window.push_str(&code_only(line));
                             window.push('\n');
                         }
                     }
@@ -706,7 +690,7 @@ fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
                 let lo = a.saturating_sub(1 + ANCHOR_TOLERANCE);
                 let hi = (z + ANCHOR_TOLERANCE).min(lines.len());
                 for line in &lines[lo.min(lines.len())..hi] {
-                    window.push_str(code_only(line));
+                    window.push_str(&code_only(line));
                     window.push('\n');
                 }
             }

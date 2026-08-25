@@ -72,6 +72,8 @@ async fn test_state_manager_wal_crash_recovery_replay() {
         timestamp: "2026-08-19T20:45:00Z".to_string(),
         key: "oyatie/oyatie#2159".to_string(),
         state: PrState {
+            auto_fix_attempts: 0,
+            last_auto_fixed_head_sha: None,
             last_reviewed_head_sha: "uncheckpointed-sha-999".to_string(),
             last_reviewed_at: "2026-08-19T20:45:00Z".to_string(),
             review_count: 5,

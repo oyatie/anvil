@@ -67,31 +67,63 @@ impl CriterionBenchRatchet {
             Regex::new(r"(?i)for\s+.*\s+in\s+.*\{[\s\n]*let\s+mut\s+v\s*=\s*Vec::new\(\)").unwrap();
         let clone_in_loop_re = Regex::new(r"(?i)\.clone\(\)\s*;.*//\s*hotpath").unwrap();
 
-        let mut current_file = String::new();
+        // The added lines, kept per file.
+        //
+        // Two defects came from not doing this. The clone rule attributed its
+        // finding to `current_file`, which is the empty string for any `+` line
+        // reaching the scanner before a `+++ b/` header -- an accusation
+        // against no file at all. And the allocation rule below could not be
+        // written per line, because its pattern spans the `for` and the
+        // `Vec::new()` on separate lines, so it read the WHOLE diff instead.
+        let mut added_by_file: Vec<(String, String)> = Vec::new();
+        let mut current_file: Option<String> = None;
 
         for line in diff_ctx.diff_content.lines() {
             if let Some(stripped) = line.strip_prefix("+++ b/") {
-                current_file = stripped.trim().to_string();
+                current_file = Some(stripped.trim().to_string());
                 continue;
             }
+            if !line.starts_with('+') || line.starts_with("+++") {
+                continue;
+            }
+            // A finding must name the file it was found in. Without a header
+            // there is no file, and a fragment that names none is not something
+            // this gate can attribute anything to.
+            let Some(path) = current_file.as_deref() else {
+                continue;
+            };
+            let code_line = line[1..].trim();
 
-            if line.starts_with('+') && !line.starts_with("+++") {
-                let code_line = &line[1..].trim();
+            if clone_in_loop_re.is_match(code_line) {
+                violations.push(BenchmarkViolation {
+                    file_path: path.to_string(),
+                    metric: "EXCESSIVE_HOTPATH_CLONE".to_string(),
+                    description: "Explicit clone detected on designated hot path; exceeds zero-copy allocation budget.".to_string(),
+                    recommendation: "Borrow or use Arc/Cow to avoid heap copies.".to_string(),
+                });
+            }
 
-                if clone_in_loop_re.is_match(code_line) {
-                    violations.push(BenchmarkViolation {
-                        file_path: current_file.clone(),
-                        metric: "EXCESSIVE_HOTPATH_CLONE".to_string(),
-                        description: "Explicit clone detected on designated hot path; exceeds zero-copy allocation budget.".to_string(),
-                        recommendation: "Borrow or use Arc/Cow to avoid heap copies.".to_string(),
-                    });
+            match added_by_file.last_mut() {
+                Some((f, body)) if f == path => {
+                    body.push_str(code_line);
+                    body.push('\n');
                 }
+                _ => added_by_file.push((path.to_string(), format!("{code_line}\n"))),
             }
         }
 
-        if unbounded_alloc_re.is_match(&diff_ctx.diff_content) {
+        // Reading the whole diff meant the pattern matched on lines the change
+        // REMOVES, so the pull request that DELETES an unbounded loop
+        // allocation was refused for containing one -- the same inversion found
+        // and fixed in the credential scanner. And the finding named
+        // `file_path: "hotpath"`, which is not a file: it is the gate's own
+        // word for the category, published where a reviewer reads a path.
+        for (path, added) in &added_by_file {
+            if !unbounded_alloc_re.is_match(added) {
+                continue;
+            }
             violations.push(BenchmarkViolation {
-                file_path: "hotpath".to_string(),
+                file_path: path.clone(),
                 metric: "UNBOUNDED_LOOP_ALLOCATION".to_string(),
                 description:
                     "Re-allocating collection inside tight loop without pre-allocated capacity."

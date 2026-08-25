@@ -41,7 +41,14 @@ mod tests {
     #[test]
     fn test_fails_fast_on_secret() {
         let prober = FastChecksProber::new();
-        let diff = "+ const token = \"ghp_123456789012345678901234567890123456\";";
+        // Split so the token is never a contiguous literal in committed
+        // source: a fixture for a credential scanner is otherwise a finding
+        // against its own file.
+        let diff = format!(
+            "+ const token = \"ghp_{}\";",
+            "123456789012345678901234567890123456"
+        );
+        let diff = diff.as_str();
         let findings = prober.probe_static_invariants(diff);
         assert_eq!(findings.len(), 1);
     }

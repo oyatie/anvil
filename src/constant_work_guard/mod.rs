@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::diffs_by_path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -44,22 +45,16 @@ impl ConstantWorkGuard {
 
         let mut unbounded_findings = Vec::new();
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            if !file_diff.contains(".rs") {
+        for file in diffs_by_path(&diff_ctx.diff_content) {
+            if !file.path.ends_with(".rs") {
                 continue;
             }
-
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "unknown.rs".to_string();
-            if let Some(first_line) = lines.first()
-                && let Some(path) = first_line.split_whitespace().last()
-            {
-                current_file = path.trim_start_matches("b/").to_string();
-            }
-
+            // `added`, not the whole hunk: an unbounded channel this change
+            // REMOVES is not one it introduces, and the gate used to refuse
+            // the pull request that replaced it with a bounded one.
             let findings = self
                 .checker
-                .scan_unbounded_structures(&current_file, file_diff);
+                .scan_unbounded_structures(&file.path, &file.added);
             unbounded_findings.extend(findings);
         }
 

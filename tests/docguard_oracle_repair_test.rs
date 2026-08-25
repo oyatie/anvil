@@ -2861,6 +2861,7 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         formal: anvil::formal_verification::FormalVerificationReport {
+            policy_files_seen: Vec::new(),
             passed: true,
             findings: Vec::new(),
         },

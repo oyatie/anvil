@@ -198,7 +198,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         fidelity: Fidelity::Heuristic,
         gap: "A chain of policy_content.contains(..) tests. No solver exists. The file and its types \
               were renamed from smt_solver.rs/SmtConstraintEngine to say so \
-              (formal_verification/policy_scanner.rs:28).",
+              (formal_verification/policy_scanner.rs:28). The rename stopped one line short of the \
+              verdict a reviewer reads: the gate discarded the findings and published in their place \
+              a fixed sentence asserting that an SMT constraint solver had detected an unsafe state. \
+              The findings carry the rule that matched and the text it matched on, and the gate now \
+              reports those. Two further \
+              defects went with it -- the scan read the whole diff including removals, so a pull \
+              request DELETING a wildcard grant was refused for containing it, and a report with no \
+              findings was `passed` whether a policy had been examined or the diff contained none, so \
+              a change touching no policy file published a green formal-verification gate. Only added \
+              lines in a policy file are scanned, and policy_files_seen \
+              (formal_verification/mod.rs:26) makes an empty scan NotMeasured. Coverage is the stated \
+              set of paths in is_policy_path (formal_verification/mod.rs:36) and no wider.",
         blocked_on: None,
     },
     GateFidelity {

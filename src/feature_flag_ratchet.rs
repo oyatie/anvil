@@ -126,19 +126,31 @@ impl FeatureFlagRatchet {
         .expect("the flag call-site pattern is a compile-time constant");
 
         let mut refs = Vec::new();
-        let mut current_file = String::new();
+        // `None` until the diff names a file. It used to be `String::new()`,
+        // so a `+` line arriving before any `+++ b/` header produced a
+        // reference whose path was the empty string:
+        //
+        //     flag refs: [("", "new_billing")]
+        //
+        // A flag reference that cannot say which file it is in is not one a
+        // reader can act on, and it is not evidence the flag is referenced
+        // anywhere -- which is what this scan exists to establish.
+        let mut current_file: Option<&str> = None;
 
         for line in diff_content.lines() {
             if let Some(stripped) = line.strip_prefix("+++ b/") {
-                current_file = stripped.trim().to_string();
+                current_file = Some(stripped.trim());
                 continue;
             }
             if !line.starts_with('+') || line.starts_with("+++") {
                 continue;
             }
+            let Some(path) = current_file else {
+                continue;
+            };
             for caps in flag_usage_re.captures_iter(line[1..].trim()) {
                 refs.push(FlagReference {
-                    file_path: current_file.clone(),
+                    file_path: path.to_string(),
                     flag_key: caps[1].to_string(),
                 });
             }

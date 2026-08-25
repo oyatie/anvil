@@ -416,12 +416,41 @@ impl PreMergeGuard {
         let zero_day_status = zero_day_report.status.clone();
 
         // 41. Formal SMT Constraint Verification
-        let formal_verification_status = if formal_report.passed {
-            GateStatus::Passed
-        } else {
+        //
+        // Two rebuilds, both of the same kind as gate 42 immediately below: the
+        // status now says what the scan actually did.
+        //
+        // The failure message used to be the fixed sentence "SMT constraint
+        // solver detected unsafe policy or reachability state." No solver
+        // exists -- the registry has recorded that since the module was renamed
+        // out of `smt_solver.rs`, and the rename stopped one line short of the
+        // string a reviewer actually reads. The findings carry the rule that
+        // matched and the text it matched on, and an author cannot act on an
+        // accusation that names neither.
+        //
+        // And a report with no findings is `passed` whether the scan examined a
+        // policy or was handed a diff with no policy in it. The second is the
+        // absence-reads-as-a-pass class: a pull request touching no policy file
+        // published a green "formal verification" gate, over a two-pattern
+        // keyword scan whose own documentation says the absence of a match is
+        // not evidence of safety.
+        let formal_verification_status = if !formal_report.findings.is_empty() {
             GateStatus::Failed(
-                "SMT constraint solver detected unsafe policy or reachability state.".to_string(),
+                formal_report
+                    .findings
+                    .iter()
+                    .map(|f| format!("{}: {} (matched `{}`)", f.rule, f.message, f.matched_text))
+                    .collect::<Vec<_>>()
+                    .join(" "),
             )
+        } else if formal_report.policy_files_seen.is_empty() {
+            GateStatus::NotMeasured {
+                gate_id: "formal_verification_status".to_string(),
+                reason: "this change adds no line to a policy file, so the policy scan had                          nothing to examine. Absence of a match is not evidence of safety."
+                    .to_string(),
+            }
+        } else {
+            GateStatus::Passed
         };
 
         // 42. Lock Graph & Deadlock Prevention

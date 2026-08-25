@@ -726,8 +726,15 @@ fn test_trace_context_green_instrumented_span() {
 #[test]
 fn test_formal_verification_red_flag_wildcard_permission() {
     let guard = FormalVerificationGuard::new();
-    // RED: Overly permissive wildcard policy grant
-    let bad_policy = "+ permit(principal, action, resource);";
+    // RED: Overly permissive wildcard policy grant.
+    //
+    // The fixture now carries the `+++ b/` header a real diff always has. The
+    // guard reads only the lines a change ADDS to a policy file -- without a
+    // header there is no file, and a fragment that names none is not something
+    // this gate can attribute a finding to. The rule itself is unchanged and
+    // still fires: `formal_verification_gate_test` asserts the same red.
+    let bad_policy = "--- a/iam/authz.cedar\n+++ b/iam/authz.cedar\n\
+                      + permit(principal, action, resource);\n";
     let report = guard.evaluate_formal_invariants(bad_policy);
     assert!(
         !report.passed,
@@ -739,11 +746,21 @@ fn test_formal_verification_red_flag_wildcard_permission() {
 fn test_formal_verification_green_scoped_least_privilege() {
     let guard = FormalVerificationGuard::new();
     // GREEN: Scoped least-privilege principal permission
-    let good_policy = "+ permit(principal == Principal::\"User:123\", action == Action::\"Read\", resource == Resource::\"Doc:456\");";
+    let good_policy = "--- a/iam/authz.cedar\n+++ b/iam/authz.cedar\n\
+                       + permit(principal == Principal::\"User:123\", action == Action::\"Read\", \
+                       resource == Resource::\"Doc:456\");\n";
     let report = guard.evaluate_formal_invariants(good_policy);
     assert!(
         report.passed,
         "Expected False Red prevention: Least privilege scoped policy must PASS"
+    );
+    // A green here must be a green EARNED. Without this the same assertion
+    // holds for a diff containing no policy at all, which is the state gate 41
+    // used to publish as a passing formal-verification result.
+    assert_eq!(
+        report.policy_files_seen,
+        vec!["iam/authz.cedar".to_string()],
+        "the pass must come from having scanned the policy, not from its absence"
     );
 }
 

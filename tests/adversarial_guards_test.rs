@@ -58,7 +58,14 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
         head_sha: "bbb".to_string(),
         previous_head_sha: None,
         repo_working_dir: PathBuf::from("."),
-        diff_content: "+ let resident_reg_num = \"900101-1234567\";".to_string(),
+        // The `+++ b/` header is what tells a gate which file a line belongs
+        // to. Without it this fixture only worked because the compliance
+        // engine seeded its cursor from `changed_files[0]` -- so the assertion
+        // below was passing on the strength of the misattribution defect, not
+        // on the rule. Same repair as the gate 41 and gate 64 fixtures.
+        diff_content: "--- a/src/user.rs\n+++ b/src/user.rs\n\
+                       + let resident_reg_num = \"900101-1234567\";\n"
+            .to_string(),
         changed_files: vec!["src/user.rs".to_string()],
         is_incremental: false,
     };

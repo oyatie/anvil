@@ -220,8 +220,10 @@ pub fn observed_fidelity(e: Evidence) -> Fidelity {
 /// `Measured` and no mechanism outside the test suite would contradict it.
 ///
 /// A separate table rather than a field on `GateFidelity`: only gates claiming
-/// `Measured` need one, and adding a field would touch all fifty-one entries in
-/// a file every gate pull request already conflicts on.
+/// `Measured` need one, and adding a field would touch every entry in
+/// `registry::AUDITED_GATES` -- a file every gate pull request already conflicts
+/// on. The count is `AUDITED_GATES.len()` and is not restated here; this
+/// sentence said "fifty-one" while the table held fifty-four.
 ///
 /// Empty is the correct state today. No gate has closed the distance between
 /// its aspiration and its implementation -- `shape_status` has eleven

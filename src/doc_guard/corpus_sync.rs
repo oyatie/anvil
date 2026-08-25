@@ -131,22 +131,135 @@ fn collect_owned_pages(repo_dir: &Path) -> Result<Vec<String>> {
 }
 
 fn count_regex() -> Regex {
-    // Matches "23-gate", "60-Gate", "68 gates". Does not match
-    // "100-300 lines", "16-lens", or "380 Rust rules".
-    Regex::new(r"(?i)\b(\d+)(\s*-\s*gate|\s+gates?)\b").expect("count regex")
+    // Matches "23-gate", "60-Gate", "68 gates", and now the spelled-out forms
+    // too: "sixty-gate", "seventy-two gates". Does not match "100-300 lines",
+    // "16-lens", or "380 Rust rules"; a group-1 word that is not a numeral is
+    // rejected by `numeral` rather than by the pattern, so "the gates" and
+    // "pre-merge gates" fall out for free.
+    // The noun must be PLURAL, or the hyphenated compound ("70-Gate Matrix").
+    // Singular " gate" is ordinary English -- "one gate on the scorecard",
+    // "rather than one gate" -- and a total is never singular.
+    Regex::new(r"(?i)\b([a-z]+(?:-[a-z]+)?|\d+)(\s*-\s*gate\b|\s+gates\b)").expect("count regex")
 }
 
-fn sixty_regex() -> Regex {
-    Regex::new(r"(?i)\bsixty-gate\b").expect("sixty regex")
+/// A count written as prose, in the form `<numeral> of the <numeral> gates`.
+///
+/// The left number is a SUBSET, and no total can verify it: "thirty-seven of
+/// the seventy-two gates" was true when written, was 18 by the time anyone read
+/// it, and passed every check this module had because only the seventy-two was
+/// checkable. A subset count in prose has no honest home -- the symbol that
+/// derives it does -- so the shape is refused outright rather than validated.
+fn subset_regex() -> Regex {
+    Regex::new(
+        r"(?i)\b(?:([a-z]+(?:-[a-z]+)?|\d+)\s+of\s+the\s+(?:[a-z]+(?:-[a-z]+)?|\d+)|(?:other|remaining)\s+([a-z]+(?:-[a-z]+)?|\d+))(?:\s*-\s*gate\b|\s+gates\b)",
+    )
+    .expect("subset regex")
+}
+
+const ONES: &[&str] = &[
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+];
+const TENS: &[&str] = &[
+    "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+];
+
+/// A count written as digits or as English words, 0-99.
+///
+/// `None` for anything that is not a numeral, which is what lets the pattern
+/// above stay permissive: `count_regex` finds every word sitting in front of
+/// "gates" and this decides which of them was a claim. Replaces a hardcoded
+/// `\bsixty-gate\b` regex -- an N+1 patch for the one spelled-out number that
+/// had actually drifted, which by construction could never catch the next one.
+/// Below this, a count in front of "gates" is an ENUMERATION of a named set --
+/// "the two gates this path used to assert absent", "three boundaries" -- and
+/// not a claim about the size of the matrix.
+///
+/// A stated threshold rather than a list of exceptions: the matrix has never
+/// held fewer than the twenty-three this module was written to chase, and small
+/// cardinals are how English counts things it has just named. Without it the
+/// check either fires on ordinary prose or needs an allowlist, and an allowlist
+/// is the N+1 shape all of this exists to avoid.
+pub const SMALLEST_PLAUSIBLE_TOTAL: usize = 10;
+
+/// The one escape hatch: a count a page explicitly marks as history.
+///
+/// `docs/doctrine.md` and ADR-0001 both read "The founding name said sixty
+/// gates. That number is historical. The field list is the authority." That is
+/// the honest form of a stale number -- reported, disclaimed, and handed to the
+/// symbol -- and a check that forbids it makes this tree unable to describe its
+/// own past. The old detector permitted it only by accident: its pattern was
+/// `\bsixty-gate\b` with a hyphen, so "sixty gates" with a space was invisible.
+///
+/// Deliberately narrow. The word must appear WITHIN [`DISCLAIMER_WINDOW`] bytes
+/// after the count, so it has to be the adjacent sentence rather than anywhere
+/// on the page, and it costs the author an explicit statement.
+const DISCLAIMER: &str = "historical";
+
+/// How far after a count the disclaimer may sit: the next sentence, not the
+/// rest of the document.
+const DISCLAIMER_WINDOW: usize = 160;
+
+/// Whether the count matched at `at` is explicitly marked as history.
+fn disclaimed(text: &str, at: usize) -> bool {
+    let end = text.len().min(at + DISCLAIMER_WINDOW);
+    // Slicing on a byte offset would panic mid-character on any page with a
+    // multi-byte character before the window's edge.
+    let tail = match text.get(at..end) {
+        Some(t) => t,
+        None => &text[at..],
+    };
+    tail.to_ascii_lowercase().contains(DISCLAIMER)
+}
+
+pub fn numeral(word: &str) -> Option<usize> {
+    let w = word.trim().to_ascii_lowercase();
+    if let Ok(n) = w.parse::<usize>() {
+        return Some(n);
+    }
+    if let Some(i) = ONES.iter().position(|o| *o == w) {
+        return Some(i);
+    }
+    if let Some(i) = TENS.iter().position(|t| *t == w) {
+        return Some((i + 2) * 10);
+    }
+    let (tens, ones) = w.split_once('-')?;
+    let t = TENS.iter().position(|x| *x == tens)?;
+    let o = ONES
+        .iter()
+        .position(|x| *x == ones)
+        .filter(|n| (1..10).contains(n))?;
+    Some((t + 2) * 10 + o)
 }
 
 fn rewrite_page(input: &str, total_gates: usize) -> String {
     let n = total_gates.to_string();
+    // Only a claim that DISAGREES is rewritten. Replacing every match would
+    // churn a page that already says "seventy-two gates" into "72 gates" and
+    // report it as repaired, which is a diff that teaches a reader nothing.
     let mut out = count_regex()
-        .replace_all(input, |caps: &regex::Captures| format!("{}{}", n, &caps[2]))
-        .into_owned();
-    out = sixty_regex()
-        .replace_all(&out, format!("{n}-Gate"))
+        .replace_all(input, |caps: &regex::Captures| match numeral(&caps[1]) {
+            Some(got) if got != total_gates => format!("{}{}", n, &caps[2]),
+            _ => caps[0].to_string(),
+        })
         .into_owned();
     // The exemption deletion takes the marker's own SENTENCE, not its line.
     // `while let`, not `if let`: `remaining_claim` fails the gate on any
@@ -256,18 +369,34 @@ fn sentence_end(text: &str, from: usize) -> usize {
     text.len()
 }
 
-fn remaining_claim(text: &str, total_gates: usize) -> Option<String> {
+pub fn remaining_claim(text: &str, total_gates: usize) -> Option<String> {
+    // The subset shape is refused before the total is checked, because it
+    // CONTAINS a valid total and would otherwise read as clean.
+    // "the other seventy-one gates" is arithmetic on the total spelled out in
+    // prose. It is correct today and rots the moment TOTAL_GATES moves, which
+    // is the same defect as a wrong subset -- so both spellings are refused.
+    if let Some(caps) = subset_regex().captures(text).filter(|c| {
+        c.get(1)
+            .or(c.get(2))
+            .and_then(|m| numeral(m.as_str()))
+            .is_some_and(|n| n >= SMALLEST_PLAUSIBLE_TOTAL)
+    }) {
+        return Some(format!(
+            "publishes an unverifiable subset count `{}`: name the symbol that derives it",
+            caps[0].trim()
+        ));
+    }
     for caps in count_regex().captures_iter(text) {
-        let raw = &caps[1];
-        let Ok(got) = raw.parse::<usize>() else {
-            return Some(format!("unparseable gate-count claim: {raw}"));
+        // A word in front of "gates" that is not a numeral is not a claim.
+        let Some(got) = numeral(&caps[1]).filter(|n| *n >= SMALLEST_PLAUSIBLE_TOTAL) else {
+            continue;
         };
+        if disclaimed(text, caps.get(0).map_or(0, |m| m.start())) {
+            continue;
+        }
         if got != total_gates {
             return Some(format!("still claims {got}{}", &caps[2]));
         }
-    }
-    if sixty_regex().is_match(text) {
-        return Some("still claims sixty-gate".into());
     }
     for marker in EXEMPTION_MARKERS {
         if text.contains(marker) {

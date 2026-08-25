@@ -19,11 +19,26 @@ pub struct PrDiffContext {
 /// Three gates each carried their own copy of this parsing, and all three
 /// copies were wrong in the same two ways, because they were the same lines
 /// pasted three times.
+/// Why a rule needs the side of the diff a change REMOVES.
+///
+/// A closed set, so asking for both sides is a named, reviewable act rather
+/// than a field access. Adding a variant is a diff someone can challenge --
+/// which is the whole mechanism: seven times a scanner read the removed side
+/// by accident, and once (#115) it was written fresh with the same defect
+/// after the first two were fixed. Reading the whole diff is what you get by
+/// NOT thinking about it, so the type stops being silent about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BothSides {
+    /// A wire contract is compared before and after: a `required` field that
+    /// disappears IS the finding, so the rule cannot work from additions.
+    ContractComparesRemovedFields,
+}
+
 pub struct FileDiff {
     /// Repo-relative path, taken from the `+++ b/` header.
     pub path: String,
     /// Only the lines this change ADDS, without their `+`.
-    pub added: String,
+    added: String,
     /// Every line of this file's hunk, additions and context alike, without
     /// the leading marker.
     ///
@@ -31,7 +46,7 @@ pub struct FileDiff {
     /// this change introduce a mutating route" is about `added`; "does the file
     /// reference an Idempotency-Key" is about `all`, since a key already
     /// present is context the diff never adds.
-    pub all: String,
+    all: String,
     /// This file's hunk lines exactly as the diff spells them, `+` and `-`
     /// markers intact.
     ///
@@ -39,7 +54,39 @@ pub struct FileDiff {
     /// compares the two sides of a wire contract, and a field disappearing is
     /// the entire finding. Reaching for this is opting out of the added/removed
     /// distinction on purpose, and a rule that takes it should say why.
-    pub raw: String,
+    raw: String,
+}
+
+impl FileDiff {
+    /// The lines this change ADDS, without their `+`.
+    ///
+    /// What an ordinary rule wants. It contains no removed line, so a rule
+    /// working from it cannot refuse the change that deletes what it is
+    /// looking for.
+    pub fn added(&self) -> &str {
+        &self.added
+    }
+
+    /// The file as it stands AFTER this change: additions plus the context they
+    /// sit in, removals excluded.
+    ///
+    /// For a rule asking what the file says now -- "a Namespace declared
+    /// without the enforce label", "an image not pinned to a digest" -- where a
+    /// line the change does not touch still counts.
+    pub fn after_change(&self) -> &str {
+        &self.all
+    }
+
+    /// Both sides, markers intact.
+    ///
+    /// Requires naming a reason from [`BothSides`], because this is the only
+    /// corpus containing removed lines and reading it by accident is the
+    /// inversion defect. The parameter is deliberately unused at runtime: its
+    /// job is to make the caller state, in code a reviewer reads, that the
+    /// removal is the subject rather than something swept in.
+    pub fn both_sides(&self, _why: BothSides) -> &str {
+        &self.raw
+    }
 }
 
 /// Split a unified diff into its files, attributing each line to the path the

@@ -54,7 +54,7 @@ impl ConstantWorkGuard {
             // the pull request that replaced it with a bounded one.
             let findings = self
                 .checker
-                .scan_unbounded_structures(&file.path, &file.added);
+                .scan_unbounded_structures(&file.path, file.added());
             unbounded_findings.extend(findings);
         }
 

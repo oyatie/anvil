@@ -56,7 +56,7 @@ impl EphemeralSecretInjector {
 
             let file_findings = self
                 .validator
-                .validate_workflow_secrets(&file.path, &file.all);
+                .validate_workflow_secrets(&file.path, file.after_change());
             findings.extend(file_findings);
         }
 

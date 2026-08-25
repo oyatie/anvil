@@ -750,6 +750,22 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   cover digest pinning and deploy parity; promotion-tier state machine has no counterpart.",
     },
     MigrationEntry {
+        component: "source_scan",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie's checks each strip commentary their own way",
+        counterpart_loc: 0,
+        evidence: "PURE, ~60 lines. Reads Rust source as CODE: line comments, block comments and \
+                  string-literal bodies removed, quotes and byte offsets kept, so a scan sees \
+                  code and can still name a line. Extracted because NINE spellings of this idea \
+                  existed under four behaviours and one name -- the weakest dropped whole \
+                  comment lines and left block comments, the strongest was private to one test \
+                  file. A reader reaching for `code_only` got whichever was nearest, and the \
+                  failure was silent in both directions: reading commentary as code invents a \
+                  finding, missing a construct hides one. Both happened within an hour. Migrates \
+                  because every governance scan in either repository needs it.",
+    },
+    MigrationEntry {
         component: "postmortem",
         verdict: Verdict::Migrating,
         confidence: Confidence::Probable,

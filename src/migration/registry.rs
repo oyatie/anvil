@@ -134,6 +134,23 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                    question stops being asked.",
     },
     MigrationEntry {
+        component: "bin/occupancy.rs",
+        verdict: Verdict::Scaffolding,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "",
+        counterpart_loc: 0,
+        evidence: "The command `.github/workflows/ci.yml` runs to turn `admit_spawn` into a \
+                   check. It holds no rule of its own: it reads two path lists and a \
+                   merge-base answer, calls `change_delivery::core::shard::admit_spawn`, and \
+                   maps the result onto `pre_merge_guard::report::GateStatus`. Every input is \
+                   bound to this repository -- Anvil's own workflow, Anvil's own hub set in \
+                   `anvil_hubs()`, which names this crate's Cargo.toml, src/main.rs and \
+                   ci.yml. At absorption the absorbing repository runs its own presubmit over \
+                   its own hub set, so nothing has to replace this file: the question it \
+                   answers stops being asked here. Scaffolding, not Superseded -- no \
+                   counterpart is needed before it goes.",
+    },
+    MigrationEntry {
         component: "adr_drift_ratchet.rs",
         verdict: Verdict::Superseded,
         confidence: Confidence::Verified,

@@ -100,6 +100,7 @@ pub mod shadow_traffic_harness;
 pub mod shape;
 pub mod shuffle_shard_simulator;
 pub mod slo_canary_guard;
+pub mod source_scan;
 pub mod stack_whitelist_guard;
 pub mod stacked_diffs;
 pub mod state;

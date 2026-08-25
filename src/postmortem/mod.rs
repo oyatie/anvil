@@ -160,9 +160,15 @@ pub const FIX_CLASSES: &[FixClass] = &[
                            fabricated paths and the seven that refused deletions had those \
                            defects because thirteen places each parsed a diff. Retiring the \
                            duplication retired both.",
-        instances: 19,
-        evidence: "Diff parsing duplicated across thirteen of them, retired by `diffs_by_path` (#117, #118); the `Fix` \
-                   enum spelled twice (#113); the `unknown.rs` cursor block in three of them (#117).",
+        instances: 28,
+        evidence: "Diff parsing duplicated across thirteen of them, retired by `diffs_by_path` \
+                   (#117, #118); the `Fix` enum spelled twice (#113); the `unknown.rs` cursor \
+                   block in three of them (#117); and NINE spellings of \
+                   \"strip commentary before scanning source\" under four different behaviours \
+                   and one name -- a four-line filter that drops whole comment lines, a per-line \
+                   truncation with a crude quote guard, a line-wise lexer, and a whole-source \
+                   state machine. That last is the only one that sees a literal spanning lines, \
+                   and the weakest was reached first by a reader who assumed the strongest.",
         remedies: &[
             Remedy {
                 layer: Layer::Unspellable,
@@ -179,6 +185,26 @@ pub const FIX_CLASSES: &[FixClass] = &[
                 what: "refuse a fourteenth hand-rolled parser before it is a commit; the ratchet \
                        is a source scan needing no build and runs in under a second",
                 status: Status::Missing,
+            },
+            Remedy {
+                layer: Layer::Unspellable,
+                mechanism: Mechanism::Mechanical,
+                what: "one `code_only`, in `src`, so a scan reads code rather than commentary \
+                       and a caller cannot reach a weaker spelling by accident; it preserves \
+                       byte offsets, so a finding can name a line without a second pass",
+                status: Status::Live {
+                    named: "src/source_scan/mod.rs::code_only",
+                },
+            },
+            Remedy {
+                layer: Layer::Ci,
+                mechanism: Mechanism::Mechanical,
+                what: "an exact count of the remaining local spellings, so a ninth cannot be \
+                       written and each migration must lower it; the scan uses `code_only` \
+                       itself, without which it counted its own string literals",
+                status: Status::Live {
+                    named: "tests/source_scan_test.rs",
+                },
             },
             Remedy {
                 layer: Layer::Ci,
@@ -251,17 +277,23 @@ pub const FIX_CLASSES: &[FixClass] = &[
             Remedy {
                 layer: Layer::Unspellable,
                 mechanism: Mechanism::Mechanical,
-                what: "hand a scanner the added lines and nothing else, so reading a removal \
-                       requires deliberately asking for `raw` -- which two rules legitimately \
-                       do and every other one does not",
-                status: Status::Missing,
+                what: "`FileDiff` hands out `added()` and `after_change()`, neither of which \
+                       contains a removed line; the only corpus that does is reached through \
+                       `both_sides(BothSides::..)`, a closed set of reasons, so asking for \
+                       removals is a named act that appears in review",
+                status: Status::Live {
+                    named: "src/git_manager/diff_context.rs::BothSides",
+                },
             },
             Remedy {
                 layer: Layer::Ci,
                 mechanism: Mechanism::Mechanical,
-                what: "run every scanner over its own red fixture inverted to a deletion and \
-                       assert it goes clean; the probe exists as a one-off and nothing runs it",
-                status: Status::Missing,
+                what: "assert neither ordinary corpus contains a removed line, that exactly one \
+                       rule reads the removed side, and that the sanctioned-reason set stays \
+                       closed -- a second variant is a design decision, not a refactor",
+                status: Status::Live {
+                    named: "tests/removals_are_not_reachable_by_accident_test.rs",
+                },
             },
         ],
     },
@@ -376,7 +408,7 @@ pub const FIX_CLASSES: &[FixClass] = &[
 /// EXACT, and it must fall. This is the number the doctrine is about: a class
 /// counted here is observed rather than prevented, and every observation is
 /// another wave of fixes.
-pub const CLASSES_ONLY_CAUGHT_AFTER_THE_FACT: usize = 2;
+pub const CLASSES_ONLY_CAUGHT_AFTER_THE_FACT: usize = 1;
 
 /// The classes still waiting for a remedy earlier than CI.
 pub fn awaiting_early_remedy() -> Vec<&'static FixClass> {

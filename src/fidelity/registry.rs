@@ -875,18 +875,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               not run, and the blocking sentence named a preview sandbox that is not deployed, \
               spawned or configured anywhere in this repository. All of that is deleted. \
               What remains is a lint, published as one: added lines whose text contains \
-              `.await.unwrap()` once whitespace is removed (chaos_injector/mod.rs:149). That is \
+              `.await.unwrap()` once whitespace is removed (chaos_injector/mod.rs:157). That is \
               the property `clippy::unwrap_used` checks, which upstream files under the opt-in \
               restriction group rather than correctness -- so a hit is a Warning, not a refused \
               merge. It blocked once, and was red on ten lines of its own diff with no true \
               positive among them. It is text, not syntax, but only over `code_only` \
-              (chaos_injector/mod.rs:145), which drops a comment and empties a string literal, so \
+              (chaos_injector/mod.rs:153), which drops a comment and empties a string literal, so \
               prose about the property is no longer counted as the property. That is one line at \
               a time with no memory of the last, so the continuation line of a multi-line string \
               literal -- this sentence, for one -- carries no opening quote and is still counted; \
               an unwrap split across lines is still invisible, and an expect on the same await is \
               not matched at all. Only added lines are read, as `code_line` \
-              (chaos_injector/mod.rs:144), so an unwrap this change leaves untouched is invisible, \
+              (chaos_injector/mod.rs:152), so an unwrap this change leaves untouched is invisible, \
               and a line in a test module is indistinguishable from one in production code -- which \
               is the other reason this warns rather than blocks. A diff \
               with no such line is reported unmeasured, not resilient: nothing was made to fail, so \

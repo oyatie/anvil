@@ -180,19 +180,37 @@ impl RustQualityEngine {
         let sync_mutex_in_async_re = Regex::new(r#"(?i)std::sync::Mutex::lock"#).unwrap();
         let clone_on_copy_re = Regex::new(r#"(?i)\.(?:clone\(\))\s*;.*//\s*primitive"#).unwrap();
 
-        let mut current_file = diff_ctx.changed_files.first().cloned().unwrap_or_default();
+        // `None` until the diff names a file, rather than seeding it with the
+        // first changed file.
+        //
+        // The seed made every line before the first `+++ b/` header a finding
+        // against `changed_files[0]` -- a real file in the pull request, which
+        // is what made it credible. Measured on the old code, a diff whose only
+        // line was `+let v = maybe.unwrap();` produced:
+        //
+        //     rust_policy idiomatic=false findings=["src/innocent.rs"]
+        //
+        // A reviewer opens src/innocent.rs, finds no `.unwrap()`, and has
+        // nothing to tell them the gate picked that name off a list.
+        let mut current_file: Option<String> = None;
         let mut is_test_file = false;
         let mut prev_line = String::new();
 
         for line in diff_ctx.diff_content.lines() {
             if let Some(stripped) = line.strip_prefix("+++ b/") {
-                current_file = stripped.trim().to_string();
-                is_test_file = current_file.contains("test")
-                    || current_file.contains("bench")
-                    || current_file.contains("mock");
+                let path = stripped.trim().to_string();
+                is_test_file =
+                    path.contains("test") || path.contains("bench") || path.contains("mock");
+                current_file = Some(path);
                 prev_line.clear();
                 continue;
             }
+
+            // No header yet: this hunk belongs to no file the diff has named,
+            // and a finding that cannot name its file is not one to report.
+            let Some(current_file) = current_file.as_deref() else {
+                continue;
+            };
 
             if !current_file.ends_with(".rs") {
                 continue;
@@ -212,7 +230,7 @@ impl RustQualityEngine {
                 {
                     findings.push(RustQualityFinding::from_rule(
                         &ERR_NO_UNWRAP_PROD,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Use of `.unwrap()` or empty `.expect(\"\")` in production code can cause unrecoverable panics.",
                         "Use the `?` operator, `.context()`, or handle the error explicitly with `match`/`if let`.",
@@ -223,7 +241,7 @@ impl RustQualityEngine {
                 if ref_string_re.is_match(code_line) {
                     findings.push(RustQualityFinding::from_rule(
                         &OWN_SLICE_OVER_VEC,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Accepting `&String` forces heap allocations for string slices.",
                         "Change parameter type from `&String` to `&str`.",
@@ -232,7 +250,7 @@ impl RustQualityEngine {
                 if ref_vec_re.is_match(code_line) {
                     findings.push(RustQualityFinding::from_rule(
                         &OWN_SLICE_OVER_VEC,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Accepting `&Vec<T>` prevents callers from passing array slices or small collections.",
                         "Change parameter type from `&Vec<T>` to `&[T]`.",
@@ -243,7 +261,7 @@ impl RustQualityEngine {
                 if blocking_in_async_re.is_match(code_line) && !is_test_file {
                     findings.push(RustQualityFinding::from_rule(
                         &ASYNC_SPAWN_BLOCKING,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Synchronous blocking I/O or `std::thread::sleep` inside async code starves the Tokio worker threads.",
                         "Use `tokio::fs`, `tokio::time::sleep`, or offload blocking calls to `tokio::task::spawn_blocking`.",
@@ -254,7 +272,7 @@ impl RustQualityEngine {
                 if sync_mutex_in_async_re.is_match(code_line) && !is_test_file {
                     findings.push(RustQualityFinding::from_rule(
                         &ASYNC_NO_LOCK_AWAIT,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Using `std::sync::Mutex` in async contexts can cause deadlocks if held across `.await` points.",
                         "Use `tokio::sync::Mutex` or narrow the lock scope to a synchronous block.",
@@ -265,7 +283,7 @@ impl RustQualityEngine {
                 if format_literal_re.is_match(code_line) {
                     findings.push(RustQualityFinding::from_rule(
                         &MEM_AVOID_FORMAT,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Calling `format!(\"literal\")` without placeholders causes an unnecessary heap allocation.",
                         "Use `.to_string()`, `String::from(\"...\")`, or string literals directly.",
@@ -276,7 +294,7 @@ impl RustQualityEngine {
                 if unsafe_block_re.is_match(code_line) && !prev_line.contains("SAFETY:") {
                     findings.push(RustQualityFinding::from_rule(
                         &UNSAFE_SAFETY_COMMENT,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Unsafe block missing mandatory `// SAFETY:` explanation justifying memory invariants.",
                         "Document memory layout, pointer validity, and alignment guarantees in a preceding `// SAFETY:` comment.",
@@ -287,7 +305,7 @@ impl RustQualityEngine {
                 if clone_on_copy_re.is_match(code_line) {
                     findings.push(RustQualityFinding::from_rule(
                         &OWN_BORROW_OVER_CLONE,
-                        &current_file,
+                        current_file,
                         code_line,
                         "Redundant `.clone()` on value that implements `Copy` or can be borrowed.",
                         "Remove `.clone()` call or pass by reference.",

@@ -21,7 +21,7 @@
 //!   7. Signature last, always.
 
 use crate::fidelity::{Fidelity, registry::AUDITED_GATES};
-use crate::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport};
+use crate::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport, TOTAL_GATES};
 use crate::publish::{AnvilAction, body};
 
 /// Remediation per gate id. Absent where no concrete action is known --
@@ -203,12 +203,38 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         // is load-bearing precisely when the number is good.
         let understated = low_fidelity_passing_gates(report);
         if !understated.is_empty() {
+            // The unaudited count rides on this existing line rather than
+            // taking one of its own.
+            //
+            // `report.rs` withholds a verdict from a gate with no registry
+            // entry, and defends that exemption with "is not silent:
+            // `fidelity::gap_report().unaudited` publishes its size". It
+            // published nothing -- `gap_report` had no caller outside
+            // `#[cfg(test)]`, so the exemption was silent and the sentence
+            // justifying it rested on a mechanism that did not run.
+            //
+            // It is not in the verdict line: how many gates nobody has audited
+            // is a fact about the registry, not an outcome of this run, and
+            // folding it into "N/M gates passed" conflates the two. It is not a
+            // paragraph of its own either: the certified path is the common one
+            // and `scorecard_wiring_test` caps it at three content lines so
+            // nothing buries the verdict.
+            let unaudited = crate::fidelity::gap_report(TOTAL_GATES).unaudited;
+            let unaudited_note = if unaudited > 0 {
+                format!(
+                    " A further {unaudited} of {TOTAL_GATES} have no registry \
+                     entry at all, so nothing here claims anything about them."
+                )
+            } else {
+                String::new()
+            };
             s.push_str(&format!(
                 "\n⚠️ {} of the passing gates do not fully measure what their \
                  names imply: {}. See `src/fidelity/registry.rs` for what each \
-                 one actually checks.\n",
+                 one actually checks.{}\n",
                 understated.len(),
-                understated.join(", ")
+                understated.join(", "),
+                unaudited_note
             ));
         }
     } else {

@@ -146,16 +146,13 @@ impl Evaluated {
 
 /// A machine-applicable repair.
 ///
-/// A fix that only a human can apply is a fix applied 251 times by hand. These
-/// are the codemod: one declaration drives both the finding and the repair, so
-/// a rule author never writes a separate migration script.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fix {
-    MovePath { from: String, to: String },
-    RenameSymbol { from: String, to: String },
-    RetargetDependency { from: String, to: String },
-    CreatePath { path: String, template: String },
-}
+/// Re-exported from `shape::core::report`, not redefined. This module first
+/// declared its own four-variant `Fix` that was a one-for-one re-spelling of
+/// the one shape had already shipped -- `MovePath`/`RenameSymbol`/
+/// `RetargetDependency`/`CreatePath` against `Move`/`Rename`/`DependOnInstead`/
+/// `Create`. Two vocabularies for one concept is the duplication this harness
+/// exists to end, and it was introduced by the harness itself.
+pub use crate::shape::core::report::Fix;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {

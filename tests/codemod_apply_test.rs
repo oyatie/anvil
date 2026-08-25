@@ -31,7 +31,7 @@ fn finding(subject: &str, fix: Option<Fix>) -> Finding {
 fn a_rename_becomes_a_concrete_edit() {
     let f = finding(
         "bus/adapters/file/Cargo.toml",
-        Some(Fix::RenameSymbol {
+        Some(Fix::Rename {
             from: "messaging-file-adapter".into(),
             to: "bus-file".into(),
         }),
@@ -59,9 +59,9 @@ fn many_findings_of_one_rule_become_one_plan() {
         .map(|i| {
             finding(
                 &format!("cap{i}/core/x/Cargo.toml"),
-                Some(Fix::RetargetDependency {
-                    from: "data/core/types".into(),
-                    to: "data/ports/types".into(),
+                Some(Fix::DependOnInstead {
+                    replace: "data/core/types".into(),
+                    with: "data/ports/types".into(),
                 }),
             )
         })
@@ -97,7 +97,7 @@ fn a_stale_fix_is_refused_not_silently_skipped() {
     // correct; applying it silently and reporting success is not.
     let f = finding(
         "a/core/x/Cargo.toml",
-        Some(Fix::RenameSymbol {
+        Some(Fix::Rename {
             from: "old-name".into(),
             to: "new-name".into(),
         }),
@@ -116,7 +116,7 @@ fn a_stale_fix_is_refused_not_silently_skipped() {
 fn a_fix_naming_an_absent_file_is_refused() {
     let f = finding(
         "gone/core/x/Cargo.toml",
-        Some(Fix::RenameSymbol {
+        Some(Fix::Rename {
             from: "a".into(),
             to: "b".into(),
         }),
@@ -134,14 +134,14 @@ fn a_file_whose_fixes_disagree_takes_none_of_them() {
     // sees a tree in neither state.
     let a = finding(
         "x/core/c/Cargo.toml",
-        Some(Fix::RenameSymbol {
+        Some(Fix::Rename {
             from: "name".into(),
             to: "renamed".into(),
         }),
     );
     let b = finding(
         "x/core/c/Cargo.toml",
-        Some(Fix::MovePath {
+        Some(Fix::Move {
             from: "x/core/c/Cargo.toml".into(),
             to: "x/ports/c/Cargo.toml".into(),
         }),
@@ -156,14 +156,14 @@ fn a_file_whose_fixes_disagree_takes_none_of_them() {
 fn two_moves_of_one_file_are_refused() {
     let a = finding(
         "y/core/c/lib.rs",
-        Some(Fix::MovePath {
+        Some(Fix::Move {
             from: "y/core/c/lib.rs".into(),
             to: "y/ports/c/lib.rs".into(),
         }),
     );
     let b = finding(
         "y/core/c/lib.rs",
-        Some(Fix::MovePath {
+        Some(Fix::Move {
             from: "y/core/c/lib.rs".into(),
             to: "y/adapters/c/lib.rs".into(),
         }),
@@ -177,9 +177,9 @@ fn two_moves_of_one_file_are_refused() {
 fn creating_over_an_existing_file_is_refused() {
     let f = finding(
         "z/core/c/OWNERS",
-        Some(Fix::CreatePath {
+        Some(Fix::Create {
             path: "z/core/c/OWNERS".into(),
-            template: "team\n".into(),
+            content: Some("team\n".into()),
         }),
     );
     let p = plan(&[&f], &files(&[("z/core/c/OWNERS", "someone-else\n")]));
@@ -193,9 +193,9 @@ fn creating_over_an_existing_file_is_refused() {
 fn a_scaffold_creates_what_is_missing() {
     let f = finding(
         "z/core/c/OWNERS",
-        Some(Fix::CreatePath {
+        Some(Fix::Create {
             path: "z/core/c/OWNERS".into(),
-            template: "team\n".into(),
+            content: Some("team\n".into()),
         }),
     );
     let p = plan(&[&f], &files(&[]));
@@ -209,7 +209,7 @@ fn planning_writes_nothing_so_a_dry_run_is_the_real_run() {
     let before = files(&[("a/core/x/Cargo.toml", "name = \"old\"\n")]);
     let f = finding(
         "a/core/x/Cargo.toml",
-        Some(Fix::RenameSymbol {
+        Some(Fix::Rename {
             from: "old".into(),
             to: "new".into(),
         }),

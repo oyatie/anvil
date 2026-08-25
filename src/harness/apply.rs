@@ -138,9 +138,24 @@ fn plan_file(
 
     for finding in findings {
         match finding.fix.as_ref().expect("filtered above") {
-            Fix::MovePath { from, to } => moves.push((from, to)),
-            Fix::CreatePath { path, template } => creates.push((path, template)),
-            Fix::RenameSymbol { from, to } | Fix::RetargetDependency { from, to } => {
+            Fix::Move { from, to } => moves.push((from, to)),
+            Fix::Create { path, content } => match content {
+                Some(body) => creates.push((path, body)),
+                // The path is required and what belongs in it needs judgement.
+                // Reported rather than created empty: a scaffold that writes
+                // empty files produces a tree that looks complete and is not.
+                None => {
+                    return Err(Refused::NoFixOffered {
+                        rule: finding.rule,
+                        subject: path.clone(),
+                    });
+                }
+            },
+            Fix::Rename { from, to }
+            | Fix::DependOnInstead {
+                replace: from,
+                with: to,
+            } => {
                 let current = match body.take() {
                     Some(b) => b,
                     None => files

@@ -4,7 +4,7 @@
 //! same idea lived elsewhere. Extracting it made it shared; these are the
 //! properties a caller is entitled to rely on.
 
-use anvil::source_scan::code_only;
+use anvil::source_scan::{code_only, without_commentary};
 
 #[test]
 fn a_line_comment_is_removed_and_the_code_before_it_survives() {
@@ -80,11 +80,19 @@ fn byte_offsets_are_preserved() {
 
 #[test]
 fn code_only_is_not_re_spelled_a_ninth_time() {
-    // Eight implementations of this idea existed under four behaviours and one
-    // name. That is the generating class of this session, found in the test
-    // scaffolding rather than the product. The count may fall and must not
-    // rise; each remaining one is a behaviour-preserving migration away.
-    const REMAINING: usize = 8;
+    // Nine implementations of this idea existed under four behaviours and one
+    // name -- the generating class of this session, found in the test
+    // scaffolding rather than the product. All nine now forward to
+    // `source_scan`, so the behaviour has one definition and the count is zero.
+    //
+    // Migrating them was not a rename. Two scans BROKE on the shared
+    // `code_only` and were right to: the diff-parsing ratchet's count fell from
+    // nineteen sites to two, because every marker it matches is spelled as a
+    // string literal and `code_only` strips literal bodies. That is what
+    // produced `without_commentary`: a scan whose subject IS a literal needs
+    // the literals kept, and one whose subject is a construct needs them gone.
+    // Two questions, two names, rather than one name with four behaviours.
+    const REMAINING: usize = 0;
 
     let mut found: Vec<String> = Vec::new();
     for dir in ["src", "tests"] {
@@ -103,10 +111,26 @@ fn code_only_is_not_re_spelled_a_ninth_time() {
                     // itself -- which is precisely the defect the extraction
                     // exists to remove, demonstrated on the detector itself.
                     let body = code_only(&std::fs::read_to_string(&p).unwrap_or_default());
-                    if body.contains("fn code_only(")
+                    let defines = body.contains("fn code_only(")
                         || body.contains("fn code_before_comment(")
-                        || body.contains("fn code_only_body(")
-                    {
+                        || body.contains("fn code_only_body(");
+                    // A thin wrapper that DELEGATES is not another
+                    // implementation. Three remain by name, because their call
+                    // sites and the fidelity registry's citations refer to
+                    // them, but each one forwards to the shared scanner -- so
+                    // the behaviour has exactly one definition, which is the
+                    // property this counts.
+                    let delegates = body.contains("source_scan::");
+                    // Similar name, different logic. Not everything that looks
+                    // like duplication is: `code_before_comment` reads CONFIG
+                    // -- YAML, shell, SQL -- so it strips `#` and `--` as well,
+                    // and treats `//` as code when preceded by `:` or
+                    // `http://example.com` loses its host. Migrating it to the
+                    // Rust scanner was tried and reverted: the URL guard went
+                    // with it and a cleartext-endpoint test found zero where it
+                    // expects one. Rule of Three applies to the same LOGIC.
+                    let different_language = p.ends_with("zero_trust_workload/identity_auditor.rs");
+                    if defines && !delegates && !different_language {
                         found.push(p.display().to_string());
                     }
                 }
@@ -122,5 +146,91 @@ fn code_only_is_not_re_spelled_a_ninth_time() {
          If this FELL, lower REMAINING here in the same change.\n  {}",
         found.len(),
         found.join("\n  ")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// without_commentary: the other question
+// ---------------------------------------------------------------------------
+
+#[test]
+fn without_commentary_keeps_the_literal_a_scan_is_looking_for() {
+    // The distinction that forced two functions. A scan whose SUBJECT is a
+    // literal -- the `"+++ b/"` a diff parser keys on -- must still see it.
+    let src = r#"if let Some(p) = line.strip_prefix("+++ b/") { } // a comment"#;
+    let kept = without_commentary(src);
+    assert!(kept.contains("+++ b/"), "the marker was stripped: {kept}");
+    assert!(!kept.contains("a comment"));
+
+    // And the other function must NOT, which is why swapping them silently
+    // took a ratchet from nineteen sites to two.
+    assert!(!code_only(src).contains("+++ b/"));
+}
+
+#[test]
+fn without_commentary_still_removes_every_kind_of_comment() {
+    let out = without_commentary(concat!(
+        "let a = 1; // line\n",
+        "/* block */\n",
+        "let b = \"kept\";\n",
+    ));
+    assert!(!out.contains("line"));
+    assert!(!out.contains("block"));
+    assert!(out.contains("let a = 1;"));
+    assert!(out.contains("kept"), "the literal body survives");
+}
+
+#[test]
+fn without_commentary_does_not_end_a_literal_on_an_escaped_quote() {
+    // Same escape handling as `code_only`: falling out of a literal early
+    // makes the scanner read the rest of the line as code.
+    let out = without_commentary(r#"let s = "a \" // not a comment"; let after = 1;"#);
+    assert!(
+        out.contains("not a comment"),
+        "left the literal early: {out}"
+    );
+    assert!(out.contains("let after = 1;"));
+}
+
+#[test]
+fn without_commentary_preserves_byte_offsets() {
+    let src = "let a = 1; // comment
+let b = 2;
+";
+    let out = without_commentary(src);
+    assert_eq!(out.len(), src.len());
+    let at = src.find("let b").expect("present");
+    assert_eq!(&out[at..at + 5], "let b");
+}
+
+/// The governance scans must actually run before a push.
+///
+/// A remedy the ledger records as live at `PrePush` and which the hook does not
+/// invoke is the same defect as a gate that cannot fire: it reads as covered
+/// and refuses nothing. Asserted against the hook's text rather than its
+/// behaviour, because running a push from a test is not something a test may do.
+#[test]
+fn the_pre_push_hook_runs_the_source_only_scans() {
+    let hook = std::fs::read_to_string("src/git_manager/hooks/pre-push")
+        .expect("the pre-push hook is in the tree");
+
+    for scan in [
+        "diff_parsing_ratchet_test",
+        "prose_counts_test",
+        "source_scan_test",
+        "removals_are_not_reachable_by_accident_test",
+        "postmortem_ledger_test",
+    ] {
+        assert!(
+            hook.contains(scan),
+            "pre-push does not run {scan}, so the class it refuses is only caught in CI -- \
+             which is after the fact, and every CI catch is another wave of fixes"
+        );
+    }
+
+    // And it must still refuse on failure rather than reporting and continuing.
+    assert!(
+        hook.contains("REFUSED: a governance scan failed"),
+        "the hook runs the scans and does not act on the result"
     );
 }

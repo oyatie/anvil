@@ -323,10 +323,10 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               PERMISSIVE mode with no workload identity at all. What runs is a CWE-319 \
               cleartext-transport lint over added lines. It was the substring \"http://\", which \
               failed a merge for a licence URL in a doc comment; it now drops the comment tail in \
-              code_before_comment (identity_auditor.rs:118), skips prose and fixture paths in \
+              code_before_comment (identity_auditor.rs::code_before_comment), skips prose and fixture paths in \
               path_is_out_of_scope (identity_auditor.rs:98), and requires the authority after the \
               scheme to open with is_ascii_alphanumeric and not be one of the LOOPBACK_HOSTS \
-              (identity_auditor.rs:159-160). Unlike the lints of that class it names, it is not \
+              (identity_auditor.rs::LOOPBACK_HOSTS). Unlike the lints of that class it names, it is not \
               sink-anchored: there is no parser here, so it cannot tell a URL that reaches an HTTP \
               client from one that does not, and a URL assembled across lines or read from \
               configuration this diff does not touch is invisible to it. Comment stripping is \

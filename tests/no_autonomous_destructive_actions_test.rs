@@ -32,13 +32,7 @@ fn sources_under(dir: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Strips `//` and `//!` lines so a comment explaining the ban does not trip it.
-fn code_only(text: &str) -> String {
-    text.lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+use anvil::source_scan::code_only;
 
 #[test]
 fn nothing_closes_a_github_issue_autonomously() {

@@ -115,6 +115,13 @@ fn path_is_out_of_scope(path: &str) -> bool {
 ///     lint -- a one-character bypass -- so it must start a token.
 ///   - a leading `*` continues a block comment (`* text`, `*/`), but it is also
 ///     a dereference: blanking the line on `*` alone hid `*endpoint = "..."`.
+///
+/// NOT a member of the `source_scan` family, despite the shape and the name.
+/// That scanner reads Rust; this reads config, and none of the rules above
+/// exist there. Migrating it was tried and reverted -- the `://` guard went
+/// with it and `a_cleartext_endpoint_in_a_config_value_still_fires` found zero
+/// where it expects one. Rule of Three applies to the same LOGIC, not to
+/// similar names.
 fn code_before_comment(line: &str) -> &str {
     let b = line.as_bytes();
     // A block-comment continuation and a SQL comment open the whole line. A

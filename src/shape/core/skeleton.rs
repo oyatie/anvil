@@ -86,6 +86,7 @@ pub fn unit_conformance(
                     detail: format!("unit {} has no {face} face ({dir})", unit.name),
                     fix: Some(Fix::Create {
                         path: format!("{}{dir}", unit.root),
+                        content: None,
                     }),
                 });
             }

@@ -957,7 +957,12 @@ async fn test_git_hook_provisioning_and_permissions() {
 #[test]
 fn test_local_probe_red_flag_unconventional_commit_or_secret() {
     let validator = anvil::local_inner_loop::FastValidator::new();
-    let bad_diff = "+ let aws_key = \"AKIAIOSFODNN7EXAMPLE\";";
+    // Split for the same reason as every other fixture key in this tree: a
+    // contiguous literal makes the file a finding against itself. This one
+    // survived only because the self-scan looks at the last twenty commits and
+    // this line is older than that -- a horizon, not an absence.
+    let bad_diff = format!("+ let aws_key = \"AKIA{}\";", "IOSFODNN7EXAMPLE");
+    let bad_diff = bad_diff.as_str();
     let findings = validator.validate_pre_commit("bad commit msg", bad_diff);
 
     assert!(

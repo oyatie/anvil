@@ -45,24 +45,41 @@ use std::path::PathBuf;
 /// `println!`, which `cargo test` captures and hides on a passing test -- anvil
 /// reviewed this gate and pointed out the note would never be seen. A number
 /// that must be updated by the change that moves it needs no reminder.
-const CEILING: usize = 28;
+const CEILING: usize = 25;
 
 /// Functions allowed to walk a diff, with the reason.
 ///
 /// Deliberately short and deliberately explicit. An allowlist that grows
 /// without argument is the same as no gate; each line here should name a
 /// reason a reviewer can disagree with.
-/// The sanctioned parser is deliberately ABSENT from this list. It does not
-/// exist on this branch yet, and `every_allowlist_entry_still_exists_and_still_parses`
-/// caught the entry the moment it was written for something not there -- which
-/// is the behaviour wanted, so it stays. When `diff_context::diffs_by_path`
-/// lands, add it here with the reason "the parser itself" and lower `CEILING`
-/// by the number of sites that change removes.
+/// `diffs_by_path` is the sanctioned parser and heads this list.
+///
+/// It was deliberately absent while it did not yet exist, and
+/// `every_allowlist_entry_still_exists_and_still_parses` caught the entry the
+/// moment it was written for something not there. That is the behaviour wanted,
+/// and it is why the entry could be added only by the change that brings the
+/// parser -- which is this one.
 const ALLOWED: &[(&str, &str)] = &[
+    (
+        "git_manager/diff_context.rs::diffs_by_path",
+        "the parser itself: the one place this parsing is allowed to live. It \
+         takes the path from a header that STATES it -- `+++ b/` or \
+         `diff --git ... b/` -- and attributes nothing to a hunk that names no \
+         file, which is what the thirteen gates it replaces all got wrong",
+    ),
     (
         "chaos_mutation_guard.rs::touches_rust_source",
         "asks only whether ANY path ends in .rs; it reads no line and \
          attributes no finding, so it has no path to get wrong",
+    ),
+    (
+        "harness/rules.rs::fixture",
+        "CONSTRUCTS a diff, it does not read one: `Rule::fixture` builds the \
+         seeded defect and its conformant twin, and a fixture that spells a \
+         `+++ b/` header contains the literal without parsing anything. This is \
+         the cost of matching the literal rather than the call syntax -- the fix \
+         for the evasion vectors anvil's own review found -- and it is paid \
+         here, once, by name",
     ),
     (
         "change_delivery/core/purity.rs::diff_is_structure_only",

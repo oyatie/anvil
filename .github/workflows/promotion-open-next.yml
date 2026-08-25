@@ -1,0 +1,123 @@
+# Opens the next rung's promotion pull request when a rung advances.
+#
+# Ladder: dev -> staging -> canary -> production. `dev` is the trunk; feature
+# work lands there. This file OPENS pull requests. It never merges one, never
+# approves one, and never pushes to a rung.
+#
+# `contents: read` is not what holds that. It stops a push to a rung and a
+# branch deletion; it stops no merge at all, because `pulls.merge`,
+# `mergePullRequest` and `enablePullRequestAutoMerge` each run on
+# `pull-requests: write` alone -- and with `allow_auto_merge` on and no
+# required status check on any rung, an auto-merge lands the promotion at once
+# and unreviewed. What holds it is `tests/promotion_ladder_test.rs`, which
+# allow-lists the three API calls this script may make and fails on any fourth.
+#
+# Why it exists: all three promotions to date were hand-opened, and `dev` fell
+# 43 commits behind `main` inside a single session before anyone noticed. Drift
+# that surfaces as an open pull request is drift somebody sees. Drift nobody
+# opens a pull request for is discovered by reading `git rev-list` weeks later.
+#
+# The `next` map below is the exact inverse of `pred` in
+# promotion-predecessor.yml. `tests/promotion_ladder_test.rs` fails if the two
+# ever drift, because a map disagreeing with the guard would open pull requests
+# the guard is guaranteed to reject.
+name: promotion-open-next
+
+on:
+  push:
+    branches: [dev, staging, canary]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Two pushes to the same rung in quick succession would otherwise race between
+# the "is one already open?" read and the create, and open the rung twice. This
+# repository already carries `promote/dev-from-main` and
+# `promote/dev-from-main-2` from exactly that class of mistake, made by hand.
+concurrency:
+  group: promotion-open-next-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  open-next:
+    name: open-next
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open the next rung
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          # A pull request opened by GITHUB_TOKEN does not trigger further
+          # workflow runs, so anvil-ci and promotion-predecessor would not run
+          # on it. That is a promotion nothing checked, which is worse than no
+          # promotion at all. Setting PROMOTION_PAT makes the checks run;
+          # without it this step says so loudly and the pull request body
+          # carries the manual remedy.
+          HAS_PAT: ${{ secrets.PROMOTION_PAT != '' }}
+        with:
+          github-token: ${{ secrets.PROMOTION_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const next = { dev: "staging", staging: "canary", canary: "production" };
+            const head = context.ref.replace(/^refs\/heads\//, "");
+            const base = next[head];
+            if (!base) {
+              core.setFailed(
+                `no rung follows '${head}'; on.push.branches and the ladder map disagree. ` +
+                  `No promotion is attempted: guessing a rung is how a rung gets skipped.`
+              );
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+
+            const open = await github.rest.pulls.list({
+              owner, repo, base, state: "open", head: `${owner}:${head}`,
+            });
+            if (open.data.length > 0) {
+              core.notice(
+                `#${open.data[0].number} is already open for ${head} -> ${base}; nothing to do.`
+              );
+              return;
+            }
+
+            const cmp = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: `${base}...${head}`,
+            });
+            if (cmp.data.ahead_by === 0) {
+              core.notice(`${base} is level with ${head}; nothing to promote.`);
+              return;
+            }
+
+            const patWarning =
+              "`PROMOTION_PAT` is not set, so this pull request was opened by " +
+              "`GITHUB_TOKEN`. GitHub does not trigger workflow runs for such " +
+              "pull requests, so **anvil-ci and promotion-predecessor have not " +
+              "run on it**. Close and reopen it to trigger them, or set " +
+              "`PROMOTION_PAT`.";
+            const hasPat = process.env.HAS_PAT === "true";
+            if (!hasPat) {
+              core.warning(patWarning);
+            }
+
+            const body = [
+              `Automated promotion: \`${head}\` -> \`${base}\`, ${cmp.data.ahead_by} commit(s) ahead.`,
+              ``,
+              `Opened by \`.github/workflows/promotion-open-next.yml\` because \`${head}\``,
+              `advanced. **Opened only — nothing in that workflow merges or approves it.**`,
+              ``,
+              `Rungs run \`dev -> staging -> canary -> production\`. \`promotion-predecessor\``,
+              `**fails** a base whose head is not its predecessor. It does not block the merge:`,
+              `no branch here is protected, so that check is advisory until one requires it.`,
+            ];
+            if (!hasPat) {
+              body.push(``, `> [!WARNING]`, `> ${patWarning}`);
+            }
+
+            const pr = await github.rest.pulls.create({
+              owner, repo, base, head,
+              title: `promote(${base}): ${cmp.data.ahead_by} commit(s) from ${head}`,
+              body: body.join("\n"),
+            });
+            core.notice(
+              `opened #${pr.data.number}: ${head} -> ${base} (${cmp.data.ahead_by} commits)`
+            );

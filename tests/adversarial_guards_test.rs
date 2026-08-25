@@ -18,7 +18,7 @@ use anvil::kani_guard::KaniGuard;
 use anvil::modularization_guard::ModularizationGuard;
 use anvil::monorepo_guard::MonorepoGuard;
 use anvil::pre_merge_guard::PreMergeGuard;
-use anvil::rust_skills_guard::RustSkillsGuard;
+use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::slo_canary_guard::SloCanaryGuard;
 use anvil::supply_chain_guard::SupplyChainGuard;
 use std::path::PathBuf;
@@ -29,7 +29,7 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
     let repo_dir = temp_dir.path();
 
     let doc_guard = DocGuard::new("high".to_string());
-    let cedar_guard = CedarGuard::new("high".to_string());
+    let cedar_guard = CedarGuard::new();
     let compliance_guard = ComplianceGuard::new();
     let api_guard = ApiContractGuard::new();
     let cell_guard = CellIsolationGuard::new();
@@ -39,7 +39,7 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
     let debt_guard = DebtShrinkGuard::new();
     let modular_guard = ModularizationGuard::new();
     let coverage_guard = CoverageGuard::new();
-    let rust_skills_guard = RustSkillsGuard::new(repo_dir);
+    let rust_language_policy = RustLanguagePolicy::new();
     let kani_guard = KaniGuard::new();
     let slo_guard = SloCanaryGuard::new();
     let ghost_guard = GhostMigrationHarness::new();
@@ -58,7 +58,14 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
         head_sha: "bbb".to_string(),
         previous_head_sha: None,
         repo_working_dir: PathBuf::from("."),
-        diff_content: "+ let resident_reg_num = \"900101-1234567\";".to_string(),
+        // The `+++ b/` header is what tells a gate which file a line belongs
+        // to. Without it this fixture only worked because the compliance
+        // engine seeded its cursor from `changed_files[0]` -- so the assertion
+        // below was passing on the strength of the misattribution defect, not
+        // on the rule. Same repair as the gate 41 and gate 64 fixtures.
+        diff_content: "--- a/src/user.rs\n+++ b/src/user.rs\n\
+                       + let resident_reg_num = \"900101-1234567\";\n"
+            .to_string(),
         changed_files: vec!["src/user.rs".to_string()],
         is_incremental: false,
     };
@@ -85,7 +92,7 @@ async fn test_adversarial_failure_modes_are_real_and_block_certification() {
     };
 
     let kani_rep = kani_guard
-        .evaluate_unsafe_invariants(repo_dir, &bad_unsafe_diff)
+        .lint_unsafe_safety_comments(repo_dir, &bad_unsafe_diff)
         .unwrap();
-    assert!(!kani_rep.is_verified);
+    assert!(!kani_rep.all_unsafe_blocks_documented);
 }

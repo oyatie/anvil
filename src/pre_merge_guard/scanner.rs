@@ -1,41 +1,29 @@
 use super::GateStatus;
+use crate::harness::judgement;
 use regex::Regex;
 
 pub struct PreMergeScanner;
 
 impl PreMergeScanner {
+    /// Shannon entropy of `s` in bits per character.
+    ///
+    /// Moved to [`crate::harness::judgement`] and delegated here. This gate is
+    /// `Superseded`; the judgement is not, and a `Migrating` rule may not be
+    /// anchored to a module scheduled for deletion.
+    pub fn shannon_entropy(s: &str) -> f64 {
+        judgement::shannon_entropy(s)
+    }
+
+    /// Whether a structurally matched candidate survives the false-positive
+    /// filters. See [`crate::harness::judgement::is_credential_shaped`].
+    pub fn is_credential_shaped(candidate: &str, min_entropy: f64) -> bool {
+        judgement::is_credential_shaped(candidate, min_entropy)
+    }
+
+    /// Scans the lines a diff ADDS for a credential.
+    /// See [`crate::harness::judgement::scan_for_secrets`].
     pub fn scan_for_secrets(diff: &str) -> GateStatus {
-        let secret_patterns = [
-            (
-                r"(?i)-----BEGIN[ A-Z0-9_-]*PRIVATE KEY-----",
-                "Exposed Private Key block",
-            ),
-            (r"(?i)AKIA[0-9A-Z]{16}", "AWS Access Key ID"),
-            (r"(?i)ghp_[A-Za-z0-9_]{36}", "GitHub Personal Access Token"),
-            (r"(?i)gho_[A-Za-z0-9_]{36}", "GitHub OAuth Token"),
-            (r"(?i)sk-[A-Za-z0-9_-]{24,}", "API Secret Key"),
-            (
-                r#"(?i)password\s*[:=]\s*["'][^"']{6,}["']"#,
-                "Hardcoded plaintext password",
-            ),
-        ];
-
-        for (pattern, desc) in secret_patterns {
-            if let Ok(re) = Regex::new(pattern) {
-                for line in diff.lines() {
-                    if line.starts_with('+') && !line.starts_with("+++") {
-                        if re.is_match(line) {
-                            return GateStatus::Failed(format!(
-                                "Potential credential leak: {}",
-                                desc
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        GateStatus::Passed
+        judgement::scan_for_secrets(diff)
     }
 
     pub fn scan_for_breaking_changes(diff: &str, changed_files: &[String]) -> GateStatus {
@@ -53,12 +41,10 @@ impl PreMergeScanner {
             for pattern in destructive_patterns {
                 if let Ok(re) = Regex::new(pattern) {
                     for line in diff.lines() {
-                        if line.starts_with('+') && !line.starts_with("+++") {
-                            if re.is_match(line) {
-                                return GateStatus::Warning(
+                        if line.starts_with('+') && !line.starts_with("+++") && re.is_match(line) {
+                            return GateStatus::Warning(
                                     "Destructive schema migration detected (DROP/NOT NULL without multi-phase rollout). Verify backwards compatibility across cell nodes.".to_string(),
                                 );
-                            }
                         }
                     }
                 }
@@ -83,13 +69,11 @@ impl PreMergeScanner {
         for (pattern, desc) in flake_patterns {
             if let Ok(re) = Regex::new(pattern) {
                 for line in diff.lines() {
-                    if line.starts_with('+') && !line.starts_with("+++") {
-                        if re.is_match(line) {
-                            return GateStatus::Warning(format!(
-                                "Concurrency/Timing Warning: {}",
-                                desc
-                            ));
-                        }
+                    if line.starts_with('+') && !line.starts_with("+++") && re.is_match(line) {
+                        return GateStatus::Warning(format!(
+                            "Concurrency/Timing Warning: {}",
+                            desc
+                        ));
                     }
                 }
             }

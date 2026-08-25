@@ -3,8 +3,16 @@ use serde::{Deserialize, Serialize};
 pub mod reproducibility_checker;
 pub use reproducibility_checker::{ReproducibilityChecker, ReproducibilityResult};
 
+use crate::pre_merge_guard::report::GateStatus;
+
+const GATE_ID: &str = "hermetic_build_status";
+
+const MISSING_BUILD_PAIR: &str = "no second build was produced, so bit-for-bit reproducibility was \
+     never compared for this pull request";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HermeticBuildReport {
+    pub status: GateStatus,
     pub passed: bool,
     pub result: ReproducibilityResult,
 }
@@ -21,6 +29,57 @@ impl HermeticBuildValidator {
         }
     }
 
+    /// The gate's answer when no pair of builds exists to compare.
+    ///
+    /// The pipeline passed the literal `"sha256_clean"` as both digests, so
+    /// the equality check compared a string to itself.
+    /// The impurity scan, without the digest comparison.
+    ///
+    /// The gate has two halves. Comparing two build digests is unmeasured --
+    /// nothing builds this tree twice, and the two literals the pipeline used
+    /// to pass were the same string. But the diff scan for `SystemTime::now()`
+    /// and `env!("HOME")` is real, fires on code someone would plausibly write,
+    /// and is why the registry grades this gate `Heuristic` rather than
+    /// `Aspirational`. Reporting `NotMeasured` for the whole gate threw that
+    /// half away; this keeps it and withholds only the half nothing measured.
+    pub fn scan_for_impurity_without_build_pair(&self, source_diff: &str) -> HermeticBuildReport {
+        match self.checker.check_build_artifacts("", "", source_diff) {
+            // An impurity the scan can name is a measurement, and it fails.
+            result @ ReproducibilityResult::NonDeterministic { .. }
+                if source_diff.contains("SystemTime::now()")
+                    || source_diff.contains("env!(\"HOME\")") =>
+            {
+                HermeticBuildReport {
+                    status: GateStatus::Failed(
+                        "Non-hermetic input in the diff: a build embedding wall-clock time or an \
+                         ambient path cannot reproduce byte for byte."
+                            .to_string(),
+                    ),
+                    passed: false,
+                    result,
+                }
+            }
+            // No impurity found is not a reproducible build: nothing compared
+            // two binaries, so the property the gate is named for is unknown.
+            _ => self.evaluate_without_build_pair(),
+        }
+    }
+
+    pub fn evaluate_without_build_pair(&self) -> HermeticBuildReport {
+        HermeticBuildReport {
+            status: GateStatus::NotMeasured {
+                gate_id: GATE_ID.to_string(),
+                reason: MISSING_BUILD_PAIR.to_string(),
+            },
+            passed: false,
+            result: ReproducibilityResult::NonDeterministic {
+                build_a_sha256: String::new(),
+                build_b_sha256: String::new(),
+                divergent_symbol_or_path: MISSING_BUILD_PAIR.to_string(),
+            },
+        }
+    }
+
     pub fn evaluate_hermetic_reproducibility(
         &self,
         build_a_hash: &str,
@@ -32,7 +91,18 @@ impl HermeticBuildValidator {
             .check_build_artifacts(build_a_hash, build_b_hash, diff_content);
         let passed = matches!(result, ReproducibilityResult::DeterministicBitForBit);
 
-        HermeticBuildReport { passed, result }
+        HermeticBuildReport {
+            status: if passed {
+                GateStatus::Passed
+            } else {
+                GateStatus::Failed(
+                    "Hermetic build reproducibility check detected bitwise artifact non-determinism."
+                        .to_string(),
+                )
+            },
+            passed,
+            result,
+        }
     }
 }
 
@@ -45,5 +115,37 @@ mod tests {
         let val = HermeticBuildValidator::new();
         let report = val.evaluate_hermetic_reproducibility("hash1", "hash1", "const X: u32 = 42;");
         assert!(report.passed);
+    }
+}
+
+#[cfg(test)]
+mod no_build_pair_tests {
+    use super::*;
+
+    /// The review pipeline called this with the literal `"sha256_clean"` as
+    /// BOTH build digests, so `build_a_hash == build_b_hash` compared a string
+    /// to itself and was true on every pull request. No second build was ever
+    /// produced, and the only route to a failure was an unrelated substring
+    /// check for `SystemTime::now()` in the diff.
+    #[test]
+    fn absent_build_digests_are_unmeasured_not_bit_for_bit_identical() {
+        let report = HermeticBuildValidator::new().evaluate_without_build_pair();
+
+        assert_eq!(report.status.unmeasured_gate_id(), Some(GATE_ID));
+        assert!(
+            !report.passed,
+            "a binary that was never built twice is not reproducible"
+        );
+    }
+
+    /// The measuring path must still detect divergence between two real builds.
+    #[test]
+    fn two_divergent_digests_still_fail() {
+        let report = HermeticBuildValidator::new().evaluate_hermetic_reproducibility(
+            "sha256_aaa",
+            "sha256_bbb",
+            "",
+        );
+        assert!(!report.passed, "mismatched digests must not pass");
     }
 }

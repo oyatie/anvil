@@ -1,232 +1,448 @@
-use super::GateStatus;
+//! The certification table, one row per gate — rendered from the report's
+//! own field list so a gate added to the struct appears here by construction.
+//!
+//! The previous renderer took 68 positional `&GateStatus` arguments against a
+//! 71-field report: `review_verdict_status`, `brand_absence_status` and
+//! `migration_boundary_status` were counted, sealed on, and absent from the
+//! table. `GATE_LABELS` is pinned to `TOTAL_GATES` and to `named_statuses()`
+//! by test, so the table and the verdict can no longer disagree about what
+//! the gates are.
+//!
+//! Not what Anvil publishes on a pull request: the scorecard comment is
+//! rendered by `crate::publish::scorecard::render`, which reports findings
+//! only and counts the passes. This table populates
+//! `PreMergeCertificationReport::summary_markdown` and is asserted against by
+//! `tests/red_green_gates_test.rs`.
+
+use super::PreMergeCertificationReport;
+
+/// (field name in `named_statuses()`, row label, row detail), in matrix order.
+pub const GATE_LABELS: &[(&str, &str, &str)] = &[
+    (
+        "doc_parity_status",
+        "📚 Documentation & Doctrine Parity",
+        "Verified against platform doctrine and docs",
+    ),
+    (
+        "cedar_status",
+        "🛡️ Cedar Policy & IAM Boundaries",
+        "Cedar policy files parsed by the reference checker; coverage needs a schema",
+    ),
+    (
+        "compliance_status",
+        "🏛️ Regulatory Rule-Pack Scan",
+        "Added lines vs rules in force today; KR PIPA/전상법, HIPAA, PCI-DSS",
+    ),
+    (
+        "api_contract_status",
+        "📐 OpenAPI & Wire Contract Integrity",
+        "Schema validation & two-way route sync",
+    ),
+    (
+        "cell_isolation_status",
+        "🌐 Cell Boundary & Tenant Isolation",
+        "Multi-tenant query scoping & zero cross-cell leaks",
+    ),
+    (
+        "supply_chain_status",
+        "📦 Supply Chain & CVE Audit",
+        "Cargo.lock matched against the OSV advisory database; no SBOM, no provenance",
+    ),
+    (
+        "clean_arch_status",
+        "🏛️ Clean Architecture",
+        "Strict inward layer boundaries (Core -> Ports -> Adapters)",
+    ),
+    (
+        "monorepo_status",
+        "🏢 Monorepo Patterns & Hermeticity",
+        "Hermetic package boundaries & zero path leakage",
+    ),
+    (
+        "debt_shrink_status",
+        "📉 Deprecation & Reorg Drain Ratchet",
+        "Only debt shrinks permitted on deprecating targets",
+    ),
+    (
+        "modularization_status",
+        "🧩 Code Modularization (100-300 lines)",
+        "Componentized architecture with zero monoliths",
+    ),
+    (
+        "coverage_status",
+        "🎯 Differential Test Coverage (≥85%)",
+        "Verified test coverage on added & modified lines",
+    ),
+    (
+        "rust_skills_status",
+        "🦀 Rust Idiom Scan (regex over added lines)",
+        "Deterministic rules over added lines; the count is in the gate's own summary",
+    ),
+    (
+        "kani_status",
+        "🔬 Unsafe Block `// SAFETY:` Comment Lint",
+        "Added unsafe blocks carry a `// SAFETY:` comment; no model checker runs",
+    ),
+    (
+        "slo_status",
+        "📊 OpenSLO & Error Budget Burn-Rate Gate",
+        "Target reliability SLOs & <3x 5m burn rate verified",
+    ),
+    (
+        "adr_status",
+        "📑 Living ADR Field-Schema Ratchet",
+        "Touched ADRs carry every field docs/decisions/adr-schema.json declares",
+    ),
+    (
+        "shuffle_status",
+        "🎲 Cell Shuffle-Sharding & Blast-Radius",
+        "Combinatorial tenant isolation & bounded shared-shard blast radius",
+    ),
+    (
+        "trace_status",
+        "📡 W3C TraceContext & Distributed Tracing",
+        "End-to-end span instrumentation across async tasks",
+    ),
+    (
+        "constant_work_status",
+        "⏱️ Constant-Work Static Pool & Backpressure",
+        "Zero unbounded channels & fixed capacity limits",
+    ),
+    (
+        "idempotency_status",
+        "💳 Stripe Idempotency Key & Outbox Gate",
+        "Mutating route idempotency & transactional outbox safety",
+    ),
+    (
+        "finops_status",
+        "💰 FinOps Unit-Cost & Zero-Copy Ratchet",
+        "Zero unbudgeted heap allocations in performance hotpaths",
+    ),
+    (
+        "ghost_migration_status",
+        "🐘 Ghost DB Migration & Zero-Lock Validator",
+        "Zero exclusive table locks & rollback parity verified",
+    ),
+    (
+        "gitops_promo_status",
+        "📦 GitOps OCI Immutable Digest Pinning",
+        "Zero :latest tags; verified sha256 container digests",
+    ),
+    (
+        "gitops_drift_status",
+        "🔄 GitOps ArgoCD/Flux Manifest Parity",
+        "Zero unmanaged or unsafe cascade deletions",
+    ),
+    (
+        "canary_status",
+        "🐤 Progressive Canary Traffic & Burn Breaker",
+        "Error budget burn rate and tail latency against a canary deployment",
+    ),
+    (
+        "cluster_audit_status",
+        "🔍 Live Cluster Readback & Drift Auditor",
+        "100% parity between live cluster and Git trunk",
+    ),
+    (
+        "migration_orch_status",
+        "🗄️ Database Expand-Contract Lifecycle",
+        "4-phase zero-lock schema state machine enforcement",
+    ),
+    (
+        "ci_wallclock_status",
+        "⚡ CI Wallclock & Compute Cost Ratchet",
+        "Regression threshold & actionable optimization guidance",
+    ),
+    (
+        "predictive_test_status",
+        "🎯 DAG Predictive Test Selection",
+        "Affected workspace member targeting; <90s PR test wallclock",
+    ),
+    (
+        "compile_profile_status",
+        "⏱️ Compile-Time & Macro Bloat Profiler",
+        "Zero un-budgeted macro expansion or un-cached build.rs scripts",
+    ),
+    (
+        "remote_cache_status",
+        "📦 Remote Sccache & Object Key Parity",
+        "Lockfile sha256 cache keys; >90% compilation cache hits",
+    ),
+    (
+        "runner_economics_status",
+        "💵 Runner SKU Tiering & PR Spot Allocation",
+        "PRs run on low-cost spot; multi-arch macOS tiered to merge train",
+    ),
+    (
+        "sandbox_status",
+        "🏗️ Ephemeral Micro-Sandbox Isolation",
+        "Sub-second sandbox spin-up; zero dirty host or port collisions",
+    ),
+    (
+        "cross_service_status",
+        "🌐 Wire Contract Required-Field Ratchet",
+        "Changed API contracts lose no required field; consumers not derived",
+    ),
+    (
+        "ephemeral_secret_status",
+        "🔐 OIDC Zero-Trust Dynamic Credentials",
+        "Ephemeral <=15m STS tokens; zero static secrets in workflows",
+    ),
+    (
+        "psa_status",
+        "🛡️ Native Kubernetes PSA Gate (ADR-0710)",
+        "enforce: restricted or recorded expiring exception registry",
+    ),
+    (
+        "shadow_traffic_status",
+        "🌑 Dark-Traffic Shadow Replay Parity",
+        "1% shadow mirror; >=99.5% payload parity before live traffic",
+    ),
+    (
+        "unresolved_review_status",
+        "💬 Zero-Unresolved-Comments Review Gate",
+        "100% of review comments and threads must be resolved",
+    ),
+    (
+        "local_probe_status",
+        "⚡ Pre-Commit Conventional-Commit & Secret Probe",
+        "Conventional Commits 1.0.0 headers on this PR's commits; credential prefixes in the diff",
+    ),
+    (
+        "semantic_abi_status",
+        "🧬 Semantic ABI & Interface Stability",
+        "Public library signatures & struct memory layout stability",
+    ),
+    (
+        "zero_day_status",
+        "🛡️ Zero-Day Patch Synthesis",
+        "Not measured: nothing here writes a patch; detection is gate 6",
+    ),
+    (
+        "formal_verification_status",
+        "📐 Policy Pattern Scan",
+        "Keyword scan for wildcard principals and open egress; not a proof",
+    ),
+    (
+        "deadlock_status",
+        "🔒 Lock Order Cycle Scan",
+        "Cycles in a lock-order graph keyed on receiver text; no types, no call edges",
+    ),
+    (
+        "review_verdict_status",
+        "🧠 AI Code Review & 16-Lens Matrix",
+        "Adversarial multi-lens review verdict; REQUEST_CHANGES or REJECT blocks",
+    ),
+    (
+        "brand_absence_status",
+        "🏷️ Name-Honesty (Brand Absence) Self-Gate",
+        "Anvil's own names and PR-visible strings name what the code verifies, not an aspiration",
+    ),
+    (
+        "migration_boundary_status",
+        "🧭 Migration Boundary Direction Self-Gate",
+        "Anvil's Migrating components never depend on code oyatie supersedes",
+    ),
+    (
+        "shape_status",
+        "📐 Monorepo Shape Conformance Ratchet",
+        "Distance to the tenant's shape spec; blocking rules may not regress past the baseline frozen at merge-base",
+    ),
+    (
+        "automated_canary_status",
+        "📊 Automated Canary Analysis (ACA)",
+        "Mann-Whitney U-test statistical distribution validation",
+    ),
+    (
+        "progressive_ring_status",
+        "💍 Progressive Regional Rollout Rings",
+        "4-ring progressive promotion (Canary -> Dogfood -> Cell -> Global)",
+    ),
+    (
+        "hermetic_build_status",
+        "🧱 Hermetic & Bitwise Reproducible Build",
+        "Byte-for-byte deterministic binary verification",
+    ),
+    (
+        "openvex_status",
+        "📋 OpenVEX Dead-Code Reachability",
+        "Callgraph-pruned CVE exploitability attestations",
+    ),
+    (
+        "cosign_status",
+        "🔏 Cosign & Sigstore Keyless Provenance",
+        "OIDC hardware-backed transparency log signatures",
+    ),
+    (
+        "chaos_injection_status",
+        "💥 Unhandled-Await Lint",
+        "Added lines that unwrap an awaited call; no fault is injected into any system",
+    ),
+    (
+        "stacked_diffs_status",
+        "🌲 Stacked Diffs & PR DAG Orchestration",
+        "Atomic parent-child branch cascade & merge train sync",
+    ),
+    (
+        "microbench_status",
+        "⚡ Nanosecond Hotpath Microbench Ratchet",
+        "Criterion P99 CPU cycle & latency regression enforcement",
+    ),
+    (
+        "jittered_backoff_status",
+        "🎲 Jittered Exponential Backoff Gate",
+        "Full Jitter & deadline propagation on all network retries",
+    ),
+    (
+        "schema_evolution_status",
+        "📐 Wire Schema Evolution Ratchet",
+        "Deleted/renumbered .proto fields and removed OpenAPI paths (diff text, no baseline)",
+    ),
+    (
+        "auto_rollback_status",
+        "🔄 Auto-Rollback & Postmortem Engine",
+        "Autonomous canary rollback on degradation & blameless postmortem",
+    ),
+    (
+        "wasm_sandbox_status",
+        "📦 Dynamic WebAssembly Policy Sandbox",
+        "Sub-millisecond sandboxed bytecode linting & policy evaluation",
+    ),
+    (
+        "consistency_status",
+        "🌐 Active-Active Consistency Guard",
+        "Multi-region vector clock ordering & CRDT conflict resolution",
+    ),
+    (
+        "flake_quarantine_status",
+        "🧪 Flaky-Test Quarantine Lifecycle",
+        "Isolated quarantine lane & autonomous 100x stress rehabilitation",
+    ),
+    (
+        "cleartext_transport_status",
+        "🔓 Cleartext Transport Lint (CWE-319)",
+        "Added lines free of plaintext endpoints; no SPIFFE or mTLS is observed",
+    ),
+    (
+        "carbon_compute_status",
+        "🌱 GreenOps Carbon-Aware Compute",
+        "Energy-efficient CI compilation & green compute window routing",
+    ),
+    (
+        "replay_harness_status",
+        "📼 Deterministic Record-and-Replay",
+        "Hermetic production trace replayer & offline bug reproduction",
+    ),
+    (
+        "upgrade_train_status",
+        "🚂 Proactive Dependency Upgrade Train",
+        "Autonomous upstream semver & CVE patch PR scheduling",
+    ),
+    (
+        "mutation_status",
+        "💥 Mutation Adequacy of the Changed Lines",
+        "Runs cargo-mutants over the changed lines; blocks on a mutant the suite fails to kill",
+    ),
+    (
+        "feature_flag_status",
+        "🚩 Feature Flag Lifecycle",
+        "Flag keys read at call sites, checked against a stale-flag ledger",
+    ),
+    (
+        "bench_status",
+        "⚡ Micro-Benchmark & Latency Ratchet",
+        "Hot paths within +3% latency & zero-leak budget",
+    ),
+    (
+        "attestation_status",
+        "🧾 Lane Receipt",
+        "Receipt recorded in .anvil/receipts; nothing signs or attests it",
+    ),
+    (
+        "security_scan_status",
+        "🔐 Secret & Credential Scan",
+        "Provider-anchored regex plus Shannon entropy; no live key verification",
+    ),
+    (
+        "schema_compat_status",
+        "🔄 Schema & Migration Compatibility",
+        "Zero destructive breakages across cell nodes",
+    ),
+    (
+        "performance_concurrency_status",
+        "⚡ Concurrency, Perf & Flake Guard",
+        "Bounded execution and flake-resistant timings",
+    ),
+    (
+        "test_suite_status",
+        "🧪 Automated Test Suite",
+        "`cargo test` / `npm test` on an ephemeral worktree at the PR head",
+    ),
+];
+
+pub fn label_for(name: &str) -> Option<(&'static str, &'static str)> {
+    GATE_LABELS
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, l, d)| (*l, *d))
+}
 
 pub struct MatrixRenderer;
 
 impl MatrixRenderer {
-    pub fn render_matrix(
-        doc_status: &GateStatus,
-        cedar_status: &GateStatus,
-        compliance_status: &GateStatus,
-        api_contract_status: &GateStatus,
-        cell_status: &GateStatus,
-        supply_status: &GateStatus,
-        clean_arch_status: &GateStatus,
-        monorepo_status: &GateStatus,
-        debt_status: &GateStatus,
-        modular_status: &GateStatus,
-        coverage_status: &GateStatus,
-        rust_skills_status: &GateStatus,
-        kani_status: &GateStatus,
-        slo_status: &GateStatus,
-        adr_status: &GateStatus,
-        shuffle_status: &GateStatus,
-        trace_status: &GateStatus,
-        constant_work_status: &GateStatus,
-        idempotency_status: &GateStatus,
-        finops_status: &GateStatus,
-        ghost_migration_status: &GateStatus,
-        gitops_promo_status: &GateStatus,
-        gitops_drift_status: &GateStatus,
-        canary_status: &GateStatus,
-        cluster_audit_status: &GateStatus,
-        migration_orch_status: &GateStatus,
-        ci_wallclock_status: &GateStatus,
-        predictive_test_status: &GateStatus,
-        compile_profile_status: &GateStatus,
-        remote_cache_status: &GateStatus,
-        runner_economics_status: &GateStatus,
-        sandbox_status: &GateStatus,
-        cross_service_status: &GateStatus,
-        ephemeral_secret_status: &GateStatus,
-        psa_status: &GateStatus,
-        shadow_traffic_status: &GateStatus,
-        unresolved_review_status: &GateStatus,
-        local_probe_status: &GateStatus,
-        semantic_abi_status: &GateStatus,
-        zero_day_status: &GateStatus,
-        formal_verification_status: &GateStatus,
-        deadlock_status: &GateStatus,
-        automated_canary_status: &GateStatus,
-        progressive_ring_status: &GateStatus,
-        hermetic_build_status: &GateStatus,
-        openvex_status: &GateStatus,
-        cosign_status: &GateStatus,
-        chaos_injection_status: &GateStatus,
-        stacked_diffs_status: &GateStatus,
-        microbench_status: &GateStatus,
-        jittered_backoff_status: &GateStatus,
-        schema_evolution_status: &GateStatus,
-        auto_rollback_status: &GateStatus,
-        wasm_sandbox_status: &GateStatus,
-        consistency_status: &GateStatus,
-        flake_quarantine_status: &GateStatus,
-        zero_trust_workload_status: &GateStatus,
-        carbon_compute_status: &GateStatus,
-        replay_harness_status: &GateStatus,
-        upgrade_train_status: &GateStatus,
-        mutation_status: &GateStatus,
-        feature_flag_status: &GateStatus,
-        bench_status: &GateStatus,
-        attest_status: &GateStatus,
-        sec_status: &GateStatus,
-        schema_status: &GateStatus,
-        perf_status: &GateStatus,
-        test_status: &GateStatus,
-        is_ready: bool,
-    ) -> String {
-        let readiness_badge = if is_ready {
+    /// One row per named gate, in the report's order. A gate without a label
+    /// is rendered under its field name rather than dropped; the test that
+    /// pins `GATE_LABELS` to `named_statuses()` keeps that path unreachable.
+    pub fn render(report: &PreMergeCertificationReport) -> String {
+        let readiness_badge = if report.is_certified_ready {
             "🟢 **READY FOR MERGE (Certified)**"
         } else {
             "🔴 **BLOCKERS DETECTED (Pre-Merge Incomplete)**"
         };
+        let mut out = String::with_capacity(16 * 1024);
+        out.push_str(
+            "<!-- ANVIL_SCORECARD_RECEIPT -->\n### Full-lifecycle quality and GitOps matrix\n\n| Quality Gate | Status | Details |\n|---|---|---|\n",
+        );
+        for (name, status) in report.named_statuses() {
+            let (label, detail) = label_for(name).unwrap_or((name, ""));
+            out.push_str(&format!(
+                "| **{label}** | {} | {detail} |\n",
+                status.badge()
+            ));
+        }
+        out.push_str(&format!(
+            "\n---\n**Verdict**: {readiness_badge}\n\n*🤖 [Certified] by Oyatie Anvil*"
+        ));
+        out
+    }
+}
 
-        format!(
-            r###"### 🛡️ Oyatie Hyperscale Full-Lifecycle Quality & GitOps Matrix (70 Gates)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pre_merge_guard::report::TOTAL_GATES;
 
-| Quality Gate | Status | Details |
-|---|---|---|
-| **📚 Documentation & Doctrine Parity** | {} | Verified against platform doctrine and docs |
-| **🛡️ Cedar Policy & IAM Boundaries** | {} | AWS Cedar policy coverage & offline PDP verification |
-| **🏛️ Systematic Regulatory Compliance** | {} | Dynamic temporal KR PIPA, FSS & HIPAA engine |
-| **📐 OpenAPI & Wire Contract Integrity** | {} | Schema validation & two-way route sync |
-| **🌐 Cell Boundary & Tenant Isolation** | {} | Multi-tenant query scoping & zero cross-cell leaks |
-| **📦 Supply Chain & CVE Audit (SLSA L2+)** | {} | Dependency audit, Syft CycloneDX SBOM & provenance |
-| **🏛️ Clean Architecture** | {} | Strict inward layer boundaries (Core -> Ports -> Adapters) |
-| **🏢 Monorepo Patterns & Hermeticity** | {} | Hermetic package boundaries & zero path leakage |
-| **📉 Deprecation & Reorg Drain Ratchet** | {} | Only debt shrinks permitted on deprecating targets |
-| **🧩 Code Modularization (100-300 lines)** | {} | Componentized architecture with zero monoliths |
-| **🎯 Differential Test Coverage (≥85%)** | {} | Verified test coverage on added & modified lines |
-| **🦀 Rust 2024 Edition Quality (rust-skills)** | {} | 380 Rust rules: zero unwrap panics & zero-copy |
-| **🔬 Kani Formal Verification & Unsafe Proofs** | {} | Mathematical memory safety & SAFETY: invariant proofs |
-| **📊 OpenSLO & Error Budget Burn-Rate Gate** | {} | Target reliability SLOs & <3x 5m burn rate verified |
-| **📑 Living ADR 5-Field Schema Ratchet** | {} | Mandatory achieves, origin, rule, ensure, overturn_when |
-| **🎲 Cell Shuffle-Sharding & Blast-Radius** | {} | Combinatorial tenant isolation & bounded cell outage impact |
-| **📡 W3C TraceContext & Distributed Tracing** | {} | End-to-end span instrumentation across async tasks |
-| **⏱️ Constant-Work Static Pool & Backpressure** | {} | Zero unbounded channels & fixed capacity limits |
-| **💳 Stripe Idempotency Key & Outbox Gate** | {} | Mutating route idempotency & transactional outbox safety |
-| **💰 FinOps Unit-Cost & Zero-Copy Ratchet** | {} | Zero unbudgeted heap allocations in performance hotpaths |
-| **🐘 Ghost DB Migration & Zero-Lock Validator** | {} | Zero exclusive table locks & rollback parity verified |
-| **📦 GitOps OCI Immutable Digest Pinning** | {} | Zero :latest tags; verified sha256 container digests |
-| **🔄 GitOps ArgoCD/Flux Manifest Parity** | {} | Zero unmanaged or unsafe cascade deletions |
-| **🐤 Progressive Canary Traffic & Burn Breaker** | {} | 5m error budget burn rate < 3.0x threshold |
-| **🔍 Live Cluster Readback & Drift Auditor** | {} | 100% parity between live cluster and Git trunk |
-| **🗄️ Database Expand-Contract Lifecycle** | {} | 4-phase zero-lock schema state machine enforcement |
-| **⚡ CI Wallclock & Compute Cost Ratchet** | {} | Regression threshold & actionable optimization guidance |
-| **🎯 DAG Predictive Test Selection** | {} | Affected workspace member targeting; <90s PR test wallclock |
-| **⏱️ Compile-Time & Macro Bloat Profiler** | {} | Zero un-budgeted macro expansion or un-cached build.rs scripts |
-| **📦 Remote Sccache & Object Key Parity** | {} | Lockfile sha256 cache keys; >90% compilation cache hits |
-| **💵 Runner SKU Tiering & PR Spot Allocation** | {} | PRs run on low-cost spot; multi-arch macOS tiered to merge train |
-| **🏗️ Ephemeral Micro-Sandbox Isolation** | {} | Sub-second sandbox spin-up; zero dirty host or port collisions |
-| **🌐 Monorepo Cross-Service Blast-Radius** | {} | Wire contract compatibility proven across microservices |
-| **🔐 OIDC Zero-Trust Dynamic Credentials** | {} | Ephemeral <=15m STS tokens; zero static secrets in workflows |
-| **🛡️ Native Kubernetes PSA Gate (ADR-0710)** | {} | enforce: restricted or recorded expiring exception registry |
-| **🌑 Dark-Traffic Shadow Replay Parity** | {} | 1% shadow mirror; >=99.5% payload parity before live traffic |
-| **💬 Zero-Unresolved-Comments Review Gate** | {} | 100% of review comments and threads must be resolved |
-| **⚡ Sub-100ms Inner-Loop Local Probe** | {} | Instant pre-commit AST linting & conventional commit hygiene |
-| **🧬 Semantic ABI & Interface Stability** | {} | Public library signatures & struct memory layout stability |
-| **🛡️ Zero-Day Vulnerability Auto-Patcher** | {} | Autonomous upstream RustSec/CVE patch synthesis |
-| **📐 SMT Formal Invariant Verification** | {} | Mathematical proof of zero unauthorized state reachability |
-| **🔒 Lock Graph & Deadlock Prevention** | {} | Lock acquisition hierarchy verified against circular waits |
-| **📊 Automated Canary Analysis (ACA)** | {} | Mann-Whitney U-test statistical distribution validation |
-| **💍 Progressive Regional Rollout Rings** | {} | 4-ring progressive promotion (Canary -> Dogfood -> Cell -> Global) |
-| **🧱 Hermetic & Bitwise Reproducible Build** | {} | Byte-for-byte deterministic binary verification |
-| **📋 OpenVEX Dead-Code Reachability** | {} | Callgraph-pruned CVE exploitability attestations |
-| **🔏 Cosign & Sigstore Keyless Provenance** | {} | OIDC hardware-backed transparency log signatures |
-| **💥 Pre-Merge Simulated Chaos Injection** | {} | Synthetic packet loss, DNS jitter & DB failover certification |
-| **🌲 Stacked Diffs & PR DAG Orchestration** | {} | Atomic parent-child branch cascade & merge train sync |
-| **⚡ Nanosecond Hotpath Microbench Ratchet** | {} | Criterion P99 CPU cycle & latency regression enforcement |
-| **🎲 Jittered Exponential Backoff Gate** | {} | Full Jitter & deadline propagation on all network retries |
-| **📐 Wire Schema Evolution Ratchet** | {} | Strict backward/forward wire compatibility (Protobuf/OpenAPI) |
-| **🔄 Auto-Rollback & Postmortem Engine** | {} | Autonomous canary rollback on degradation & blameless postmortem |
-| **📦 Dynamic WebAssembly Policy Sandbox** | {} | Sub-millisecond sandboxed bytecode linting & policy evaluation |
-| **🌐 Active-Active Consistency Guard** | {} | Multi-region vector clock ordering & CRDT conflict resolution |
-| **🧪 Flaky-Test Quarantine Lifecycle** | {} | Isolated quarantine lane & autonomous 100x stress rehabilitation |
-| **🔐 Zero-Trust SPIFFE Workload Identity** | {} | Cryptographic SPIFFE ID workload attestation & mTLS encryption |
-| **🌱 GreenOps Carbon-Aware Compute** | {} | Energy-efficient CI compilation & green compute window routing |
-| **📼 Deterministic Record-and-Replay** | {} | Hermetic production trace replayer & offline bug reproduction |
-| **🚂 Proactive Dependency Upgrade Train** | {} | Autonomous upstream semver & CVE patch PR scheduling |
-| **💥 AST Chaos Mutation Test Adequacy** | {} | Critical branches verified against surviving mutants |
-| **🚩 Feature Flag & Dead Branch Lifecycle** | {} | Zero stale or dead toggle fallback branches |
-| **⚡ Micro-Benchmark & Latency Ratchet** | {} | Hot paths within +3% latency & zero-leak budget |
-| **🔏 Cryptographic Provenance Attestation** | {} | Stamped verification receipts in .cursor/receipts |
-| **🔐 Secret & Credential Scan** | {} | Deep entropy scan for leaked credentials |
-| **🔄 Schema & Migration Compatibility** | {} | Zero destructive breakages across cell nodes |
-| **⚡ Concurrency, Perf & Flake Guard** | {} | Bounded execution and flake-resistant timings |
-| **🧪 Automated Test Suite** | {} | Local verification gate passed |
+    #[test]
+    fn every_named_gate_has_exactly_one_label_and_vice_versa() {
+        let r = PreMergeCertificationReport::unmeasured("fixture");
+        let names: Vec<&str> = r.named_statuses().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(GATE_LABELS.len(), TOTAL_GATES);
+        assert_eq!(names.len(), TOTAL_GATES);
+        for (i, (n, _, _)) in GATE_LABELS.iter().enumerate() {
+            assert_eq!(
+                *n, names[i],
+                "GATE_LABELS order must follow named_statuses()"
+            );
+        }
+    }
 
----
-**Verdict**: {}
-
-*🤖 Certified by **Anvil Hyperscale Delivery Fabric***"###,
-            doc_status.badge(),
-            cedar_status.badge(),
-            compliance_status.badge(),
-            api_contract_status.badge(),
-            cell_status.badge(),
-            supply_status.badge(),
-            clean_arch_status.badge(),
-            monorepo_status.badge(),
-            debt_status.badge(),
-            modular_status.badge(),
-            coverage_status.badge(),
-            rust_skills_status.badge(),
-            kani_status.badge(),
-            slo_status.badge(),
-            adr_status.badge(),
-            shuffle_status.badge(),
-            trace_status.badge(),
-            constant_work_status.badge(),
-            idempotency_status.badge(),
-            finops_status.badge(),
-            ghost_migration_status.badge(),
-            gitops_promo_status.badge(),
-            gitops_drift_status.badge(),
-            canary_status.badge(),
-            cluster_audit_status.badge(),
-            migration_orch_status.badge(),
-            ci_wallclock_status.badge(),
-            predictive_test_status.badge(),
-            compile_profile_status.badge(),
-            remote_cache_status.badge(),
-            runner_economics_status.badge(),
-            sandbox_status.badge(),
-            cross_service_status.badge(),
-            ephemeral_secret_status.badge(),
-            psa_status.badge(),
-            shadow_traffic_status.badge(),
-            unresolved_review_status.badge(),
-            local_probe_status.badge(),
-            semantic_abi_status.badge(),
-            zero_day_status.badge(),
-            formal_verification_status.badge(),
-            deadlock_status.badge(),
-            automated_canary_status.badge(),
-            progressive_ring_status.badge(),
-            hermetic_build_status.badge(),
-            openvex_status.badge(),
-            cosign_status.badge(),
-            chaos_injection_status.badge(),
-            stacked_diffs_status.badge(),
-            microbench_status.badge(),
-            jittered_backoff_status.badge(),
-            schema_evolution_status.badge(),
-            auto_rollback_status.badge(),
-            wasm_sandbox_status.badge(),
-            consistency_status.badge(),
-            flake_quarantine_status.badge(),
-            zero_trust_workload_status.badge(),
-            carbon_compute_status.badge(),
-            replay_harness_status.badge(),
-            upgrade_train_status.badge(),
-            mutation_status.badge(),
-            feature_flag_status.badge(),
-            bench_status.badge(),
-            attest_status.badge(),
-            sec_status.badge(),
-            schema_status.badge(),
-            perf_status.badge(),
-            test_status.badge(),
-            readiness_badge
-        )
+    #[test]
+    fn the_three_previously_unrendered_gates_have_rows() {
+        let r = PreMergeCertificationReport::unmeasured("fixture");
+        let t = MatrixRenderer::render(&r);
+        assert!(t.contains("AI Code Review & 16-Lens Matrix"));
+        assert!(t.contains("Brand Absence"));
+        assert!(t.contains("Migration Boundary"));
+        assert_eq!(t.matches("\n| **").count(), TOTAL_GATES);
     }
 }

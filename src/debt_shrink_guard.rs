@@ -4,6 +4,13 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::pre_merge_guard::report::GateStatus;
+
+const GATE_ID: &str = "debt_shrink_status";
+
+const NO_DEPRECATING_TARGET_IN_SCOPE: &str = "no changed file is a deprecating target -- none matched the marker set (`deprecated`, \
+     `legacy`, `/old/`) and no REORG-DRAIN.md drain ledger named one -- so no debt was measured; \
+     an empty scope is not a drained one";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DebtViolation {
@@ -16,6 +23,7 @@ pub struct DebtViolation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebtShrinkReport {
+    pub status: GateStatus,
     pub is_acceptable: bool,
     pub total_debt_shrunk: usize,
     pub violations: Vec<DebtViolation>,
@@ -24,9 +32,32 @@ pub struct DebtShrinkReport {
 
 pub struct DebtShrinkGuard;
 
+impl Default for DebtShrinkGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DebtShrinkGuard {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Whether a changed path is a deprecating or reorganisation target -- the
+    /// scope this ratchet inspects.
+    ///
+    /// `pub` because the caller must distinguish "scanned and clean" from
+    /// "nothing was in scope"; the predicate was inline and unreachable.
+    ///
+    /// The marker half is a guess about spelling, and the drain ledger is the
+    /// only authoritative half: deprecation is a decision somebody recorded,
+    /// not a substring somebody typed into a path. With no ledger present, a
+    /// path that does not spell one of three fragments is invisible here.
+    pub fn is_deprecating_target(file_path: &str, drain_ledger: &str) -> bool {
+        file_path.contains("deprecated")
+            || file_path.contains("legacy")
+            || file_path.contains("/old/")
+            || (!drain_ledger.is_empty() && drain_ledger.contains(file_path))
     }
 
     /// Evaluates deprecation & reorg debt shrink ratchet:
@@ -60,11 +91,11 @@ impl DebtShrinkGuard {
         let mut file_diffs: Vec<(String, usize, usize)> = Vec::new();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
                 if !current_file.is_empty() {
                     file_diffs.push((current_file.clone(), file_added, file_deleted));
                 }
-                current_file = line[6..].trim().to_string();
+                current_file = stripped.trim().to_string();
                 file_added = 0;
                 file_deleted = 0;
                 continue;
@@ -80,13 +111,13 @@ impl DebtShrinkGuard {
             file_diffs.push((current_file, file_added, file_deleted));
         }
 
+        let mut scanned_a_target = false;
+
         for (file, added, deleted) in file_diffs {
-            let is_deprecating = file.contains("deprecated")
-                || file.contains("legacy")
-                || file.contains("/old/")
-                || reorg_drain_content.contains(&file);
+            let is_deprecating = Self::is_deprecating_target(&file, &reorg_drain_content);
 
             if is_deprecating {
+                scanned_a_target = true;
                 let net_growth = (added as isize) - (deleted as isize);
                 if net_growth > 0 {
                     violations.push(DebtViolation {
@@ -107,10 +138,31 @@ impl DebtShrinkGuard {
             }
         }
 
+        // Nothing in scope is not the same as nothing wrong. The marker set is
+        // three path fragments and the drain ledger is absent from this
+        // repository, so a repository that spells deprecation any other way can
+        // never put a file in scope -- and a pass here would certify a debt
+        // ratchet against a corpus the guard never had.
+        if !scanned_a_target {
+            return Ok(DebtShrinkReport {
+                status: GateStatus::NotMeasured {
+                    gate_id: GATE_ID.to_string(),
+                    reason: NO_DEPRECATING_TARGET_IN_SCOPE.to_string(),
+                },
+                is_acceptable: false,
+                total_debt_shrunk: 0,
+                violations,
+                summary: NO_DEPRECATING_TARGET_IN_SCOPE.to_string(),
+            });
+        }
+
         let is_acceptable = violations.is_empty();
         let summary = if is_acceptable {
             if total_debt_shrunk > 0 {
-                format!("Deprecation debt reduced by {} lines across reorg targets. Zero expansions permitted.", total_debt_shrunk)
+                format!(
+                    "Deprecation debt reduced by {} lines across reorg targets. Zero expansions permitted.",
+                    total_debt_shrunk
+                )
             } else {
                 "Deprecation & Reorg Drain Ratchet verified; zero prohibited expansions on deprecating targets.".to_string()
             }
@@ -127,6 +179,11 @@ impl DebtShrinkGuard {
         };
 
         Ok(DebtShrinkReport {
+            status: if is_acceptable {
+                GateStatus::Passed
+            } else {
+                GateStatus::Failed(summary.clone())
+            },
             is_acceptable,
             total_debt_shrunk,
             violations,

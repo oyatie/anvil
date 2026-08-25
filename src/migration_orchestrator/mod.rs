@@ -6,10 +6,18 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod phase_validator;
-pub use phase_validator::{MigrationPhase, MigrationPhaseFinding, MigrationPhaseValidator};
+pub use phase_validator::{MigrationPhaseFinding, MigrationPhaseValidator};
+
+use crate::pre_merge_guard::report::GateStatus;
+
+const GATE_ID: &str = "migration_orch_status";
+
+const NO_SQL_IN_SCOPE: &str = "no file in this diff is a `.sql` migration, so no schema transition was parsed and no \
+     Expand-Contract phase order was checked; an empty scope is not an ordered lifecycle";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationLifecycleReport {
+    pub status: GateStatus,
     pub is_ordered: bool,
     pub findings: Vec<MigrationPhaseFinding>,
     pub summary: String,
@@ -17,6 +25,12 @@ pub struct MigrationLifecycleReport {
 
 pub struct MigrationLifecycleOrchestrator {
     validator: MigrationPhaseValidator,
+}
+
+impl Default for MigrationLifecycleOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MigrationLifecycleOrchestrator {
@@ -37,24 +51,48 @@ impl MigrationLifecycleOrchestrator {
         );
 
         let mut findings = Vec::new();
+        let mut parsed_a_migration = false;
 
         for file_diff in diff_ctx.diff_content.split("diff --git") {
-            if !file_diff.contains(".sql") {
+            // A chunk with no `diff --git` header names no file, and a chunk
+            // that names no file is not a migration. It used to default to
+            // `migration.sql`, which put the split's empty leading chunk in
+            // scope on every diff.
+            let Some(current_file) = file_diff
+                .lines()
+                .next()
+                .and_then(|l| l.split_whitespace().last())
+                .map(|p| p.trim_start_matches("b/").to_string())
+            else {
+                continue;
+            };
+
+            if !MigrationPhaseValidator::is_migration_sql(&current_file) {
                 continue;
             }
-
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "migration.sql".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
-            }
+            parsed_a_migration = true;
 
             let file_findings = self
                 .validator
                 .validate_migration_sql(&current_file, file_diff);
             findings.extend(file_findings);
+        }
+
+        // Nothing in scope is not the same as nothing wrong. The scope is one
+        // file extension, and the sibling gate that judges the same subject
+        // (`ghost_migration_status`) uses a wider one, so the two disagree
+        // about what a migration is. A pass here would certify phase ordering
+        // for a schema this gate never read.
+        if !parsed_a_migration {
+            return Ok(MigrationLifecycleReport {
+                status: GateStatus::NotMeasured {
+                    gate_id: GATE_ID.to_string(),
+                    reason: NO_SQL_IN_SCOPE.to_string(),
+                },
+                is_ordered: false,
+                findings,
+                summary: NO_SQL_IN_SCOPE.to_string(),
+            });
         }
 
         let is_ordered = findings.is_empty();
@@ -68,6 +106,11 @@ impl MigrationLifecycleOrchestrator {
         };
 
         Ok(MigrationLifecycleReport {
+            status: if is_ordered {
+                GateStatus::Passed
+            } else {
+                GateStatus::Failed(summary.clone())
+            },
             is_ordered,
             findings,
             summary,
@@ -98,6 +141,13 @@ mod tests {
         let rep = orch
             .evaluate_migration_lifecycle(Path::new("."), &diff_ctx)
             .unwrap();
-        assert!(rep.is_ordered);
+
+        // This asserted `rep.is_ordered` for a diff carrying no `diff --git`
+        // header at all: the old scope defaulted the filename to
+        // `migration.sql` and then found no `.sql` in the hunk text, so the
+        // chunk was skipped and the gate certified an empty scan. Out of scope
+        // is now unmeasured.
+        assert_eq!(rep.status.unmeasured_gate_id(), Some(GATE_ID));
+        assert!(!rep.is_ordered);
     }
 }

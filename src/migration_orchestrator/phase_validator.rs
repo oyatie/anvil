@@ -17,9 +17,31 @@ pub struct MigrationPhaseFinding {
 
 pub struct MigrationPhaseValidator;
 
+impl Default for MigrationPhaseValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MigrationPhaseValidator {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Whether a changed path is a SQL migration -- the scope this validator
+    /// inspects.
+    ///
+    /// `pub` because the caller must distinguish "parsed and ordered" from
+    /// "nothing was in scope". The predicate used to be `chunk.contains(".sql")`
+    /// against the *hunk text* rather than the path, so a Rust file mentioning
+    /// `schema.sql` was validated as SQL and a chunk with no derivable path fell
+    /// back to a `migration.sql` default and was too.
+    ///
+    /// It is still a guess about file extension: a schema transition arrives as
+    /// `db/migrate/*.rb`, `schema.rb` or an Atlas `*.hcl` at least as often as
+    /// `*.sql`, and none of those are visible here.
+    pub fn is_migration_sql(file_path: &str) -> bool {
+        file_path.ends_with(".sql")
     }
 
     /// 100% Deterministic validation of Expand-Contract database migration phase invariants
@@ -42,13 +64,11 @@ impl MigrationPhaseValidator {
                         violation: "Destructive `DROP COLUMN` attempted without explicit `-- PHASE: CONTRACT` annotation and 30-day bake confirmation.".to_string(),
                     });
                 }
-            } else if drop_table_re.is_match(line) {
-                if !sql_content.contains("-- PHASE: CONTRACT") {
-                    findings.push(MigrationPhaseFinding {
+            } else if drop_table_re.is_match(line) && !sql_content.contains("-- PHASE: CONTRACT") {
+                findings.push(MigrationPhaseFinding {
                         file_path: file_path.to_string(),
                         violation: "Destructive `DROP TABLE` attempted without explicit `-- PHASE: CONTRACT` annotation.".to_string(),
                     });
-                }
             }
         }
 

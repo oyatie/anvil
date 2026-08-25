@@ -9,9 +9,30 @@ pub struct OrphanManifestFinding {
 
 pub struct OrphanSweeper;
 
+impl Default for OrphanSweeper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrphanSweeper {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Whether a changed path is an ArgoCD desired-state manifest -- the scope
+    /// this sweeper inspects.
+    ///
+    /// `pub` because the caller must distinguish "scanned and clean" from
+    /// "nothing was in scope"; the predicate was inline and unreachable.
+    ///
+    /// It is a guess about filing convention, not about content: an ArgoCD
+    /// `Application` or `ApplicationSet` is a Kubernetes resource identified by
+    /// its `kind`, and nothing requires it to live at a path spelling either of
+    /// these two fragments. A root app at `argocd/root.yaml` or a rendered
+    /// Kustomize overlay is invisible here.
+    pub fn is_gitops_manifest(file_path: &str) -> bool {
+        file_path.contains("applicationset") || file_path.contains("application.yaml")
     }
 
     /// 100% Deterministic scan for deleted desired-state resources to ensure safe cascade deletion
@@ -23,7 +44,7 @@ impl OrphanSweeper {
         let mut findings = Vec::new();
 
         for file in changed_files {
-            if file.contains("applicationset") || file.contains("application.yaml") {
+            if Self::is_gitops_manifest(file) {
                 // If ApplicationSet is modified/deleted without specifying finalizers or cascade protection
                 if diff_content.contains("deleted file")
                     && !diff_content.contains("resources-finalizer")

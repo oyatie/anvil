@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::diffs_by_path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -6,6 +7,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod digest_pinner;
+
 pub use digest_pinner::{DigestPinFinding, DigestPinner};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +19,12 @@ pub struct GitOpsPromotionReport {
 
 pub struct GitOpsPromotionEngine {
     pinner: DigestPinner,
+}
+
+impl Default for GitOpsPromotionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GitOpsPromotionEngine {
@@ -38,27 +46,26 @@ impl GitOpsPromotionEngine {
 
         let mut unpinned_findings = Vec::new();
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            let is_gitops_manifest = file_diff.contains("gitops/")
-                || file_diff.contains("iac/")
-                || file_diff.contains("helm/")
-                || file_diff.contains("k8s/")
-                || file_diff.contains(".yaml")
-                || file_diff.contains(".yml");
+        for file in diffs_by_path(&diff_ctx.diff_content) {
+            // Scope is decided by the PATH, not by whether the word ".yaml"
+            // appears somewhere in the text. The old predicate ran
+            // `file_diff.contains(".yaml")` over the chunk's content, so a Rust
+            // file that merely mentioned a manifest was scanned as one -- and
+            // the finding was then filed against the literal `manifest.yaml`,
+            // a plausible path that named nothing in the change.
+            let is_gitops_manifest = ["gitops/", "iac/", "helm/", "k8s/"]
+                .iter()
+                .any(|d| file.path.contains(d))
+                || file.path.ends_with(".yaml")
+                || file.path.ends_with(".yml");
 
             if !is_gitops_manifest {
                 continue;
             }
 
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "manifest.yaml".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
-            }
-
-            let findings = self.pinner.scan_unpinned_images(&current_file, file_diff);
+            // `all`: an image pinned by a line this change does not touch is
+            // still pinned, and one it DELETES is not this change's mutable tag.
+            let findings = self.pinner.scan_unpinned_images(&file.path, &file.all);
             unpinned_findings.extend(findings);
         }
 

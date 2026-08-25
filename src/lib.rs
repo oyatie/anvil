@@ -1,20 +1,7 @@
-#![allow(
-    dead_code,
-    unused_imports,
-    clippy::too_many_arguments,
-    clippy::new_without_default,
-    clippy::collapsible_if,
-    clippy::type_complexity,
-    clippy::large_enum_variant,
-    clippy::manual_strip,
-    clippy::useless_format,
-    clippy::useless_borrows_in_formatting,
-    clippy::double_ended_iterator_last,
-    clippy::single_match,
-    clippy::redundant_closure,
-    clippy::ptr_arg,
-    clippy::derivable_impls
-)]
+//! Oyatie Anvil: Autonomous Engineering & Hyperscale Delivery Fabric
+//!
+//! Provides the PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
+//! deterministic PR & issue self-healing loops, zero-trust workload validation, and fail-closed merge train orchestration.
 
 pub mod adr_drift_ratchet;
 pub mod ai_driver;
@@ -22,10 +9,12 @@ pub mod api_contract_guard;
 pub mod attestation_guard;
 pub mod auto_rollback;
 pub mod automated_canary;
+pub mod brand_absence;
 pub mod canary_rollout;
 pub mod carbon_aware;
 pub mod cedar_guard;
 pub mod cell_isolation_guard;
+pub mod change_delivery;
 pub mod chaos_injector;
 pub mod chaos_mutation_guard;
 pub mod ci_runner_economics;
@@ -33,72 +22,94 @@ pub mod ci_triager;
 pub mod ci_wallclock_ratchet;
 pub mod clean_architecture_guard;
 pub mod cli;
+pub mod cloud_native_guard;
 pub mod cluster_state_auditor;
 pub mod compile_time_profiler;
 pub mod compliance_guard;
 pub mod config;
 pub mod consistency_guard;
 pub mod constant_work_guard;
+pub mod corpus_auditor;
 pub mod cosign_signer;
 pub mod coverage_guard;
 pub mod criterion_bench_ratchet;
 pub mod cross_service_impact;
+pub mod dashboard;
 pub mod deadlock_analyzer;
 pub mod debt_shrink_guard;
+pub mod doc_archival_sweeper;
 pub mod doc_guard;
+pub mod dual_track_build_guard;
 pub mod early_exit_cascade;
 pub mod ephemeral_sandbox;
 pub mod ephemeral_secrets;
+pub mod exec;
 pub mod feature_flag_ratchet;
+pub mod fidelity;
 pub mod finops_ratchet;
 pub mod fixer;
 pub mod flake_bisector;
 pub mod flake_cost_dampener;
 pub mod flake_quarantine;
+pub mod fleet_observer;
 pub mod formal_verification;
 pub mod ghost_migration_harness;
 pub mod git_manager;
 pub mod github;
 pub mod gitops_drift_reconciler;
 pub mod gitops_promotion;
+pub mod harness;
 pub mod hermetic_build;
 pub mod idempotency_guard;
 pub mod incident_healer;
 pub mod incident_sentry;
+pub mod issue_reconciler;
 pub mod jittered_backoff;
 pub mod kani_guard;
 pub mod local_inner_loop;
 pub mod lockfile_reconciler;
 pub mod mainline_ci_healer;
 pub mod merge_enlister;
+pub mod metrics;
 pub mod microbenchmark_ratchet;
+pub mod migration;
 pub mod migration_orchestrator;
 pub mod modularization_guard;
 pub mod monorepo_guard;
+pub mod pr_self_healer;
 pub mod pre_merge_guard;
 pub mod predictive_test_selector;
 pub mod preview_env_reaper;
 pub mod progressive_rollout;
 pub mod psa_admission_guard;
+pub mod publish;
 pub mod queue_healer;
+pub mod ratchet;
+pub mod recovery;
 pub mod remote_cache_optimizer;
 pub mod replay_harness;
 pub mod review_memory;
 pub mod reviewer;
-pub mod rust_skills_guard;
+pub mod roadmap_guard;
+pub mod rust_language_policy;
 pub mod schema_evolution;
+pub mod self_governance;
 pub mod semantic_abi_ratchet;
 pub mod shadow_traffic_harness;
+pub mod shape;
 pub mod shuffle_shard_simulator;
 pub mod slo_canary_guard;
+pub mod stack_whitelist_guard;
 pub mod stacked_diffs;
 pub mod state;
 pub mod supply_chain_guard;
+pub mod telemetry_store;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;
 pub mod upgrade_train;
 pub mod vex_scanner;
 pub mod wasm_sandbox;
+pub mod watchdog;
 pub mod webhook;
 pub mod zero_day_patcher;
 pub mod zero_trust_workload;

@@ -6,7 +6,7 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 
 pub mod telemetry_sentry;
-pub use telemetry_sentry::{IncidentSentryDecision, LiveGoldenSignals, TelemetrySentry};
+pub use telemetry_sentry::{LiveGoldenSignals, TelemetrySentry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncidentSentryReport {
@@ -17,6 +17,12 @@ pub struct IncidentSentryReport {
 
 pub struct IncidentSentryCircuitBreaker {
     sentry: TelemetrySentry,
+}
+
+impl Default for IncidentSentryCircuitBreaker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IncidentSentryCircuitBreaker {

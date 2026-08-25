@@ -9,6 +9,12 @@ pub struct FlakeBisectionResult {
 
 pub struct FlakeBisectionBot;
 
+impl Default for FlakeBisectionBot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FlakeBisectionBot {
     pub fn new() -> Self {
         Self

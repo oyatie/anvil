@@ -11,6 +11,12 @@ pub struct RunnerSkuFinding {
 
 pub struct RunnerSkuAllocator;
 
+impl Default for RunnerSkuAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RunnerSkuAllocator {
     pub fn new() -> Self {
         Self

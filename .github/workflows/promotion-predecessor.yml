@@ -1,0 +1,61 @@
+# Promotion rungs: staging ← dev, canary ← staging, production ← canary.
+# Feature work enters at `dev`.
+#
+# What this check does: a pull request into a rung whose head is not that
+# rung's predecessor FAILS this check. That is all it does. It does not block
+# the merge. No branch in this repository is protected -- `dev`, `staging`,
+# `canary`, `production` and `main` all answer "Branch not protected" -- and
+# `allow_auto_merge` is on with zero required status checks, so a red
+# `promotion-predecessor` leaves the merge button live. A skipped rung is born
+# *failing*, not born *blocking*, and the difference is whether anybody has to
+# look. Making it blocking is branch protection with this check required, which
+# is repository configuration and cannot be done from any file here.
+#
+# `dev` is the trunk and the default branch. This header claimed as much from
+# the day it was written, but the repository did not practise it: work landed
+# on `main`, `dev` fell 43 commits behind, and pull requests auto-targeting the
+# default branch diffed against a stale base — roughly 49k phantom additions
+# apiece across #31, #32, #34, #42-#46 and #48. That is fixed by merging `main`
+# into `dev` and seeding the rungs, which is the first time this file has had a
+# real rung to guard.
+#
+# `main` still exists and still carries the history everything above descends
+# from. It has no role in this ladder, and no replacement role has been
+# decided. Do not infer one from its absence here.
+#
+# `.github/workflows/promotion-open-next.yml` opens the next rung's pull
+# request when a rung advances. Its `next` map is the inverse of `pred` below,
+# and `tests/promotion_ladder_test.rs` fails if the two drift.
+name: promotion-predecessor
+
+on:
+  pull_request:
+    branches: [staging, canary, production]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  promotion-predecessor:
+    name: promotion-predecessor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require predecessor rung
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const pred = { staging: "dev", canary: "staging", production: "canary" };
+            const base = context.payload.pull_request.base.ref;
+            const head = context.payload.pull_request.head.ref;
+            const want = pred[base];
+            if (!want) {
+              core.setFailed(`unexpected promotion base '${base}'`);
+              return;
+            }
+            if (head !== want) {
+              core.setFailed(
+                `promote ${base} only from ${want} (head is '${head}'). ` +
+                  `dev is the integration trunk; do not skip rungs.`
+              );
+            }

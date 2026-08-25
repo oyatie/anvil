@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::diffs_by_path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -19,6 +20,12 @@ pub struct IdempotencyGuard {
     engine: OutboxRulesEngine,
 }
 
+impl Default for IdempotencyGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IdempotencyGuard {
     pub fn new() -> Self {
         let engine = OutboxRulesEngine::new();
@@ -38,22 +45,19 @@ impl IdempotencyGuard {
 
         let mut findings = Vec::new();
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            if !file_diff.contains(".rs") {
+        for file in diffs_by_path(&diff_ctx.diff_content) {
+            if !file.path.ends_with(".rs") {
                 continue;
             }
-
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "unknown.rs".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
-            }
-
-            let file_findings = self
-                .engine
-                .scan_mutating_endpoints(&current_file, file_diff);
+            // Two corpora, because the rule asks two questions. The route must
+            // be one this change ADDS -- deleting a mutating endpoint is not
+            // declaring one. The Idempotency-Key it looks for may be anywhere
+            // in the hunk, including context the change does not touch: a file
+            // that already handles the key was being judged as though it did
+            // not, once only added lines were considered.
+            let file_findings =
+                self.engine
+                    .scan_mutating_endpoints(&file.path, &file.added, &file.all);
             findings.extend(file_findings);
         }
 

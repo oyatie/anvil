@@ -19,6 +19,12 @@ pub struct FlakeCostDampener {
     log_mgr: QuarantineLogManager,
 }
 
+impl Default for FlakeCostDampener {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FlakeCostDampener {
     pub fn new() -> Self {
         let log_mgr = QuarantineLogManager::new();

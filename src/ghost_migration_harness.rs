@@ -5,6 +5,14 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::pre_merge_guard::report::GateStatus;
+
+const GATE_ID: &str = "ghost_migration_status";
+
+const NO_MIGRATION_IN_SCOPE: &str = "no changed file matched the migration marker set (a `.sql` extension, or a `migrations`/\
+     `migrate` path component), so no schema change was scanned for exclusive locks, table \
+     rewrites or rollback parity; an empty scope -- and an empty changed-file list -- is not a \
+     verified migration";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationViolation {
@@ -16,6 +24,7 @@ pub struct MigrationViolation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GhostMigrationReport {
+    pub status: GateStatus,
     pub is_safe: bool,
     pub migrations_evaluated: usize,
     pub violations: Vec<MigrationViolation>,
@@ -24,9 +33,37 @@ pub struct GhostMigrationReport {
 
 pub struct GhostMigrationHarness;
 
+impl Default for GhostMigrationHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GhostMigrationHarness {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Whether a changed path is a schema migration -- the scope this harness
+    /// inspects.
+    ///
+    /// `pub` because the caller must distinguish "read and safe" from "nothing
+    /// was in scope"; the predicate was inline and unreachable.
+    ///
+    /// It is a guess about filing convention: a `.sql` extension, or a path
+    /// component that is exactly `migrations` or `migrate`. A checked-in
+    /// `schema.rb` or an Atlas `*.hcl` carries DDL under neither, so they are
+    /// missed.
+    ///
+    /// The component test is deliberate. `contains("migration")` put
+    /// `src/migration/registry.rs` -- a Rust source file -- into schema scope
+    /// and certified it "evaluated with zero exclusive locks or table
+    /// rewrites", which is the same fabricated green an empty scope produced.
+    pub fn is_migration_file(file_path: &str) -> bool {
+        file_path.ends_with(".sql")
+            || file_path
+                .split('/')
+                .any(|component| component == "migrations" || component == "migrate")
     }
 
     /// Evaluates database schema migrations for zero exclusive locks, table rewrites, and rollback parity
@@ -45,17 +82,24 @@ impl GhostMigrationHarness {
         let migration_files: Vec<&String> = diff_ctx
             .changed_files
             .iter()
-            .filter(|f| f.contains("migration") || f.ends_with(".sql"))
+            .filter(|f| Self::is_migration_file(f))
             .collect();
 
+        // Nothing in scope is not the same as nothing wrong. This scope is the
+        // changed-file list, so an empty result has two causes the gate cannot
+        // tell apart: a diff that touched no migration, and a diff whose file
+        // list never arrived. Neither is a migration verified safe, and the old
+        // early return published both as one -- "ghost migration check passed".
         if migration_files.is_empty() {
             return Ok(GhostMigrationReport {
-                is_safe: true,
+                status: GateStatus::NotMeasured {
+                    gate_id: GATE_ID.to_string(),
+                    reason: NO_MIGRATION_IN_SCOPE.to_string(),
+                },
+                is_safe: false,
                 migrations_evaluated: 0,
                 violations: Vec::new(),
-                summary:
-                    "Zero database schema migrations in PR diff; ghost migration check passed."
-                        .to_string(),
+                summary: NO_MIGRATION_IN_SCOPE.to_string(),
             });
         }
 
@@ -70,12 +114,15 @@ impl GhostMigrationHarness {
         let mut current_file = String::new();
 
         for line in diff_ctx.diff_content.lines() {
-            if line.starts_with("+++ b/") {
-                current_file = line[6..].trim().to_string();
+            if let Some(stripped) = line.strip_prefix("+++ b/") {
+                current_file = stripped.trim().to_string();
                 continue;
             }
 
-            if !current_file.contains("migration") && !current_file.ends_with(".sql") {
+            // Same predicate as the scope filter above, not a second copy of
+            // it: a hunk header naming a file the scope rejected must not be
+            // read as schema.
+            if !Self::is_migration_file(&current_file) {
                 continue;
             }
 
@@ -164,6 +211,11 @@ impl GhostMigrationHarness {
         };
 
         Ok(GhostMigrationReport {
+            status: if is_safe {
+                GateStatus::Passed
+            } else {
+                GateStatus::Failed(summary.clone())
+            },
             is_safe,
             migrations_evaluated,
             violations,

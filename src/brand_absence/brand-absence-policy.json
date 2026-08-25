@@ -1,0 +1,83 @@
+{
+  "$comment": "ALLOWLIST-as-DATA for the brand-absence gate. The gate engine is UNIVERSAL: it reads this allowlist as DATA and runs on ANY repository; Anvil's allowlist is just the pack below. Adopted from oyatie's root-workspace-hygiene-policy.json, which states this rule and which this gate contradicted by compiling its allowlist into the binary.",
+  "gate_id": "brand_absence_status",
+  "rules": {
+    "entries_are_exact_paths": "no pattern characters, so the list stays finite and countable",
+    "occurrences_is_a_ceiling": "occurrence N+1 is reported as new",
+    "exemption_requires": "a Superseded verdict in the migration ledger -- code is exempt only because it is being deleted"
+  },
+  "allowlisted_debt": [
+    {
+      "path": "src/cloud_native_guard/mod.rs",
+      "stamp": "cloud_native",
+      "occurrences": 7,
+      "debt_note": "pre-existing name + display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/doc_archival_sweeper/issue_doc_consolidator.rs",
+      "stamp": "hyperscaler",
+      "occurrences": 1,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/doc_archival_sweeper/mod.rs",
+      "stamp": "hyperscaler",
+      "occurrences": 1,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/doc_guard/frontmatter.rs",
+      "stamp": "hyperscaler",
+      "occurrences": 1,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/doc_guard/mod.rs",
+      "stamp": "hyperscaler",
+      "occurrences": 2,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/lib.rs",
+      "stamp": "cloud_native",
+      "occurrences": 1,
+      "debt_note": "pre-existing name; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/monorepo_guard/mod.rs",
+      "stamp": "hyperscaler",
+      "occurrences": 2,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/pre_merge_guard/evaluator.rs",
+      "stamp": "70",
+      "occurrences": 1,
+      "debt_note": "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/pre_merge_guard/evaluator.rs",
+      "stamp": "hyperscale",
+      "occurrences": 1,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/stack_whitelist_guard/mod.rs",
+      "stamp": "hyperscaler",
+      "occurrences": 1,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/webhook/pipelines/review.rs",
+      "stamp": "70",
+      "occurrences": 2,
+      "debt_note": "pre-existing gate-count claim of 70 against a real corpus of 68; the correction is sequenced with the retain/discard determination (plan 36.2)"
+    },
+    {
+      "path": "src/webhook/pipelines/certify.rs",
+      "stamp": "hyperscale",
+      "occurrences": 1,
+      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
+    }
+  ]
+}

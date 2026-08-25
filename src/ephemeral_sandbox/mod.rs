@@ -4,26 +4,47 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::pre_merge_guard::report::GateStatus;
 
-pub mod sandbox_pool;
-pub use sandbox_pool::{SandboxInstance, SandboxPool};
+const GATE_ID: &str = "sandbox_status";
+
+const MISSING_SANDBOX_RUNTIME: &str = "no ephemeral sandbox runtime is available, so no sandbox was \
+     started and no isolation was observed for this pull request";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxReport {
+    pub status: GateStatus,
     pub is_hermetic: bool,
     pub sandboxes_allocated: usize,
     pub average_spinup_ms: u64,
     pub summary: String,
 }
 
-pub struct EphemeralSandboxManager {
-    pool: SandboxPool,
+pub struct EphemeralSandboxManager;
+
+impl Default for EphemeralSandboxManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EphemeralSandboxManager {
     pub fn new() -> Self {
-        let pool = SandboxPool::new();
-        Self { pool }
+        Self
+    }
+
+    /// The gate's answer when no sandbox runtime exists to spin one up.
+    pub fn evaluate_without_sandbox_runtime(&self) -> SandboxReport {
+        SandboxReport {
+            status: GateStatus::NotMeasured {
+                gate_id: GATE_ID.to_string(),
+                reason: MISSING_SANDBOX_RUNTIME.to_string(),
+            },
+            is_hermetic: false,
+            sandboxes_allocated: 0,
+            average_spinup_ms: 0,
+            summary: MISSING_SANDBOX_RUNTIME.to_string(),
+        }
     }
 
     /// 100% Deterministic evaluation of hermetic ephemeral sandbox isolation
@@ -37,21 +58,11 @@ impl EphemeralSandboxManager {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let instance = self
-            .pool
-            .allocate_ephemeral_sandbox(&format!("pr-{}", diff_ctx.pr_number));
-        let is_hermetic = instance.is_isolated;
-        let summary = format!(
-            "✅ PASSED (Ephemeral sandbox allocated in {}ms; zero host state leaks or port collisions)",
-            instance.spinup_latency_ms
-        );
-
-        Ok(SandboxReport {
-            is_hermetic,
-            sandboxes_allocated: 1,
-            average_spinup_ms: instance.spinup_latency_ms,
-            summary,
-        })
+        // `allocate_ephemeral_sandbox` builds a struct literal: it starts no
+        // container, binds no port, and times nothing. Reporting its constants
+        // as a measurement published "allocated in 185ms" on every pull
+        // request. Nothing here can observe isolation, so nothing is claimed.
+        Ok(self.evaluate_without_sandbox_runtime())
     }
 }
 
@@ -78,6 +89,12 @@ mod tests {
         let rep = mgr
             .evaluate_sandbox_isolation(Path::new("."), &diff_ctx)
             .unwrap();
-        assert!(rep.is_hermetic);
+
+        // This asserted `rep.is_hermetic`, which was a constant `true` carried
+        // from a struct literal -- so it certified the fabrication rather than
+        // testing anything. The pipeline path now reports the absence.
+        assert_eq!(rep.status.unmeasured_gate_id(), Some(GATE_ID));
+        assert!(!rep.is_hermetic);
+        assert_eq!(rep.average_spinup_ms, 0);
     }
 }

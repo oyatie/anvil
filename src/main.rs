@@ -1,197 +1,97 @@
-#![allow(
-    dead_code,
-    unused_imports,
-    clippy::too_many_arguments,
-    clippy::new_without_default,
-    clippy::collapsible_if,
-    clippy::type_complexity,
-    clippy::large_enum_variant,
-    clippy::manual_strip,
-    clippy::useless_format,
-    clippy::useless_borrows_in_formatting,
-    clippy::double_ended_iterator_last,
-    clippy::single_match,
-    clippy::redundant_closure,
-    clippy::ptr_arg,
-    clippy::derivable_impls
-)]
+//! Oyatie Anvil CLI & Autonomous Server Daemon
+//!
+//! Entrypoint for `anvil` CLI commands and background lifecycle daemons.
 
 use anyhow::Result;
 use std::sync::Arc;
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod adr_drift_ratchet;
-mod ai_driver;
-mod api_contract_guard;
-mod attestation_guard;
-mod auto_rollback;
-mod automated_canary;
-mod canary_rollout;
-mod carbon_aware;
-mod cedar_guard;
-mod cell_isolation_guard;
-mod chaos_injector;
-mod chaos_mutation_guard;
-mod ci_runner_economics;
-mod ci_triager;
-mod ci_wallclock_ratchet;
-mod clean_architecture_guard;
-mod cli;
-mod cluster_state_auditor;
-mod compile_time_profiler;
-mod compliance_guard;
-mod config;
-mod consistency_guard;
-mod constant_work_guard;
-mod cosign_signer;
-mod coverage_guard;
-mod criterion_bench_ratchet;
-mod cross_service_impact;
-mod deadlock_analyzer;
-mod debt_shrink_guard;
-mod doc_guard;
-mod early_exit_cascade;
-mod ephemeral_sandbox;
-mod ephemeral_secrets;
-mod feature_flag_ratchet;
-mod finops_ratchet;
-mod fixer;
-mod flake_bisector;
-mod flake_cost_dampener;
-mod flake_quarantine;
-mod formal_verification;
-mod ghost_migration_harness;
-mod git_manager;
-mod github;
-mod gitops_drift_reconciler;
-mod gitops_promotion;
-mod hermetic_build;
-mod idempotency_guard;
-mod incident_healer;
-mod incident_sentry;
-mod jittered_backoff;
-mod kani_guard;
-mod local_inner_loop;
-mod lockfile_reconciler;
-mod mainline_ci_healer;
-mod merge_enlister;
-mod microbenchmark_ratchet;
-mod migration_orchestrator;
-mod modularization_guard;
-mod monorepo_guard;
-mod pre_merge_guard;
-mod predictive_test_selector;
-mod preview_env_reaper;
-mod progressive_rollout;
-mod psa_admission_guard;
-mod queue_healer;
-mod remote_cache_optimizer;
-mod replay_harness;
-mod review_memory;
-mod reviewer;
-mod rust_skills_guard;
-mod schema_evolution;
-mod semantic_abi_ratchet;
-mod shadow_traffic_harness;
-mod shuffle_shard_simulator;
-mod slo_canary_guard;
-mod stacked_diffs;
-mod state;
-mod supply_chain_guard;
-mod trace_context_guard;
-mod unresolved_review_guard;
-mod upgrade_train;
-mod vex_scanner;
-mod wasm_sandbox;
-mod webhook;
-mod zero_day_patcher;
-mod zero_trust_workload;
-
-use adr_drift_ratchet::AdrDriftRatchet;
-use api_contract_guard::ApiContractGuard;
-use attestation_guard::AttestationGuard;
-use auto_rollback::AutoRollbackPostmortemEngine;
-use automated_canary::AutomatedCanaryAnalysis;
-use canary_rollout::CanaryRolloutGuard;
-use carbon_aware::CarbonAwareComputeRatchet;
-use cedar_guard::CedarGuard;
-use cell_isolation_guard::CellIsolationGuard;
-use chaos_injector::ChaosFaultInjector;
-use chaos_mutation_guard::ChaosMutationGuard;
-use ci_runner_economics::CiRunnerEconomicsOptimizer;
-use ci_triager::CiTriager;
-use ci_wallclock_ratchet::CiWallclockEconomicsRatchet;
-use clean_architecture_guard::CleanArchitectureGuard;
-use cli::handle_cli;
-use cluster_state_auditor::ClusterStateAuditor;
-use compile_time_profiler::CompileTimeProfiler;
-use compliance_guard::ComplianceGuard;
-use config::Config;
-use consistency_guard::ActiveActiveConsistencyGuard;
-use constant_work_guard::ConstantWorkGuard;
-use cosign_signer::CosignProvenanceSigner;
-use coverage_guard::CoverageGuard;
-use criterion_bench_ratchet::CriterionBenchRatchet;
-use cross_service_impact::CrossServiceImpactEngine;
-use deadlock_analyzer::DeadlockStaticAnalyzer;
-use debt_shrink_guard::DebtShrinkGuard;
-use doc_guard::DocGuard;
-use early_exit_cascade::EarlyExitCascadeGuard;
-use ephemeral_sandbox::EphemeralSandboxManager;
-use ephemeral_secrets::EphemeralSecretInjector;
-use feature_flag_ratchet::FeatureFlagRatchet;
-use finops_ratchet::FinOpsUnitCostRatchet;
-use fixer::Fixer;
-use flake_bisector::FlakeBisectorEngine;
-use flake_cost_dampener::FlakeCostDampener;
-use flake_quarantine::FlakeQuarantineLifecycle;
-use formal_verification::FormalVerificationGuard;
-use ghost_migration_harness::GhostMigrationHarness;
-use git_manager::GitManager;
-use github::GitHubClient;
-use gitops_drift_reconciler::GitOpsDriftReconciler;
-use gitops_promotion::GitOpsPromotionEngine;
-use hermetic_build::HermeticBuildValidator;
-use idempotency_guard::IdempotencyGuard;
-use incident_healer::IncidentHealer;
-use incident_sentry::IncidentSentryCircuitBreaker;
-use jittered_backoff::JitteredBackoffGuard;
-use kani_guard::KaniGuard;
-use local_inner_loop::LocalInnerLoopProbe;
-use lockfile_reconciler::LockfileReconciler;
-use mainline_ci_healer::MainlineCiHealer;
-use merge_enlister::MergeEnlister;
-use microbenchmark_ratchet::MicroBenchmarkRatchet;
-use migration_orchestrator::MigrationLifecycleOrchestrator;
-use modularization_guard::ModularizationGuard;
-use monorepo_guard::MonorepoGuard;
-use pre_merge_guard::PreMergeGuard;
-use predictive_test_selector::PredictiveTestSelector;
-use preview_env_reaper::PreviewEnvReaper;
-use progressive_rollout::ProgressiveRingOrchestrator;
-use psa_admission_guard::PsaAdmissionGuard;
-use queue_healer::QueueHealer;
-use remote_cache_optimizer::RemoteCacheOptimizer;
-use replay_harness::DeterministicReplayHarness;
-use review_memory::ReviewMemoryEngine;
-use reviewer::Reviewer;
-use rust_skills_guard::RustSkillsGuard;
-use schema_evolution::SchemaEvolutionRatchet;
-use semantic_abi_ratchet::SemanticAbiRatchet;
-use shadow_traffic_harness::ShadowTrafficHarness;
-use shuffle_shard_simulator::ShuffleShardSimulator;
-use slo_canary_guard::SloCanaryGuard;
-use stacked_diffs::StackedDiffsOrchestrator;
-use state::StateManager;
-use supply_chain_guard::SupplyChainGuard;
-use trace_context_guard::TraceContextGuard;
-use unresolved_review_guard::UnresolvedReviewGuard;
-use upgrade_train::ProactiveUpgradeTrain;
-use vex_scanner::OpenVexReachabilityScanner;
-use wasm_sandbox::WasmPolicySandbox;
-use webhook::AppState;
-use zero_day_patcher::ZeroDayAutoPatcher;
-use zero_trust_workload::ZeroTrustWorkloadGate;
+use anvil::adr_drift_ratchet::AdrDriftRatchet;
+use anvil::api_contract_guard::ApiContractGuard;
+use anvil::attestation_guard::AttestationGuard;
+use anvil::auto_rollback::AutoRollbackPostmortemEngine;
+use anvil::automated_canary::AutomatedCanaryAnalysis;
+use anvil::canary_rollout::CanaryRolloutGuard;
+use anvil::carbon_aware::CarbonAwareComputeRatchet;
+use anvil::cedar_guard::CedarGuard;
+use anvil::cell_isolation_guard::CellIsolationGuard;
+use anvil::chaos_injector::ChaosFaultInjector;
+use anvil::chaos_mutation_guard::ChaosMutationGuard;
+use anvil::ci_runner_economics::CiRunnerEconomicsOptimizer;
+use anvil::ci_triager::CiTriager;
+use anvil::ci_wallclock_ratchet::CiWallclockEconomicsRatchet;
+use anvil::clean_architecture_guard::CleanArchitectureGuard;
+use anvil::cli::handle_cli;
+use anvil::cluster_state_auditor::ClusterStateAuditor;
+use anvil::compile_time_profiler::CompileTimeProfiler;
+use anvil::compliance_guard::ComplianceGuard;
+use anvil::config::Config;
+use anvil::consistency_guard::ActiveActiveConsistencyGuard;
+use anvil::constant_work_guard::ConstantWorkGuard;
+use anvil::cosign_signer::CosignProvenanceSigner;
+use anvil::coverage_guard::CoverageGuard;
+use anvil::criterion_bench_ratchet::CriterionBenchRatchet;
+use anvil::cross_service_impact::CrossServiceImpactEngine;
+use anvil::deadlock_analyzer::DeadlockStaticAnalyzer;
+use anvil::debt_shrink_guard::DebtShrinkGuard;
+use anvil::doc_guard::DocGuard;
+use anvil::early_exit_cascade::EarlyExitCascadeGuard;
+use anvil::ephemeral_sandbox::EphemeralSandboxManager;
+use anvil::ephemeral_secrets::EphemeralSecretInjector;
+use anvil::feature_flag_ratchet::FeatureFlagRatchet;
+use anvil::finops_ratchet::FinOpsUnitCostRatchet;
+use anvil::fixer::Fixer;
+use anvil::flake_bisector::FlakeBisectorEngine;
+use anvil::flake_cost_dampener::FlakeCostDampener;
+use anvil::flake_quarantine::FlakeQuarantineLifecycle;
+use anvil::formal_verification::FormalVerificationGuard;
+use anvil::ghost_migration_harness::GhostMigrationHarness;
+use anvil::git_manager::GitManager;
+use anvil::github::GitHubClient;
+use anvil::gitops_drift_reconciler::GitOpsDriftReconciler;
+use anvil::gitops_promotion::GitOpsPromotionEngine;
+use anvil::hermetic_build::HermeticBuildValidator;
+use anvil::idempotency_guard::IdempotencyGuard;
+use anvil::incident_healer::IncidentHealer;
+use anvil::incident_sentry::IncidentSentryCircuitBreaker;
+use anvil::jittered_backoff::JitteredBackoffGuard;
+use anvil::kani_guard::KaniGuard;
+use anvil::local_inner_loop::LocalInnerLoopProbe;
+use anvil::lockfile_reconciler::LockfileReconciler;
+use anvil::mainline_ci_healer::MainlineCiHealer;
+use anvil::merge_enlister::MergeEnlister;
+use anvil::microbenchmark_ratchet::MicroBenchmarkRatchet;
+use anvil::migration_orchestrator::MigrationLifecycleOrchestrator;
+use anvil::modularization_guard::ModularizationGuard;
+use anvil::monorepo_guard::MonorepoGuard;
+use anvil::pre_merge_guard::PreMergeGuard;
+use anvil::predictive_test_selector::PredictiveTestSelector;
+use anvil::preview_env_reaper::PreviewEnvReaper;
+use anvil::progressive_rollout::ProgressiveRingOrchestrator;
+use anvil::psa_admission_guard::PsaAdmissionGuard;
+use anvil::queue_healer::QueueHealer;
+use anvil::remote_cache_optimizer::RemoteCacheOptimizer;
+use anvil::replay_harness::DeterministicReplayHarness;
+use anvil::review_memory::ReviewMemoryEngine;
+use anvil::reviewer::Reviewer;
+use anvil::rust_language_policy::RustLanguagePolicy;
+use anvil::schema_evolution::SchemaEvolutionRatchet;
+use anvil::semantic_abi_ratchet::SemanticAbiRatchet;
+use anvil::shadow_traffic_harness::ShadowTrafficHarness;
+use anvil::shuffle_shard_simulator::ShuffleShardSimulator;
+use anvil::slo_canary_guard::SloCanaryGuard;
+use anvil::stacked_diffs::StackedDiffsOrchestrator;
+use anvil::state::StateManager;
+use anvil::supply_chain_guard::SupplyChainGuard;
+use anvil::trace_context_guard::TraceContextGuard;
+use anvil::unresolved_review_guard::UnresolvedReviewGuard;
+use anvil::upgrade_train::ProactiveUpgradeTrain;
+use anvil::vex_scanner::OpenVexReachabilityScanner;
+use anvil::wasm_sandbox::WasmPolicySandbox;
+use anvil::webhook::AppState;
+use anvil::zero_day_patcher::ZeroDayAutoPatcher;
+use anvil::zero_trust_workload::ZeroTrustWorkloadGate;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -217,17 +117,60 @@ async fn main() -> Result<()> {
         config.agy_effort.clone(),
     ));
     let doc_guard = Arc::new(DocGuard::new(config.agy_effort.clone()));
-    let cedar_guard = Arc::new(CedarGuard::new(config.agy_effort.clone()));
+    let cedar_guard = Arc::new(CedarGuard::new());
     let compliance_guard = Arc::new(ComplianceGuard::new());
     let api_contract_guard = Arc::new(ApiContractGuard::new());
     let cell_isolation_guard = Arc::new(CellIsolationGuard::new());
     let supply_chain_guard = Arc::new(SupplyChainGuard::new());
     let clean_arch_guard = Arc::new(CleanArchitectureGuard::new());
+    // Turn the Clean Architecture guard inward before it is ever pointed at
+    // another repository's PR. Anvil applies this standard to everyone; the
+    // result of applying it to Anvil itself is recorded at boot, whatever it
+    // says. Today it says NotMeasured — Anvil has no core/ports/adapters/facade
+    // layering — and that finding is emitted rather than suppressed.
+    match clean_arch_guard.self_conformance() {
+        Ok(self_report) => {
+            info!(
+                "Clean Architecture self-conformance ({}): {}",
+                self_report.scope, self_report.summary
+            );
+        }
+        Err(e) => {
+            warn!("Clean Architecture self-conformance could not run: {e}");
+        }
+    }
+    // Shape Program: Anvil's own distance to its adopted spec, measured from
+    // the checked-out commit through git plumbing — the same number the gate
+    // and the fleet sweep produce, recorded at boot so the trend starts here.
+    {
+        let req = anvil::shape::facade::measure::MeasureRequest {
+            repo_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            rev: "HEAD".to_string(),
+            repo: config.self_repo.clone(),
+            spec_override: None,
+            registry_override: None,
+        };
+        match anvil::shape::facade::measure::measure_repo(&req).await {
+            Ok(report) => {
+                let d = report.distance();
+                info!(
+                    "Shape self-measurement ({} @ {}): distance {} — {}/{} units conformant, {} rule(s) not measured",
+                    report.repo,
+                    &report.rev[..report.rev.len().min(12)],
+                    d.findings_total,
+                    d.units_conformant,
+                    d.units_total,
+                    report.not_measured.len()
+                );
+            }
+            Err(e) => warn!("Shape self-measurement could not run: {e}"),
+        }
+    }
     let monorepo_guard = Arc::new(MonorepoGuard::new());
     let debt_shrink_guard = Arc::new(DebtShrinkGuard::new());
     let modularization_guard = Arc::new(ModularizationGuard::new());
     let coverage_guard = Arc::new(CoverageGuard::new());
-    let rust_skills_guard = Arc::new(RustSkillsGuard::new(&config.data_dir));
+    let rust_language_policy = Arc::new(RustLanguagePolicy::new());
     let kani_guard = Arc::new(KaniGuard::new());
     let slo_canary_guard = Arc::new(SloCanaryGuard::new());
     let adr_drift_ratchet = Arc::new(AdrDriftRatchet::new());
@@ -304,6 +247,15 @@ async fn main() -> Result<()> {
         github_client.clone(),
         config.agy_effort.clone(),
     ));
+    let metrics = Arc::new(anvil::metrics::PrometheusRegistry::new());
+    let self_governor = Arc::new(anvil::self_governance::SelfGovernor::new());
+    let telemetry_store =
+        Arc::new(anvil::telemetry_store::TelemetryStore::new("data/telemetry").await);
+    let fleet_observer = Arc::new(anvil::fleet_observer::FleetObserver::new(
+        github_client.clone(),
+        telemetry_store.clone(),
+    ));
+    let broadcaster = Arc::new(anvil::webhook::sse::FleetEventBroadcaster::new());
 
     let app_state = AppState {
         config: config.clone(),
@@ -321,7 +273,7 @@ async fn main() -> Result<()> {
         debt_shrink_guard: debt_shrink_guard.clone(),
         modularization_guard: modularization_guard.clone(),
         coverage_guard: coverage_guard.clone(),
-        rust_skills_guard: rust_skills_guard.clone(),
+        rust_language_policy: rust_language_policy.clone(),
         kani_guard: kani_guard.clone(),
         slo_canary_guard: slo_canary_guard.clone(),
         adr_drift_ratchet: adr_drift_ratchet.clone(),
@@ -389,6 +341,11 @@ async fn main() -> Result<()> {
         ci_triager: ci_triager.clone(),
         github_client: github_client.clone(),
         state_mgr: state_mgr.clone(),
+        metrics,
+        self_governor,
+        broadcaster,
+        telemetry_store,
+        fleet_observer,
     };
 
     let res = handle_cli(app_state).await;

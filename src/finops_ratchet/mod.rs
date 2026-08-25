@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::diffs_by_path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -53,22 +54,16 @@ impl FinOpsUnitCostRatchet {
         let mut findings = Vec::new();
         let mut scanned_a_hotpath = false;
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "unknown.rs".to_string();
-            if let Some(first_line) = lines.first()
-                && let Some(path) = first_line.split_whitespace().last()
-            {
-                current_file = path.trim_start_matches("b/").to_string();
-            }
-
-            if AllocationScanner::is_hotpath(&current_file) {
+        for file in diffs_by_path(&diff_ctx.diff_content) {
+            if AllocationScanner::is_hotpath(&file.path) {
                 scanned_a_hotpath = true;
             }
 
+            // `added` only. A hotpath allocation the change removes is the fix,
+            // not the defect.
             let file_findings = self
                 .scanner
-                .scan_hotpath_allocations(&current_file, file_diff);
+                .scan_hotpath_allocations(&file.path, &file.added);
             findings.extend(file_findings);
         }
 

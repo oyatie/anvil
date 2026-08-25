@@ -58,6 +58,7 @@ pub mod git_manager;
 pub mod github;
 pub mod gitops_drift_reconciler;
 pub mod gitops_promotion;
+pub mod harness;
 pub mod hermetic_build;
 pub mod idempotency_guard;
 pub mod incident_healer;

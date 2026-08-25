@@ -179,3 +179,28 @@ fn the_generating_class_is_prevented_and_not_merely_detected() {
         "the instance counts no longer show duplication as a leading class; re-derive them"
     );
 }
+
+#[test]
+fn zero_after_the_fact_is_not_read_as_zero_work_left() {
+    // The ratchet reaching zero is the moment a scoreboard becomes misleading.
+    // No class is caught only in CI, and that is not the same as every class
+    // being fully covered: `missing_remedies` is the backlog, and it is not
+    // empty. Asserted so nobody deletes the backlog because the headline number
+    // looks finished.
+    assert_eq!(
+        awaiting_early_remedy().len(),
+        CLASSES_ONLY_CAUGHT_AFTER_THE_FACT
+    );
+    assert!(
+        !missing_remedies().is_empty(),
+        "the ledger claims no outstanding remedies at all. If that is true, say so \
+         deliberately by deleting this test; if it is not, a work item was dropped"
+    );
+    for (class, remedy) in missing_remedies() {
+        assert!(
+            !matches!(remedy.layer, Layer::Ci),
+            "{}: a remedy still to be built should target something earlier than CI",
+            class.id
+        );
+    }
+}

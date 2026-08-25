@@ -149,24 +149,7 @@ fn production_source(rel: &str) -> String {
         .join("\n")
 }
 
-/// The code on a line, with any trailing `//` comment removed. A `//` inside a
-/// string literal is code, not commentary, so the scan tracks whether it is
-/// inside a `"` before treating one as a comment opener.
-fn code_only(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut in_string = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if in_string => i += 1,
-            b'"' => in_string = !in_string,
-            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
-            _ => {}
-        }
-        i += 1;
-    }
-    line
-}
+use anvil::source_scan::without_commentary as code_only;
 
 #[test]
 fn code_only_strips_commentary_but_keeps_published_sentences() {

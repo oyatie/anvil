@@ -131,16 +131,24 @@ impl ChaosFaultInjector {
     /// unwrap split across lines is still invisible; the registry gap says so.
     fn unwraps_on_awaited_calls(diff_content: &str) -> Vec<UnhandledAwait> {
         let mut out = Vec::new();
-        let mut current_file = String::new();
+        // `None` until the diff names a file; see the note in
+        // `feature_flag_ratchet::scan_flag_references`, which had the identical
+        // `String::new()` seed. Measured on the old code, a `+` line before any
+        // header produced `chaos findings: [""]` -- an unhandled-await
+        // accusation with no location on it.
+        let mut current_file: Option<&str> = None;
 
         for line in diff_content.lines() {
             if let Some(stripped) = line.strip_prefix("+++ b/") {
-                current_file = stripped.trim().to_string();
+                current_file = Some(stripped.trim());
                 continue;
             }
             if !line.starts_with('+') || line.starts_with("+++") {
                 continue;
             }
+            let Some(current_file) = current_file else {
+                continue;
+            };
             let code_line = line[1..].trim();
             let squashed: String = code_only(code_line)
                 .chars()
@@ -148,7 +156,7 @@ impl ChaosFaultInjector {
                 .collect();
             if squashed.contains(".await.unwrap()") {
                 out.push(UnhandledAwait {
-                    file_path: current_file.clone(),
+                    file_path: current_file.to_string(),
                     code_line: code_line.to_string(),
                 });
             }

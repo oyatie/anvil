@@ -204,7 +204,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         fidelity: Fidelity::Heuristic,
         gap: "A chain of policy_content.contains(..) tests. No solver exists. The file and its types \
               were renamed from smt_solver.rs/SmtConstraintEngine to say so \
-              (formal_verification/policy_scanner.rs:28).",
+              (formal_verification/policy_scanner.rs:28). The rename stopped one line short of the \
+              verdict a reviewer reads: the gate discarded the findings and published in their place \
+              a fixed sentence asserting that an SMT constraint solver had detected an unsafe state. \
+              The findings carry the rule that matched and the text it matched on, and the gate now \
+              reports those. Two further \
+              defects went with it -- the scan read the whole diff including removals, so a pull \
+              request DELETING a wildcard grant was refused for containing it, and a report with no \
+              findings was `passed` whether a policy had been examined or the diff contained none, so \
+              a change touching no policy file published a green formal-verification gate. Only added \
+              lines in a policy file are scanned, and policy_files_seen \
+              (formal_verification/mod.rs::policy_files_seen) makes an empty scan NotMeasured. Coverage is the stated \
+              set of paths in is_policy_path (formal_verification/mod.rs::is_policy_path) and no wider.",
         blocked_on: None,
     },
     GateFidelity {
@@ -840,18 +851,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               with no colon and no description and accepts `feature` as a type, none of which \
               Conventional Commits 1.0.0 admits. The subjects are now read from the clone the \
               pipeline already holds, by `commit_subjects` (git_manager/mod.rs:525), and judged \
-              against `CONVENTIONAL_HEADER` (fast_validator.rs:34) with commitlint's default type \
+              against `CONVENTIONAL_HEADER` (harness/judgement.rs:257) with commitlint's default type \
               list plus this repository's own promote type -- type-enum is configuration, not \
               specification, and hardcoding the default made the check red on the convention the \
               project follows. Two \
               gaps remain there: only the subject line is read, so a breaking-change footer and \
               a body are not checked, and none of commitlint's other default rules -- length, \
               case, trailing stop -- is enforced. Subjects git generates rather than the author \
-              writes are skipped -- `GENERATED_SUBJECT_PREFIXES` (fast_validator.rs:39), as commitlint's own defaultIgnores skip \
+              writes are skipped -- `GENERATED_SUBJECT_PREFIXES` (harness/judgement.rs:263), as commitlint's own defaultIgnores skip \
               them; a pull request made entirely of those is reported unmeasured rather than \
               clean. \
               The credential half delegates to `PreMergeScanner::scan_for_secrets` \
-              (fast_validator.rs:111), which matches whole credentials on added lines only. It \
+              (fast_validator.rs:61), which matches whole credentials on added lines only. It \
               used to be four bare vendor prefixes tested against the whole diff, so a change \
               that DELETED a leaked key was refused for containing one and any change touching \
               this repository's own AWS-key regex blocked itself. Six regexes is still not a \
@@ -881,18 +892,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               not run, and the blocking sentence named a preview sandbox that is not deployed, \
               spawned or configured anywhere in this repository. All of that is deleted. \
               What remains is a lint, published as one: added lines whose text contains \
-              `.await.unwrap()` once whitespace is removed (chaos_injector/mod.rs:149). That is \
+              `.await.unwrap()` once whitespace is removed (chaos_injector/mod.rs:157). That is \
               the property `clippy::unwrap_used` checks, which upstream files under the opt-in \
               restriction group rather than correctness -- so a hit is a Warning, not a refused \
               merge. It blocked once, and was red on ten lines of its own diff with no true \
               positive among them. It is text, not syntax, but only over `code_only` \
-              (chaos_injector/mod.rs:145), which drops a comment and empties a string literal, so \
+              (chaos_injector/mod.rs:153), which drops a comment and empties a string literal, so \
               prose about the property is no longer counted as the property. That is one line at \
               a time with no memory of the last, so the continuation line of a multi-line string \
               literal -- this sentence, for one -- carries no opening quote and is still counted; \
               an unwrap split across lines is still invisible, and an expect on the same await is \
               not matched at all. Only added lines are read, as `code_line` \
-              (chaos_injector/mod.rs:144), so an unwrap this change leaves untouched is invisible, \
+              (chaos_injector/mod.rs:152), so an unwrap this change leaves untouched is invisible, \
               and a line in a test module is indistinguishable from one in production code -- which \
               is the other reason this warns rather than blocks. A diff \
               with no such line is reported unmeasured, not resilient: nothing was made to fail, so \
@@ -1008,17 +1019,17 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         gap: "Calls no provider and verifies nothing, which is the whole of what separates this \
               from the reference tool: a finding here is a shape that resembles a credential, \
               never a credential confirmed to be live, so it cannot tell a rotated key from a \
-              working one. Seven regexes over added lines in SECRET_RULES (scanner.rs:59). Four \
+              working one. Seven regexes over added lines in SECRET_RULES (harness/judgement.rs:76). Four \
               carry a provider-issued prefix and are conclusive on their own, so they run with \
-              min_entropy: 0.0 and no filtering (scanner.rs:63). Two had no anchor and were the \
+              min_entropy: 0.0 and no filtering (harness/judgement.rs:80). Two had no anchor and were the \
               two that produced this gate's false merge blocks; each now captures the candidate \
               rather than the line and filters it -- `sk-[A-Za-z0-9]{24,}` at min_entropy: 3.5 \
-              (scanner.rs:102,104) and a quoted value of eight or more characters after the word \
-              password at min_entropy: 3.0 (scanner.rs:123,125). shannon_entropy is a real \
-              logarithm (scanner.rs:141) and the file had none before, but it is the last filter \
+              (harness/judgement.rs:119,121) and a quoted value of eight or more characters after the word \
+              password at min_entropy: 3.0 (harness/judgement.rs:140,142). shannon_entropy is a real \
+              logarithm (harness/judgement.rs:155) and the file had none before, but it is the last filter \
               and not the decision: is_credential_shaped rejects a candidate made only of \
               is_ascii_alphabetic characters and identifier punctuation before entropy is ever \
-              consulted (scanner.rs:166,175), because entropy alone cannot reject a \
+              consulted (harness/judgement.rs:180,189), because entropy alone cannot reject a \
               kebab-case identifier. The reference config additionally anchors its own key rule on \
               the literal marker T3BlbkFJ that every issued key of that vendor embeds; this rule \
               does not, so a long enough base62 run behind the prefix is a finding whoever issued \

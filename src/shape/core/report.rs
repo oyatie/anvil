@@ -34,10 +34,29 @@ pub enum SpecSource {
 /// The machine-applicable remedy that ships with a finding.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Fix {
-    Move { from: String, to: String },
-    Rename { from: String, to: String },
-    DependOnInstead { replace: String, with: String },
-    Create { path: String },
+    Move {
+        from: String,
+        to: String,
+    },
+    Rename {
+        from: String,
+        to: String,
+    },
+    DependOnInstead {
+        replace: String,
+        with: String,
+    },
+    /// Create a path that should exist.
+    ///
+    /// `content` is what makes this applicable rather than merely reportable:
+    /// a fix naming a path with nothing to put in it can be printed but not
+    /// executed, and a scaffold that creates empty files is not a scaffold.
+    /// `None` means the path is required and the content needs judgement --
+    /// which is a finding a human must close, not one a codemod can.
+    Create {
+        path: String,
+        content: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

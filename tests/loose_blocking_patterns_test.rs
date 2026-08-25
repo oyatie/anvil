@@ -613,3 +613,62 @@ fn neither_gate_fires_on_this_repositorys_own_history() {
         findings.join("\n  ")
     );
 }
+
+/// The same judgement over the whole tracked tree, not a window onto it.
+///
+/// `neither_gate_fires_on_this_repositorys_own_history` looks at the last
+/// twenty commits. That horizon is not a property of the problem — it was a
+/// property of the cost: `scan_for_secrets` compiled seven regexes per call, so
+/// covering 417 files took nine minutes and sampling was the only affordable
+/// shape. With the patterns compiled once the scan is seconds, and a horizon
+/// that exists only because a check was slow is exactly the shape where absence
+/// of a finding reads as absence of a problem: a credential committed
+/// twenty-one commits ago was invisible, permanently.
+///
+/// It found one. `src/early_exit_cascade/fast_checks.rs` carried a contiguous
+/// `ghp_` fixture token that the windowed test had scrolled past and would
+/// never have looked at again.
+#[test]
+fn no_tracked_file_contains_a_credential() {
+    let out = std::process::Command::new("git")
+        .args(["ls-files"])
+        .output()
+        .expect("git ls-files");
+    assert!(out.status.success(), "git ls-files failed");
+
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let mut scanned = 0usize;
+    let mut findings = Vec::new();
+    for path in listing.lines() {
+        // Binary and unreadable paths are skipped, not counted: a file this
+        // scan cannot read is not a file it cleared.
+        let Ok(body) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        scanned += 1;
+        for (i, line) in body.lines().enumerate() {
+            // Scanned as though ADDED, because that is the only shape
+            // `scan_for_secrets` judges — it reads `+` lines and ignores the
+            // rest, which is what lets a pull request delete a leaked key.
+            if let GateStatus::Failed(why) =
+                PreMergeScanner::scan_for_secrets(&format!("+{line}\n"))
+            {
+                findings.push(format!("{path}:{}  {why}", i + 1));
+            }
+        }
+    }
+
+    // Coverage is asserted, not assumed. A `git ls-files` that returned nothing
+    // would otherwise produce an empty findings list and read as a clean tree.
+    assert!(
+        scanned > 300,
+        "only {scanned} tracked text files were read; this tree has over 400, \
+         so the scan did not cover what it claims to have covered"
+    );
+    assert!(
+        findings.is_empty(),
+        "{} credential(s) in tracked files:\n  {}",
+        findings.len(),
+        findings.join("\n  ")
+    );
+}

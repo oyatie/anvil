@@ -374,13 +374,21 @@ fn withholding_does_not_strip_the_certification_mark_or_the_rendered_matrix() {
         "the rendered matrix was discarded by the ceiling"
     );
 
-    // `admission_refusal` is the only reader of the provenance mark. It must
-    // refuse this report for the eighteen withheld gates, never for having lost
-    // the mark that says a certification run produced it.
+    // `admission_refusal` is the only reader of the provenance mark, and this
+    // test uses it to check the mark survived. It needs a refusal to read, and
+    // the withheld gates no longer supply one: `admission::ABSENCE_POLICY`
+    // declares an aspirational gate's absence NOT PROVISIONED, which does not
+    // block. So the probe is an absence nobody has declared -- `shape_status`
+    // is outside the policy -- and the assertion below is unchanged: whatever
+    // the refusal says, it must not be about a lost certification mark.
+    report.shape_status = GateStatus::NotMeasured {
+        gate_id: "shape_status".to_string(),
+        reason: "probe for the provenance mark".to_string(),
+    };
     report.seal();
     let refusal = report
         .admission_refusal()
-        .expect_err("the withheld gates produced no measurement and must be refused")
+        .expect_err("an undeclared absence must be refused")
         .to_string();
     assert!(
         !refusal.contains("certification run"),

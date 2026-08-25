@@ -63,7 +63,7 @@ impl FinOpsUnitCostRatchet {
             // not the defect.
             let file_findings = self
                 .scanner
-                .scan_hotpath_allocations(&file.path, &file.added);
+                .scan_hotpath_allocations(&file.path, file.added());
             findings.extend(file_findings);
         }
 

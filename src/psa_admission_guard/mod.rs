@@ -54,7 +54,9 @@ impl PsaAdmissionGuard {
             // rule asks what the file says after this change, and a line the
             // change DELETES is not part of that.
 
-            let file_findings = self.rules.evaluate_psa_manifest(&file.path, &file.all);
+            let file_findings = self
+                .rules
+                .evaluate_psa_manifest(&file.path, file.after_change());
             findings.extend(file_findings);
         }
 

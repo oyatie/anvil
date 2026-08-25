@@ -750,6 +750,39 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   cover digest pinning and deploy parity; promotion-tier state machine has no counterpart.",
     },
     MigrationEntry {
+        component: "source_scan",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie's checks each strip commentary their own way",
+        counterpart_loc: 0,
+        evidence: "PURE, ~60 lines. Reads Rust source as CODE: line comments, block comments and \
+                  string-literal bodies removed, quotes and byte offsets kept, so a scan sees \
+                  code and can still name a line. Extracted because NINE spellings of this idea \
+                  existed under four behaviours and one name -- the weakest dropped whole \
+                  comment lines and left block comments, the strongest was private to one test \
+                  file. A reader reaching for `code_only` got whichever was nearest, and the \
+                  failure was silent in both directions: reading commentary as code invents a \
+                  finding, missing a construct hides one. Both happened within an hour. Migrates \
+                  because every governance scan in either repository needs it.",
+    },
+    MigrationEntry {
+        component: "postmortem",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "no counterpart: oyatie records no fix-class ledger",
+        counterpart_loc: 0,
+        evidence: "PURE. The ledger of defect classes and what refuses each of them. Every fix is \
+                  evidence that some class reached somewhere expensive enough to repair by hand, \
+                  so each one is a candidate for admission into the pipeline; this is where the \
+                  admission is recorded. Entries carry first principles, the instances, and \
+                  remedies at every layer that warrants one -- and `Layer::Ci` counts as debt, \
+                  because a class caught there was observed rather than prevented. Compiled \
+                  rather than written down: `every_live_remedy_names_something_that_exists` \
+                  fails on a remedy naming a check that is absent, and \
+                  CLASSES_ONLY_CAUGHT_AFTER_THE_FACT is exact so moving a class earlier lowers \
+                  it in the same change. Migrates because the doctrine is not anvil-specific.",
+    },
+    MigrationEntry {
         component: "harness",
         verdict: Verdict::Migrating,
         confidence: Confidence::Probable,

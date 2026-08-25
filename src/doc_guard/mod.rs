@@ -39,6 +39,15 @@ pub struct DocGuardReport {
 
 /// An xhigh-effort model call cannot reliably complete in 20 seconds, which is
 /// what the previous limit was; every timeout became a silent pass.
+///
+/// This is BOTH deadlines: the `--print-timeout` handed to agy, minus the
+/// margin `agy_print_timeout_arg` subtracts, and the budget of the watchdog
+/// supervising it. They were different numbers. The probe told agy it had 120
+/// seconds and the supervisor was hardcoded to 30, so the watchdog killed a
+/// healthy call at 30 and the gate published `Errored` -- which blocks
+/// merge-queue admission. A supervisor that is tighter than the thing it
+/// supervises does not supervise it; it truncates it, and reports a failure it
+/// caused.
 const DOC_PARITY_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Where `evaluate_doc_parity` gets its judgement from.
@@ -390,7 +399,9 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         crate::watchdog::PipelineWatchdog::run_with_watchdog(
             "DocGuardEvaluation",
             &target,
-            std::time::Duration::from_secs(30),
+            // The same constant the probe hands agy below. A supervisor must
+            // outlive what it supervises.
+            DOC_PARITY_PROBE_TIMEOUT,
             move || async move {
                 let mut cmd = Command::new("agy");
                 // Match the invocation form used by every other agy call site

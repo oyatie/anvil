@@ -15,6 +15,21 @@ pub struct PrState {
     pub last_review_verdict: Option<String>,
     pub last_certified_head_sha: Option<String>,
     pub is_enlisted_in_merge_queue: bool,
+    /// How many times anvil has rewritten this pull request in response to its
+    /// own review. Bounded by `next_phase::MAX_AUTO_FIX_ATTEMPTS`.
+    ///
+    /// `serde(default)` is load-bearing, not decoration: `StateManager::load`
+    /// refuses to start when `pr_states.json` does not parse, so a new field
+    /// without a default would take the daemon down on a state file written by
+    /// any earlier build.
+    #[serde(default)]
+    pub auto_fix_attempts: u32,
+    /// The head the fixer last ran against.
+    ///
+    /// A fixer run that pushes nothing leaves the head where it was, so this is
+    /// what stops a fixer that cannot satisfy the review from running forever.
+    #[serde(default)]
+    pub last_auto_fixed_head_sha: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -54,7 +54,9 @@ impl CompileTimeProfiler {
             // rule asks what the file says after this change, and a line the
             // change DELETES is not part of that.
 
-            let file_findings = self.scanner.scan_heavy_dependencies(&file.path, &file.all);
+            let file_findings = self
+                .scanner
+                .scan_heavy_dependencies(&file.path, file.after_change());
             findings.extend(file_findings);
         }
 

@@ -65,7 +65,9 @@ impl GitOpsPromotionEngine {
 
             // `all`: an image pinned by a line this change does not touch is
             // still pinned, and one it DELETES is not this change's mutable tag.
-            let findings = self.pinner.scan_unpinned_images(&file.path, &file.all);
+            let findings = self
+                .pinner
+                .scan_unpinned_images(&file.path, file.after_change());
             unpinned_findings.extend(findings);
         }
 

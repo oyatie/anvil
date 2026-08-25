@@ -54,7 +54,9 @@ impl CiRunnerEconomicsOptimizer {
             // rule asks what the file says after this change, and a line the
             // change DELETES is not part of that.
 
-            let file_findings = self.allocator.scan_workflow_runners(&file.path, &file.all);
+            let file_findings = self
+                .allocator
+                .scan_workflow_runners(&file.path, file.after_change());
             findings.extend(file_findings);
         }
 

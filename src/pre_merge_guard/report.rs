@@ -462,20 +462,28 @@ impl PreMergeCertificationReport {
             );
         }
 
+        // `Errored` always blocks: the gate had a source and the call failed,
+        // which is a defect regardless of what the deployment can measure.
+        //
+        // `NotMeasured` blocks unless `admission::ABSENCE_POLICY` says this
+        // gate's absence is not a defect -- the capability is not provisioned
+        // here, or the change carries no subject for it. Unlisted gates are
+        // `Provisioned` and still block, so invariant I1 holds for everything
+        // nobody has argued about in review.
         let without_a_measurement: Vec<&str> = self
             .named_statuses()
             .into_iter()
-            .filter(|(_, status)| {
-                matches!(
-                    status,
-                    GateStatus::Errored(_) | GateStatus::NotMeasured { .. }
-                )
+            .filter(|(gate, status)| match status {
+                GateStatus::Errored(_) => true,
+                GateStatus::NotMeasured { .. } => crate::pre_merge_guard::absence_blocks(gate),
+                _ => false,
             })
             .map(|(gate, _)| gate)
             .collect();
         if !without_a_measurement.is_empty() {
             anyhow::bail!(
-                "merge queue admission withheld: {} gate(s) produced no measurement: {}",
+                "merge queue admission withheld: {} gate(s) produced no measurement where one \
+                 was possible: {}",
                 without_a_measurement.len(),
                 without_a_measurement.join(", ")
             );

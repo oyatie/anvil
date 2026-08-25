@@ -42,7 +42,9 @@ pub fn plan_from_report(report: &ShapeReport, spec_version: &str) -> ShapeMovePl
                 to.clone(),
             ),
             Some(Fix::Rename { from, to }) => (MoveKind::RenameCrate, from.clone(), to.clone()),
-            Some(Fix::Create { path }) => (MoveKind::CreateSkeleton, String::new(), path.clone()),
+            Some(Fix::Create { path, .. }) => {
+                (MoveKind::CreateSkeleton, String::new(), path.clone())
+            }
             _ => continue,
         };
         moves.push(Move {

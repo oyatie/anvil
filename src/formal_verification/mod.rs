@@ -80,11 +80,11 @@ impl FormalVerificationGuard {
         // A path is recorded only when the change actually ADDS a line to it:
         // a policy file with deletions alone gives this scan nothing.
         for file in diffs_by_path(diff_content) {
-            if !is_policy_path(&file.path) || file.added.is_empty() {
+            if !is_policy_path(&file.path) || file.added().is_empty() {
                 continue;
             }
             policy_files_seen.push(file.path.clone());
-            added.push_str(&file.added);
+            added.push_str(file.added());
         }
 
         match self.solver.scan_policy_text(&added) {

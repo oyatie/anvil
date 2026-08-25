@@ -57,7 +57,7 @@ impl IdempotencyGuard {
             // not, once only added lines were considered.
             let file_findings =
                 self.engine
-                    .scan_mutating_endpoints(&file.path, &file.added, &file.all);
+                    .scan_mutating_endpoints(&file.path, file.added(), file.after_change());
             findings.extend(file_findings);
         }
 

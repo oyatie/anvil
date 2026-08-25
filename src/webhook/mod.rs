@@ -1,6 +1,7 @@
 pub mod admin_auth;
 pub mod forwarder_supervisor;
 pub mod manual_handlers;
+pub mod next_phase;
 pub mod pipelines;
 pub mod repo_guard;
 pub mod sse;

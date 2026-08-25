@@ -73,11 +73,11 @@ fn additions_context_and_removals_are_kept_apart() {
     );
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "src/a.rs");
-    assert_eq!(files[0].added, "let fresh = 3;\n");
-    assert!(files[0].all.contains("let kept = 1;"));
-    assert!(files[0].all.contains("let fresh = 3;"));
+    assert_eq!(files[0].added(), "let fresh = 3;\n");
+    assert!(files[0].after_change().contains("let kept = 1;"));
+    assert!(files[0].after_change().contains("let fresh = 3;"));
     assert!(
-        !files[0].all.contains("let gone = 2;"),
+        !files[0].after_change().contains("let gone = 2;"),
         "a removed line belongs to neither corpus"
     );
 }
@@ -93,7 +93,7 @@ fn two_hunks_of_one_file_land_in_one_entry() {
         files.iter().map(|f| &f.path).collect::<Vec<_>>()
     );
     let a = files.iter().find(|f| f.path == "src/a.rs").unwrap();
-    assert_eq!(a.added, "one\nthree\n");
+    assert_eq!(a.added(), "one\nthree\n");
 }
 
 // ------------------------------------------------------------------ the gates

@@ -32,6 +32,14 @@ pub struct FileDiff {
     /// reference an Idempotency-Key" is about `all`, since a key already
     /// present is context the diff never adds.
     pub all: String,
+    /// This file's hunk lines exactly as the diff spells them, `+` and `-`
+    /// markers intact.
+    ///
+    /// For the rules whose subject IS the removal -- `removed_required_fields`
+    /// compares the two sides of a wire contract, and a field disappearing is
+    /// the entire finding. Reaching for this is opting out of the added/removed
+    /// distinction on purpose, and a rule that takes it should say why.
+    pub raw: String,
 }
 
 /// Split a unified diff into its files, attributing each line to the path the
@@ -84,6 +92,7 @@ pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
                         path,
                         added: String::new(),
                         all: String::new(),
+                        raw: String::new(),
                     });
                     out.len() - 1
                 }
@@ -102,6 +111,9 @@ pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
         if line.starts_with("@@") {
             continue;
         }
+        out[i].raw.push_str(line);
+        out[i].raw.push('\n');
+
         if let Some(body) = line.strip_prefix('+') {
             out[i].added.push_str(body);
             out[i].added.push('\n');

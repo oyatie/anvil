@@ -212,6 +212,10 @@ pub struct GateCounts {
     pub warned: usize,
     /// Did not produce a measurement. Never a pass.
     pub unmeasured: usize,
+    /// Ran, searched a named subject set, and found it empty. Never a pass
+    /// either, and distinct from `unmeasured`: complete evidence that happens
+    /// to be empty, rather than evidence that is missing.
+    pub not_applicable: usize,
     /// Measured and not acceptable, or errored.
     pub failed: usize,
 }
@@ -219,7 +223,7 @@ pub struct GateCounts {
 impl GateCounts {
     /// Every gate accounted for exactly once.
     pub fn total(&self) -> usize {
-        self.passed + self.warned + self.unmeasured + self.failed
+        self.passed + self.warned + self.unmeasured + self.not_applicable + self.failed
     }
 }
 
@@ -405,6 +409,9 @@ impl PreMergeCertificationReport {
                 GateStatus::Passed | GateStatus::AutoUpdated => c.passed += 1,
                 GateStatus::Warning(_) => c.warned += 1,
                 GateStatus::NotMeasured { .. } => c.unmeasured += 1,
+                // Its own bucket. Counting it as `unmeasured` would restate in
+                // the tally the conflation this variant exists to end.
+                GateStatus::NotApplicable { .. } => c.not_applicable += 1,
                 GateStatus::Failed(_) | GateStatus::Errored(_) => c.failed += 1,
             }
         }
@@ -462,20 +469,28 @@ impl PreMergeCertificationReport {
             );
         }
 
+        // `Errored` always blocks: the gate had a source and the call failed,
+        // which is a defect regardless of what the deployment can measure.
+        //
+        // `NotMeasured` blocks unless `admission::ABSENCE_POLICY` says this
+        // gate's absence is not a defect -- the capability is not provisioned
+        // here, or the change carries no subject for it. Unlisted gates are
+        // `Provisioned` and still block, so invariant I1 holds for everything
+        // nobody has argued about in review.
         let without_a_measurement: Vec<&str> = self
             .named_statuses()
             .into_iter()
-            .filter(|(_, status)| {
-                matches!(
-                    status,
-                    GateStatus::Errored(_) | GateStatus::NotMeasured { .. }
-                )
+            .filter(|(gate, status)| match status {
+                GateStatus::Errored(_) => true,
+                GateStatus::NotMeasured { .. } => crate::pre_merge_guard::absence_blocks(gate),
+                _ => false,
             })
             .map(|(gate, _)| gate)
             .collect();
         if !without_a_measurement.is_empty() {
             anyhow::bail!(
-                "merge queue admission withheld: {} gate(s) produced no measurement: {}",
+                "merge queue admission withheld: {} gate(s) produced no measurement where one \
+                 was possible: {}",
                 without_a_measurement.len(),
                 without_a_measurement.join(", ")
             );
@@ -511,7 +526,17 @@ impl PreMergeCertificationReport {
     /// it says yes to a report no run produced. Use it to describe a report — a
     /// receipt verdict, a scorecard line — never to let one through a door.
     pub fn is_admissible(&self) -> bool {
-        self.is_certified_ready && self.unmeasured_gates.is_empty()
+        // Asks the same question of absence that `admission_refusal` does.
+        // This used to require `unmeasured_gates` to be EMPTY, which after
+        // `admission::ABSENCE_POLICY` split absence into three would have made
+        // the scorecard publish "Blocked" over a pull request the enlister
+        // admits -- two definitions of admissibility disagreeing, which is the
+        // defect the doc on `admission_refusal` was written to prevent.
+        self.is_certified_ready
+            && !self
+                .unmeasured_gates
+                .iter()
+                .any(|g| crate::pre_merge_guard::absence_blocks(g))
     }
 
     /// A report built from what the gates actually measured: every gate in the
@@ -847,6 +872,22 @@ pub enum GateStatus {
         gate_id: String,
         reason: String,
     },
+    /// The gate ran, searched a named subject set, and found it empty.
+    ///
+    /// Not a pass and not a defect: the correct outcome for a change that
+    /// carries no subject for this gate. Acceptable, and it does not withhold
+    /// merge-queue admission.
+    ///
+    /// Separate from `NotMeasured` because one gate can produce both. The trace
+    /// guard reports this when a diff crosses no async boundary, and
+    /// `NotMeasured` when it crosses boundaries it could not resolve -- the
+    /// first is complete evidence that happens to be empty, the second is
+    /// missing evidence. A per-gate table cannot tell those apart, so the gate
+    /// says which it is.
+    NotApplicable {
+        gate_id: String,
+        subject: String,
+    },
 }
 
 impl GateStatus {
@@ -858,6 +899,7 @@ impl GateStatus {
             GateStatus::Failed(_) => "❌ FAILED",
             GateStatus::Errored(_) => "🛑 ERRORED",
             GateStatus::NotMeasured { .. } => "➖ NOT MEASURED",
+            GateStatus::NotApplicable { .. } => "➖ NOT APPLICABLE",
         }
     }
 
@@ -873,6 +915,9 @@ impl GateStatus {
             GateStatus::Failed(_) => false,
             GateStatus::Errored(_) => false,
             GateStatus::NotMeasured { .. } => true,
+            // The gate ran and its subject set was empty. That is complete
+            // evidence which happens to be empty, not absent evidence.
+            GateStatus::NotApplicable { .. } => true,
         }
     }
 
@@ -1180,10 +1225,17 @@ mod seal_tests {
         assert!(r.is_certified_ready);
         assert!(r.is_admissible());
 
+        // `kani_status`, not `slo_status`. Both are `NotMeasured`; only one is
+        // a defect. `admission::ABSENCE_POLICY` declares `slo_status` NOT
+        // PROVISIONED -- no telemetry endpoint exists in this deployment, for
+        // any pull request -- so its absence cannot withhold a merge without
+        // withholding every merge forever. `kani_status` is undeclared, so its
+        // absence means a gate that could have measured did not, which is what
+        // I1 is actually about.
         let mut r = sample_report();
-        r.slo_status = GateStatus::NotMeasured {
-            gate_id: "slo_status".into(),
-            reason: "no endpoint".into(),
+        r.kani_status = GateStatus::NotMeasured {
+            gate_id: "kani_status".into(),
+            reason: "kani is not installed on this runner".into(),
         };
         r.seal();
         assert!(
@@ -1191,6 +1243,20 @@ mod seal_tests {
             "NotMeasured is individually acceptable"
         );
         assert!(!r.is_admissible(), "but it withholds admission (I1)");
+        assert_eq!(r.unmeasured_gates, vec!["kani_status".to_string()]);
+
+        // The other half, so the sharpened invariant is pinned in both
+        // directions rather than merely relaxed.
+        let mut r = sample_report();
+        r.slo_status = GateStatus::NotMeasured {
+            gate_id: "slo_status".into(),
+            reason: "no telemetry endpoint is configured".into(),
+        };
+        r.seal();
+        assert!(
+            r.is_admissible(),
+            "a declared absence is still not a pass, and no longer withholds the merge"
+        );
         assert_eq!(r.unmeasured_gates, vec!["slo_status".to_string()]);
     }
 

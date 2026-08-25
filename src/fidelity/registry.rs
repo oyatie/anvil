@@ -103,7 +103,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               every hunk, so a hunk whose first line is already inside a literal or a block comment \
               is read as code until that literal closes, and a `\'` that is neither a character \
               literal nor a lifetime is read as a lifetime. The diff is cut into one chunk per file \
-              at a line beginning `diff --git ` (trace_context_guard/mod.rs:263-276), and a chunk \
+              at a line beginning `diff --git ` (trace_context_guard/mod.rs::file_chunks), and a chunk \
               carrying no `+++ ` header names no path and is not read. An accusation names \
               post-image lines derived from the a hunk header header \
               (trace_context_guard/mod.rs:298-333) -- a chunk with no such header declares no \
@@ -114,14 +114,20 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               wrote; the failing sentence says so. \
               What the guard decides is what is published: it builds its own `GateStatus` and \
               `trace_status` clones it (pre_merge_guard/evaluator.rs:296-302), the shape \
-              `slo_status` already used. A diff crossing no boundary it can see is `Warning` \
-              carrying `NOTHING TO MEASURE` (trace_context_guard/mod.rs:176-179): acceptable, so it \
-              neither blocks nor accuses, and not `Passed`, which carries no string and would \
-              discard the sentence. A boundary seen and not judged is `NotMeasured` under this \
-              gate is own id (trace_context_guard/mod.rs:148-158), which publishes the count and \
-              the reason and blocks merge-queue admission through `is_admissible` \
-              (pre_merge_guard/report.rs:317-321) -- the same split between `NothingToMeasure` and \
-              `NotMeasured` that `gate_status` makes (coverage_guard.rs:135,139). What remains: the \
+              `slo_status` already used. A diff crossing no boundary it can see is \
+              `NotApplicable` (trace_context_guard/mod.rs::evaluate_trace_propagation): the subject \
+              set was searched and found empty, which neither blocks nor accuses, and is not \
+              `Passed`, which carries no string and would discard the sentence. It was `Warning` \
+              until the admission rule stopped treating every absence as a defect; `Warning` was \
+              the only variant left that carried the sentence and blocked nothing, so it appeared \
+              among the findings needing action on every pull request touching no async boundary. \
+              A boundary seen and not judged is `NotMeasured` under this gate is own id \
+              (trace_context_guard/mod.rs:148-158), which publishes the count and the reason and \
+              blocks merge-queue admission through `is_admissible` \
+              (pre_merge_guard/report.rs::is_admissible) -- undeclared in \
+              `ABSENCE_POLICY` (pre_merge_guard/admission.rs::ABSENCE_POLICY), so it is a gate that could \
+              have measured and did not. \
+              What remains: the \
               scorecard renderer collapses an admissible report to a single verdict line and \
               enumerates no finding at all (publish/scorecard.rs:133-137), so on a pull request \
               carrying no other finding the warning row is still not printed and the row \

@@ -215,3 +215,86 @@ fn an_undeclared_absence_still_withholds_the_merge() {
         "the refusal must name {victim}: {refusal}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// What a reader sees
+// ---------------------------------------------------------------------------
+
+/// The scorecard's own rule 1 -- findings only, the rest counted -- had never
+/// been applied to absences.
+///
+/// Measured on this repository's own PR #121, the posted comment opened:
+///
+/// ```text
+/// ❌ Blocked — 38 finding(s) across 72 gates; 34 gate(s) produced no measurement.
+/// ```
+///
+/// followed by 34 multi-line paragraphs about Prometheus endpoints and Sigstore
+/// backends, with the three things a reader could act on buried inside them.
+/// That is the same defect as the 68-row table of `PASSED` the rule was written
+/// for, wearing absence as a costume.
+#[test]
+fn the_scorecard_leads_with_what_needs_action() {
+    let declared: Vec<(&str, GateStatus)> = ABSENCE_POLICY
+        .iter()
+        .map(|(id, _)| (*id, not_measured(id)))
+        .collect();
+    let mut overrides = declared.clone();
+    overrides.push((
+        "shape_status",
+        GateStatus::Failed("root file \"deny.toml\" is not on the allowlist".to_string()),
+    ));
+    let report = report_with(&overrides);
+    let card = anvil::publish::scorecard::render(&report);
+
+    let headline = card
+        .lines()
+        .find(|l| l.starts_with("❌"))
+        .expect("a blocked scorecard leads with the verdict");
+    assert!(
+        headline.contains("1 finding(s) need action"),
+        "the headline must count what a reader can act on, not the corpus: {headline}"
+    );
+
+    // The one thing to act on is above the fold; the declared absences are
+    // inside it, counted and still present.
+    let fold = card
+        .find("<details>")
+        .expect("declared absences are folded");
+    let shape = card.find("shape").expect("the real finding is rendered");
+    assert!(
+        shape < fold,
+        "the actionable finding must come before the fold"
+    );
+    assert!(
+        card.contains(&format!(
+            "{} gates absent by declaration",
+            ABSENCE_POLICY.len()
+        )),
+        "the fold must say how many, so nobody has to count them: {card}"
+    );
+    assert!(
+        card.contains("slo"),
+        "declared absences are folded, never dropped -- hiding them is how a \
+         corpus quietly stops measuring"
+    );
+}
+
+#[test]
+fn the_scorecard_and_the_enlister_agree_on_admissibility() {
+    // Two definitions of admissible disagreeing is the defect the doc on
+    // `admission_refusal` was written to prevent. `is_admissible` required
+    // `unmeasured_gates` to be empty, so the scorecard would have published
+    // "Blocked" over a pull request the enlister admits.
+    let declared: Vec<(&str, GateStatus)> = ABSENCE_POLICY
+        .iter()
+        .map(|(id, _)| (*id, not_measured(id)))
+        .collect();
+    let report = report_with(&declared);
+    assert_eq!(
+        report.is_admissible(),
+        report.admission_refusal().is_ok(),
+        "the scorecard and the merge-queue door must ask the same question"
+    );
+    assert!(report.is_admissible());
+}

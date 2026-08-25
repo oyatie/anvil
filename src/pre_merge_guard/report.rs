@@ -519,7 +519,17 @@ impl PreMergeCertificationReport {
     /// it says yes to a report no run produced. Use it to describe a report — a
     /// receipt verdict, a scorecard line — never to let one through a door.
     pub fn is_admissible(&self) -> bool {
-        self.is_certified_ready && self.unmeasured_gates.is_empty()
+        // Asks the same question of absence that `admission_refusal` does.
+        // This used to require `unmeasured_gates` to be EMPTY, which after
+        // `admission::ABSENCE_POLICY` split absence into three would have made
+        // the scorecard publish "Blocked" over a pull request the enlister
+        // admits -- two definitions of admissibility disagreeing, which is the
+        // defect the doc on `admission_refusal` was written to prevent.
+        self.is_certified_ready
+            && !self
+                .unmeasured_gates
+                .iter()
+                .any(|g| crate::pre_merge_guard::absence_blocks(g))
     }
 
     /// A report built from what the gates actually measured: every gate in the
@@ -1188,10 +1198,17 @@ mod seal_tests {
         assert!(r.is_certified_ready);
         assert!(r.is_admissible());
 
+        // `kani_status`, not `slo_status`. Both are `NotMeasured`; only one is
+        // a defect. `admission::ABSENCE_POLICY` declares `slo_status` NOT
+        // PROVISIONED -- no telemetry endpoint exists in this deployment, for
+        // any pull request -- so its absence cannot withhold a merge without
+        // withholding every merge forever. `kani_status` is undeclared, so its
+        // absence means a gate that could have measured did not, which is what
+        // I1 is actually about.
         let mut r = sample_report();
-        r.slo_status = GateStatus::NotMeasured {
-            gate_id: "slo_status".into(),
-            reason: "no endpoint".into(),
+        r.kani_status = GateStatus::NotMeasured {
+            gate_id: "kani_status".into(),
+            reason: "kani is not installed on this runner".into(),
         };
         r.seal();
         assert!(
@@ -1199,6 +1216,20 @@ mod seal_tests {
             "NotMeasured is individually acceptable"
         );
         assert!(!r.is_admissible(), "but it withholds admission (I1)");
+        assert_eq!(r.unmeasured_gates, vec!["kani_status".to_string()]);
+
+        // The other half, so the sharpened invariant is pinned in both
+        // directions rather than merely relaxed.
+        let mut r = sample_report();
+        r.slo_status = GateStatus::NotMeasured {
+            gate_id: "slo_status".into(),
+            reason: "no telemetry endpoint is configured".into(),
+        };
+        r.seal();
+        assert!(
+            r.is_admissible(),
+            "a declared absence is still not a pass, and no longer withholds the merge"
+        );
         assert_eq!(r.unmeasured_gates, vec!["slo_status".to_string()]);
     }
 

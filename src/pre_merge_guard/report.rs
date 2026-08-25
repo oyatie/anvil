@@ -212,6 +212,10 @@ pub struct GateCounts {
     pub warned: usize,
     /// Did not produce a measurement. Never a pass.
     pub unmeasured: usize,
+    /// Ran, searched a named subject set, and found it empty. Never a pass
+    /// either, and distinct from `unmeasured`: complete evidence that happens
+    /// to be empty, rather than evidence that is missing.
+    pub not_applicable: usize,
     /// Measured and not acceptable, or errored.
     pub failed: usize,
 }
@@ -219,7 +223,7 @@ pub struct GateCounts {
 impl GateCounts {
     /// Every gate accounted for exactly once.
     pub fn total(&self) -> usize {
-        self.passed + self.warned + self.unmeasured + self.failed
+        self.passed + self.warned + self.unmeasured + self.not_applicable + self.failed
     }
 }
 
@@ -405,6 +409,9 @@ impl PreMergeCertificationReport {
                 GateStatus::Passed | GateStatus::AutoUpdated => c.passed += 1,
                 GateStatus::Warning(_) => c.warned += 1,
                 GateStatus::NotMeasured { .. } => c.unmeasured += 1,
+                // Its own bucket. Counting it as `unmeasured` would restate in
+                // the tally the conflation this variant exists to end.
+                GateStatus::NotApplicable { .. } => c.not_applicable += 1,
                 GateStatus::Failed(_) | GateStatus::Errored(_) => c.failed += 1,
             }
         }
@@ -865,6 +872,22 @@ pub enum GateStatus {
         gate_id: String,
         reason: String,
     },
+    /// The gate ran, searched a named subject set, and found it empty.
+    ///
+    /// Not a pass and not a defect: the correct outcome for a change that
+    /// carries no subject for this gate. Acceptable, and it does not withhold
+    /// merge-queue admission.
+    ///
+    /// Separate from `NotMeasured` because one gate can produce both. The trace
+    /// guard reports this when a diff crosses no async boundary, and
+    /// `NotMeasured` when it crosses boundaries it could not resolve -- the
+    /// first is complete evidence that happens to be empty, the second is
+    /// missing evidence. A per-gate table cannot tell those apart, so the gate
+    /// says which it is.
+    NotApplicable {
+        gate_id: String,
+        subject: String,
+    },
 }
 
 impl GateStatus {
@@ -876,6 +899,7 @@ impl GateStatus {
             GateStatus::Failed(_) => "❌ FAILED",
             GateStatus::Errored(_) => "🛑 ERRORED",
             GateStatus::NotMeasured { .. } => "➖ NOT MEASURED",
+            GateStatus::NotApplicable { .. } => "➖ NOT APPLICABLE",
         }
     }
 
@@ -891,6 +915,9 @@ impl GateStatus {
             GateStatus::Failed(_) => false,
             GateStatus::Errored(_) => false,
             GateStatus::NotMeasured { .. } => true,
+            // The gate ran and its subject set was empty. That is complete
+            // evidence which happens to be empty, not absent evidence.
+            GateStatus::NotApplicable { .. } => true,
         }
     }
 

@@ -208,8 +208,8 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               findings was `passed` whether a policy had been examined or the diff contained none, so \
               a change touching no policy file published a green formal-verification gate. Only added \
               lines in a policy file are scanned, and policy_files_seen \
-              (formal_verification/mod.rs:26) makes an empty scan NotMeasured. Coverage is the stated \
-              set of paths in is_policy_path (formal_verification/mod.rs:36) and no wider.",
+              (formal_verification/mod.rs::policy_files_seen) makes an empty scan NotMeasured. Coverage is the stated \
+              set of paths in is_policy_path (formal_verification/mod.rs::is_policy_path) and no wider.",
         blocked_on: None,
     },
     GateFidelity {

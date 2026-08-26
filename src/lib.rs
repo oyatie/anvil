@@ -64,6 +64,7 @@ pub mod hermetic_build;
 pub mod idempotency_guard;
 pub mod incident_healer;
 pub mod incident_sentry;
+pub mod intake;
 pub mod issue_reconciler;
 pub mod jittered_backoff;
 pub mod kani_guard;

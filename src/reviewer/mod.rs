@@ -1,3 +1,5 @@
+pub mod rubric;
+
 use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -278,23 +280,7 @@ impl Reviewer {
         prompt.push_str(&rules_section);
         prompt.push('\n');
 
-        prompt.push_str("## Canonical 16-Lens Adversarial Review Rubric:\n");
-        prompt.push_str("1. Cartesian doubt: Question foundational assumptions. Is this change actually solving the real root problem?\n");
-        prompt.push_str("2. Essentialism / YAGNI: Is this code minimal and necessary, or over-engineered with speculative abstractions?\n");
-        prompt.push_str("3. Chesterton's Fence: Understand why the existing code was written before approving alterations or deletions.\n");
-        prompt.push_str("4. Contrarian / Outside-the-box: Is there an unorthodox, dramatically simpler 10x architectural alternative?\n");
-        prompt.push_str("5. Socratic: Challenge interfaces, boundary contracts, and invariants with clarifying inquiries.\n");
-        prompt.push_str("6. Pragmatism: Balance theoretical purity against operational velocity, simplicity, and maintainability.\n");
-        prompt.push_str("7. Red Team: Actively probe for security vulnerabilities, injection vectors, TOCTOU race conditions, unauthenticated endpoints.\n");
-        prompt.push_str("8. Systems Thinking: Trace non-obvious cascade effects, coupling across microservices, and hidden feedback loops.\n");
-        prompt.push_str("9. Operability / Day-2: Are logs structured? Are metrics emitted? How will on-call engineers debug this at 3 AM?\n");
-        prompt.push_str("10. Opportunity Cost: Does this change introduce long-term maintenance burdens that outweigh its immediate benefit?\n");
-        prompt.push_str("11. Blast-radius / Cell-based: Can a failure in this component propagate across cell boundaries or bring down unrelated tenants?\n");
-        prompt.push_str("12. Constant-work / Anti-fragility: Does latency degrade under heavy load? Are queues and static worker pools bounded?\n");
-        prompt.push_str("13. Shared-nothing / Eventual consistency: Are distributed components decoupled? Are operations idempotent?\n");
-        prompt.push_str("14. FinOps / Unit-cost: Does this increase memory allocations, cloud egress, or unbudgeted compute hotpaths?\n");
-        prompt.push_str("15. Telemetry-first: Are OpenTelemetry traces, spans, and metrics instrumented across critical execution paths?\n");
-        prompt.push_str("16. Zero-trust / Defense-in-depth: Validate all inputs, enforce least privilege, and sanitize external data boundaries.\n\n");
+        prompt.push_str(&rubric::rubric_prompt());
 
         prompt.push_str("## Response Format Instructions:\n");
         prompt.push_str(

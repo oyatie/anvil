@@ -357,3 +357,73 @@ fn guard_can_report_not_measured_when_no_layering_exists() {
          so Anvil's own result is recorded as unmeasured rather than passed."
     );
 }
+
+/// A real, present bypass: `git_manager` has no layer of its own, and reaches
+/// straight into another module's `adapters`. Only `facade` is importable from
+/// outside a unit -- that is the whole point of the four faces, and it is the
+/// edge that closes anvil's `change_delivery -> git_manager -> shape` cycle.
+///
+/// The guard classifies a file by ITS OWN path, so an unclassified importer is
+/// invisible to it and this edge is reported as clean.
+#[test]
+fn unclassified_importer_reaching_into_a_units_adapters_is_a_violation() {
+    let r = CleanArchitectureGuard::new().self_conformance().unwrap();
+    let bypass = r.violations.iter().any(|v| {
+        v.file_path.contains("git_manager") && v.snippet.contains("change_delivery::adapters")
+    });
+    assert!(
+        bypass,
+        "git_manager/mod.rs imports crate::change_delivery::adapters::git_vcs::LANE_LEASE_FILE, \
+         which reaches past that unit's facade. Guard reported {} violation(s).",
+        r.violations.len()
+    );
+}
+
+/// The ratchet. Exact: a bypass that disappears must be noticed as much as one
+/// that appears, because a count that drops for an unknown reason is a count
+/// nobody is reading.
+#[test]
+fn facade_bypasses_match_the_recorded_count() {
+    let r = CleanArchitectureGuard::new().self_conformance().unwrap();
+    let bypasses = r
+        .violations
+        .iter()
+        .filter(|v| v.description.contains("reaches past"))
+        .count();
+    assert_eq!(
+        bypasses,
+        anvil::clean_architecture_guard::FACADE_BYPASSES_IN_ANVIL,
+        "cross-unit facade bypasses moved. Offenders:\n{}",
+        r.violations
+            .iter()
+            .filter(|v| v.description.contains("reaches past"))
+            .map(|v| format!("  {} -> {}", v.file_path, v.target_layer))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// The other half of a proof: the rule must SPARE a conformant subject. A check
+/// that only ever fires is indistinguishable from one that always fires.
+///
+/// A unit reaching into its OWN interior is the normal, correct case -- it is
+/// how a facade uses its adapters -- and `shape/facade` does exactly that.
+#[test]
+fn a_unit_reaching_into_its_own_interior_is_spared() {
+    let r = CleanArchitectureGuard::new().self_conformance().unwrap();
+    let self_reach = r
+        .violations
+        .iter()
+        .find(|v| v.file_path.starts_with("src/shape/") && v.target_layer.starts_with("shape::"));
+    assert!(
+        self_reach.is_none(),
+        "a unit was flagged for using its own faces: {self_reach:?}"
+    );
+    // And the rule is not inert: it is finding real cross-unit edges.
+    assert!(
+        r.violations
+            .iter()
+            .any(|v| v.description.contains("reaches past")),
+        "rule fired on nothing at all, so sparing proves nothing"
+    );
+}

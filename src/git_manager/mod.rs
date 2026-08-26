@@ -5,6 +5,7 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod diff_context;
+pub mod hook_liveness;
 pub mod worktree;
 
 pub use diff_context::PrDiffContext;

@@ -642,35 +642,57 @@ async fn a_change_that_moves_through_certification_is_answered_for_by_that_repor
         "Anvil endorsed a pull request the same report refuses to admit"
     );
 
-    // The pre-flight the enlist doors read claims certain gates cannot be
-    // measured in this build at all. That claim has to be true of the corpus,
-    // and this is the corpus run — no second one is needed to check it.
-    let blockers = anvil::pre_merge_guard::unmeasurable_gates_in_this_build()
-        .expect("this build has a gate no execution of it can measure; see the pre-flight test");
-    let mut checked = 0usize;
-    for (gate, status) in report.named_statuses() {
-        if blockers.contains(gate) {
-            checked += 1;
+    match anvil::pre_merge_guard::unmeasurable_gates_in_this_build() {
+        Some(blockers) => {
+            // The pre-flight claims certain gates cannot be measured in this
+            // build at all. That claim has to be true of the corpus, and this
+            // is the corpus run -- no second one is needed to check it.
+            let mut checked = 0usize;
+            for (gate, status) in report.named_statuses() {
+                if blockers.contains(gate) {
+                    checked += 1;
+                    assert!(
+                        !status.is_acceptable() || matches!(status, GateStatus::NotMeasured { .. }),
+                        "`{gate}` is named as a gate this build cannot produce a \
+                         measurement for, and this real corpus run reported `{}` \
+                         for it. The doors are refusing in advance on a claim \
+                         the corpus does not bear out",
+                        status.badge()
+                    );
+                }
+            }
+            // The filter reads the pre-flight for the *field* name. A
+            // pre-flight reworded to name only the published label would leave
+            // the loop iterating nothing while this test stayed green, so the
+            // count is asserted rather than assumed.
             assert!(
-                !status.is_acceptable() || matches!(status, GateStatus::NotMeasured { .. }),
-                "`{gate}` is named as a gate this build cannot produce a \
-                 measurement for, and this real corpus run reported `{}` for it. \
-                 The doors are refusing in advance on a claim the corpus does not \
-                 bear out",
-                status.badge()
+                checked > 0,
+                "the pre-flight named gates this build cannot measure and none \
+                 of them matched a gate in the report, so the claim above was \
+                 checked against nothing: {blockers}"
             );
         }
+        None => {
+            // No cross-check applies, and asserting one here would be wrong.
+            // The pre-flight answers a question about the DEPLOYMENT -- can
+            // this build ever measure that gate -- while the corpus answers
+            // one about a CHANGE. A gate is routinely NotMeasured for a
+            // particular pull request that carries no subject for it, and that
+            // is `admission_refusal`'s job to act on, not the pre-flight's.
+            //
+            // A first draft asserted that no gate may be both unmeasured and
+            // blocking whenever the pre-flight names nothing. It fired
+            // immediately on four gates -- supply_chain, predictive_test,
+            // formal_verification, mutation -- every one of them unmeasured
+            // for THIS fixture rather than unmeasurable in this build. The
+            // assertion conflated the two questions.
+            //
+            // The vacuity this branch might otherwise invite is covered where
+            // it belongs, by `the_pre_flight_still_names_an_absence_that_does_block`,
+            // which seeds a blocking absence and proves the filter reports it.
+            // The refusal's own consistency with the report is asserted above.
+        }
     }
-    // The filter reads the pre-flight for the *field* name. A pre-flight
-    // reworded to name only the published label would leave the loop above
-    // iterating nothing while this test stayed green, so the count is asserted
-    // rather than assumed.
-    assert!(
-        checked > 0,
-        "the pre-flight named gates this build cannot measure and none of them \
-         matched a gate in the report, so the claim above was checked against \
-         nothing: {blockers}"
-    );
 }
 
 /// INTEGRATION — the verification gate's outcome reaches the merge queue as
@@ -833,22 +855,67 @@ async fn a_review_that_did_not_complete_is_absent_evidence_not_a_blocking_verdic
 /// paying for a corpus is a property of the doors, pinned in the spec suite
 /// where the doors are read.
 #[test]
-fn the_cheap_pre_flight_names_the_gate_that_can_never_pass_and_why() {
-    let blockers = anvil::pre_merge_guard::unmeasurable_gates_in_this_build()
-        .expect("this build has a gate no execution of it can measure: `slo_status`");
-    assert!(
-        names_gate(&blockers, "slo_status"),
-        "the pre-flight refusal must name the gate that cannot be measured, or \
-         an operator is told only that something is wrong: {blockers}"
+fn the_cheap_pre_flight_does_not_refuse_for_an_absence_that_does_not_block() {
+    // This asserted the opposite. It pinned a refusal that fired on every
+    // input, because the pre-flight was written when ANY unmeasured gate made
+    // a report inadmissible. `ABSENCE_POLICY` replaced that premise and
+    // `slo_status` is declared `NotProvisioned`, so its absence withholds
+    // nothing -- yet all three enlist doors kept refusing, and no pull request
+    // could reach the merge queue at all.
+    assert_eq!(
+        anvil::pre_merge_guard::unmeasurable_gates_in_this_build(),
+        None,
+        "the pre-flight refuses this build for a gate whose absence is \
+         declared not to block. Every enlist door reads it, so nothing can \
+         ever be admitted."
     );
-    let reason = anvil::slo_canary_guard::burn_rate_is_unmeasurable()
-        .expect("fixture sanity: the pre-flight's one entry is this guard's answer");
+    // The guard still reports its own absence honestly; what changed is that
+    // the pre-flight no longer treats a declared, non-blocking absence as a
+    // reason to refuse before running anything.
     assert!(
-        blockers.contains(reason),
-        "the pre-flight names the gate and drops the reason the guard gave for \
-         it, so an operator reading a refusal that cost nothing to produce is \
-         told a gate can never pass and not why. The reason was: {reason}\n  \
-         blockers: {blockers}"
+        anvil::slo_canary_guard::burn_rate_is_unmeasurable().is_some(),
+        "fixture sanity: this deployment still has no telemetry endpoint"
+    );
+    assert!(
+        !anvil::pre_merge_guard::absence_blocks("slo_status"),
+        "fixture sanity: slo_status is declared NotProvisioned, so its \
+         absence does not withhold the merge"
+    );
+}
+
+/// ...and the filter must not be vacuous in the other direction.
+///
+/// A pre-flight that returns `None` because it can never say anything is the
+/// same defect wearing the opposite sign. Seeded with a gate whose absence
+/// DOES block, it must name it.
+#[test]
+fn the_pre_flight_still_names_an_absence_that_does_block() {
+    // An id absent from ABSENCE_POLICY defaults to `Provisioned`, which blocks.
+    let blocking = "a_gate_absent_from_the_policy_table";
+    assert!(
+        anvil::pre_merge_guard::absence_blocks(blocking),
+        "fixture sanity: an undeclared gate must block by construction"
+    );
+    let named = anvil::pre_merge_guard::blocking_unmeasurable(&[(
+        blocking,
+        "no source of truth is wired for it".to_string(),
+    )])
+    .expect("a blocking absence must be reported");
+    assert!(
+        named.contains(blocking) && named.contains("no source of truth"),
+        "the refusal must name the gate AND the reason, or an operator is \
+         told only that something is wrong: {named}"
+    );
+
+    // A non-blocking absence alongside it is filtered out, not merged in.
+    let mixed = anvil::pre_merge_guard::blocking_unmeasurable(&[
+        ("slo_status", "no telemetry endpoint".to_string()),
+        (blocking, "no source of truth is wired for it".to_string()),
+    ])
+    .expect("the blocking one survives");
+    assert!(
+        !mixed.contains("slo_status"),
+        "a declared, non-blocking absence was reported as a blocker: {mixed}"
     );
 }
 

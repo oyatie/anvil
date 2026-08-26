@@ -175,3 +175,61 @@ pub fn without_commentary(src: &str) -> String {
     }
     out
 }
+
+/// Rust source with its `#[cfg(test)]` modules blanked out, line numbering
+/// preserved.
+///
+/// Lives here beside [`code_only`] because it answers the same question about
+/// a different axis: that one removes what the compiler ignores, this removes
+/// what only the test build compiles. It was private to `brand_absence` until
+/// a second caller needed it, which is the point at which a copy would have
+/// been the wrong answer.
+///
+/// Test text never reaches a pull request. Counting a stamp that lives only in
+/// a fixture does two kinds of damage: it inflates the debt ledger, and it lets
+/// a real production violation hide beneath a ceiling that test data paid for.
+///
+/// Lines are replaced rather than removed so every reported line number still
+/// points at the right line of the original file.
+pub fn without_test_modules(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut depth: i32 = 0;
+    let mut in_test = false;
+    let mut pending = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+
+        if !in_test && trimmed.starts_with("#[cfg(test)]") {
+            pending = true;
+            out.push('\n');
+            continue;
+        }
+
+        if pending && trimmed.starts_with("mod ") {
+            in_test = true;
+            pending = false;
+            depth = line.matches('{').count() as i32 - line.matches('}').count() as i32;
+            out.push('\n');
+            continue;
+        }
+        // An attribute on something that is not a module: not a test module.
+        if pending && !trimmed.is_empty() {
+            pending = false;
+        }
+
+        if in_test {
+            depth += line.matches('{').count() as i32;
+            depth -= line.matches('}').count() as i32;
+            if depth <= 0 {
+                in_test = false;
+            }
+            out.push('\n');
+            continue;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}

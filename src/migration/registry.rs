@@ -783,6 +783,14 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   because every governance scan in either repository needs it.",
     },
     MigrationEntry {
+        component: "stage_liveness",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie proves gates fire, not that stages run",
+        counterpart_loc: 0,
+        evidence: "PURE over a source list. `gate_proof` makes a gate demonstrate it can FIRE;                   nothing made a stage demonstrate it RUNS, and three were found dead in one day                   -- `next_phase`, whose reject arm therefore did nothing at all; the local hooks,                   pointed at a directory that did not exist; and the enlist doors, refusing every                   input on a premise that had stopped being true. Each was complete, documented                   and tested. None was a bug in the code that failed, which is why no unit test                   over that code could catch it. Reachability alone answers the wrong question: a                   module inside a reachable parent scores reachable with zero callers, and                   `next_phase` measured that way all session. So each stage names the SYMBOL                   whose presence in production code proves invocation, searched outside the                   stage's own files, with comments, string literals and `#[cfg(test)]` modules                   removed first -- a stage named in a doc comment is documented, not called.                   Six stages have no production caller today, recorded exactly. Migrates because                   every repository can hold a stage nothing runs.",
+    },
+    MigrationEntry {
         component: "postmortem",
         verdict: Verdict::Migrating,
         confidence: Confidence::Probable,

@@ -47,8 +47,14 @@ const INTERIOR_FACES: [&str; 3] = ["core", "ports", "adapters"];
 /// identifier shape handles grouped, nested and repeated paths without any of
 /// them being enumerated as cases.
 static FACE_REF: LazyLock<Regex> = LazyLock::new(|| {
+    // Rooted at `crate::` deliberately. Matching a bare `<ident>::<face>`
+    // also matched paths into crates we do not own -- `uuid::adapter::Compact`
+    // is an ordinary third-party path, and accusing it is the same wrong
+    // answer as accusing a unit of using its own adapters. Anvil's review of
+    // this change raised it; `expand_use_groups` runs first, so a grouped
+    // `use crate::{b::adapters::X}` is already `crate::b::adapters::X` here.
     Regex::new(&format!(
-        r"\b([A-Za-z_][A-Za-z0-9_]*)::({})\b",
+        r"\b([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)::({})\b",
         INTERIOR_FACES.join("|")
     ))
     .expect("static pattern")
@@ -102,7 +108,7 @@ pub(super) struct FaceScan {
     pub(super) subjects: usize,
 }
 
-pub(super) fn scan_faces(line: &str, importing_file: &str) -> FaceScan {
+pub(super) fn scan_faces(line: &str, importing_file: &str, local_crates: &[String]) -> FaceScan {
     let own = unit_of(importing_file);
     let mut out = FaceScan {
         bypasses: Vec::new(),
@@ -110,18 +116,30 @@ pub(super) fn scan_faces(line: &str, importing_file: &str) -> FaceScan {
     };
     let line = expand_use_groups(line);
     for c in FACE_REF.captures_iter(&line) {
-        let unit = c[1].to_string();
-        // `crate`, `self` and `super` root a path inside the current unit;
-        // they name no other unit, so they are neither a bypass nor evidence
-        // that any unit has faces.
-        if matches!(unit.as_str(), "crate" | "self" | "super") {
+        let root = &c[1];
+        // The path must be rooted in code we own. A bare `<ident>::<face>`
+        // also matched crates we do not own -- `uuid::adapter::Compact` is an
+        // ordinary third-party path, and accusing it is the same wrong answer
+        // as accusing a unit of using its own adapters. Anvil's review of this
+        // change raised it.
+        //
+        // `crate::` covers the in-crate case. A workspace member's own name
+        // covers the cross-crate one: `src/bin/occupancy.rs` reaches
+        // `anvil::change_delivery::core`, which is a real bypass spelled
+        // without `crate::`. When the member list is unknown the rule narrows
+        // to `crate::` only -- it under-reports rather than accusing.
+        if root != "crate" && !local_crates.iter().any(|c| c == root) {
+            continue;
+        }
+        let unit = c[2].to_string();
+        if matches!(unit.as_str(), "self" | "super") {
             continue;
         }
         out.subjects += 1;
         if own.as_deref() == Some(unit.as_str()) {
             continue; // a unit may reach into its own interior
         }
-        let face = c[2].to_string();
+        let face = c[3].to_string();
         if !out.bypasses.contains(&(unit.clone(), face.clone())) {
             out.bypasses.push((unit, face));
         }

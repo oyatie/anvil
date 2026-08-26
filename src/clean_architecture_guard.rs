@@ -42,6 +42,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use anyhow::Result;
 use regex::Regex;
@@ -57,7 +58,13 @@ use crate::git_manager::PrDiffContext;
 /// silently is the count nobody notices. Lowering this is the work -- each one
 /// is a unit reaching into another's interior, and each is an edge that has to
 /// go before these units could ever be separated.
-pub const FACADE_BYPASSES_IN_ANVIL: usize = 18;
+///
+/// It rose from 18 to 19 when the parser stopped reading one path per line:
+/// `src/bin/occupancy.rs` binds to `change_delivery::core`, and a binary
+/// reaching into the library's interior is the same bypass as any other. A
+/// ratchet that climbs because the check got sharper is not a regression, and
+/// the distinction is only legible if it is written down.
+pub const FACADE_BYPASSES_IN_ANVIL: usize = 19;
 
 /// Anvil's own source tree, as it stood at build time.
 pub const ANVIL_SOURCE_TREE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
@@ -221,56 +228,143 @@ fn classify_layer(file_path: &str) -> Option<ArchLayer> {
     None
 }
 
-/// The unit a file belongs to: its directory directly under `src/`.
+/// The unit a file belongs to: the segment its `crate::` path is rooted at.
 ///
-/// A unit is the thing that owns a set of faces. `src/shape/core/glob.rs` and
-/// `src/shape/facade/measure.rs` are both `shape`; whether one may import the
-/// other is an internal question. Whether `git_manager` may import either is
-/// not.
+/// `crate::` is rooted at a crate's `src/`, in a flat repo and a Cargo
+/// workspace alike -- `crates/alpha/src/beta/mod.rs` answers to
+/// `crate::beta::…`, never `crate::alpha::…`. Taking the first path segment
+/// instead made every file in a workspace a member of a unit called `crates`,
+/// so a unit using its OWN adapters was reported as reaching into someone
+/// else's. Workspaces are the common layout for exactly the repositories that
+/// have faces to check.
 fn unit_of(file_path: &str) -> Option<String> {
     let norm = file_path.replace('\\', "/");
-    let mut parts = norm.split('/').filter(|p| !p.is_empty() && *p != ".");
-    // Repo-relative (`src/shape/...`) and tree-relative (`shape/...`) paths
-    // both occur: PR diffs carry the former, `evaluate_source_tree` the latter.
-    let first = parts.next()?;
-    let unit = if first == "src" { parts.next()? } else { first };
+    let segs: Vec<&str> = norm
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
+    let start = segs
+        .iter()
+        .rposition(|s| *s == "src")
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let unit = segs.get(start)?;
     if unit.ends_with(".rs") {
-        return None; // a loose file directly under src/ owns no faces
+        return None; // a file at the crate root owns no faces
     }
-    Some(unit.to_string())
+    Some((*unit).to_string())
 }
 
-/// The unit and face an import reaches into, when it names another unit's
-/// inner face.
+/// A unit's interior. `facade` is deliberately absent: it is the one face that
+/// may be named from outside.
+const INTERIOR_FACES: [&str; 6] = [
+    "core",
+    "ports",
+    "adapters",
+    "adapter",
+    "domain",
+    "application",
+];
+
+/// Every `<unit>::<interior-face>` the line names.
 ///
-/// This is the rule the four faces exist to create, and the one the layer
-/// checks above cannot express: reaching *inward* is legitimate within a
-/// unit and forbidden across units. `core`, `ports` and `adapters` are a
-/// unit's private interior; `facade` is the only importable face. Without
-/// this, faces are directory names that constrain nothing -- which is what
-/// let `git_manager` bind to `change_delivery::adapters::git_vcs`.
-fn cross_unit_bypass(import_line: &str, importing_file: &str) -> Option<(String, String)> {
+/// Matching the shape directly, rather than splitting on `crate::` and reading
+/// one path out of the result, is what makes this hold. That earlier spelling
+/// had four separate failures, all from the same hand-rolled parse:
+///
+///   * it read only the FIRST path on the line, so
+///     `f(crate::a::facade::X, crate::b::adapters::Y)` was reported clean --
+///     a one-line evasion, put a legal reference first;
+///   * `use crate::{b::adapters::X, c::core::Y}` yielded a unit named
+///     `{b` and never saw `c::core` at all;
+///   * because `{b` can never equal `b`, a unit grouping its OWN faces was
+///     reported as a bypass;
+///   * a nested group had no spelling it could parse.
+///
+/// An identifier cannot contain `{`, `,` or whitespace, so anchoring on the
+/// identifier shape handles grouped, nested and repeated paths without any of
+/// them being enumerated as cases.
+static FACE_REF: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"\b([A-Za-z_][A-Za-z0-9_]*)::({})\b",
+        INTERIOR_FACES.join("|")
+    ))
+    .expect("static pattern")
+});
+
+/// `a::{b::X, c::Y}` becomes `a::b::X, a::c::Y`, innermost group first.
+///
+/// Without this, `use crate::beta::{core::X, ports::Y}` names neither
+/// `beta::core` nor `beta::ports` in a form any pattern can see: the brace sits
+/// exactly where the `::` between unit and face would be. Expanding is what
+/// makes grouped, nested and longhand spellings one case instead of three.
+fn expand_use_groups(line: &str) -> String {
+    let mut s = line.to_string();
+    // Bounded: a pathological line must not spin. Eight levels is far past any
+    // real `use`, and stopping early only under-reports.
+    for _ in 0..8 {
+        let Some(close) = s.find('}') else { break };
+        // The last `{` before the first `}` is the innermost group.
+        let Some(open) = s[..close].rfind('{') else {
+            break;
+        };
+        let prefix_start = s[..open]
+            .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let prefix = &s[prefix_start..open];
+        if !prefix.ends_with("::") {
+            break; // a block or struct literal, not a path group
+        }
+        let expanded = s[open + 1..close]
+            .split(',')
+            .map(|part| format!("{prefix}{}", part.trim()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        s = format!("{}{}{}", &s[..prefix_start], expanded, &s[close + 1..]);
+    }
+    s
+}
+
+/// What one line offered the seal, and what the seal found in it.
+struct FaceScan {
+    /// Cross-unit bypasses on this line.
+    bypasses: Vec<(String, String)>,
+    /// References naming SOME unit's face, bypass or not.
+    ///
+    /// This is the seal's subject, and it is not the same as "a Rust file".
+    /// A tree can be full of Rust and offer the rule nothing to judge, and
+    /// reporting that as a clean pass is the failure the whole report type
+    /// exists to prevent. A same-unit reference counts: it proves faces are
+    /// present and that the rule looked at one and spared it.
+    subjects: usize,
+}
+
+fn scan_faces(line: &str, importing_file: &str) -> FaceScan {
     let own = unit_of(importing_file);
-    // `crate::<unit>::<face>` is the only spelling that can name another
-    // unit's interior; `super::` and `self::` are unit-internal by
-    // construction and `::`-rooted external crates are not ours to judge.
-    let rest = import_line.split("crate::").nth(1)?;
-    let mut seg = rest.split("::");
-    let unit = seg.next()?.trim();
-    let face = seg
-        .next()?
-        .trim()
-        .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
-    if !matches!(
-        face,
-        "core" | "ports" | "adapters" | "adapter" | "domain" | "application"
-    ) {
-        return None;
+    let mut out = FaceScan {
+        bypasses: Vec::new(),
+        subjects: 0,
+    };
+    let line = expand_use_groups(line);
+    for c in FACE_REF.captures_iter(&line) {
+        let unit = c[1].to_string();
+        // `crate`, `self` and `super` root a path inside the current unit;
+        // they name no other unit, so they are neither a bypass nor evidence
+        // that any unit has faces.
+        if matches!(unit.as_str(), "crate" | "self" | "super") {
+            continue;
+        }
+        out.subjects += 1;
+        if own.as_deref() == Some(unit.as_str()) {
+            continue; // a unit may reach into its own interior
+        }
+        let face = c[2].to_string();
+        if !out.bypasses.contains(&(unit.clone(), face.clone())) {
+            out.bypasses.push((unit, face));
+        }
     }
-    if own.as_deref() == Some(unit) {
-        return None; // a unit may reach into its own interior
-    }
-    Some((unit.to_string(), face.to_string()))
+    out
 }
 
 fn layer_name(layer: Option<ArchLayer>) -> &'static str {
@@ -398,6 +492,8 @@ impl CleanArchitectureGuard {
         let mut current_layer: Option<ArchLayer> = None;
         let mut files_inspected = 0usize;
         let mut files_classified = 0usize;
+        let mut rust_files_inspected = 0usize;
+        let mut face_subjects = 0usize;
 
         let core_forbidden_imports = [
             (
@@ -426,6 +522,9 @@ impl CleanArchitectureGuard {
                 if current_layer.is_some() {
                     files_classified += 1;
                 }
+                if current_file.ends_with(".rs") {
+                    rust_files_inspected += 1;
+                }
                 continue;
             }
 
@@ -445,7 +544,9 @@ impl CleanArchitectureGuard {
                 // not terminate blanks to its end, which suppresses rather than
                 // fabricates.
                 let code = crate::source_scan::code_only(trimmed);
-                if let Some((unit, face)) = cross_unit_bypass(code.trim(), &current_file) {
+                let scan = scan_faces(code.trim(), &current_file);
+                face_subjects += scan.subjects;
+                for (unit, face) in scan.bypasses {
                     violations.push(ArchViolation {
                         file_path: current_file.clone(),
                         source_layer: layer_name(current_layer).to_string(),
@@ -504,11 +605,19 @@ impl CleanArchitectureGuard {
             }
         }
 
-        let measurement = if files_classified == 0 {
+        // Two rules with two different subjects. The layer-direction rules need
+        // a file that sits in a layer; the facade seal needs only Rust source.
+        // Keying the verdict on the first alone reported a real, FOUND bypass as
+        // "NOT MEASURED ... no inward-dependency claim can be made" whenever the
+        // offending file happened to sit in no layer -- which is the common case,
+        // and the exact case the seal exists for. An absence must never outrank a
+        // finding.
+        let measurement = if files_classified == 0 && face_subjects == 0 {
             ArchMeasurement::NotMeasured {
                 reason: format!(
-                    "no core/ports/adapters/facade layering found: 0 of {files_inspected} \
-                     file(s) examined belong to a recognised layer"
+                    "nothing to measure in {files_inspected} file(s) examined: 0 belong to a \
+                     recognised layer, and no path names any unit's core/ports/adapters, so \
+                     neither the layer-direction rules nor the facade seal had a subject"
                 ),
                 files_inspected,
             }
@@ -538,7 +647,10 @@ impl CleanArchitectureGuard {
                     format!(
                         "Clean Architecture: 0 layer-boundary violations across \
                          {files_classified} layered file(s) of {files_inspected} examined in \
-                         {scope}; {} file(s) belong to no recognised layer and were not measured.",
+                         {scope}; {} file(s) belong to no recognised layer and were not \
+                         measured for layer direction. The facade seal examined \
+                         {face_subjects} face reference(s) across {rust_files_inspected} Rust \
+                         file(s).",
                         files_inspected.saturating_sub(*files_classified)
                     )
                 } else {

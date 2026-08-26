@@ -455,3 +455,55 @@ pub fn missing_remedies() -> Vec<(&'static FixClass, &'static Remedy)> {
 pub fn total_instances() -> usize {
     FIX_CLASSES.iter().map(|c| c.instances).sum()
 }
+
+/// Classes whose every built remedy is semantic rather than mechanical.
+///
+/// Prose is probabilistic. It catches what slips past the deterministic layer,
+/// and that is its job — but a class defended ONLY by prose is a class that
+/// will recur, because the next instance depends on a reviewer noticing again.
+/// Measured on one day of this repository's history: the same class, prose
+/// read as code, recurred THREE times within hours. The mechanical remedy
+/// existed the whole time and was reached for on the third.
+///
+/// Each such class is where investing once now removes a cost that otherwise
+/// accrues on every future change. `Mechanism::Semantic` already demands
+/// `why_not_mechanical`, so a class listed here has either a real reason or an
+/// unwritten rule.
+pub fn defended_only_by_prose() -> Vec<&'static FixClass> {
+    FIX_CLASSES
+        .iter()
+        .filter(|c| {
+            let live: Vec<_> = c
+                .remedies
+                .iter()
+                .filter(|r| matches!(r.status, Status::Live { .. }))
+                .collect();
+            !live.is_empty()
+                && live
+                    .iter()
+                    .all(|r| matches!(r.mechanism, Mechanism::Semantic { .. }))
+        })
+        .collect()
+}
+
+/// One line stating the prevention debt, for publication on every review.
+///
+/// The ledger was complete, ratcheted and unreachable from production: it ran
+/// only from a pre-push test, so the mechanism that makes "CI is debt"
+/// measurable was not part of the running system. This is the caller.
+pub fn prevention_debt_line() -> String {
+    let awaiting = awaiting_early_remedy().len();
+    let missing = missing_remedies().len();
+    let prose = defended_only_by_prose().len();
+    format!(
+        // Continuations escaped. A wrapped literal without `\\` carries its
+        // indentation into the text a person reads -- the same defect fixed in
+        // `formal_verification`'s reason string earlier the same day, and
+        // committed again here within the hour. Two instances, one class.
+        "Prevention ledger: {} class(es), {} instance(s); {awaiting} caught no \
+         earlier than CI, {missing} remedy(ies) named but not built, {prose} \
+         defended only by review prose.",
+        FIX_CLASSES.len(),
+        total_instances()
+    )
+}

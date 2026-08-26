@@ -298,6 +298,24 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         ));
         s.push_str(&findings.join("\n"));
         s.push('\n');
+
+        // The prevention ledger, where a reader is already acting.
+        //
+        // It records each defect CLASS, the layer each remedy sits at and
+        // whether that remedy is mechanical or semantic -- and it was
+        // unreachable from production, running only from a pre-push test. A
+        // ledger nobody reads does not change what anyone does, which is the
+        // same defect as a gate nothing calls.
+        //
+        // On the BLOCKED path only. Three guards refused this line on the
+        // certified scorecard and were right to: a certified verdict is one
+        // counted line by contract, and this measures the state of the
+        // repository rather than anything about the change. Published rather
+        // than gated, for the same reason -- a finding a change cannot act on
+        // must not withhold it.
+        s.push('\n');
+        s.push_str(&crate::postmortem::prevention_debt_line());
+        s.push('\n');
     }
 
     s.push_str(&absence_note(declared_absent.len() != 1));

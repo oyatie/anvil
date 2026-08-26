@@ -53,6 +53,7 @@ pub mod flake_cost_dampener;
 pub mod flake_quarantine;
 pub mod fleet_observer;
 pub mod formal_verification;
+pub mod gate_proof;
 pub mod ghost_migration_harness;
 pub mod git_manager;
 pub mod github;

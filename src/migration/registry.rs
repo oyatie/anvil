@@ -750,6 +750,23 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   cover digest pinning and deploy parity; promotion-tier state machine has no counterpart.",
     },
     MigrationEntry {
+        component: "gate_proof",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie's gates are not required to demonstrate they fire",
+        counterpart_loc: 0,
+        evidence: "PURE. Each gate names the test that seeds its defect and the test that spares \
+                  a conformant subject. `Rule::fixture` makes an unproven rule unspellable on the \
+                  harness; the hand-wired gates are not on it, so the obligation is imposed here \
+                  instead -- and both citations are checked to EXIST and to mention the thing \
+                  under test. That second check is the whole value: inferring the mapping from \
+                  the test-naming convention produced false proofs, claiming an ADR test \
+                  demonstrated psa_status and slo_status. GATES_WITHOUT_PROOF is exact and \
+                  counts only gates that can fire at all, since a gate declared unprovisionable \
+                  in ABSENCE_POLICY cannot be seeded with a defect either. Migrates because the \
+                  obligation is not anvil-specific.",
+    },
+    MigrationEntry {
         component: "source_scan",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,

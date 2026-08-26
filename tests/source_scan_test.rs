@@ -220,6 +220,7 @@ fn the_pre_push_hook_runs_the_source_only_scans() {
         "source_scan_test",
         "removals_are_not_reachable_by_accident_test",
         "postmortem_ledger_test",
+        "gate_proof_test",
     ] {
         assert!(
             hook.contains(scan),

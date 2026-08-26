@@ -2,7 +2,7 @@
 //!
 //! DEFECT UNDER TEST
 //! -----------------
-//! `src/clean_architecture_guard.rs` enforces the Core -> Ports -> Adapters ->
+//! `src/clean_architecture_guard/` enforces the Core -> Ports -> Adapters ->
 //! Facade dependency direction on *other people's* repositories only. Its single
 //! public entrypoint is `evaluate_architecture(&PrDiffContext)`, which consumes
 //! `diff_ctx.repo` / `diff_ctx.diff_content` from an inbound pull request, and its
@@ -74,6 +74,31 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+/// Every source file of the guard, concatenated.
+///
+/// The guard was one 928-line file until ADR-0719 D-35 forced the split; a test
+/// that reads a single path would silently read nothing once it moved, and a
+/// structural assertion over an empty string passes.
+fn guard_source() -> String {
+    let dir = anvil_src().join("clean_architecture_guard");
+    let mut files: Vec<_> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        .collect();
+    assert!(
+        !files.is_empty(),
+        "no guard sources under {}",
+        dir.display()
+    );
+    files.sort();
+    files
+        .iter()
+        .map(|f| non_comment_source(f))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Source lines with whole-line `//` comments removed, so that a doc comment
@@ -152,7 +177,7 @@ fn anvil_tree_as_diff() -> (PrDiffContext, Vec<String>) {
 ///
 /// A self-check cannot exist until the guard can read a directory, so this is the
 /// structural precondition for tests 2-4. It requires two things of
-/// `src/clean_architecture_guard.rs`, both outside comments: a function signature
+/// `src/clean_architecture_guard/`, both outside comments: a function signature
 /// that accepts a filesystem path, and an actual filesystem read.
 ///
 /// Prompting would not prevent this: the missing capability is invisible at the
@@ -160,8 +185,7 @@ fn anvil_tree_as_diff() -> (PrDiffContext, Vec<String>) {
 /// nothing about it announces that the only reachable inputs are foreign repos.
 #[test]
 fn guard_exposes_an_entrypoint_that_scans_a_source_tree() {
-    let guard_src = anvil_src().join("clean_architecture_guard.rs");
-    let code = non_comment_source(&guard_src);
+    let code = guard_source();
 
     let takes_a_path = code
         .lines()
@@ -303,7 +327,7 @@ fn self_conformance_check_is_wired_into_production_code() {
         let code = non_comment_source(&f);
         let mentions_guard = code.contains("CleanArchitectureGuard")
             || code.contains("clean_architecture_guard")
-            || rel.ends_with("clean_architecture_guard.rs");
+            || rel.contains("clean_architecture_guard/");
         if !mentions_guard {
             continue;
         }
@@ -341,8 +365,7 @@ fn self_conformance_check_is_wired_into_production_code() {
 /// the type -- it produces no warning, no error, and a plausible-looking green.
 #[test]
 fn guard_can_report_not_measured_when_no_layering_exists() {
-    let guard_src = anvil_src().join("clean_architecture_guard.rs");
-    let code = non_comment_source(&guard_src);
+    let code = guard_source();
 
     let has_third_state = code.contains("NotMeasured")
         || code.contains("not_measured")

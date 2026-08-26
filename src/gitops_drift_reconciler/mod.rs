@@ -112,6 +112,37 @@ impl GitOpsDriftReconciler {
     }
 }
 
+impl GitOpsDriftReport {
+    /// Orphan manifests, as work items.
+    ///
+    /// Declared here rather than in `intake` so that `intake` stays a leaf.
+    /// A finding belongs to the module that found it; the vocabulary it is
+    /// expressed in must not import that module back.
+    ///
+    /// An orphan is mechanical to resolve -- the manifest is either adopted by
+    /// a reconciler or removed -- so it is raised as such rather than as
+    /// something awaiting a decision.
+    pub fn work_items(&self, repo: &str) -> Vec<crate::intake::WorkItem> {
+        use crate::intake::{Remedy, Source, WorkItem, sources::subject};
+        self.orphan_findings
+            .iter()
+            .map(|f| WorkItem {
+                source: Source::Drift,
+                subject: subject(repo, &f.file_path),
+                what: format!("orphan {} manifest: {}", f.manifest_kind, f.reason),
+                consequence: "the manifest is applied by nothing, so what is \
+                              declared and what runs have drifted and neither \
+                              side reports it"
+                    .to_string(),
+                class: None,
+                remedy: Remedy::Mechanical {
+                    how: "adopt the manifest into a reconciler, or delete it".to_string(),
+                },
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

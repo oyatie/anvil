@@ -783,6 +783,14 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   because every governance scan in either repository needs it.",
     },
     MigrationEntry {
+        component: "intake",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie has no unified work-item queue",
+        counterpart_loc: 0,
+        evidence: "PURE. One shape for every intent, and a queue keyed on DERIVED identity.                   Seven producers raise work here -- issue reconciler, roadmap guard, incident                   sentry, zero-day patcher, GitOps drift, corpus auditor, review memory -- and                   each raises its own type, so nothing can compare across them, prioritise                   between them, or say what is outstanding. Worse, the standing audits print                   findings that re-enter nothing, so LEARN back to INTAKE is an arc and a                   finding that is not queued will be found again. Identity is a function of                   source, subject and finding, never generated: every sweep re-reports                   everything it can still see, and a generated id would grow the backlog                   linearly with the number of passes and never converge -- exactly the defect                   the recovery sweep had when it re-certified every open pull request on every                   pass. `Remedy` separates Mechanical from NeedsJudgement from Unclassified,                   because collapsing the last two lets `nobody looked` pass as `a machine                   cannot`. Migrates because every repository accumulates work from more than                   one source.",
+    },
+    MigrationEntry {
         component: "postmortem",
         verdict: Verdict::Migrating,
         confidence: Confidence::Probable,

@@ -455,3 +455,46 @@ pub fn missing_remedies() -> Vec<(&'static FixClass, &'static Remedy)> {
 pub fn total_instances() -> usize {
     FIX_CLASSES.iter().map(|c| c.instances).sum()
 }
+
+/// The unbuilt remedies, as work items.
+///
+/// A remedy recorded as `Missing` is a decision already taken and not carried
+/// out. Left in a registry only a test reads, a decision becomes a comment.
+///
+/// Declared here rather than in `intake` so that `intake` stays a leaf: a
+/// vocabulary module that imports each of its producers, while each producer
+/// imports it back, is how seventy modules ended up in one cycle.
+pub fn work_items(repo: &str) -> Vec<crate::intake::WorkItem> {
+    use crate::intake::{Remedy as WorkRemedy, Source, WorkItem, sources::subject};
+    missing_remedies()
+        .into_iter()
+        .map(|(class, remedy)| WorkItem {
+            source: Source::PostmortemRemedy,
+            subject: subject(repo, class.id),
+            what: format!("unbuilt remedy: {}", remedy.what),
+            consequence: format!(
+                "`{}` has {} recorded instance(s) and this remedy is not built, \
+                 so the class is still open at the layer this was meant to close",
+                class.id, class.instances
+            ),
+            class: Some(class.id.to_string()),
+            remedy: match &remedy.mechanism {
+                Mechanism::Semantic { why_not_mechanical } => WorkRemedy::NeedsJudgement {
+                    why: (*why_not_mechanical).to_string(),
+                },
+                _ => WorkRemedy::Mechanical {
+                    how: remedy.what.to_string(),
+                },
+            },
+        })
+        .collect()
+}
+
+/// Remedies already built, which must never be raised as outstanding work.
+pub fn built_remedy_count() -> usize {
+    FIX_CLASSES
+        .iter()
+        .flat_map(|c| c.remedies.iter())
+        .filter(|r| matches!(r.status, Status::Live { .. }))
+        .count()
+}

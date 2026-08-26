@@ -169,3 +169,67 @@ fn a_tree_with_no_rust_source_is_unmeasured_rather_than_clean() {
         r.measurement
     );
 }
+
+/// rustfmt breaks a long grouped `use` across lines by default, so this is the
+/// COMMON spelling, not an exotic one. Scanning a diff line at a time sees
+/// `use crate::beta::{` with no face on it, then `core::X,` with no unit before
+/// it, and neither line names a bypass on its own.
+///
+/// Found by anvil's own review of this change, after eight hand-written
+/// adversarial cases had missed it.
+#[test]
+fn a_use_statement_broken_across_lines_is_still_read_as_one() {
+    assert_eq!(
+        bypasses(
+            "src/alpha/mod.rs",
+            "use crate::beta::{\n    core::X,\n    ports::Y,\n};"
+        ),
+        vec!["beta::core", "beta::ports"]
+    );
+}
+
+/// The interior faces are the spec's, not the guard's own idea of them.
+///
+/// The list once carried `domain`, `application` and `adapter` alongside the
+/// real three. Prose saying "these come from shape.json" would not have caught
+/// that; reading shape.json does.
+#[test]
+fn interior_faces_match_the_shape_spec() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(".anvil/shape.json").unwrap()).unwrap();
+    let faces = spec["skeletons"]["standard"]["faces"]
+        .as_object()
+        .expect("shape.json declares skeletons.standard.faces");
+
+    let mut declared: Vec<&str> = faces.keys().map(|k| k.as_str()).collect();
+    declared.sort();
+    assert_eq!(
+        declared,
+        vec!["adapters", "core", "facade", "ports"],
+        "the spec's face set changed; the guard's interior list must follow"
+    );
+
+    // Only `facade` is importable from outside, so the interior is the rest.
+    let mut interior: Vec<&str> = declared.into_iter().filter(|f| *f != "facade").collect();
+    interior.sort();
+    assert_eq!(interior, vec!["adapters", "core", "ports"]);
+
+    // And the guard must accuse each of those, and nothing beyond them.
+    for face in &interior {
+        assert_eq!(
+            bypasses("src/alpha/mod.rs", &format!("use crate::beta::{face}::X;")),
+            vec![format!("beta::{face}")],
+            "the seal does not cover the spec's `{face}` face"
+        );
+    }
+    for not_a_face in ["domain", "application", "adapter", "rest", "facade"] {
+        assert!(
+            bypasses(
+                "src/alpha/mod.rs",
+                &format!("use crate::beta::{not_a_face}::X;")
+            )
+            .is_empty(),
+            "`{not_a_face}` is not an interior face in the spec, but the seal accused it"
+        );
+    }
+}

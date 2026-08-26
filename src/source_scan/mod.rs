@@ -43,6 +43,9 @@
 //! stated rather than implied, because the point of a mechanism is to not
 //! overclaim its coverage: either could hide a hit, and neither can invent one.
 
+use std::fs;
+use std::path::{Path, PathBuf};
+
 pub fn code_only(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut chars = src.chars().peekable();
@@ -174,4 +177,65 @@ pub fn without_commentary(src: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// Whether this file compiles only under `cfg(test)` because its parent
+/// module declares it that way.
+///
+/// Scanners strip test code by finding the literal `#[cfg(test)]` inside a
+/// file. That works for `#[cfg(test)] mod tests { … }` written inline, and
+/// fails completely for `#[cfg(test)] mod tests;` with the body in a sibling
+/// file -- the standard layout the Rust book describes, and the one a module
+/// must use once its tests would push it past the 300-line file budget. The
+/// attribute is in the PARENT; the file itself carries no marker, so every
+/// such scanner reads unit tests as production code.
+///
+/// This was found when splitting one 928-line guard: five test functions
+/// became, to the diff-parsing ratchet, five new hand-rolled diff parsers.
+/// Twelve scanners in this tree strip `#[cfg(test)]` the same way, so the
+/// answer belongs here once rather than in each of them.
+pub fn is_cfg_test_module_file(path: &Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if stem == "mod" || stem == "lib" || stem == "main" {
+        return false;
+    }
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    // The parent module is `<dir>/mod.rs`, or the sibling `<dir>.rs` in the
+    // path form the Rust book prefers. Both are checked; only one will exist.
+    [
+        dir.join("mod.rs"),
+        PathBuf::from(format!("{}.rs", dir.display())),
+    ]
+    .iter()
+    .filter_map(|p| fs::read_to_string(p).ok())
+    .any(|src| declares_cfg_test_mod(&src, stem))
+}
+
+/// `#[cfg(test)]` followed by `mod <name>;`, allowing attributes and blank
+/// lines between them but nothing that would make it a different item.
+fn declares_cfg_test_mod(parent_src: &str, name: &str) -> bool {
+    let decl = format!("mod {name};");
+    let mut armed = false;
+    for line in parent_src.lines() {
+        let t = line.trim();
+        if t.starts_with("//") || t.is_empty() {
+            continue;
+        }
+        if t.starts_with("#[cfg(test)]") {
+            armed = true;
+            continue;
+        }
+        if armed && (t == decl || t == format!("pub {decl}")) {
+            return true;
+        }
+        // Any other item disarms: the attribute applied to that, not to us.
+        if !t.starts_with("#[") {
+            armed = false;
+        }
+    }
+    false
 }

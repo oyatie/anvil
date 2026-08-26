@@ -85,7 +85,8 @@ scan_out=$(cargo test --locked --quiet \
     --test prose_counts_test \
     --test source_scan_test \
     --test removals_are_not_reachable_by_accident_test \
-    --test postmortem_ledger_test 2>&1)
+    --test postmortem_ledger_test \
+    --test gate_proof_test 2>&1)
 scan_rc=$?
 set -e
 if [ "$scan_rc" -ne 0 ]; then

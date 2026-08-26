@@ -102,6 +102,7 @@ impl CleanArchitectureGuard {
         Ok(analyze::analyze_unified_diff(
             &diff_ctx.diff_content,
             format!("{}#{}", diff_ctx.repo, diff_ctx.pr_number),
+            &source_tree::workspace_members(&diff_ctx.repo_working_dir),
         ))
     }
 
@@ -151,7 +152,11 @@ impl CleanArchitectureGuard {
             }
         }
 
-        Ok(analyze::analyze_unified_diff(&diff, scope))
+        Ok(analyze::analyze_unified_diff(
+            &diff,
+            scope,
+            &source_tree::workspace_members(root),
+        ))
     }
 
     /// Runs the guard against Anvil's own source tree and records the finding.

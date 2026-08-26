@@ -10,7 +10,11 @@ use super::paths::{classify_layer, is_import_line, layer_name};
 use super::report::{ArchLayer, ArchMeasurement, ArchViolation, CleanArchitectureReport};
 use super::scan::{FaceScan, scan_faces};
 
-pub(super) fn analyze_unified_diff(diff_content: &str, scope: String) -> CleanArchitectureReport {
+pub(super) fn analyze_unified_diff(
+    diff_content: &str,
+    scope: String,
+    local_crates: &[String],
+) -> CleanArchitectureReport {
     let mut violations = Vec::new();
     let mut current_file = String::new();
     let mut current_layer: Option<ArchLayer> = None;
@@ -57,6 +61,14 @@ pub(super) fn analyze_unified_diff(diff_content: &str, scope: String) -> CleanAr
 
         if line.starts_with('+') && !line.starts_with("+++") {
             let trimmed = line[1..].trim();
+            // The rules below read Rust paths. Run them on anything else and
+            // prose becomes code: this guard's own CHANGELOG entry, which
+            // names `change_delivery::adapters::git_vcs` in order to DESCRIBE
+            // the defect, was reported as committing it. Anvil's review of
+            // this change is what caught that.
+            if !current_file.ends_with(".rs") {
+                continue;
+            }
             // Only an import statement can create a dependency edge. A
             // comment containing "because ports -> core" matched the
             // unanchored `use\s+` through "beca|use" on Anvil's own tree.
@@ -109,7 +121,7 @@ pub(super) fn analyze_unified_diff(diff_content: &str, scope: String) -> CleanAr
             };
 
             let scan = match &statement {
-                Some(text) => scan_faces(text, &current_file),
+                Some(text) => scan_faces(text, &current_file, local_crates),
                 // Still collecting the rest of this statement.
                 None => FaceScan {
                     bypasses: Vec::new(),

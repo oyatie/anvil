@@ -233,3 +233,61 @@ fn interior_faces_match_the_shape_spec() {
         );
     }
 }
+
+/// A path into a crate we do not own is not a facade bypass.
+///
+/// Raised by Anvil's own review of this change: `FACE_REF` matched a bare
+/// `<ident>::<face>`, so `uuid::adapter::Compact` — an ordinary third-party
+/// path — read as reaching into a unit's interior. The root must be `crate::`
+/// or a crate this repository owns.
+#[test]
+fn a_path_into_a_third_party_crate_is_not_a_bypass() {
+    for foreign in [
+        "use uuid::adapter::Compact;",
+        "let x = serde::core::Thing::new();",
+        "use tokio::adapters::Runtime;",
+    ] {
+        assert!(
+            bypasses("src/alpha/mod.rs", foreign).is_empty(),
+            "accused a third-party path: {foreign}"
+        );
+    }
+    // ...while the crate-rooted form is still caught.
+    assert_eq!(
+        bypasses("src/alpha/mod.rs", "use crate::beta::adapters::X;"),
+        vec!["beta::adapters"]
+    );
+}
+
+/// Prose is not code.
+///
+/// The seal ran on every file in the diff regardless of language. This
+/// guard's own CHANGELOG entry names `change_delivery::adapters::git_vcs` in
+/// order to DESCRIBE the defect, and was reported as committing it — caught
+/// by Anvil reviewing this very change.
+#[test]
+fn a_non_rust_file_is_not_scanned_for_rust_paths() {
+    for doc in ["CHANGELOG.md", "docs/design.md", "README.md", "notes.txt"] {
+        assert!(
+            bypasses(
+                doc,
+                "it reaches crate::change_delivery::adapters::git_vcs, which is the bug"
+            )
+            .is_empty(),
+            "prose in {doc} was read as a facade bypass"
+        );
+    }
+    // The same sentence inside Rust source is still a comment, not an edge...
+    assert!(
+        bypasses(
+            "src/alpha/mod.rs",
+            "// it reaches crate::beta::adapters::X, which is the bug"
+        )
+        .is_empty()
+    );
+    // ...and real code in a .rs file is still caught.
+    assert_eq!(
+        bypasses("src/alpha/mod.rs", "use crate::beta::adapters::X;"),
+        vec!["beta::adapters"]
+    );
+}

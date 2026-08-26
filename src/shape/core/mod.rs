@@ -3,6 +3,7 @@
 //! git, a clock or a subprocess.
 
 pub mod dependency;
+pub mod graph_shape;
 pub mod glob;
 pub mod measure;
 pub mod naming;

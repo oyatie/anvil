@@ -298,3 +298,45 @@ fn the_scorecard_and_the_enlister_agree_on_admissibility() {
     );
     assert!(report.is_admissible());
 }
+
+/// `formal_verification_status` withheld a report that had already certified.
+///
+/// Its own reason is that the change adds no line to a policy file, "so the
+/// policy scan had nothing to examine" — an absent SUBJECT, the same shape as
+/// `cedar_status`. Undeclared, it defaulted to `Provisioned` and blocked every
+/// pull request touching no policy file, which is nearly all of them.
+#[test]
+fn an_absent_policy_subject_does_not_withhold_the_merge() {
+    assert!(
+        !anvil::pre_merge_guard::absence_blocks("formal_verification_status"),
+        "a change carrying no policy file is refused by a gate whose own \
+         reason is that it had nothing to examine"
+    );
+    // Classified as the same KIND of absence as its neighbour, not merely
+    // silenced: the distinction is what a reader acts on.
+    assert!(
+        matches!(
+            anvil::pre_merge_guard::absence_of("formal_verification_status"),
+            anvil::pre_merge_guard::Absence::NotApplicable { .. }
+        ),
+        "the capability is provisioned — the change simply carries no subject, \
+         so NotProvisioned would be the wrong reason to publish"
+    );
+}
+
+/// ...and declaring the absence must not make the gate unable to fail.
+#[test]
+fn the_formal_verification_gate_can_still_refuse_a_change_that_has_a_subject() {
+    use anvil::pre_merge_guard::GateStatus;
+    // Only NotMeasured is routed through the absence policy at all. A finding
+    // is `Failed`, and `Failed` is unacceptable for every gate, always.
+    assert!(
+        !GateStatus::Failed("a policy finding".to_string()).is_acceptable(),
+        "declaring the absence would be a silencing if a real finding could \
+         still be admitted"
+    );
+    assert!(
+        !GateStatus::Errored("the scan could not run".to_string()).is_acceptable(),
+        "a scan that errors is not a scan with no subject"
+    );
+}

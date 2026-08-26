@@ -446,7 +446,8 @@ impl PreMergeGuard {
         } else if formal_report.policy_files_seen.is_empty() {
             GateStatus::NotMeasured {
                 gate_id: "formal_verification_status".to_string(),
-                reason: "this change adds no line to a policy file, so the policy scan had                          nothing to examine. Absence of a match is not evidence of safety."
+                reason: "this change adds no line to a policy file, so the policy scan had \
+                     nothing to examine. Absence of a match is not evidence of safety."
                     .to_string(),
             }
         } else {

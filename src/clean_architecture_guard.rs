@@ -18,9 +18,27 @@
 //! `GateStatus::NotMeasured` vocabulary exists to prevent (see
 //! `src/pre_merge_guard/report.rs`, invariant I1).
 //!
-//! Anvil's own `src/` currently contains no core/ports/adapters/facade
-//! structure, so `self_conformance()` returns `NotMeasured`. That is the honest
-//! result and it is recorded, not suppressed.
+//! Three of Anvil's units carry faces (`change_delivery`, `ratchet`, `shape`),
+//! so `self_conformance()` now measures rather than declining to.
+//!
+//! # Faces are sealed, not just named
+//!
+//! Layer ordering within a unit is only half the rule, and it was the half
+//! this guard enforced. It classified a file by ITS OWN path, so a file
+//! belonging to no layer -- which is most of this tree -- could bind to any
+//! other unit's interior and be reported as clean. It was, 0 violations
+//! across 55 classified files, while `git_manager` held a direct reference to
+//! `change_delivery::adapters::git_vcs`.
+//!
+//! The missing rule is that a unit's `core`, `ports` and `adapters` are its
+//! interior and only its `facade` is importable from outside it. Without it,
+//! faces are directory names that constrain nothing. With it, the four faces
+//! do the one job they exist for: a unit's dependencies become a property of
+//! its facade alone, which is what makes a dependency graph acyclic and a
+//! unit separable.
+//!
+//! An edge counts however it is spelled. The `git_manager` binding is an
+//! expression, not a `use`, so an import-line filter hid it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,6 +49,15 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::git_manager::PrDiffContext;
+
+/// Cross-unit facade bypasses present in Anvil's own tree.
+///
+/// Exact, not a ceiling. A `<=` bound is slack, and slack is what lets a newly
+/// introduced defect land under cover of an existing one; the count that fell
+/// silently is the count nobody notices. Lowering this is the work -- each one
+/// is a unit reaching into another's interior, and each is an edge that has to
+/// go before these units could ever be separated.
+pub const FACADE_BYPASSES_IN_ANVIL: usize = 18;
 
 /// Anvil's own source tree, as it stood at build time.
 pub const ANVIL_SOURCE_TREE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
@@ -194,6 +221,68 @@ fn classify_layer(file_path: &str) -> Option<ArchLayer> {
     None
 }
 
+/// The unit a file belongs to: its directory directly under `src/`.
+///
+/// A unit is the thing that owns a set of faces. `src/shape/core/glob.rs` and
+/// `src/shape/facade/measure.rs` are both `shape`; whether one may import the
+/// other is an internal question. Whether `git_manager` may import either is
+/// not.
+fn unit_of(file_path: &str) -> Option<String> {
+    let norm = file_path.replace('\\', "/");
+    let mut parts = norm.split('/').filter(|p| !p.is_empty() && *p != ".");
+    // Repo-relative (`src/shape/...`) and tree-relative (`shape/...`) paths
+    // both occur: PR diffs carry the former, `evaluate_source_tree` the latter.
+    let first = parts.next()?;
+    let unit = if first == "src" { parts.next()? } else { first };
+    if unit.ends_with(".rs") {
+        return None; // a loose file directly under src/ owns no faces
+    }
+    Some(unit.to_string())
+}
+
+/// The unit and face an import reaches into, when it names another unit's
+/// inner face.
+///
+/// This is the rule the four faces exist to create, and the one the layer
+/// checks above cannot express: reaching *inward* is legitimate within a
+/// unit and forbidden across units. `core`, `ports` and `adapters` are a
+/// unit's private interior; `facade` is the only importable face. Without
+/// this, faces are directory names that constrain nothing -- which is what
+/// let `git_manager` bind to `change_delivery::adapters::git_vcs`.
+fn cross_unit_bypass(import_line: &str, importing_file: &str) -> Option<(String, String)> {
+    let own = unit_of(importing_file);
+    // `crate::<unit>::<face>` is the only spelling that can name another
+    // unit's interior; `super::` and `self::` are unit-internal by
+    // construction and `::`-rooted external crates are not ours to judge.
+    let rest = import_line.split("crate::").nth(1)?;
+    let mut seg = rest.split("::");
+    let unit = seg.next()?.trim();
+    let face = seg
+        .next()?
+        .trim()
+        .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
+    if !matches!(
+        face,
+        "core" | "ports" | "adapters" | "adapter" | "domain" | "application"
+    ) {
+        return None;
+    }
+    if own.as_deref() == Some(unit) {
+        return None; // a unit may reach into its own interior
+    }
+    Some((unit.to_string(), face.to_string()))
+}
+
+fn layer_name(layer: Option<ArchLayer>) -> &'static str {
+    match layer {
+        Some(ArchLayer::Core) => "CORE/DOMAIN",
+        Some(ArchLayer::Ports) => "PORTS/APPLICATION",
+        Some(ArchLayer::Adapters) => "ADAPTERS",
+        Some(ArchLayer::Facade) => "FACADE/REST",
+        None => "UNLAYERED",
+    }
+}
+
 impl CleanArchitectureGuard {
     pub fn new() -> Self {
         Self
@@ -248,7 +337,12 @@ impl CleanArchitectureGuard {
             diff.push_str("+++ b/");
             diff.push_str(&rel);
             diff.push('\n');
-            let body = fs::read_to_string(file).unwrap_or_default();
+            // Comments and string literals stripped, byte offsets preserved.
+            // A dependency edge is created by code; a sentence about one is not.
+            // This is also what makes an inline `crate::x::adapters::Y`
+            // reference visible without re-admitting the `beca|use` false
+            // positive that `is_import_line` was introduced to stop.
+            let body = crate::source_scan::code_only(&fs::read_to_string(file).unwrap_or_default());
             for line in body.lines() {
                 diff.push('+');
                 diff.push_str(line);
@@ -340,6 +434,33 @@ impl CleanArchitectureGuard {
                 // Only an import statement can create a dependency edge. A
                 // comment containing "because ports -> core" matched the
                 // unanchored `use\s+` through "beca|use" on Anvil's own tree.
+                // A cross-unit binding is an edge however it is spelled. The
+                // one in `git_manager` is an expression, not a `use`, so the
+                // import-line filter below would hide it. Checked first, and
+                // deliberately outside that filter.
+                // `code_only` on the line, not just the tree: `evaluate_source_tree`
+                // strips whole files, but a PR diff arrives as raw text and this
+                // guard's own comment naming `crate::x::adapters::Y` was reported
+                // as a violation of a unit called `x`. A line whose construct does
+                // not terminate blanks to its end, which suppresses rather than
+                // fabricates.
+                let code = crate::source_scan::code_only(trimmed);
+                if let Some((unit, face)) = cross_unit_bypass(code.trim(), &current_file) {
+                    violations.push(ArchViolation {
+                        file_path: current_file.clone(),
+                        source_layer: layer_name(current_layer).to_string(),
+                        target_layer: format!("{unit}::{face}"),
+                        description: format!(
+                            "reaches past `{unit}`'s facade into its `{face}`; only a \
+                             unit's facade is importable from outside it"
+                        ),
+                        snippet: trimmed.to_string(),
+                    });
+                }
+
+                // The layer-direction rules below are regex matches over an
+                // unanchored `use\s+`, which matched the "use" inside
+                // "because" on this very tree. They stay import-line-only.
                 if !is_import_line(trimmed) {
                     continue;
                 }
@@ -375,8 +496,9 @@ impl CleanArchitectureGuard {
                             }
                         }
                     }
-                    // Adapters and Facade sit outermost: they may depend inward,
-                    // so there is no forbidden direction to check for them.
+                    // Adapters and Facade sit outermost within their own unit:
+                    // they may depend inward, so there is no forbidden
+                    // direction to check for them here.
                     Some(ArchLayer::Adapters) | Some(ArchLayer::Facade) | None => {}
                 }
             }
@@ -420,9 +542,17 @@ impl CleanArchitectureGuard {
                         files_inspected.saturating_sub(*files_classified)
                     )
                 } else {
+                    // The denominator belongs on this branch too. A findings
+                    // list alone says nothing about the files the classifier
+                    // never saw, and "18 violations" reads as a complete
+                    // account of the tree when it is an account of 55 files.
                     format!(
-                        "Clean Architecture layer boundary violations ({} items) in {scope}: {}",
+                        "Clean Architecture layer boundary violations ({} items) across \
+                         {files_classified} layered file(s) of {files_inspected} examined in \
+                         {scope}; {} file(s) belong to no recognised layer and were not \
+                         measured. {}",
                         violations.len(),
+                        files_inspected.saturating_sub(*files_classified),
                         violations
                             .iter()
                             .map(|v| format!("{}: {}", v.file_path, v.description))

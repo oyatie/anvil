@@ -233,6 +233,25 @@ pub const ABSENCE_POLICY: &[(&str, Absence)] = &[
     ),
     // ---- not applicable: the change carries no subject for this gate ------
     (
+        // The guard's own reason is that the change adds no line to a policy
+        // file, "so the policy scan had nothing to examine". That is an absent
+        // SUBJECT, not a failure to measure -- the same shape as `cedar_status`
+        // directly below. Undeclared, it defaulted to `Provisioned` and blocked
+        // every pull request that touches no policy file, which is nearly all
+        // of them: it was the last gate withholding a report that had already
+        // certified.
+        //
+        // Declaring it does not weaken the gate. When a policy file IS in the
+        // change the scan runs and a finding still fails, and its own doc is
+        // explicit that absence of a match is not evidence of safety -- which
+        // is exactly why the honest answer here is "no subject" rather than a
+        // pass.
+        "formal_verification_status",
+        Absence::NotApplicable {
+            subject: "a line added to a policy file for the scan to examine",
+        },
+    ),
+    (
         "cedar_status",
         Absence::NotApplicable {
             subject: "a Cedar policy file (*.cedar) in the change",

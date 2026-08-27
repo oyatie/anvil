@@ -43,20 +43,57 @@ impl AdmitReport {
     }
 }
 
-/// Every first- and second-level directory, as D-8 scopes the rule: the repo
-/// root and each capability/app root.
+/// Every directory D-8 governs: those OUTSIDE any crate.
+///
+/// Not "the first two levels". That was the first cut and it hid 49 of the 63
+/// `IPs/` directories in the repository this was written for, because they sit
+/// at `comms/mail/IPs/` rather than `audit/IPs/` -- and a projection that
+/// silently sees a fifth of a problem is worse than none, since its number
+/// reads as the whole.
+///
+/// Not "every directory" either. Inside a crate, `src/` and its module
+/// directories are governed by the compiler and by D-30/D-35, and nothing
+/// references them by path -- so an unbounded predicate would refuse `src/`
+/// itself. The boundary is the nearest enclosing build target: above it D-8
+/// decides, below it the crate does.
 fn candidate_dirs(tree: &dyn TreeSource) -> Vec<String> {
-    let mut out: BTreeSet<String> = BTreeSet::new();
+    // The CARGO marker only. A Buck2 BUCK file is a package marker, not a
+    // crate boundary -- every directory may carry one, and this repository has
+    // thirty at capability level (`audit/BUCK`, `billing/BUCK`, ...) against
+    // two Cargo.toml. Treating BUCK as the boundary excluded every capability's
+    // children and silently hid all sixty-three `IPs/` directories from the
+    // projection: a report that had stopped looking, reading as a report that
+    // had found nothing.
+    let markers = [crate::shape::core::profile::LanguageProfile::RustCargo.unit_marker()];
+    // Directories that ARE a crate root.
+    let crate_roots: BTreeSet<String> = tree
+        .paths()
+        .iter()
+        .filter_map(|p| {
+            let (dir, base) = p.rsplit_once('/')?;
+            markers.contains(&base).then(|| format!("{dir}/"))
+        })
+        .collect();
+
+    let mut all: BTreeSet<String> = BTreeSet::new();
     for p in tree.paths() {
-        let parts: Vec<&str> = p.split('/').collect();
-        if parts.len() >= 2 {
-            out.insert(format!("{}/", parts[0]));
-        }
-        if parts.len() >= 3 {
-            out.insert(format!("{}/{}/", parts[0], parts[1]));
+        let mut acc = String::new();
+        for seg in p.split('/').rev().skip(1).collect::<Vec<_>>().iter().rev() {
+            acc.push_str(seg);
+            acc.push('/');
+            all.insert(acc.clone());
         }
     }
-    out.into_iter().collect()
+    all.into_iter()
+        .filter(|d| {
+            // Excluded if any STRICT ancestor is a crate root. The directory
+            // itself being a crate root is fine -- that is the crate D-8
+            // placed, and it is admitted by containment anyway.
+            !crate_roots
+                .iter()
+                .any(|r| r != d && d.starts_with(r.as_str()))
+        })
+        .collect()
 }
 
 /// Crate manifests, split by whether a closed glob over the faces reaches them.

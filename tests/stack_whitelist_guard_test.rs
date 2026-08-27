@@ -75,7 +75,14 @@ fn test_asymmetric_dependency_ratchet_allows_removal_blocks_addition() {
         base_branch: "dev".to_string(),
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
-        diff_content: "[dependencies]\n+ serde_yaml = \"0.9\"".to_string(),
+        // A real `git diff --unified=3` fixture. The previous one was a bare
+        // two-line fragment with no `diff --git` or `+++ b/` header, which no
+        // git invocation produces; it passed only because the guard took the
+        // path from `changed_files` and the text from the raw string.
+        diff_content: "diff --git a/crates/api/Cargo.toml b/crates/api/Cargo.toml\n\
+             --- a/crates/api/Cargo.toml\n+++ b/crates/api/Cargo.toml\n\
+             @@ -5,0 +6,1 @@\n [dependencies]\n+serde_yaml = \"0.9\"\n"
+            .to_string(),
         changed_files: vec!["crates/api/Cargo.toml".to_string()],
         repo_working_dir: std::path::PathBuf::from("/tmp"),
         is_incremental: false,
@@ -99,7 +106,10 @@ fn test_asymmetric_dependency_ratchet_allows_removal_blocks_addition() {
         base_branch: "dev".to_string(),
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
-        diff_content: "[dependencies]\n- legacy_crate = \"0.1\"".to_string(),
+        diff_content: "diff --git a/crates/api/Cargo.toml b/crates/api/Cargo.toml\n\
+             --- a/crates/api/Cargo.toml\n+++ b/crates/api/Cargo.toml\n\
+             @@ -5,1 +5,0 @@\n [dependencies]\n-legacy_crate = \"0.1\"\n"
+            .to_string(),
         changed_files: vec!["crates/api/Cargo.toml".to_string()],
         repo_working_dir: std::path::PathBuf::from("/tmp"),
         is_incremental: false,

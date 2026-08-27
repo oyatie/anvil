@@ -313,7 +313,7 @@ impl BrandAbsenceGate {
     /// instances are directory names, which a scanner that only read
     /// declarations would miss entirely.
     pub fn scan_source(&self, path: &str, source: &str) -> BrandAbsenceReport {
-        let hits = self.collect_hits(path, &blank_cfg_test_modules(source));
+        let hits = self.collect_hits(path, &crate::source_scan::without_test_modules(source));
         self.finish(hits)
     }
 
@@ -337,7 +337,7 @@ impl BrandAbsenceGate {
             let Ok(body) = std::fs::read_to_string(&file) else {
                 continue;
             };
-            hits.extend(self.collect_hits(&rel, &blank_cfg_test_modules(&body)));
+            hits.extend(self.collect_hits(&rel, &crate::source_scan::without_test_modules(&body)));
         }
         self.finish(hits)
     }
@@ -843,57 +843,6 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 // ---------------------------------------------------------------------------
 // The debt ledger
 // ---------------------------------------------------------------------------
-
-/// Blanks out `#[cfg(test)]` modules, preserving line numbering.
-///
-/// Test text never reaches a pull request. Counting a stamp that lives only in
-/// a fixture does two kinds of damage: it inflates the debt ledger, and it lets
-/// a real production violation hide beneath a ceiling that test data paid for.
-///
-/// Lines are replaced rather than removed so every reported line number still
-/// points at the right line of the original file.
-fn blank_cfg_test_modules(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut depth: i32 = 0;
-    let mut in_test = false;
-    let mut pending = false;
-
-    for line in source.lines() {
-        let trimmed = line.trim_start();
-
-        if !in_test && trimmed.starts_with("#[cfg(test)]") {
-            pending = true;
-            out.push('\n');
-            continue;
-        }
-
-        if pending && trimmed.starts_with("mod ") {
-            in_test = true;
-            pending = false;
-            depth = line.matches('{').count() as i32 - line.matches('}').count() as i32;
-            out.push('\n');
-            continue;
-        }
-        // An attribute on something that is not a module: not a test module.
-        if pending && !trimmed.is_empty() {
-            pending = false;
-        }
-
-        if in_test {
-            depth += line.matches('{').count() as i32;
-            depth -= line.matches('}').count() as i32;
-            if depth <= 0 {
-                in_test = false;
-            }
-            out.push('\n');
-            continue;
-        }
-
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
 
 #[cfg(test)]
 mod tests {

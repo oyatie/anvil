@@ -59,6 +59,37 @@ impl IncidentSentryCircuitBreaker {
     }
 }
 
+impl IncidentSentryReport {
+    /// A live incident, as work.
+    ///
+    /// A verdict rather than a list: this report says whether the deployment
+    /// is healthy, so it raises at most one item and only when it is not.
+    /// Health raises nothing — a producer that raised on every observation
+    /// would record that the sentry ran rather than that anything is wrong.
+    pub fn work_items(&self, repo: &str) -> Vec<crate::intake::WorkItem> {
+        use crate::intake::{Remedy, Source, WorkItem, sources::repo_subject};
+        if self.is_healthy && !self.should_revert {
+            return Vec::new();
+        }
+        vec![WorkItem {
+            source: Source::Incident,
+            subject: repo_subject(repo),
+            what: if self.should_revert {
+                "the sentry calls for a revert".to_string()
+            } else {
+                "the deployment is not healthy".to_string()
+            },
+            consequence: self.summary.clone(),
+            class: None,
+            remedy: Remedy::NeedsJudgement {
+                why: "reverting a live deployment is a decision about blast \
+                      radius, not a mechanical edit"
+                    .to_string(),
+            },
+        }]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

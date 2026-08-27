@@ -253,3 +253,142 @@ fn a_clean_report_raises_no_work() {
          auditor ran rather than that anything is wrong"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The remaining producers. Each is asserted twice: that a finding becomes work,
+// and that a CLEAN report raises nothing. The second is the one producers get
+// wrong — raising per sweep rather than per finding fills the backlog with
+// evidence that the auditor ran.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn corpus_findings_become_work_and_measurements_do_not() {
+    use anvil::corpus_auditor::auditor::CorpusAuditReport;
+    let report = CorpusAuditReport {
+        total_files: 400,
+        freshness_ratio: 0.4,
+        dormant_files_count: 88,
+        stale_adrs_count: 12,
+        unauthorized_ssot_claims: vec!["docs/rival.md".into()],
+        frontmatter_violations: vec!["docs/a.md".into(), "docs/b.md".into()],
+        summary: String::new(),
+    };
+    let items = report.work_items("oyatie/anvil");
+    assert_eq!(
+        items.len(),
+        3,
+        "a measurement was raised as a defect: freshness ratio and dormant \
+         count are facts about the corpus that no change can close"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|i| matches!(i.remedy, Remedy::Mechanical { .. }))
+    );
+    assert!(
+        items
+            .iter()
+            .any(|i| matches!(i.remedy, Remedy::NeedsJudgement { .. }))
+    );
+
+    let clean = CorpusAuditReport {
+        unauthorized_ssot_claims: vec![],
+        frontmatter_violations: vec![],
+        ..report
+    };
+    assert!(clean.work_items("oyatie/anvil").is_empty());
+}
+
+#[test]
+fn an_unhealthy_deployment_raises_one_item_and_a_healthy_one_raises_none() {
+    use anvil::incident_sentry::IncidentSentryReport;
+    let bad = IncidentSentryReport {
+        is_healthy: false,
+        should_revert: true,
+        summary: "error rate past the threshold".into(),
+    };
+    let items = bad.work_items("oyatie/anvil");
+    assert_eq!(items.len(), 1, "a verdict must raise at most one item");
+    assert_eq!(items[0].source, Source::Incident);
+    assert!(items[0].consequence.contains("error rate"));
+
+    let good = IncidentSentryReport {
+        is_healthy: true,
+        should_revert: false,
+        summary: "nominal".into(),
+    };
+    assert!(
+        good.work_items("oyatie/anvil").is_empty(),
+        "a healthy observation was raised as work, so the backlog would grow \
+         on every poll"
+    );
+}
+
+#[test]
+fn a_contradicted_learned_rule_becomes_work_carrying_its_recurrence_count() {
+    use anvil::review_memory::ReviewMemoryReport;
+    use anvil::review_memory::memory_store::ReviewMemoryEntry;
+    let rule = ReviewMemoryEntry {
+        repo: "oyatie/anvil".into(),
+        pattern_key: "prose-read-as-code".into(),
+        architectural_rule: "scan code, not commentary".into(),
+        total_occurrences_prevented: 3,
+    };
+    let misaligned = ReviewMemoryReport {
+        is_aligned: false,
+        recalled_rules: vec![rule.clone()],
+        summary: String::new(),
+    };
+    let items = misaligned.work_items("oyatie/anvil");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].class.as_deref(), Some("prose-read-as-code"));
+    assert!(
+        items[0].consequence.contains('3'),
+        "the item drops the recurrence count, which is the argument for making \
+         the rule mechanical: {}",
+        items[0].consequence
+    );
+
+    // Recalled rules are MEMORY, not findings. An aligned change raises none.
+    let aligned = ReviewMemoryReport {
+        is_aligned: true,
+        recalled_rules: vec![rule],
+        summary: String::new(),
+    };
+    assert!(
+        aligned.work_items("oyatie/anvil").is_empty(),
+        "every recalled rule was raised as a finding, so remembering more \
+         would mean more work rather than less"
+    );
+}
+
+#[test]
+fn only_issues_whose_state_drifted_become_work() {
+    use anvil::issue_reconciler::issue_auditor::{IssueAuditFinding, IssueAuditStatus, work_items};
+    let f = |n: u64, status: IssueAuditStatus| IssueAuditFinding {
+        issue_number: n,
+        title: format!("issue {n}"),
+        status,
+        resolution_reason: "the commit closed it".into(),
+        resolution_receipt: None,
+    };
+    let findings = vec![
+        f(1, IssueAuditStatus::Active),
+        f(2, IssueAuditStatus::ResolvedByCommit),
+        f(3, IssueAuditStatus::ContradictedByADR),
+        f(4, IssueAuditStatus::StaleDuplicate),
+    ];
+    let items = work_items(&findings, "oyatie/anvil");
+    assert_eq!(
+        items.len(),
+        3,
+        "an open issue that is genuinely open was raised as a defect"
+    );
+    assert!(items.iter().all(|i| i.source == Source::Drift));
+    assert!(
+        !items
+            .iter()
+            .any(|i| i.subject.locus.as_deref() == Some("issue #1")),
+        "the Active issue reached the queue"
+    );
+}

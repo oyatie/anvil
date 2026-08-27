@@ -96,32 +96,55 @@ impl StackWhitelistGuard {
 
         // 3. Asymmetric Dependency Ratchet: Agents can remove/retire dependencies, but cannot add new ones without ADR
         if !is_human_author {
-            for file in &diff_ctx.changed_files {
-                if file.ends_with("Cargo.toml") {
-                    let mut in_deps_section = false;
-                    for line in diff_ctx.diff_content.lines() {
-                        if line.contains("[dependencies]")
-                            || line.contains("[workspace.dependencies]")
-                        {
-                            in_deps_section = true;
-                        } else if line.starts_with('[') {
-                            in_deps_section = false;
-                        }
-
-                        if in_deps_section && line.starts_with('+') && !line.starts_with("+++") {
-                            let dep_entry = line.trim_start_matches('+').trim();
-                            if !dep_entry.is_empty() && !dep_entry.starts_with('#') {
-                                violations.push(StackWhitelistViolation {
-                                    category: "UNAUTHORIZED_DEPENDENCY_EXPANSION".to_string(),
-                                    item: dep_entry.to_string(),
-                                    description: format!(
-                                        "Autonomous agent attempted to add new dependency '{}' to '{}'. Agents can remove/retire dependencies, but adding new packages requires human approval and an accepted ADR.",
-                                        dep_entry, file
-                                    ),
-                                });
-                            }
-                        }
+            // Per FILE, not per changed-file-path over the whole diff. The
+            // section flag is raised by a `[dependencies]` header and lowered
+            // by the next line starting `[`; nothing in a `diff --git` header
+            // starts with `[`, so scanning the whole diff left the flag raised
+            // across every following file. A change that added one dependency
+            // and also touched Rust source reported each added source line as
+            // an unauthorised dependency, attributed to the Cargo.toml.
+            //
+            // Scoping the walk to one file's hunks is what makes the flag mean
+            // what its name says.
+            for fd in crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content) {
+                if !fd.path.ends_with("Cargo.toml") {
+                    continue;
+                }
+                let mut in_deps_section = false;
+                // `after_change` rather than `added`: the `[dependencies]`
+                // header is usually CONTEXT, not an added line, so a rule
+                // reading only additions would never see the section it needs
+                // to be inside.
+                for line in fd.after_change().lines() {
+                    let t = line.trim();
+                    if t.starts_with("[dependencies]") || t.starts_with("[workspace.dependencies]")
+                    {
+                        in_deps_section = true;
+                        continue;
+                    } else if t.starts_with('[') {
+                        in_deps_section = false;
+                        continue;
                     }
+                    if !in_deps_section {
+                        continue;
+                    }
+                    // Only lines this change ADDS are expansions. A dependency
+                    // already present is context.
+                    if !fd.added().lines().any(|a| a == line) {
+                        continue;
+                    }
+                    let dep_entry = t;
+                    if dep_entry.is_empty() || dep_entry.starts_with('#') {
+                        continue;
+                    }
+                    violations.push(StackWhitelistViolation {
+                        category: "UNAUTHORIZED_DEPENDENCY_EXPANSION".to_string(),
+                        item: dep_entry.to_string(),
+                        description: format!(
+                            "Autonomous agent attempted to add new dependency '{}' to '{}'. Agents can remove/retire dependencies, but adding new packages requires human approval and an accepted ADR.",
+                            dep_entry, fd.path
+                        ),
+                    });
                 }
             }
         }

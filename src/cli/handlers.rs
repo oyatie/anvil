@@ -57,6 +57,23 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     print!("{}", crate::shape::facade::measure::render(&report));
                 }
             }
+            crate::cli::args::ShapeAction::Admit {
+                repo_dir,
+                rev,
+                repo,
+            } => {
+                let label = repo.unwrap_or_else(|| {
+                    repo_dir
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| repo_dir.display().to_string())
+                });
+                let report = crate::shape::facade::admit::admit(
+                    &crate::shape::facade::admit::AdmitRequest { repo_dir, rev },
+                )
+                .await?;
+                println!("{}", crate::shape::facade::admit::render(&report, &label));
+            }
             crate::cli::args::ShapeAction::Baseline {
                 repo_dir,
                 rev,
@@ -284,7 +301,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 target_path
             );
         }
-        Commands::Probe { diff } => {
+        Commands::Probe { diff, message } => {
             let diff_content = if let Some(d) = diff {
                 d
             } else {
@@ -314,11 +331,28 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 }
             };
 
-            let validator = crate::local_inner_loop::FastValidator::new();
-            let findings = validator.validate_pre_commit("chore: probe check", &diff_content);
+            // The harness supersedes both hand-wired checks rather than joining
+            // them. `secret_on_added_line` delegates to the same
+            // `judgement::scan_for_secrets` the old path reached through a thin
+            // `PreMergeScanner` wrapper, and adds what that path could not: it
+            // names the file the credential is on, and it proves itself against
+            // a seeded fixture before its verdict is trusted.
+            // `conventional_commit_subject` likewise carries the full
+            // Conventional Commits 1.0.0 header rule. Running both would report
+            // every secret twice, once without a filename.
+            let findings =
+                crate::local_inner_loop::harness_findings(&diff_content, message.as_deref());
             let is_valid = findings.iter().all(|f| f.is_valid);
             if is_valid {
-                println!("✅ PASSED (Sub-100ms Inner-Loop Local Probe Verified: 0 findings)");
+                let header = match &message {
+                    Some(_) => "commit header graded",
+                    None => "commit header NOT MEASURED (no --message; a pre-commit hook has none)",
+                };
+                println!(
+                    "✅ PASSED (Sub-100ms Inner-Loop Local Probe: {} finding(s) over {} check(s); {header})",
+                    0,
+                    findings.len()
+                );
             } else {
                 println!(
                     "❌ FAILED ({} Inner-Loop Local Probe Violations Detected):",

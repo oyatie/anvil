@@ -10,8 +10,19 @@ pub use telemetry_sentry::{LiveGoldenSignals, TelemetrySentry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncidentSentryReport {
+    /// True only when signals were actually read AND were within budget.
+    ///
+    /// Never true for an unmeasured run. "No data" and "healthy" are different
+    /// answers, and a circuit breaker that returns the second for the first
+    /// cannot trip.
     pub is_healthy: bool,
     pub should_revert: bool,
+    /// Whether live signals were obtained at all.
+    ///
+    /// The field exists because `is_healthy: false` is ambiguous on its own --
+    /// it is both "measured and breaching" and "never measured", and only one
+    /// of those is an incident.
+    pub measured: bool,
     pub summary: String,
 }
 
@@ -42,21 +53,56 @@ impl IncidentSentryCircuitBreaker {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let baseline = LiveGoldenSignals {
-            p99_latency_ms: 64.0,
-            error_rate_pct: 0.002,
-            panic_count_last_5m: 0,
-            deployed_commit_sha: diff_ctx.head_sha.clone(),
+        // Signals must come from somewhere. This fabricated all four --
+        // p99_latency_ms: 64.0, error_rate_pct: 0.002, panic_count_last_5m: 0
+        // -- and fed them to a threshold function whose limits are 500ms, 0.5%
+        // and 0 panics. Every literal sat comfortably inside every budget, so
+        // the "100% deterministic evaluation of live production incident
+        // health" was a constant answering a constant: the breaker reported
+        // healthy on every pull request and could not trip on any of them.
+        //
+        // Anvil has no telemetry endpoint. That is an absence, not a clean bill
+        // of health, and this repository already has the vocabulary for the
+        // difference. `Absence::NotProvisioned` does not withhold a merge --
+        // no author can provision an observability stack in the pull request
+        // that trips over its absence -- but it must never be spelled as a
+        // pass.
+        let signals: Option<LiveGoldenSignals> = live_golden_signals(&diff_ctx.head_sha);
+
+        let Some(signals) = signals else {
+            return Ok(IncidentSentryReport {
+                is_healthy: false,
+                should_revert: false,
+                measured: false,
+                summary: format!(
+                    "NOT MEASURED (no telemetry endpoint is configured, so no \
+                     golden signal for {} was read; absence of data is not \
+                     evidence of health)",
+                    diff_ctx.head_sha
+                ),
+            });
         };
 
-        let decision = self.sentry.evaluate_production_health(&baseline);
+        let decision = self.sentry.evaluate_production_health(&signals);
 
         Ok(IncidentSentryReport {
             is_healthy: decision.is_healthy,
             should_revert: decision.should_emergency_revert,
+            measured: true,
             summary: decision.notice,
         })
     }
+}
+
+/// The live golden signals for a deployed commit, if they can be read.
+///
+/// `None` today, and honestly so: no telemetry endpoint is configured for any
+/// managed repository, so there is nothing to read. This function is the single
+/// place that changes when one exists, and its signature is what stops a
+/// literal being written at a call site again -- the caller can no longer
+/// invent a `LiveGoldenSignals`, it can only ask for one and be told no.
+fn live_golden_signals(_deployed_sha: &str) -> Option<LiveGoldenSignals> {
+    None
 }
 
 impl IncidentSentryReport {
@@ -68,6 +114,18 @@ impl IncidentSentryReport {
     /// would record that the sentry ran rather than that anything is wrong.
     pub fn work_items(&self, repo: &str) -> Vec<crate::intake::WorkItem> {
         use crate::intake::{Remedy, Source, WorkItem, sources::repo_subject};
+        // An unmeasured run raises nothing. `is_healthy` is false both when the
+        // deployment is breaching and when no signal was ever read, and only
+        // the first is an incident -- keying on it alone would put a standing
+        // "the deployment is not healthy" item on the queue for every repo on
+        // every sweep, forever, describing a measurement that never happened.
+        //
+        // The absence itself is real work, but it is a different item with a
+        // different remedy (provision telemetry), and it belongs to whoever
+        // owns the deployment rather than to this sweep.
+        if !self.measured {
+            return Vec::new();
+        }
         if self.is_healthy && !self.should_revert {
             return Vec::new();
         }
@@ -95,7 +153,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_incident_sentry_nominal() {
+    fn test_incident_sentry_reports_absence_rather_than_health() {
         let breaker = IncidentSentryCircuitBreaker::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
@@ -113,7 +171,15 @@ mod tests {
         let rep = breaker
             .evaluate_incident_sentry(Path::new("."), &diff_ctx)
             .unwrap();
-        assert!(rep.is_healthy);
-        assert!(!rep.should_revert);
+        // This asserted `rep.is_healthy`, which was true because the function
+        // built its own signals from four literals that sat inside every
+        // threshold. The test certified the constant rather than the system:
+        // it would have held with production on fire.
+        assert!(!rep.measured, "no telemetry endpoint exists to read");
+        assert!(!rep.is_healthy, "an unread signal is not a healthy one");
+        assert!(
+            !rep.should_revert,
+            "and absent data must never trigger the revert either"
+        );
     }
 }

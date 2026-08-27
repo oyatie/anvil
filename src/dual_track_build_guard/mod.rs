@@ -1,3 +1,27 @@
+//! Whether a repository's Cargo and Buck2 build graphs are kept in step.
+//!
+//! # The defect this module carried
+//!
+//! `is_synchronized` began as `true` and was only ever lowered by a drift
+//! check that ran when a Buck2 track was already present. On a repository with
+//! no `BUCK` and no `reindeer.toml` the check was skipped entirely and the
+//! guard returned a pass -- printing `PASSED` in the same sentence as
+//! `Buck2 hermetic RBE track ready = false`.
+//!
+//! That is a green for the exact absence the guard exists to detect, and it
+//! was green on anvil itself, the repository with no Buck2 track at all. Its
+//! only test provisioned a `BUCK` file first, so the vacuous arm was never
+//! executed.
+//!
+//! # The distinction the type now forces
+//!
+//! A pass and an absence are different answers and this repository already has
+//! the vocabulary for it: `Absence::NotProvisioned` names a capability the
+//! deployment lacks, and does not withhold a merge. `DualTrackVerdict` makes
+//! the three answers unconfusable at the type level, so a caller cannot read
+//! "nothing to compare" as "compared and agreed" -- which is what a bare
+//! `bool` let it do.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -5,8 +29,54 @@ use tracing::info;
 
 use crate::git_manager::PrDiffContext;
 
+/// What the guard actually established.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DualTrackVerdict {
+    /// Both tracks exist and this change moved them together.
+    Synchronized,
+    /// Both tracks exist and this change moved only one of them.
+    Drifted { violations: Vec<String> },
+    /// There is no second track to be out of step with. NOT a pass: nothing
+    /// was compared. Maps to `Absence::NotProvisioned`, which does not
+    /// withhold a merge -- no author can add a Buck2 track in the pull request
+    /// that trips over its absence.
+    NoBuck2Track,
+    /// No `Cargo.toml`. Nothing here applies.
+    NoCargoTrack,
+}
+
+impl DualTrackVerdict {
+    /// Whether this verdict is a measurement that succeeded.
+    ///
+    /// Only `Synchronized`. The two absence arms are deliberately excluded:
+    /// treating them as passes is the defect this type exists to remove.
+    pub fn is_pass(&self) -> bool {
+        matches!(self, DualTrackVerdict::Synchronized)
+    }
+
+    /// Whether the guard measured anything at all.
+    pub fn measured(&self) -> bool {
+        matches!(
+            self,
+            DualTrackVerdict::Synchronized | DualTrackVerdict::Drifted { .. }
+        )
+    }
+
+    /// The capability whose absence stopped the measurement, if any.
+    pub fn missing_capability(&self) -> Option<&'static str> {
+        match self {
+            DualTrackVerdict::NoBuck2Track => Some("buck2 build graph (BUCK / reindeer.toml)"),
+            DualTrackVerdict::NoCargoTrack => Some("cargo workspace (Cargo.toml)"),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DualTrackBuildReport {
+    /// The answer. `is_synchronized` below is derived from it and kept only so
+    /// existing readers keep compiling; new readers should match on this.
+    pub verdict: DualTrackVerdict,
     pub is_synchronized: bool,
     pub cargo_track_ready: bool,
     pub buck2_track_ready: bool,
@@ -43,18 +113,15 @@ impl DualTrackBuildGuard {
             || repo_dir.join("BUCK2.meta").exists()
             || repo_dir.join("reindeer.toml").exists();
 
-        let touches_build_graph = diff_ctx.changed_files.iter().any(|f| {
-            f.ends_with("Cargo.toml")
-                || f.ends_with("Cargo.lock")
-                || f.ends_with("BUCK")
-                || f.ends_with("reindeer.toml")
-        });
-
-        let mut reindeer_synced = true;
-        let mut violations = Vec::new();
-
-        if touches_build_graph && has_cargo && has_buck {
-            // Check if Cargo.toml was changed without reindeer / BUCK update
+        // Absence is settled BEFORE any drift check, and returns. Previously
+        // the drift check was simply skipped when a track was missing, leaving
+        // an `is_synchronized` that had been initialised to `true` and never
+        // touched -- a pass nobody ever decided to give.
+        let verdict = if !has_cargo {
+            DualTrackVerdict::NoCargoTrack
+        } else if !has_buck {
+            DualTrackVerdict::NoBuck2Track
+        } else {
             let cargo_changed = diff_ctx
                 .changed_files
                 .iter()
@@ -62,32 +129,47 @@ impl DualTrackBuildGuard {
             let buck_changed = diff_ctx.changed_files.iter().any(|f| {
                 f.ends_with("BUCK") || f.ends_with("reindeer.toml") || f.ends_with("Cargo.lock")
             });
-
             if cargo_changed && !buck_changed {
-                reindeer_synced = false;
-                violations.push("Cargo.toml modified without updating BUCK / reindeer.toml dual-track target definitions.".to_string());
+                DualTrackVerdict::Drifted {
+                    violations: vec![
+                        "Cargo.toml modified without updating BUCK / reindeer.toml \
+                         dual-track target definitions."
+                            .to_string(),
+                    ],
+                }
+            } else {
+                DualTrackVerdict::Synchronized
             }
-        }
+        };
 
-        let is_synchronized = violations.is_empty();
-        let summary = if is_synchronized {
-            format!(
-                "✅ PASSED (Dual-track build graph synchronized: Cargo fast path ready, Buck2 hermetic RBE track ready = {})",
-                has_buck
-            )
-        } else {
-            format!(
-                "❌ FAILED (Dual-track drift detected: {})",
-                violations.join("; ")
-            )
+        let summary = match &verdict {
+            DualTrackVerdict::Synchronized => {
+                "PASSED (dual-track build graph synchronized: cargo and buck2 moved together)"
+                    .to_string()
+            }
+            DualTrackVerdict::Drifted { violations } => {
+                format!(
+                    "FAILED (dual-track drift detected: {})",
+                    violations.join("; ")
+                )
+            }
+            // Deliberately not the word PASSED. The previous summary carried it
+            // alongside `ready = false`, and a reader skimming verdict lines
+            // had no way to tell this apart from a real measurement.
+            DualTrackVerdict::NoBuck2Track | DualTrackVerdict::NoCargoTrack => format!(
+                "NOT MEASURED (no {} in this repository, so there is no second \
+                 track to be out of step with)",
+                verdict.missing_capability().unwrap_or("build track")
+            ),
         };
 
         Ok(DualTrackBuildReport {
-            is_synchronized,
+            is_synchronized: verdict.is_pass(),
             cargo_track_ready: has_cargo,
             buck2_track_ready: has_buck,
-            reindeer_synced,
+            reindeer_synced: !matches!(verdict, DualTrackVerdict::Drifted { .. }),
             summary,
+            verdict,
         })
     }
 }

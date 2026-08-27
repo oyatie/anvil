@@ -31,6 +31,7 @@
 //! nothing recorded what it had already done.
 
 pub mod sources;
+pub mod triage;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

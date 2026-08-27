@@ -18,10 +18,18 @@ done
 if ! git diff --cached --name-only --diff-filter=ACMR -- '*.rs' | grep -q .; then
   exit 0
 fi
+# rustfmt is a standalone binary: invoked on a file list it never reads
+# Cargo.toml, so it parses as Rust 2015 unless told otherwise. This repo is
+# edition 2024, so every file holding `async fn` or a let-chain FAILED TO
+# PARSE -- the check reported errors rather than formatting, on every modern
+# file, and had done since the edition moved. Derived from the manifest rather
+# than hardcoded so it cannot drift from it again.
+edition=$(sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([0-9]*\)".*/\1/p' Cargo.toml | head -1)
+[ -n "$edition" ] || edition=2015
 if [ -f rustfmt.toml ]; then
   git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' \
-    | xargs -0 rustfmt --check --config-path rustfmt.toml --
+    | xargs -0 rustfmt --edition "$edition" --check --config-path rustfmt.toml --
 else
   git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' \
-    | xargs -0 rustfmt --check --
+    | xargs -0 rustfmt --edition "$edition" --check --
 fi

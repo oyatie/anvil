@@ -135,7 +135,17 @@ pub const STAGES: &[Stage] = &[
 /// have callers. Using `code_only` and `without_test_modules` — the strippers
 /// the rest of this codebase already relies on — is what made the answer
 /// correct, and is the argument against every scanner growing its own.
-pub const STAGES_WITHOUT_A_CALLER: usize = 6;
+///
+/// Six became four when nine branches integrated: `webhook::next_phase` gained
+/// `webhook/pipelines/review.rs:338` and `postmortem` gained
+/// `publish/scorecard.rs:317`. Recorded here rather than on either branch
+/// because neither could see the fall alone — the count is a property of the
+/// merged tree, and this merge is the change that moved it. The fall was
+/// proven before it was recorded: both call sites were read, and the scanner
+/// was confirmed to have correctly ignored the one mention of `postmortem::`
+/// that lives in a doc comment. A count that falls without that check is how
+/// a blind spot gets laundered into progress.
+pub const STAGES_WITHOUT_A_CALLER: usize = 4;
 
 /// Stages nothing outside their own files invokes.
 ///

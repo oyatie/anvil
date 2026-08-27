@@ -55,12 +55,7 @@ fn two_disjoint_cycles_are_two_findings() {
 /// A cycle hanging off an acyclic spine must not drag the spine in with it.
 #[test]
 fn only_the_cycle_is_reported_not_its_neighbours() {
-    let found = cycles(&g(&[
-        ("root", "a"),
-        ("a", "b"),
-        ("b", "a"),
-        ("b", "leaf"),
-    ]));
+    let found = cycles(&g(&[("root", "a"), ("a", "b"), ("b", "a"), ("b", "leaf")]));
     assert_eq!(found, vec![vec!["a", "b"]], "root and leaf are acyclic");
 }
 
@@ -82,7 +77,9 @@ fn a_seventy_member_cycle_is_found_without_overflowing() {
 /// The rule must not fire on a graph that merely has many edges.
 #[test]
 fn a_wide_acyclic_graph_is_spared() {
-    let hub: Vec<(String, String)> = (0..200).map(|i| (format!("u{i}"), "hub".to_string())).collect();
+    let hub: Vec<(String, String)> = (0..200)
+        .map(|i| (format!("u{i}"), "hub".to_string()))
+        .collect();
     let pairs: Vec<(&str, &str)> = hub.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
     assert!(
         cycles(&g(&pairs)).is_empty(),

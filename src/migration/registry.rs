@@ -783,6 +783,14 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   because every governance scan in either repository needs it.",
     },
     MigrationEntry {
+        component: "plan",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie plans structural moves, not work",
+        counterpart_loc: 0,
+        evidence: "PURE. What a work item proposes, declared before it is done, so that it can be                   REFUSED before anyone writes a line. Every refusal is free at this point and                   expensive later: two lanes given overlapping write-sets become an N-squared                   consolidation, and a sequence with no valid order becomes a stack of pull                   requests that lands in no order at all. Waves group plans whose dependencies                   have landed AND whose write sets are pairwise disjoint -- both conditions are                   necessary, since dependencies alone give an order that still conflicts and                   disjointness alone gives lanes that cannot build. Holding a plan back is not                   refusing it: a sequenced plan still lands, a refused one needs a person, and                   conflicts are reported separately from sequencing so a write set can be                   changed while that is still cheap. `adds_edges` is carried and not yet                   checked: whether an added edge closes a cycle belongs with the graph, and                   depending on that module would stack this change on an unmerged branch -- the                   diamond this module exists to help avoid. Migrates because every repository                   that dispatches parallel work needs the write-set question answered before                   dispatch rather than at merge.",
+    },
+    MigrationEntry {
         component: "intake",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,

@@ -305,6 +305,7 @@ fn an_unhealthy_deployment_raises_one_item_and_a_healthy_one_raises_none() {
     let bad = IncidentSentryReport {
         is_healthy: false,
         should_revert: true,
+        measured: true,
         summary: "error rate past the threshold".into(),
     };
     let items = bad.work_items("oyatie/anvil");
@@ -315,6 +316,7 @@ fn an_unhealthy_deployment_raises_one_item_and_a_healthy_one_raises_none() {
     let good = IncidentSentryReport {
         is_healthy: true,
         should_revert: false,
+        measured: true,
         summary: "nominal".into(),
     };
     assert!(

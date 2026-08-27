@@ -108,6 +108,19 @@ pub enum Commands {
             help = "Optional diff content to validate (default: git diff staged)"
         )]
         diff: Option<String>,
+        /// The commit message to grade, as a `commit-msg` hook receives it.
+        ///
+        /// Optional because a `pre-commit` hook runs BEFORE a message exists.
+        /// When it is absent the header check is reported as not measured
+        /// rather than passed: the probe previously supplied its own literal
+        /// here and graded that, so the green described a string in Anvil's
+        /// source instead of the commit in front of the developer.
+        #[arg(
+            short,
+            long,
+            help = "Commit message to grade (commit-msg hook passes $1); omitted at pre-commit time"
+        )]
+        message: Option<String>,
     },
     /// Run Proactive Dependency Upgrade Train on a repository
     TrainRun {
@@ -258,6 +271,19 @@ pub enum ShapeAction {
 
         #[arg(long, help = "Print the full report as JSON")]
         json: bool,
+    },
+    /// Project ADR-0719 D-8 admission over a repository: which directories
+    /// nothing loads. Read-only -- reads a revision by git plumbing, so a
+    /// dirty working tree cannot affect the answer and nothing is written.
+    Admit {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value = "HEAD", help = "Commit to project from")]
+        rev: String,
+
+        #[arg(long, help = "Report label; defaults to the directory name")]
+        repo: Option<String>,
     },
     /// Seed a ratchet baseline from a named commit (full sha; never the
     /// working directory). Prints the baseline JSON or writes it to --out.

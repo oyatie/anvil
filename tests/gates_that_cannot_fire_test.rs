@@ -730,7 +730,14 @@ fn local_probe_is_unmeasured_when_every_subject_is_ignored() {
 #[test]
 fn local_probe_source_assigns_no_literal_latency_or_commit_message() {
     let mut offenders = Vec::new();
-    for (rel, src) in module_sources("src/local_inner_loop") {
+    // The WHOLE tree, not `src/local_inner_loop`. This guard was correct and
+    // scoped to where the defect had been found rather than where it can occur,
+    // so it watched the module while the surviving instance sat in
+    // `src/cli/handlers.rs`: the `probe` subcommand passed the literal
+    // "chore: probe check" to `validate_pre_commit` and graded it. A caller
+    // outside the module is exactly the caller the module cannot police, which
+    // makes the narrow scope the one scope guaranteed to miss.
+    for (rel, src) in module_sources("src") {
         for (n, line) in src.lines().enumerate() {
             let squashed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
             let literal_latency = squashed

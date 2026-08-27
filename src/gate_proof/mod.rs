@@ -176,3 +176,46 @@ pub const GATE_PROOFS: &[GateProof] = &[
 /// seeded with a defect either. The obligation applies to the gates that CAN
 /// fire, and this counts those still owing it.
 pub const GATES_WITHOUT_PROOF: usize = 23;
+
+/// Whether this gate has demonstrated both halves.
+pub fn is_proven(gate_id: &str) -> bool {
+    GATE_PROOFS.iter().any(|p| p.gate_id == gate_id)
+}
+
+/// Of the gates that passed on this change, those never shown to fire.
+///
+/// This is the question a green report cannot answer about itself. A gate that
+/// passed and has never been seeded with its own defect contributed a tick, not
+/// evidence -- and four checks written in one session were green for exactly
+/// the defect they existed to catch. Naming them at the point where someone is
+/// reading the verdict is the difference between a ledger and a habit.
+///
+/// Order follows the report, so the same change twice reads the same way.
+pub fn unproven_among<'a>(passed: &[&'a str]) -> Vec<&'a str> {
+    passed.iter().copied().filter(|id| !is_proven(id)).collect()
+}
+
+/// One line qualifying what a set of passing gates is worth.
+///
+/// `None` when every passing gate is proven -- silence is the correct output
+/// for a report with nothing to qualify, and a line that always prints stops
+/// being read.
+pub fn proof_qualifier(passed: &[&str]) -> Option<String> {
+    let unproven = unproven_among(passed);
+    if unproven.is_empty() {
+        return None;
+    }
+    // Escaped continuations. A wrapped literal without `\` carries its own
+    // indentation into the text a person reads -- twice fixed in this
+    // repository already, once in `formal_verification` and once in
+    // `prevention_debt_line`, which is why it is called out here.
+    Some(format!(
+        "Proof: {} of {} passing gate(s) have never been seeded with the \
+         defect they exist to catch, so their pass is a tick rather than \
+         evidence: {}. Repository-wide, {} gate(s) still owe a proof.",
+        unproven.len(),
+        passed.len(),
+        unproven.join(", "),
+        GATES_WITHOUT_PROOF
+    ))
+}

@@ -129,7 +129,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               have measured and did not. \
               What remains: the \
               scorecard renderer collapses an admissible report to a single verdict line and \
-              enumerates no finding at all (publish/scorecard.rs:133-137), so on a pull request \
+              enumerates no finding at all (publish/scorecard.rs::render), so on a pull request \
               carrying no other finding the warning row is still not printed and the row \
               \"End-to-end span instrumentation across async tasks\" \
               (pre_merge_guard/matrix.rs:102-104) is counted in the total without a word. Making a \

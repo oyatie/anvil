@@ -145,7 +145,13 @@ pub const STAGES: &[Stage] = &[
 /// was confirmed to have correctly ignored the one mention of `postmortem::`
 /// that lives in a doc comment. A count that falls without that check is how
 /// a blind spot gets laundered into progress.
-pub const STAGES_WITHOUT_A_CALLER: usize = 4;
+/// Four became three when `gate_proof` gained `publish/scorecard.rs`. It knew
+/// which gates had been seeded with their own defect and which had only ever
+/// been green, and no pull request was ever told; the qualifier on the blocked
+/// scorecard is the caller. The three that remain -- `cloud_native_guard`,
+/// `stack_whitelist_guard`, `dual_track_build_guard` -- publish no verdict on
+/// any pull request, which is the same defect in the same shape.
+pub const STAGES_WITHOUT_A_CALLER: usize = 3;
 
 /// Stages nothing outside their own files invokes.
 ///

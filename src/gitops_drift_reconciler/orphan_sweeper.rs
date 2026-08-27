@@ -43,12 +43,28 @@ impl OrphanSweeper {
     ) -> Vec<OrphanManifestFinding> {
         let mut findings = Vec::new();
 
+        // Everything derived from the whole diff is settled BEFORE the loop, so
+        // the loop body reads only per-file facts. This asked whether the WHOLE
+        // diff contained "deleted file" and attributed the answer to whichever
+        // manifest it was on, so deleting an unrelated shell script reported
+        // every ApplicationSet in the change as deleted -- sending the author to
+        // add a finalizer to a file nothing was removing.
+        //
+        // `diffs_by_path` keys on the `+++ b/` header, which a deletion spells
+        // `/dev/null`; a deleted file therefore has no entry, and a present
+        // entry means the file was edited rather than removed.
+        let surviving: std::collections::BTreeSet<String> =
+            crate::git_manager::diff_context::diffs_by_path(diff_content)
+                .into_iter()
+                .map(|fd| fd.path)
+                .collect();
+        let any_deletion = diff_content.contains("deleted file");
+        let finalizer_present = diff_content.contains("resources-finalizer");
+
         for file in changed_files {
             if Self::is_gitops_manifest(file) {
-                // If ApplicationSet is modified/deleted without specifying finalizers or cascade protection
-                if diff_content.contains("deleted file")
-                    && !diff_content.contains("resources-finalizer")
-                {
+                let this_file_deleted = any_deletion && !surviving.contains(file);
+                if this_file_deleted && !finalizer_present {
                     findings.push(OrphanManifestFinding {
                         file_path: file.clone(),
                         manifest_kind: "ApplicationSet".to_string(),

@@ -62,9 +62,13 @@ impl MonorepoGuard {
         violations.extend(harness_violations);
 
         // 2. Check for Unauthorized SSOT Authority Claims
-        for file in &diff_ctx.changed_files {
+        // The callee's parameter is named `file_content`; this passed the whole
+        // diff. One file claiming canonical authority therefore accused every
+        // non-canonical path in the change, each by name. The parameter name
+        // stated the contract correctly and only the call site broke it.
+        for fd in crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content) {
             if let Some(v) =
-                HarnessQuarantine::check_ssot_authority_location(file, &diff_ctx.diff_content)
+                HarnessQuarantine::check_ssot_authority_location(&fd.path, fd.after_change())
             {
                 violations.push(v);
             }

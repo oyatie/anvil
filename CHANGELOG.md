@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — clean-architecture boundary enforcement
+
+- **clean_architecture_guard**: reported `0 violations across 55 classified files` while `git_manager` held a
+  direct reference to `change_delivery::adapters::git_vcs`. Two blind spots: it classified a file by *its own*
+  path, so a file belonging to no layer — most of the tree — had no forbidden direction and could bind to any
+  other unit's interior; and an edge only counted when spelled `use`, so the offending expression was filtered
+  out before any rule saw it. Added the rule the four faces exist to create: a unit's `core`, `ports` and
+  `adapters` are its interior, and only its `facade` is importable from outside. **19** cross-unit bypasses
+  recorded as an exact ratchet, `FACADE_BYPASSES_IN_ANVIL`.
+- **clean_architecture_guard**: five further defects found by running the new rule against the spellings it
+  would meet, two of which *accused conformant code* — Cargo workspace layout (`crate::` is rooted at a
+  crate's `src/`, so taking the first path segment made every file a member of a unit called `crates`),
+  grouped `use` (produced a unit named `{b` and missed the rest of the group), nested `use`, one-path-per-line
+  (a legal reference placed first hid an illegal one after it), and a found violation reported as an absence.
+  A sixth — a `use` broken across lines by rustfmt — was found by Anvil's own review of the change.
+- **clean_architecture_guard**: `INTERIOR_FACES` dropped `domain`, `application` and `adapter`. `.anvil/shape.json`
+  declares exactly four faces; the spec's `layer_suffixes` table maps `domain -> core` for *crate names*, not
+  face directories, and `application` is not in the spec at all. A test now reads the face set out of the spec
+  so the constant cannot drift from it.
+- **source_scan**: added `is_cfg_test_module_file`. Twelve scanners strip test code by searching for the literal
+  `#[cfg(test)]` *inside* a file, which the standard `#[cfg(test)] mod tests;` sibling-file layout defeats — the
+  attribute is in the parent. Five unit tests were being read as production diff parsers.
+- **diff-parsing ratchet**: `FN_INTRODUCERS` was an enumerated list of eighteen literal prefixes and did not
+  contain `pub(super) fn `, so moving a function out of an impl block made a real diff parser invisible and the
+  count fell from 19 to 18. A fall that is really a blind spot is worse than a rise: it is recorded as progress.
+  Replaced by a closed grammar — optional visibility, then qualifiers in any order, then `fn`.
+
+### Changed
+
+- **clean_architecture_guard**: split from one 928-line file into `report`/`paths`/`scan`/`analyze`/
+  `source_tree`/`tests` modules within the same crate, under the 300-line hand-written file budget. Behaviour
+  is unchanged; the suite is the check.
+
 ### Fixed — merge-decision integrity
 
 - **reviewer**: an unparseable AI response reported verdict `COMMENT`, which the evaluator accepts, so a

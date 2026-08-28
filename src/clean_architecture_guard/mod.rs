@@ -71,7 +71,7 @@ pub use report::{ArchLayer, ArchMeasurement, ArchViolation, CleanArchitectureRep
 /// reaching into the library's interior is the same bypass as any other. A
 /// ratchet that climbs because the check got sharper is not a regression, and
 /// the distinction is only legible if it is written down.
-pub const FACADE_BYPASSES_IN_ANVIL: usize = 4;
+pub const FACADE_BYPASSES_IN_ANVIL: usize = 0;
 
 /// Anvil's own source tree, as it stood at build time.
 pub const ANVIL_SOURCE_TREE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src");

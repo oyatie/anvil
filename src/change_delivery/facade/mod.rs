@@ -5,6 +5,13 @@
 /// unit failed to open.
 pub use crate::change_delivery::core::LandingPolicy;
 
+/// Where a lane records that it holds a worktree.
+///
+/// `git_manager` cleans up abandoned lanes and must know the marker's name; a
+/// consumer forced into `adapters` for a constant is charged for a door the
+/// unit did not open.
+pub use crate::change_delivery::adapters::git_vcs::LANE_LEASE_FILE;
+
 pub mod deliver;
 pub mod occupancy;
 pub mod plan;

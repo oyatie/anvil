@@ -6,7 +6,7 @@ use crate::change_delivery::ports::{
     LandingPolicy, MOVE_PLAN_SCHEMA_V1, Move, MoveKind, OwnerMap, ShapeMovePlan, Shard,
     conflict_pairs, select_independent, shard_plan,
 };
-use crate::shape::ports::{Fix, ShapeReport};
+use crate::shape::facade::{Fix, ShapeReport};
 
 /// Rank: stable units first; satellite alias moves (mechanical, no code)
 /// before other file moves; crate renames last.

@@ -600,7 +600,7 @@ impl GitManager {
 /// True when `dir` holds a lane lease naming a future expiry (epoch seconds).
 /// An unreadable or malformed lease does not protect the directory.
 async fn lane_lease_unexpired(dir: &std::path::Path) -> bool {
-    let lease = dir.join(crate::change_delivery::adapters::git_vcs::LANE_LEASE_FILE);
+    let lease = dir.join(crate::change_delivery::facade::LANE_LEASE_FILE);
     let Ok(raw) = tokio::fs::read_to_string(&lease).await else {
         return false;
     };

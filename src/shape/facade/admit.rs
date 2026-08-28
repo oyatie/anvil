@@ -10,6 +10,10 @@ use crate::shape::core::load_bearing::{LoadIndex, Standing};
 use crate::shape::core::tree::{SourceError, TreeSource};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The directories Cargo gives a crate, relative to its manifest. Below these
+/// the compiler and D-30/D-35 decide; D-8 does not.
+const CRATE_SOURCE_DIRS: [&str; 4] = ["src/", "tests/", "benches/", "examples/"];
+
 /// The four faces D-8 closes a capability to.
 pub const FACES: [&str; 4] = ["core", "ports", "adapters", "facade"];
 
@@ -63,12 +67,22 @@ fn candidate_dirs(tree: &dyn TreeSource) -> Vec<String> {
     // had found nothing.
     let markers = [crate::shape::core::profile::LanguageProfile::RustCargo.unit_marker()];
     // Directories that ARE a crate root.
+    // A manifest at the repository root has no `/` to split on. Deriving the
+    // crate root by splitting alone dropped it, so a single-crate repository
+    // registered no boundary, excluded nothing, and judged the crate's own
+    // module directories as if each were a capability -- 66 of them on anvil,
+    // every one `Orphan`, because a Rust module is loaded by `mod name;` and
+    // never by a path literal. oyatie never showed it: its manifests are all
+    // nested, so the split always succeeded.
     let crate_roots: BTreeSet<String> = tree
         .paths()
         .iter()
         .filter_map(|p| {
-            let (dir, base) = p.rsplit_once('/')?;
-            markers.contains(&base).then(|| format!("{dir}/"))
+            let (dir, base) = match p.rsplit_once('/') {
+                Some((dir, base)) => (format!("{dir}/"), base),
+                None => (String::new(), p.as_str()),
+            };
+            markers.contains(&base).then_some(dir)
         })
         .collect();
 
@@ -86,9 +100,20 @@ fn candidate_dirs(tree: &dyn TreeSource) -> Vec<String> {
             // Excluded if any STRICT ancestor is a crate root. The directory
             // itself being a crate root is fine -- that is the crate D-8
             // placed, and it is admitted by containment anyway.
-            !crate_roots
-                .iter()
-                .any(|r| r != d && d.starts_with(r.as_str()))
+            //
+            // The repository root is the one crate root that cannot be read
+            // this way. Everything is strictly below it, so the ancestor test
+            // would exclude the whole tree -- including the top-level
+            // directories whose closed set is precisely what D-8 decides. What
+            // a root-level crate governs is its source tree, so that is what
+            // it withholds.
+            !crate_roots.iter().any(|r| {
+                if r.is_empty() {
+                    CRATE_SOURCE_DIRS.iter().any(|src| d.starts_with(src))
+                } else {
+                    r != d && d.starts_with(r.as_str())
+                }
+            })
         })
         .collect()
 }

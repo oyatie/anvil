@@ -124,29 +124,7 @@ pub async fn run_server(state: AppState) -> Result<()> {
         }
     });
 
-    // Shape Program fleet sweep: measure every watched repository's trunk on a
-    // cadence, record the trend, and write the ranked move plan for delivery.
-    // Report-only (I25): blocks nobody, mutates nothing in any repository.
-    {
-        let deps = crate::shape::facade::sweep::SweepDeps {
-            git_mgr: state.git_mgr.clone(),
-            telemetry: state.telemetry_store.clone(),
-            data_dir: state.config.data_dir.clone(),
-        };
-        let repos = state.config.watched_repos.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-            loop {
-                interval.tick().await;
-                for repo in &repos {
-                    match crate::shape::facade::sweep::sweep_repo(&deps, repo).await {
-                        Ok(summary) => info!("[Shape Sweep] {summary}"),
-                        Err(e) => tracing::warn!("[Shape Sweep] {repo} noticed: {e}"),
-                    }
-                }
-            }
-        });
-    }
+    crate::cli::sweep_task::spawn(&state);
 
     // Spawn background GC heartbeat for abandoned git worktrees (crash recovery & leak prevention)
     let git_mgr_gc = state.git_mgr.clone();

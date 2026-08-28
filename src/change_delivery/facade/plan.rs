@@ -176,3 +176,23 @@ pub async fn manifests_from_tree(repo_dir: &std::path::Path, rev: &str) -> Vec<S
         Err(_) => Vec::new(),
     }
 }
+
+/// Write the ranked move plan for a measured repository, and say where.
+///
+/// Delivery's half of the fleet sweep. It lives here because turning a shape
+/// report into moves is what this unit is for; performing it inside `shape`
+/// made measurement depend on delivery and closed a dependency cycle.
+pub async fn write_move_plan(
+    data_dir: &std::path::Path,
+    repo: &str,
+    report: &ShapeReport,
+) -> Result<std::path::PathBuf, String> {
+    let plan = plan_from_report(report, "adopted");
+    let dir = data_dir.join("shape");
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    let path = dir.join(format!("{}.moveplan.json", repo.replace('/', "-")));
+    tokio::fs::write(&path, format!("{}\n", plan.to_json()))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(path)
+}

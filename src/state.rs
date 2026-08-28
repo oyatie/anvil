@@ -185,6 +185,38 @@ impl StateManager {
         }
     }
 
+    /// Count one fixer run against this pull request, at this head.
+    ///
+    /// Recorded BEFORE the fixer runs, deliberately. A fixer that panics or
+    /// times out must still consume its attempt, or a crashing fixer is an
+    /// unbounded loop: the bound only holds if it counts tries rather than
+    /// successes.
+    pub async fn record_auto_fix_attempt(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        head_sha: &str,
+    ) -> Result<()> {
+        let key = Self::key(repo, pr_number);
+        let mut states = self.states.write().await;
+        let entry = states.entry(key.clone()).or_default();
+        entry.auto_fix_attempts = entry.auto_fix_attempts.saturating_add(1);
+        entry.last_auto_fixed_head_sha = Some(head_sha.to_string());
+
+        // Through the WAL, not just memory. A count that lives only in the
+        // process resets on restart, and a bound that resets is not a bound --
+        // the daemon would resume rewriting a pull request it had already
+        // given up on three times.
+        let wal_entry = WalEntry {
+            timestamp: chrono_iso_now(),
+            key: key.clone(),
+            state: entry.clone(),
+        };
+        self.append_wal(&wal_entry).await?;
+        self.atomic_checkpoint(&states).await?;
+        Ok(())
+    }
+
     pub async fn record_certification(
         &self,
         repo: &str,

@@ -3,6 +3,8 @@
 //! empty baseline (which would make every existing key a regression) nor as
 //! a pass.
 
+pub mod derived;
+
 use crate::ratchet::ports::{Baseline, FrozenReferenceSource, RefError, Signoff};
 
 /// The two documents a caller outside this unit needs to name.

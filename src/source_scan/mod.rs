@@ -190,7 +190,7 @@ pub fn without_commentary(src: &str) -> String {
 /// attribute is in the PARENT; the file itself carries no marker, so every
 /// such scanner reads unit tests as production code.
 ///
-/// This was found when splitting one 928-line guard: five test functions
+/// Splitting a large guard turns its test functions
 /// became, to the diff-parsing ratchet, five new hand-rolled diff parsers.
 /// Twelve scanners in this tree strip `#[cfg(test)]` the same way, so the
 /// answer belongs here once rather than in each of them.

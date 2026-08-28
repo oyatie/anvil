@@ -45,11 +45,8 @@ impl AdmitReport {
 
 /// Every directory D-8 governs: those OUTSIDE any crate.
 ///
-/// Not "the first two levels". That was the first cut and it hid 49 of the 63
-/// `IPs/` directories in the repository this was written for, because they sit
-/// at `comms/mail/IPs/` rather than `audit/IPs/` -- and a projection that
-/// silently sees a fifth of a problem is worse than none, since its number
-/// reads as the whole.
+/// Not the first two levels: a directory nothing loads sits at any depth, and
+/// a projection that silently covers a fifth of the tree reads as the whole.
 ///
 /// Not "every directory" either. Inside a crate, `src/` and its module
 /// directories are governed by the compiler and by D-30/D-35, and nothing

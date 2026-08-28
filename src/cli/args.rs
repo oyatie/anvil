@@ -112,9 +112,8 @@ pub enum Commands {
         ///
         /// Optional because a `pre-commit` hook runs BEFORE a message exists.
         /// When it is absent the header check is reported as not measured
-        /// rather than passed: the probe previously supplied its own literal
-        /// here and graded that, so the green described a string in Anvil's
-        /// source instead of the commit in front of the developer.
+        /// rather than passed: a literal supplied here would be graded, and
+        /// the green would describe Anvil's source rather than the commit.
         #[arg(
             short,
             long,

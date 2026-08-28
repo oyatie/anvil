@@ -88,10 +88,8 @@ enum Evidence {
 
 fn evidence_kind(path: &str) -> Evidence {
     let base = path.rsplit('/').next().unwrap_or(path);
-    // Marker names come from the profile, not from literals here. Anvil's
-    // own I13 guard refused the first draft of this module for spelling
-    // `Cargo.toml` and `BUCK` inline: the shape program must not carry a
-    // tenant's layout, and `LanguageProfile::unit_marker` already held both.
+    // Marker names come from the profile, not from literals here: the shape
+    // program must not carry a tenant's layout (I13).
     if build_markers().contains(&base) {
         Evidence::Build
     } else if path.ends_with(".rs") {

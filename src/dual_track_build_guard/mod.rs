@@ -113,10 +113,8 @@ impl DualTrackBuildGuard {
             || repo_dir.join("BUCK2.meta").exists()
             || repo_dir.join("reindeer.toml").exists();
 
-        // Absence is settled BEFORE any drift check, and returns. Previously
-        // the drift check was simply skipped when a track was missing, leaving
-        // an `is_synchronized` that had been initialised to `true` and never
-        // touched -- a pass nobody ever decided to give.
+        // Absence is settled BEFORE any drift check, and returns. Skipping the
+        // check on a missing track leaves a pass nobody decided to give.
         let verdict = if !has_cargo {
             DualTrackVerdict::NoCargoTrack
         } else if !has_buck {

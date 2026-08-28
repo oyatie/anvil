@@ -1,13 +1,53 @@
+//! What a change did to a file, not what the file already was.
+//!
+//! Both checks here read the file from disk and judged its total state, so a
+//! pull request that touched a large file inherited its size, and one that
+//! fixed a typo in a core file inherited every I/O import already there. Anvil
+//! has 57 files over the 300-line budget; charging every toucher made those
+//! files unmergeable, including by the decomposition the gate was asking for.
+//!
+//! A gate on a pre-existing condition is a ratchet, not a threshold: a file
+//! already over budget may not grow, and a line the change did not add is
+//! not the change's fault.
+
 use super::MonorepoViolation;
 use std::path::Path;
+
+/// What this change did to one file, as the diff reports it.
+pub struct FileChange<'a> {
+    /// Only the lines this change ADDS, without their `+`.
+    pub added: &'a str,
+    /// Lines added minus lines removed. Negative means the file shrank.
+    pub net_lines: i64,
+}
+
+impl FileChange<'_> {
+    fn grew(&self) -> bool {
+        self.net_lines > 0
+    }
+
+    fn adds(&self, line: &str) -> bool {
+        let needle = line.trim();
+        !needle.is_empty() && self.added.lines().any(|a| a.trim() == needle)
+    }
+}
 
 pub struct WholeFileExpansion;
 
 impl WholeFileExpansion {
     pub const MAX_WHOLE_FILE_LINES: usize = 300;
 
-    /// Evaluates the entire file content on disk for all touched files in a PR
-    pub fn evaluate_whole_file(repo_dir: &Path, file_path: &str) -> Vec<MonorepoViolation> {
+    /// Judges what `change` did to `file_path`.
+    ///
+    /// The file on disk is still read, because "is this file over budget" and
+    /// "does this line import I/O" are properties of the file. What changed is
+    /// who is charged: only a file this change GREW, and only a line this
+    /// change ADDED.
+    pub fn evaluate_whole_file(
+        repo_dir: &Path,
+        file_path: &str,
+        change: &FileChange<'_>,
+    ) -> Vec<MonorepoViolation> {
         let mut violations = Vec::new();
         let full_path = repo_dir.join(file_path);
 
@@ -32,12 +72,19 @@ impl WholeFileExpansion {
         let line_count = lines.len();
 
         // 1. Whole-file line limit check
-        if line_count > Self::MAX_WHOLE_FILE_LINES && is_rust && !file_path.contains("test") {
+        // Over budget AND made worse here. A change that shrinks an oversized
+        // file is the remedy this gate asks for and must not be refused for
+        // arriving mid-way.
+        if line_count > Self::MAX_WHOLE_FILE_LINES
+            && change.grew()
+            && is_rust
+            && !file_path.contains("test")
+        {
             violations.push(MonorepoViolation {
                 category: "OVERSIZED_WHOLE_FILE".to_string(),
                 description: format!(
-                    "Modified file '{}' has {} total lines, exceeding the module-size ceiling of {}. Decompose into cohesive submodules.",
-                    file_path, line_count, Self::MAX_WHOLE_FILE_LINES
+                    "File '{}' is {} lines and this change grew it by {}, past the module-size ceiling of {}. Split it into more modules inside the same crate.",
+                    file_path, line_count, change.net_lines, Self::MAX_WHOLE_FILE_LINES
                 ),
                 snippet: format!("Total lines: {}", line_count),
             });
@@ -54,6 +101,10 @@ impl WholeFileExpansion {
                 "redis::",
             ];
             for (idx, line) in lines.iter().enumerate() {
+                // A line that was already here is not this change's finding.
+                if !change.adds(line) {
+                    continue;
+                }
                 for kw in &banned_io_keywords {
                     if line.contains(kw) {
                         violations.push(MonorepoViolation {
@@ -106,8 +157,17 @@ mod tests {
         }
         std::fs::write(core_path.join("order.rs"), &code).unwrap();
 
-        let violations =
-            WholeFileExpansion::evaluate_whole_file(dir.path(), "billing/core/src/order.rs");
+        // A change that CREATES the file: every line is added, and the net
+        // growth is the whole file. Both findings are this change's.
+        let change = FileChange {
+            added: &code,
+            net_lines: code.lines().count() as i64,
+        };
+        let violations = WholeFileExpansion::evaluate_whole_file(
+            dir.path(),
+            "billing/core/src/order.rs",
+            &change,
+        );
         assert!(
             violations
                 .iter()

@@ -5,6 +5,12 @@
 
 use crate::ratchet::ports::{Baseline, FrozenReferenceSource, RefError, Signoff};
 
+/// The two documents a caller outside this unit needs to name.
+///
+/// Re-exported so a consumer reads them from the facade rather than reaching
+/// into `ports`, which the four-face seal counts as a bypass.
+pub use crate::ratchet::ports::{Baseline as FrozenBaseline, Signoff as FrozenSignoff};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reference {
     /// Both documents parsed (signoff defaults to empty when absent).

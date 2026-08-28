@@ -4,7 +4,9 @@
 use super::measure::{MeasureRequest, measure_repo};
 use crate::ratchet::adapters::GitMergeBase;
 use crate::ratchet::facade::{Reference, load_reference};
-use crate::ratchet::ports::{Baseline, Mode, RatchetVerdict, compare};
+use crate::ratchet::ports::{
+    Baseline, Growth, Mode, RatchetVerdict, Signoff, compare, regen_is_monotonic,
+};
 use crate::shape::ports::{RuleMode, ShapeReport, ShapeSpec};
 use anyhow::{Result, anyhow, bail};
 use std::collections::{BTreeMap, BTreeSet};
@@ -69,6 +71,48 @@ pub async fn seed_from_commit(
     };
     let (report, spec) = measure_with_spec(&req).await?;
     Ok((seed_baseline(&report, &spec), report))
+}
+
+/// Reseed a baseline that already exists, refusing a regeneration that grows.
+///
+/// `seed_from_commit` measures a tree and returns what it finds. That is
+/// correct for the first baseline and wrong for every one after it: a rule's
+/// debt may only shrink, so overwriting the committed document with whatever
+/// the tree currently produces launders every key that appeared in between.
+/// It is the same evasion as withdrawing a rule, one file over.
+///
+/// `regen_is_monotonic` is the predicate; this is its caller.
+pub async fn reseed_from_commit(
+    repo_dir: &Path,
+    rev: &str,
+    spec_override: Option<&Path>,
+    previous: Option<&Baseline>,
+    signoff: &Signoff,
+) -> Result<(Baseline, ShapeReport)> {
+    let (proposed, report) = seed_from_commit(repo_dir, rev, spec_override).await?;
+    if let Some(frozen) = previous
+        && let Err(growth) = regen_is_monotonic(frozen, &proposed, signoff)
+    {
+        bail!(
+            "refusing to regenerate the baseline: a regeneration may only shrink, and this one grows in {} place(s):\n{}\nSign the additions off in {SIGNOFF_PATH}, or fix them.",
+            growth.len(),
+            growth
+                .iter()
+                .map(describe_growth)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+    Ok((proposed, report))
+}
+
+fn describe_growth(g: &Growth) -> String {
+    match g {
+        Growth::KeyAdded { rule, key } => format!("  {rule}: new key `{key}`"),
+        Growth::RuleAdded { rule } => format!("  {rule}: rule added carrying unsigned debt"),
+        Growth::ModeDowngraded { rule } => format!("  {rule}: mode downgraded out of blocking"),
+        Growth::FrozenEmptyRelaxed { rule } => format!("  {rule}: frozen-empty relaxed"),
+    }
 }
 
 async fn measure_with_spec(req: &MeasureRequest) -> Result<(ShapeReport, ShapeSpec)> {

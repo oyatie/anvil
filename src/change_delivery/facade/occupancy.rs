@@ -6,6 +6,6 @@
 //! use that decision instead of reimplementing set intersection and silently
 //! losing the hub half.
 
-pub use crate::change_delivery::core::shard::occupancy::{
+pub use crate::change_delivery::ports::{
     SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, path_sets_disjoint,
 };

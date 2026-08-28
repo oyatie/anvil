@@ -3,7 +3,7 @@
 
 /// Reading a repository tree at a revision, for callers outside this unit.
 pub use crate::shape::adapters::GitTreeAtRev;
-pub use crate::shape::core::tree::TreeSource;
+pub use crate::shape::ports::TreeSource;
 
 /// Which build system marks a unit. Consumers ask shape what a unit marker is
 /// rather than spelling `Cargo.toml` or `BUCK` themselves, which is the rule

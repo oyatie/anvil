@@ -298,3 +298,69 @@ fn the_scorecard_and_the_enlister_agree_on_admissibility() {
     );
     assert!(report.is_admissible());
 }
+
+/// An empty subject set is `NotApplicable`, and `NotApplicable` admits.
+///
+/// This is the shape of PR #129: zero failing gates, two tree-wide warnings,
+/// and two gates reporting an absence -- refused. `formal_verification_status`
+/// was reporting "this change adds no line to a policy file" as `NotMeasured`,
+/// which withholds admission from every pull request that touches no policy,
+/// which is nearly all of them.
+///
+/// The earlier correction was right and is preserved: a diff carrying no
+/// policy must NOT publish a green gate. But `Passed` and `NotMeasured` are
+/// not the only two answers. The scan RAN; its subject set was empty. That is
+/// `NotApplicable`, and this repository already had the variant.
+#[test]
+fn a_gate_whose_subject_set_is_empty_does_not_withhold_the_merge() {
+    let absent = GateStatus::NotApplicable {
+        gate_id: "formal_verification_status".to_string(),
+        subject: "this change adds no line to a policy file".to_string(),
+    };
+    let report = report_with(&[("formal_verification_status", absent)]);
+    assert!(
+        report.is_admissible(),
+        "a gate that ran over an empty subject set must not withhold admission; \
+         refusal was: {:?}",
+        report.admission_refusal().err()
+    );
+
+    // And the distinction is load-bearing, not cosmetic: the same gate, the
+    // same change, reported as an absence of MEASUREMENT rather than an
+    // absence of SUBJECT, still refuses. If this half ever passes, the two
+    // states have been collapsed again and the guarantee is gone.
+    let unmeasured = report_with(&[(
+        "formal_verification_status",
+        not_measured("formal_verification_status"),
+    )]);
+    assert!(
+        !unmeasured.is_admissible(),
+        "`NotMeasured` on an unexempted gate must still withhold admission"
+    );
+}
+
+/// `NotApplicable` is not a pass, and must never be counted as one.
+///
+/// The whole point of the variant is that it sits between "clean" and "could
+/// not look". A reader of the scorecard must be able to tell it from a gate
+/// that measured something and found nothing.
+#[test]
+fn not_applicable_is_admissible_without_being_a_pass() {
+    let report = report_with(&[(
+        "formal_verification_status",
+        GateStatus::NotApplicable {
+            gate_id: "formal_verification_status".to_string(),
+            subject: "no policy line in this change".to_string(),
+        },
+    )]);
+    let status = report
+        .named_statuses()
+        .into_iter()
+        .find(|(g, _)| *g == "formal_verification_status")
+        .map(|(_, s)| s)
+        .expect("the gate is in the corpus");
+    assert!(
+        !matches!(status, GateStatus::Passed),
+        "an empty subject set must not be laundered into a pass"
+    );
+}

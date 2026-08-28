@@ -444,9 +444,24 @@ impl PreMergeGuard {
                     .join(" "),
             )
         } else if formal_report.policy_files_seen.is_empty() {
-            GateStatus::NotMeasured {
+            // `NotApplicable`, not `NotMeasured`. The correction above was to
+            // stop publishing a green gate over a diff carrying no policy, and
+            // it stands -- this is still not a pass. But the two absences are
+            // different questions and admission asks only one of them:
+            // `NotMeasured` means the capability could not be exercised here
+            // and blocks unless `admission::ABSENCE_POLICY` exempts the gate;
+            // `NotApplicable` means it ran and the subject set was empty, which
+            // is this case exactly. The scan executed, over a change that adds
+            // no policy line.
+            //
+            // Reported as `NotMeasured`, this gate withheld admission from
+            // every pull request that touches no policy file -- which is nearly
+            // all of them. PR #129 carried zero failures and was refused on
+            // this and one other absence of the same shape.
+            GateStatus::NotApplicable {
                 gate_id: "formal_verification_status".to_string(),
-                reason: "this change adds no line to a policy file, so the policy scan had                          nothing to examine. Absence of a match is not evidence of safety."
+                subject: "this change adds no line to a policy file, so the policy scan had \
+                          nothing to examine. Absence of a match is not evidence of safety."
                     .to_string(),
             }
         } else {

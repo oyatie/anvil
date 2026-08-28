@@ -2,11 +2,11 @@
 //! commit against the baseline frozen at its merge-base.
 
 use super::measure::{MeasureRequest, measure_repo};
-use crate::ratchet::adapters::GitMergeBase;
-use crate::ratchet::facade::{Reference, load_reference};
-use crate::ratchet::ports::{
-    Baseline, Growth, Mode, RatchetVerdict, Signoff, compare, regen_is_monotonic,
+use crate::ratchet::facade::{
+    Baseline, GitMergeBase, Growth, Mode, RatchetVerdict, Reference, Signoff, compare,
+    load_reference, regen_is_monotonic,
 };
+
 use crate::shape::ports::{RuleMode, ShapeReport, ShapeSpec};
 use anyhow::{Result, anyhow, bail};
 use std::collections::{BTreeMap, BTreeSet};

@@ -26,12 +26,14 @@ fn production_sources() -> Vec<(String, String)> {
     out
 }
 
+/// A ceiling for checkouts with no merge-base. The monotone bound is derived
+/// below: an exact equality here is a number every lane must edit, and two
+/// branches that both wire a stage write the same line and merge cleanly.
 #[test]
-fn the_uninvoked_count_is_exactly_what_was_recorded() {
+fn the_uninvoked_count_does_not_exceed_the_ceiling() {
     let dead = uninvoked(&production_sources());
-    assert_eq!(
-        dead.len(),
-        STAGES_WITHOUT_A_CALLER,
+    assert!(
+        dead.len() <= STAGES_WITHOUT_A_CALLER,
         "stages with no production caller moved. Each of these is written, \
          tested and run by nothing:\n{}",
         dead.iter()
@@ -122,4 +124,50 @@ fn every_stage_states_what_is_lost_while_it_is_dead() {
             "`{stage}` does not say what is lost while nothing runs it"
         );
     }
+}
+
+/// The bound that holds: wiring a stage is progress and needs no bookkeeping.
+///
+/// `uninvoked` is already a pure function of a source list, so the merge-base
+/// tree can be fed to the same code that judges the working tree — no second
+/// implementation, and the two sides are the same measure by construction.
+#[test]
+fn uninvoked_stages_do_not_grow_against_the_merge_base() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let derived = rt.block_on(anvil::ratchet::facade::derived::at_merge_base(
+        repo,
+        "origin/dev",
+        "HEAD",
+        |p| p.starts_with("src/") && p.ends_with(".rs"),
+        |tree| {
+            let sources: Vec<(String, String)> = tree
+                .paths()
+                .iter()
+                .filter(|p| p.starts_with("src/") && p.ends_with(".rs"))
+                .filter_map(|p| {
+                    let bytes = tree.read(p).ok().flatten()?;
+                    let text = std::str::from_utf8(bytes).ok()?.to_string();
+                    Some((p.clone(), text))
+                })
+                .collect();
+            uninvoked(&sources).len()
+        },
+    ));
+    let Ok(base) = derived else {
+        eprintln!("skipped: no merge-base against origin/dev");
+        return;
+    };
+    let dead = uninvoked(&production_sources());
+    assert!(
+        dead.len() <= base.at_merge_base,
+        "stages with no production caller grew from {} at merge-base {} to {}:\n{}",
+        base.at_merge_base,
+        &base.merge_base[..12],
+        dead.len(),
+        dead.iter()
+            .map(|s| format!("  {} — {}", s.stage, s.loses))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }

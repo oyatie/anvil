@@ -114,7 +114,7 @@ fn evidence_kind(path: &str) -> Evidence {
     // own I13 guard refused the first draft of this module for spelling
     // `Cargo.toml` and `BUCK` inline: the shape program must not carry a
     // tenant's layout, and `LanguageProfile::unit_marker` already held both.
-    if build_markers().iter().any(|m| base == *m) {
+    if build_markers().contains(&base) {
         Evidence::Build
     } else if path.ends_with(".rs") {
         Evidence::Code

@@ -3,7 +3,7 @@
 /// `LandingPolicy::load` is how a caller turns tenant bytes into a policy; a
 /// consumer that must reach into `core` for it is being charged for a door the
 /// unit failed to open.
-pub use crate::change_delivery::core::LandingPolicy;
+pub use crate::change_delivery::ports::LandingPolicy;
 
 /// Where a lane records that it holds a worktree.
 ///

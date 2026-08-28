@@ -6,8 +6,7 @@
 //! a person acts on it.
 
 use crate::shape::adapters::git_tree_at_rev::GitTreeAtRev;
-use crate::shape::core::load_bearing::{LoadIndex, Standing};
-use crate::shape::core::tree::{SourceError, TreeSource};
+use crate::shape::ports::{LoadIndex, SourceError, Standing, TreeSource};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The directories Cargo gives a crate, relative to its manifest. Below these
@@ -65,7 +64,7 @@ fn candidate_dirs(tree: &dyn TreeSource) -> Vec<String> {
     // children and silently hid all sixty-three `IPs/` directories from the
     // projection: a report that had stopped looking, reading as a report that
     // had found nothing.
-    let markers = [crate::shape::core::profile::LanguageProfile::RustCargo.unit_marker()];
+    let markers = [crate::shape::ports::LanguageProfile::RustCargo.unit_marker()];
     // Directories that ARE a crate root.
     // A manifest at the repository root has no `/` to split on. Deriving the
     // crate root by splitting alone dropped it, so a single-crate repository
@@ -123,7 +122,7 @@ fn crate_reachability(tree: &dyn TreeSource) -> (usize, Vec<String>) {
     let mut reachable = 0;
     let mut unreachable = Vec::new();
     for p in tree.paths() {
-        let marker = crate::shape::core::profile::LanguageProfile::RustCargo.unit_marker();
+        let marker = crate::shape::ports::LanguageProfile::RustCargo.unit_marker();
         if !p.ends_with(marker) {
             continue;
         }
@@ -146,8 +145,8 @@ pub async fn admit(req: &AdmitRequest) -> Result<AdmitReport, SourceError> {
     // may count is how a scanner acquires a blind spot.
     let tree = GitTreeAtRev::load(&req.repo_dir, &req.rev, |p| {
         let base = p.rsplit('/').next().unwrap_or(p);
-        base == crate::shape::core::profile::LanguageProfile::RustBuck2.unit_marker()
-            || base == crate::shape::core::profile::LanguageProfile::RustCargo.unit_marker()
+        base == crate::shape::ports::LanguageProfile::RustBuck2.unit_marker()
+            || base == crate::shape::ports::LanguageProfile::RustCargo.unit_marker()
             || p.ends_with(".rs")
             || p.ends_with(".md")
     })

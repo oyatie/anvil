@@ -23,6 +23,18 @@ pub(super) fn is_import_line(trimmed: &str) -> bool {
         || t.starts_with("from ")
 }
 
+/// Whether a path is a test source rather than shipped code.
+///
+/// `tests/` for integration tests, `_test.rs`/`_tests.rs` by convention, and
+/// any nested `/tests/` directory. `#[cfg(test)]` modules inside a production
+/// file are stripped separately by `without_test_modules`.
+pub(super) fn is_test_source(path: &str) -> bool {
+    path.starts_with("tests/")
+        || path.contains("/tests/")
+        || path.ends_with("_test.rs")
+        || path.ends_with("_tests.rs")
+}
+
 pub(super) fn classify_layer(file_path: &str) -> Option<ArchLayer> {
     // Normalise so a tree-relative path such as `core/x.rs` matches the same
     // `/core/` convention a repo-relative path uses.

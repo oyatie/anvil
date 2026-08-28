@@ -548,3 +548,61 @@ fn facade_bypasses_do_not_grow_against_the_merge_base() {
         now
     );
 }
+
+/// The two entry points must measure the same subject.
+///
+/// `evaluate_source_tree` reads `src/` alone, so it never sees a test. The PR
+/// path analyses whatever the diff carries, so it saw four test files reaching
+/// into a unit's core and reported four violations against a tree the other
+/// mode called clean. One guard, two scopes, two answers.
+///
+/// The seal governs the dependency structure that ships. A test reaching into
+/// the unit under test is what a unit test is.
+#[test]
+fn a_test_reaching_into_a_units_core_is_out_of_scope() {
+    let diff = "\
++++ b/tests/d8_load_bearing_test.rs
++use anvil::shape::core::load_bearing::LoadIndex;
+";
+    let r = CleanArchitectureGuard::new()
+        .evaluate_architecture(&diff_ctx(diff))
+        .unwrap();
+    assert!(
+        r.violations.is_empty(),
+        "a test importing the module it tests is not a boundary violation: {:?}",
+        r.violations
+    );
+}
+
+#[test]
+fn the_same_import_in_a_production_file_is_still_a_violation() {
+    // The other half: scoping tests out must not scope production out with
+    // them, or the fix would be a hole rather than a correction.
+    let diff = "\
++++ b/src/beta/facade/mod.rs
++use crate::shape::core::load_bearing::LoadIndex;
+";
+    let r = CleanArchitectureGuard::new()
+        .evaluate_architecture(&diff_ctx(diff))
+        .unwrap();
+    assert!(
+        !r.violations.is_empty(),
+        "production code reaching past a facade must still be refused"
+    );
+}
+
+/// A pull-request context carrying just the diff under test.
+fn diff_ctx(diff: &str) -> anvil::git_manager::PrDiffContext {
+    anvil::git_manager::PrDiffContext {
+        repo: "oyatie/anvil".to_string(),
+        pr_number: 1,
+        base_branch: "dev".to_string(),
+        base_sha: "aaa".to_string(),
+        head_sha: "bbb".to_string(),
+        diff_content: diff.to_string(),
+        changed_files: vec![],
+        repo_working_dir: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        is_incremental: false,
+        previous_head_sha: None,
+    }
+}

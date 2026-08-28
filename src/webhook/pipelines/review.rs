@@ -304,12 +304,84 @@ pub async fn execute_pr_review(
             );
         }
     }
-    let enlistment = state
-        .merge_enlister
-        .enlist_into_merge_queue(repo, pr_number, Some(&cert_report))
-        .await;
-    if let Err(e) = &enlistment {
-        warn!("Automatic merge queue enlistment notice: {}", e);
+    // What happens next is decided from the verdict, not left implicit.
+    //
+    // `next_phase` has existed, documented and tested, with no caller anywhere
+    // in `src/` -- so the approve arm enlisted unconditionally and the reject
+    // arm did nothing at all. A pull request anvil asked to change sat until a
+    // person noticed. Wiring it is the whole of this change.
+    //
+    // The fork question fails closed. `fetch_pr_metadata` can fail, and
+    // reading that as "not a fork" would have anvil push a rewritten branch at
+    // a repository it does not own. An unknown answer halts.
+    let is_cross_repository = match state.github_client.fetch_pr_metadata(repo, pr_number).await {
+        Ok(meta) => meta.is_cross_repository,
+        Err(e) => {
+            warn!(
+                "Could not determine whether {}#{} is a fork ({}); treating it as one, so                  nothing is pushed.",
+                repo, pr_number, e
+            );
+            true
+        }
+    };
+    // Bound to a local: the decision borrows it, so a temporary would be
+    // dropped before `next_phase` reads it.
+    let pr_state_now = state.state_mgr.get_pr_state(repo, pr_number).await;
+    let situation = crate::webhook::next_phase::Situation {
+        verdict: &review_resp.verdict,
+        admissible: cert_report.admission_refusal().map_err(|e| e.to_string()),
+        head_sha,
+        is_cross_repository,
+        actionable_comments: review_resp.comments.len(),
+        state: pr_state_now.as_ref(),
+    };
+    let phase = crate::webhook::next_phase::next_phase(&situation);
+
+    let mut enlisted = false;
+    match phase {
+        crate::webhook::next_phase::NextPhase::Enlist => {
+            let enlistment = state
+                .merge_enlister
+                .enlist_into_merge_queue(repo, pr_number, Some(&cert_report))
+                .await;
+            match &enlistment {
+                Ok(_) => enlisted = true,
+                Err(e) => warn!("Automatic merge queue enlistment notice: {}", e),
+            }
+        }
+        crate::webhook::next_phase::NextPhase::AutoFix { attempt } => {
+            info!(
+                "{}#{} review asked for changes; running the fixer (attempt {} of {}).",
+                repo,
+                pr_number,
+                attempt,
+                crate::webhook::next_phase::MAX_AUTO_FIX_ATTEMPTS
+            );
+            // Counted before the run, not after. A fixer that panics or times
+            // out must still consume its attempt, or a crashing fixer loops
+            // forever -- the bound only holds if it counts tries.
+            if let Err(e) = state
+                .state_mgr
+                .record_auto_fix_attempt(repo, pr_number, head_sha)
+                .await
+            {
+                warn!(
+                    "Could not record the auto-fix attempt for {}#{}: {}. Refusing to run the                      fixer, because an uncounted attempt is an unbounded loop.",
+                    repo, pr_number, e
+                );
+            } else if let Err(e) = super::execute_pr_fix(state, repo, pr_number).await {
+                warn!(
+                    "Auto-fixer for {}#{} did not complete: {}",
+                    repo, pr_number, e
+                );
+            }
+        }
+        crate::webhook::next_phase::NextPhase::Halt { reason } => {
+            info!(
+                "{}#{} stops here, and the reason is stated rather than left to be inferred: {}",
+                repo, pr_number, reason
+            );
+        }
     }
 
     // Record which head this run certified, and whether it went into the queue.
@@ -354,10 +426,10 @@ pub async fn execute_pr_review(
     // retried on every pass; a new writer must not silently disable the retry
     // path.
     if cert_report.admission_refusal().is_ok()
-        && enlistment.is_ok()
+        && enlisted
         && let Err(e) = state
             .state_mgr
-            .record_certification(repo, pr_number, head_sha, enlistment.is_ok())
+            .record_certification(repo, pr_number, head_sha, enlisted)
             .await
     {
         warn!(

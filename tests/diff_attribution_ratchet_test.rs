@@ -120,8 +120,15 @@ fn no_loop_over_changed_files_reads_the_whole_diff_inside_it() {
     );
 }
 
+/// A ceiling, not an equality.
+///
+/// An exact literal is the hazard it was meant to prevent: two branches that
+/// both lower it write the same line, git merges them cleanly, and the merged
+/// tree carries a number that is wrong with no conflict to catch it. The
+/// monotone bound is derived below; this only floors a checkout with no
+/// merge-base.
 #[test]
-fn whole_diff_line_scans_are_exactly_what_was_recorded() {
+fn whole_diff_line_scans_do_not_exceed_the_recorded_ceiling() {
     let found: usize = production_sources()
         .iter()
         .map(|(_, s)| {
@@ -137,11 +144,57 @@ fn whole_diff_line_scans_are_exactly_what_was_recorded() {
                 + flat.matches("diff_content.lines()").count()
         })
         .sum();
-    assert_eq!(
-        found, WHOLE_DIFF_LINE_SCANS,
+    assert!(
+        found <= WHOLE_DIFF_LINE_SCANS,
         "whole-diff line scans moved. Falling is the work: a rule that scans \
          the whole diff cannot say which file its finding is in, so any \
          per-file message it produces is a guess. Rising means a new rule was \
          written that cannot attribute what it finds."
+    );
+}
+
+/// The bound that holds without a committed literal.
+///
+/// `WHOLE_DIFF_LINE_SCANS` above is a floor kept for checkouts with no
+/// merge-base. This is the real rule: no growth against this change's own
+/// base, so nothing is written down and two branches that both improve it
+/// cannot disagree about the number.
+#[test]
+fn whole_diff_line_scans_do_not_grow_against_the_merge_base() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let Some(base) = rt.block_on(anvil::ratchet::facade::derived::source_sites_at_merge_base(
+        repo,
+        "origin/dev",
+        "HEAD",
+        |_, body| {
+            let stripped = anvil::source_scan::without_test_modules(body);
+            let flat = anvil::source_scan::code_only(&stripped)
+                .lines()
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join(" ");
+            flat.matches("diff_content .lines()").count()
+                + flat.matches("diff_content.lines()").count()
+        },
+    )) else {
+        eprintln!("skipped: no merge-base against origin/dev");
+        return;
+    };
+    let now: usize = production_sources()
+        .iter()
+        .map(|(_, s)| {
+            let flat = s.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+            flat.matches("diff_content .lines()").count()
+                + flat.matches("diff_content.lines()").count()
+        })
+        .sum();
+    assert!(
+        now <= base.at_merge_base,
+        "whole-diff line scans grew from {} at merge-base {} to {}. A rule that \
+         scans the whole diff cannot say which file its finding is in.",
+        base.at_merge_base,
+        &base.merge_base[..12],
+        now
     );
 }

@@ -1,3 +1,4 @@
+use crate::cli::opt_read::read_opt;
 use anyhow::{Context, Result};
 use clap::Parser;
 use tracing::info;
@@ -86,12 +87,11 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 // overwrites the committed baseline with whatever the tree
                 // produces now, laundering every key that appeared in between.
                 use crate::ratchet::facade::{Baseline, Signoff};
-                let previous = out
-                    .as_ref()
-                    .and_then(|p| std::fs::read(p).ok())
-                    .and_then(|b| Baseline::parse(&b).ok());
+                let previous = read_opt(out.as_ref()).await.ok().flatten();
+                let previous = previous.and_then(|b| Baseline::parse(&b).ok());
                 let signoff =
-                    std::fs::read(repo_dir.join(crate::shape::facade::baseline::SIGNOFF_PATH))
+                    tokio::fs::read(repo_dir.join(crate::shape::facade::baseline::SIGNOFF_PATH))
+                        .await
                         .ok()
                         .and_then(|b| Signoff::parse(&b).ok())
                         .unwrap_or_default();
@@ -107,9 +107,9 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 match out {
                     Some(p) => {
                         if let Some(parent) = p.parent() {
-                            std::fs::create_dir_all(parent)?;
+                            tokio::fs::create_dir_all(parent).await?;
                         }
-                        std::fs::write(&p, format!("{json}\n"))?;
+                        tokio::fs::write(&p, format!("{json}\n")).await?;
                         println!(
                             "baseline written to {} ({} key(s) across {} rule(s), measured at {})",
                             p.display(),
@@ -151,7 +151,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     &report.rev,
                 )
                 .await;
-                let policy_bytes = policy.map(std::fs::read).transpose()?;
+                let policy_bytes = read_opt(policy.as_ref()).await?;
                 let (policy, problem) =
                     crate::change_delivery::facade::LandingPolicy::load(policy_bytes.as_deref());
                 if let Some(p) = problem {
@@ -165,7 +165,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     crate::change_delivery::facade::plan::render(&d, &plan)
                 );
                 if let Some(p) = plan_out {
-                    std::fs::write(&p, format!("{}\n", plan.to_json()))?;
+                    tokio::fs::write(&p, format!("{}\n", plan.to_json())).await?;
                     println!("move plan written to {}", p.display());
                 }
             }
@@ -412,10 +412,10 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             let mut findings: Vec<&crate::harness::Finding> = vec![&channel];
             files.insert(
                 "rust-toolchain.toml".to_string(),
-                std::fs::read_to_string(repo_dir.join("rust-toolchain.toml"))?,
+                tokio::fs::read_to_string(repo_dir.join("rust-toolchain.toml")).await?,
             );
             let ci_path = repo_dir.join(".github/workflows/ci.yml");
-            if let Ok(body) = std::fs::read_to_string(&ci_path) {
+            if let Ok(body) = tokio::fs::read_to_string(&ci_path).await {
                 files.insert(".github/workflows/ci.yml".to_string(), body);
                 findings.push(&ci);
             }
@@ -427,7 +427,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 match edit {
                     crate::harness::apply::Edit::Rewrite { path: p, body } => {
                         if apply {
-                            std::fs::write(repo_dir.join(p), body)?;
+                            tokio::fs::write(repo_dir.join(p), body).await?;
                             println!("✅ {p}: channel moved to {target}");
                         } else {
                             println!("would rewrite {p} (pass --apply to write)");

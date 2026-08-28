@@ -199,8 +199,14 @@ impl RustQualityEngine {
         for line in diff_ctx.diff_content.lines() {
             if let Some(stripped) = line.strip_prefix("+++ b/") {
                 let path = stripped.trim().to_string();
-                is_test_file =
-                    path.contains("test") || path.contains("bench") || path.contains("mock");
+                // `path.contains("test")` spared `src/latest_state.rs` and
+                // `src/attestation_guard.rs` while charging every production
+                // file that merely says the word. Cargo's layout is the rule.
+                is_test_file = crate::source_scan::paths::is_test_source(&path)
+                    || path.contains("/benches/")
+                    || path.ends_with("_bench.rs")
+                    || path.contains("/mocks/")
+                    || path.ends_with("_mock.rs");
                 current_file = Some(path);
                 prev_line.clear();
                 continue;

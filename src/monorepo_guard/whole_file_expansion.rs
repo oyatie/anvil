@@ -21,14 +21,7 @@ pub struct FileChange<'a> {
     pub net_lines: i64,
 }
 
-/// Whether a path is a test source. A substring match on "test" is not this:
-/// it spares any production file whose name happens to contain the word.
-fn is_test_path(path: &str) -> bool {
-    path.starts_with("tests/")
-        || path.contains("/tests/")
-        || path.ends_with("_test.rs")
-        || path.ends_with("_tests.rs")
-}
+use crate::source_scan::paths::is_test_source as is_test_path;
 
 impl FileChange<'_> {
     fn grew(&self) -> bool {

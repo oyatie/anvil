@@ -5,6 +5,11 @@
 pub use crate::shape::adapters::GitTreeAtRev;
 pub use crate::shape::core::tree::TreeSource;
 
+/// Which build system marks a unit. Consumers ask shape what a unit marker is
+/// rather than spelling `Cargo.toml` or `BUCK` themselves, which is the rule
+/// I13 enforces; the facade has to name it for that to be possible.
+pub use crate::shape::ports::LanguageProfile;
+
 pub mod admit;
 pub mod baseline;
 pub mod cli;

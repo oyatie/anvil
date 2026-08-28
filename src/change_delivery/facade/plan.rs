@@ -135,14 +135,14 @@ pub fn render(d: &DryRun, plan: &ShapeMovePlan) -> String {
 /// `CODEOWNERS`) plus every `OWNERS` file, read by revision.
 pub async fn owners_from_tree(repo_dir: &std::path::Path, rev: &str) -> OwnerMap {
     let mut map = OwnerMap::default();
-    let Ok(tree) = crate::shape::adapters::GitTreeAtRev::load(repo_dir, rev, |p| {
+    let Ok(tree) = crate::shape::facade::GitTreeAtRev::load(repo_dir, rev, |p| {
         p == ".github/CODEOWNERS" || p == "CODEOWNERS" || p.rsplit('/').next() == Some("OWNERS")
     })
     .await
     else {
         return map;
     };
-    use crate::shape::ports::TreeSource;
+    use crate::shape::facade::TreeSource;
     for (path, bytes) in tree.loaded() {
         let text = String::from_utf8_lossy(bytes);
         if path.ends_with("CODEOWNERS") {
@@ -161,12 +161,12 @@ pub async fn owners_from_tree(repo_dir: &std::path::Path, rev: &str) -> OwnerMap
 /// Manifest paths (every profile's unit marker) at the revision, for
 /// touch-set prediction.
 pub async fn manifests_from_tree(repo_dir: &std::path::Path, rev: &str) -> Vec<String> {
-    use crate::shape::ports::{LanguageProfile, TreeSource};
+    use crate::shape::facade::{LanguageProfile, TreeSource};
     let markers: Vec<&str> = LanguageProfile::ALL
         .iter()
         .map(|p| p.unit_marker())
         .collect();
-    match crate::shape::adapters::GitTreeAtRev::load(repo_dir, rev, |_| false).await {
+    match crate::shape::facade::GitTreeAtRev::load(repo_dir, rev, |_| false).await {
         Ok(tree) => tree
             .paths()
             .iter()

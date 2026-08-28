@@ -153,7 +153,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 .await;
                 let policy_bytes = policy.map(std::fs::read).transpose()?;
                 let (policy, problem) =
-                    crate::change_delivery::core::LandingPolicy::load(policy_bytes.as_deref());
+                    crate::change_delivery::facade::LandingPolicy::load(policy_bytes.as_deref());
                 if let Some(p) = problem {
                     println!("warning: {p}");
                 }

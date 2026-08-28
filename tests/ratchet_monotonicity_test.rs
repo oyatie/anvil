@@ -6,6 +6,7 @@ use anvil::ratchet::core::{
     regen_is_monotonic,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
 
 fn keys(v: &[&str]) -> BTreeSet<String> {
     v.iter().map(|s| s.to_string()).collect()
@@ -29,6 +30,23 @@ fn baseline(rules: &[(&str, Mode, bool, &[&str])]) -> Baseline {
             })
             .collect(),
     }
+}
+
+/// Every rule these fixtures ever declare. Existing cases measure what they
+/// declare, so they pass the full set; the withdrawal cases pass less.
+static ALL: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
+    declaring(&[
+        "crate_layer_suffix",
+        "file_misplaced",
+        "root_file_unallowlisted",
+        "unit_missing_face",
+    ])
+});
+
+/// Every rule the head spec declares. Existing cases all declare what they
+/// measure; the withdrawal cases below pass a narrower set on purpose.
+fn declaring(rules: &[&str]) -> BTreeSet<String> {
+    rules.iter().map(|s| s.to_string()).collect()
 }
 
 fn current(pairs: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
@@ -57,6 +75,7 @@ fn a_new_key_under_a_blocking_rule_fails() {
         &current(&[("file_misplaced", &["a", "b"])]),
         &Signoff::default(),
         |_| None,
+        &ALL,
     );
     assert!(v.fails);
     assert_eq!(v.per_rule["file_misplaced"].regressions, keys(&["b"]));
@@ -71,6 +90,7 @@ fn a_fixed_key_passes_and_is_reported_as_fixed() {
         &current(&[("file_misplaced", &["a"])]),
         &Signoff::default(),
         |_| None,
+        &ALL,
     );
     assert!(!v.fails);
     assert_eq!(v.per_rule["file_misplaced"].fixed, keys(&["b"]));
@@ -84,6 +104,7 @@ fn a_signed_off_key_passes_and_an_inert_signoff_fails() {
         &current(&[("file_misplaced", &["a", "b"])]),
         &signed("file_misplaced", &["b"]),
         |_| None,
+        &ALL,
     );
     assert!(!v.fails, "{v:?}");
     assert_eq!(v.per_rule["file_misplaced"].signed_off, keys(&["b"]));
@@ -94,6 +115,7 @@ fn a_signed_off_key_passes_and_an_inert_signoff_fails() {
         &current(&[("file_misplaced", &["a"])]),
         &signed("file_misplaced", &["b"]),
         |_| None,
+        &ALL,
     );
     assert!(v.fails);
     assert_eq!(
@@ -110,6 +132,7 @@ fn an_advisory_rule_never_fails_however_much_it_grows() {
         &current(&[("unit_missing_face", &["x", "y", "z"])]),
         &Signoff::default(),
         |_| None,
+        &ALL,
     );
     assert!(!v.fails);
     assert_eq!(
@@ -127,6 +150,7 @@ fn a_frozen_empty_rule_fails_on_its_first_key() {
         &current(&[("root_file_unallowlisted", &["scratch.txt"])]),
         &Signoff::default(),
         |_| None,
+        &ALL,
     );
     assert!(v.fails);
 }
@@ -135,11 +159,15 @@ fn a_frozen_empty_rule_fails_on_its_first_key() {
 fn a_rule_unknown_to_the_frozen_baseline_takes_the_spec_mode_or_advisory() {
     let frozen = baseline(&[]);
     let cur = current(&[("crate_layer_suffix", &["k"])]);
-    let v = compare(&frozen, &cur, &Signoff::default(), |r| {
-        (r == "crate_layer_suffix").then_some((Mode::BlockOnNew, false))
-    });
+    let v = compare(
+        &frozen,
+        &cur,
+        &Signoff::default(),
+        |r| (r == "crate_layer_suffix").then_some((Mode::BlockOnNew, false)),
+        &ALL,
+    );
     assert!(v.fails, "the spec says block");
-    let v = compare(&frozen, &cur, &Signoff::default(), |_| None);
+    let v = compare(&frozen, &cur, &Signoff::default(), |_| None, &ALL);
     assert!(!v.fails, "a rule nobody declared cannot block");
 }
 
@@ -190,4 +218,77 @@ fn baseline_documents_reject_a_frozen_empty_rule_that_carries_keys() {
 fn a_signoff_with_entries_but_no_signing_is_rejected() {
     let raw = r#"{"schema":"anvil/ratchet-signoff/v1","_sign_off_additions":{"r":["k"]}}"#;
     assert!(Signoff::parse(raw.as_bytes()).is_err());
+}
+
+#[test]
+fn withdrawing_a_blocking_rule_does_not_launder_its_baselined_keys() {
+    // The baseline is frozen at the merge-base, but the rule SET is read from
+    // the change. Before this was closed, a change that stopped declaring the
+    // rule blocking it produced no measurement, `current` had no entry, and
+    // every baselined key was reported FIXED. The ratchet passed and the
+    // laundering read as progress.
+    let frozen = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a", "b"])]);
+    let v = compare(
+        &frozen,
+        &current(&[]),
+        &Signoff::default(),
+        |_| None,
+        &declaring(&["unit_missing_face"]),
+    );
+    let r = &v.per_rule["file_misplaced"];
+    assert!(r.withdrawn, "the rule was not declared at head");
+    assert!(r.fails, "a blocking rule that stopped running must fail");
+    assert!(
+        r.fixed.is_empty(),
+        "nothing ran, so nothing was fixed: {:?}",
+        r.fixed
+    );
+}
+
+#[test]
+fn a_rule_that_ran_and_found_nothing_is_a_real_pass() {
+    // The other side of the same coin. Declared and clean must stay clean, or
+    // closing the hole would refuse every genuine fix.
+    let frozen = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a"])]);
+    let v = compare(
+        &frozen,
+        &current(&[]),
+        &Signoff::default(),
+        |_| None,
+        &declaring(&["file_misplaced"]),
+    );
+    let r = &v.per_rule["file_misplaced"];
+    assert!(!r.withdrawn && !r.fails);
+    assert_eq!(r.fixed.len(), 1, "the baselined key really was fixed");
+}
+
+#[test]
+fn withdrawing_a_rule_with_an_empty_baseline_is_not_a_failure() {
+    // A rule carrying no debt has nothing to launder, so dropping it is a
+    // policy change rather than an evasion. Failing here would make the
+    // gate fire on every legitimate rule retirement.
+    let frozen = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &[])]);
+    let v = compare(
+        &frozen,
+        &current(&[]),
+        &Signoff::default(),
+        |_| None,
+        &declaring(&["unit_missing_face"]),
+    );
+    assert!(!v.per_rule["file_misplaced"].fails);
+}
+
+#[test]
+fn an_advisory_rule_that_is_withdrawn_still_does_not_block() {
+    let frozen = baseline(&[("file_misplaced", Mode::Advisory, false, &["a"])]);
+    let v = compare(
+        &frozen,
+        &current(&[]),
+        &Signoff::default(),
+        |_| None,
+        &declaring(&["unit_missing_face"]),
+    );
+    let r = &v.per_rule["file_misplaced"];
+    assert!(r.withdrawn, "still reported");
+    assert!(!r.fails, "advisory never blocks");
 }

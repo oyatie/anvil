@@ -141,9 +141,19 @@ pub async fn judge(
             signoff,
         } => {
             let modes = modes_of(&spec);
-            let verdict = compare(&baseline, &keys_by_rule(&report), &signoff, |r| {
-                modes.get(r).copied()
-            });
+            // The rule set the CHANGE declares. `compare` needs it to tell a
+            // rule that ran and found nothing from one the change stopped
+            // declaring; the key map alone cannot, and the difference decides
+            // whether withdrawing a rule launders its baselined keys.
+            let declared_now: std::collections::BTreeSet<String> =
+                spec.rules.keys().cloned().collect();
+            let verdict = compare(
+                &baseline,
+                &keys_by_rule(&report),
+                &signoff,
+                |r| modes.get(r).copied(),
+                &declared_now,
+            );
             Ok(Judgement::Judged {
                 merge_base: rev,
                 report,

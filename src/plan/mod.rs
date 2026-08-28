@@ -26,6 +26,7 @@
 //! must be acyclic or no order exists at all. It is not the crate dependency
 //! graph and must not be confused with it.
 
+use crate::change_delivery::facade::occupancy::admit_spawn;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What a work item proposes to change.
@@ -103,6 +104,7 @@ pub type Waves<'a> = Vec<Vec<&'a Plan>>;
 /// necessary: dependencies alone give an order that still conflicts, and
 /// disjointness alone gives lanes that cannot build.
 pub fn waves(plans: &[Plan]) -> Result<Waves<'_>, Refusal> {
+    let hubs = crate::change_delivery::facade::occupancy::anvil_hubs();
     for p in plans {
         if p.write_set.is_empty() {
             return Err(Refusal::NothingToWrite {
@@ -149,18 +151,19 @@ pub fn waves(plans: &[Plan]) -> Result<Waves<'_>, Refusal> {
         // back is not refused -- it simply waits for the next wave, which is
         // the difference between sequencing and rejecting.
         let mut wave: Vec<&Plan> = Vec::new();
-        let mut claimed: BTreeSet<&str> = BTreeSet::new();
+        let mut claimed: Vec<BTreeSet<String>> = Vec::new();
         for p in ready {
-            let overlap: Vec<&str> = p
-                .write_set
-                .iter()
-                .map(String::as_str)
-                .filter(|path| claimed.contains(path))
-                .collect();
-            if overlap.is_empty() {
-                for path in &p.write_set {
-                    claimed.insert(path.as_str());
-                }
+            // `admit_spawn` owns this decision. Reimplementing the set
+            // intersection here lost the hub rule with it: a write touching
+            // `src/lib.rs` or the workspace manifest must go alone and from
+            // trunk HEAD, which plain disjointness does not express.
+            //
+            // Planning is done from trunk, so `merge_base_is_trunk` is true;
+            // a lane that has since drifted is refused later by the same
+            // function with the real answer.
+            let admitted = admit_spawn(&p.write_set, &hubs, &claimed, true).is_ok();
+            if admitted {
+                claimed.push(p.write_set.clone());
                 wave.push(p);
             }
         }

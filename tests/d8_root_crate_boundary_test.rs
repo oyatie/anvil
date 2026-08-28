@@ -1,21 +1,9 @@
-//! D-8's boundary must hold for a crate at the repository root.
+//! D-8's crate boundary holds for a crate at the repository root.
 //!
-//! The predicate stops at "the nearest enclosing build target": above it D-8
-//! decides, below it the crate does. That boundary was derived by splitting a
-//! manifest path on `/`, which yields nothing for a root-level `Cargo.toml` --
-//! so a single-crate repository registered no crate root at all, excluded
-//! nothing, and judged every module directory under `src/` as if it were a
-//! capability directory.
-//!
-//! Every such directory came back `Orphan`, because a Rust module is loaded by
-//! `mod name;` and not by a path literal. On anvil that was 66 refusals
-//! including `src/github/`, `src/fixer/` and `src/local_inner_loop/` -- all
-//! declared in `src/lib.rs`. A conversion tool acting on that list would
-//! delete the repository.
-//!
-//! oyatie never exhibited it: all 28,996 of its manifests are nested, so the
-//! split always succeeded. The defect was reachable only on the repository
-//! shape every managed repo starts in.
+//! A module directory inside a crate is governed by the compiler and by
+//! D-30/D-35, not by D-8, and a Rust module is loaded by `mod name;` rather
+//! than by the path literal the predicate looks for. Directories outside the
+//! crate's source tree stay governed: `docs/` is the witness for that half.
 
 use anvil::shape::facade::admit::{AdmitRequest, admit};
 

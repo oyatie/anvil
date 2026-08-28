@@ -1,0 +1,16 @@
+{
+  "schema": "anvil/ratchet-signoff/v1",
+  "_sign_off_additions": {
+    "semantic_abi_status": [
+      "body@src/publish/mod.rs",
+      "sweep_repo@src/shape/facade/sweep.rs"
+    ]
+  },
+  "signings": [
+    {
+      "by": "Jason Lee",
+      "date": "2026-08-28",
+      "note": "Both signatures changed to carry a distinction the old ones could not. `body` returns the `Published` newtype so a caller cannot hand back an unpublished string, and `sweep_repo` returns `Swept::{Measured, Skipped}` so a sweep that examined nothing stops reading as a clean one. Every caller moves in the same change; anvil is not a published library, so no consumer exists outside this tree. Both entries go inert once this merges, because the gate reads a diff and the diff will no longer carry them."
+    }
+  ]
+}

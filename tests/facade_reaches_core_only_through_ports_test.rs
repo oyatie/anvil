@@ -1,37 +1,11 @@
-//! A facade reaches its own core only through ports — measured on this tree.
+//! A facade reaches its own core only through ports.
 //!
-//! `.anvil/shape.json` declares `face_dependency_matrix.facade = ["ports",
-//! "adapters"]`, and `face_edge_denied` is `baseline-block-on-new` with an
-//! empty key set. So every facade -> core edge is a regression on a blocking
-//! rule. Four of them stood for eight days.
+//! `.anvil/shape.json` allows `facade -> [ports, adapters]`; core is absent
+//! from that list, so any such edge is a regression on a blocking rule.
 //!
-//! # Why nothing caught them
-//!
-//! `tests/shape_self_baseline_test.rs` is a document read, not a measurement:
-//! it parses `.anvil/baselines/shape.baseline.json` and asserts the file holds
-//! 258 keys and a 40-character sha. The baseline was frozen on 20 August; the
-//! four edges landed on the 27th and 28th. A self-check that reads yesterday's
-//! answer cannot see today's tree. `shape::facade::gate::judge_pr` does the
-//! real measurement and its one production caller points at tenant pull
-//! requests, never at this repository.
-//!
-//! # Why they were introduced deliberately
-//!
-//! Two guards enforce two halves of one invariant, and only one of them runs
-//! here. `clean_architecture_guard` holds `FACADE_BYPASSES_IN_ANVIL = 0` by
-//! measuring this tree, and its remedy for a bypass is to add a door to the
-//! provider's facade. The shortest spelling of that door is
-//! `pub use crate::<unit>::core::X` — which is precisely the edge the other
-//! half forbids. Every one of the four was seal remediation: 580422e, 3e8c6b4,
-//! 065bd24, 785cb66.
-//!
-//! # Why this test does not reuse the shipped parser
-//!
-//! `shape::adapters::rust_use_deps` matches a `use crate::` line prefix, so it
-//! sees five of the nine real references and none of the inline paths
-//! (`crate::shape::core::profile::LanguageProfile::…`) or grouped imports. A
-//! self-check built on it would under-report the thing it exists to prevent,
-//! so this one matches the reference wherever it appears.
+//! Matches the reference wherever it appears rather than reusing
+//! `shape::adapters::rust_use_deps`, which recognises only a `use crate::`
+//! line prefix and so cannot see an inline path or a grouped import.
 
 use std::path::Path;
 

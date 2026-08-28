@@ -1,0 +1,50 @@
+name: toolchain-weekly
+
+# Is the pinned channel still current, and is the MSRV still honest?
+#
+# Two separate facts that a single "Rust version" reading conflates. The
+# channel is what this repository compiles with; the MSRV is the oldest
+# release it promises to compile on. They move in opposite directions and a
+# gate that reads one as the other is wrong twice.
+#
+# Weekly because upstream releases on a six-week train and CVEs arrive on
+# nobody's schedule; neither is answerable from a diff.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Latest stable, for comparison
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: stable
+      - name: Channel and MSRV drift
+        run: |
+          set -eu
+          latest=$(rustc --version | cut -d' ' -f2)
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)
+          msrv=$(sed -n 's/^rust-version *= *"\(.*\)".*/\1/p' Cargo.toml)
+          echo "latest stable : ${latest}"
+          echo "pinned channel: ${channel}"
+          echo "declared MSRV : ${msrv}"
+          [ "${channel}" != "${msrv}" ] || {
+            echo "MSRV equals the channel, so the floor is not a promise -- it is a"
+            echo "restatement of what this build happens to use. Two facts, one number."
+            exit 1
+          }
+          [ "${channel}" = "${latest}" ] || {
+            echo "the pinned channel is behind latest stable; open a bump with"
+            echo "  anvil toolchain --repo-dir . --to ${latest}"
+            exit 1
+          }

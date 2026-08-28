@@ -1,22 +1,15 @@
-name: anvil-ci
+name: presubmit
+
+# Merge-blocking. Answers one question: may this change land on the trunk?
 
 on:
-  push:
-    branches: [main, dev, staging, canary, production]
   pull_request:
     branches: [main, dev, staging, canary, production]
   merge_group:
     types: [checks_requested]
 
 jobs:
-  # Path occupancy. Two hops combine iff their write-sets are disjoint;
-  # hub files are N=1 at trunk HEAD. The verdict is `admit_spawn`, reached
-  # through `cargo run --bin occupancy`, so the rule has one home.
-  #
-  # This job is first in the graph on purpose. `fast-checks` waits on it,
-  # so a refused overlap costs one debug build of the library and never
-  # reaches clippy, the test suite or the release build.
-  #
+
   # The merge_group skip below is deliberate, not an oversight. Do not
   # "fix" it by adding merge_group to the condition. The queue builds a
   # merge-group SHA that already holds this hop combined with the entries
@@ -116,50 +109,9 @@ jobs:
             --in-flight in-flight.txt \
             --merge-base-is-trunk "$(cat at-trunk.txt)"
 
-  fmt:
-    name: fmt
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
-        with:
-          toolchain: "1.97.1"
-          components: rustfmt
-      - name: Format Check
-        run: cargo fmt --all -- --check
+  build-and-test:
+    uses: ./.github/workflows/build-and-test.yml
 
-  test:
-    name: test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      # Full history. `neither_gate_fires_on_this_repositorys_own_history`
-      # scans the last 20 commits and refuses to run on a shallow checkout,
-      # where `git show` on the single grafted commit is the whole tree rather
-      # than a commit's diff.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
-        with:
-          toolchain: "1.97.1"
-          components: rustfmt, clippy
-      - name: Install nextest
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532
-        with:
-          tool: nextest
-      - name: Rust Cache
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-        with:
-          shared-key: anvil-test
-          cache-workspace-crates: "true"
-      - name: Clippy Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Test
-        run: cargo nextest run --all-targets --locked --profile ci
 
   # Rulesets still require the `fast-checks` context. This job is the fan-in
   # for fmt + test. Same pattern as oya-ci-required.
@@ -167,7 +119,7 @@ jobs:
     name: fast-checks
     runs-on: ubuntu-24.04
     if: always()
-    needs: [fmt, test, occupancy]
+    needs: [build-and-test, occupancy]
     steps:
       # First step, before checkout, before the toolchain, before cargo:
       # nothing is compiled until occupancy has admitted the path-set.
@@ -193,27 +145,4 @@ jobs:
 
       - name: Fan-in
         run: |
-          [ "${{ needs.fmt.result }}" = "success" ] && [ "${{ needs.test.result }}" = "success" ]
-
-  # Post-submit compile check under the release profile. Nothing is uploaded:
-  # `scripts/start.sh` builds its own binary on the host. Not a merge-queue
-  # gate — the release profile is a different rustc than the test profile.
-  release:
-    name: release-build
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
-        with:
-          toolchain: "1.97.1"
-          components: rustfmt, clippy
-      - name: Rust Cache
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-        with:
-          shared-key: anvil-release
-          cache-workspace-crates: "true"
-      - name: Release profile compile check
-        run: cargo build --release --locked
+          [ "${{ needs.build-and-test.result }}" = "success" ]

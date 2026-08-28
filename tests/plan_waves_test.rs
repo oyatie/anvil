@@ -169,3 +169,50 @@ fn conflicts_are_reported_separately_from_sequencing() {
 fn no_plans_is_no_waves_rather_than_an_error() {
     assert_eq!(waves(&[]).expect("nothing to schedule").len(), 0);
 }
+
+#[test]
+fn two_plans_touching_different_hub_files_do_not_share_a_wave() {
+    // Disjoint write-sets, so plain set intersection admits both. The hub rule
+    // does not: `Cargo.toml` and `src/lib.rs` are both files every lane must
+    // edit, and two hub hops in flight together is how this repository's own
+    // branches collided on `src/lib.rs` and `src/migration/registry.rs`.
+    let plans = vec![
+        plan("a", &["Cargo.toml"], &[]),
+        plan("b", &["src/lib.rs"], &[]),
+    ];
+    let w = waves(&plans).expect("schedulable");
+    assert_eq!(
+        w.len(),
+        2,
+        "each hub hop goes alone; got {:?}",
+        w.iter()
+            .map(|wave| wave.iter().map(|p| p.item_id.clone()).collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_hub_plan_and_an_ordinary_plan_still_share_a_wave() {
+    // The hub rule bounds hub hops against each other, not against everything.
+    // A rule that serialised the whole wave behind one hub write would be a
+    // crate lock by another name, which D-39 rejects.
+    let plans = vec![
+        plan("hub", &["src/lib.rs"], &[]),
+        plan("leaf", &["src/widget/mod.rs"], &[]),
+    ];
+    let w = waves(&plans).expect("schedulable");
+    assert_eq!(w.len(), 1, "one hub plus disjoint leaves is one wave");
+    assert_eq!(w[0].len(), 2);
+}
+
+#[test]
+fn the_disjointness_decision_is_not_reimplemented_here() {
+    // `plan` must not carry its own copy of the occupancy predicate. The first
+    // version did, and lost the hub rule with it.
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/plan/mod.rs"))
+        .expect("plan source");
+    assert!(
+        src.contains("admit_spawn"),
+        "waves must delegate the admission decision to change_delivery"
+    );
+}

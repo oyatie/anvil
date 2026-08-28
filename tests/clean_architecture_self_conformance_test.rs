@@ -381,7 +381,39 @@ fn guard_can_report_not_measured_when_no_layering_exists() {
     );
 }
 
-/// A real, present bypass: `git_manager` has no layer of its own, and reaches
+/// A synthetic tree with one deliberate bypass, for proving the rule fires.
+///
+/// Anvil's own tree carried the fixture until today: these tests asserted on
+/// real violations in `git_manager` and elsewhere. With the seal at zero there
+/// is nothing left to assert against, and re-introducing a violation to keep a
+/// test green would invert the whole exercise. A constructed subject is what a
+/// proof needs anyway — `Rule::fixture` makes the same argument for the
+/// harness.
+fn tree_with_a_bypass() -> tempfile::TempDir {
+    let d = tempfile::tempdir().expect("tempdir");
+    let w = |rel: &str, body: &str| {
+        let p = d.path().join("src").join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    };
+    w("alpha/mod.rs", "pub mod core;\npub mod facade;\n");
+    w("alpha/core/mod.rs", "pub fn seed() {}\n");
+    w("alpha/facade/mod.rs", "pub use super::core::seed;\n");
+    w("beta/mod.rs", "pub mod facade;\n");
+    // The bypass: beta reaches past alpha's facade into its core.
+    w(
+        "beta/facade/mod.rs",
+        "use crate::alpha::core::seed;\npub fn go() { seed() }\n",
+    );
+    // A conformant self-reach: alpha's facade using alpha's own core, above.
+    d
+}
+
+/// The rule fires on a cross-unit reach past a facade.
+///
+/// Constructed, not observed: with anvil's own seal at zero there is no real
+/// bypass left to point at, and a check nobody has watched fire is a check
+/// that proves nothing.
 /// straight into another module's `adapters`. Only `facade` is importable from
 /// outside a unit -- that is the whole point of the four faces, and it is the
 /// edge that closes anvil's `change_delivery -> git_manager -> shape` cycle.
@@ -389,15 +421,19 @@ fn guard_can_report_not_measured_when_no_layering_exists() {
 /// The guard classifies a file by ITS OWN path, so an unclassified importer is
 /// invisible to it and this edge is reported as clean.
 #[test]
-fn unclassified_importer_reaching_into_a_units_adapters_is_a_violation() {
-    let r = CleanArchitectureGuard::new().self_conformance().unwrap();
-    let bypass = r.violations.iter().any(|v| {
-        v.file_path.contains("git_manager") && v.snippet.contains("change_delivery::adapters")
-    });
+fn a_cross_unit_reach_past_a_facade_is_a_violation() {
+    let d = tree_with_a_bypass();
+    let r = CleanArchitectureGuard::new()
+        .evaluate_source_tree(&d.path().join("src"))
+        .unwrap();
+    let bypass = r
+        .violations
+        .iter()
+        .any(|v| v.file_path.contains("beta") && v.description.contains("reaches past"));
     assert!(
         bypass,
-        "git_manager/mod.rs imports crate::change_delivery::adapters::git_vcs::LANE_LEASE_FILE, \
-         which reaches past that unit's facade. Guard reported {} violation(s).",
+        "beta/facade reaches past alpha's facade into its core and must be \
+         refused. Guard reported {} violation(s).",
         r.violations.len()
     );
 }
@@ -413,12 +449,16 @@ fn facade_bypasses_do_not_exceed_the_recorded_ceiling() {
         .iter()
         .filter(|v| v.description.contains("reaches past"))
         .count();
-    // A ceiling for checkouts with no merge-base; the monotone bound is
-    // derived below. An equality here is a number every lane must edit, and
-    // two branches that both remove a bypass write the same line.
-    assert!(
-        bypasses <= anvil::clean_architecture_guard::FACADE_BYPASSES_IN_ANVIL,
-        "cross-unit facade bypasses rose. Offenders:\n{}",
+    // The ratchet reached its terminus. At zero a ceiling and an equality are
+    // the same statement: the count cannot fall further, so any change is a
+    // rise, and the number no lane needs to edit is the number that stays.
+    assert_eq!(
+        bypasses,
+        anvil::clean_architecture_guard::FACADE_BYPASSES_IN_ANVIL,
+        "cross-unit facade bypasses rose from zero. Only a unit's facade is \
+         importable from outside it; if the facade lacks what a consumer \
+         legitimately needs, widen the facade rather than reach around it. \
+         Offenders:\n{}",
         r.violations
             .iter()
             .filter(|v| v.description.contains("reaches past"))
@@ -435,11 +475,17 @@ fn facade_bypasses_do_not_exceed_the_recorded_ceiling() {
 /// how a facade uses its adapters -- and `shape/facade` does exactly that.
 #[test]
 fn a_unit_reaching_into_its_own_interior_is_spared() {
-    let r = CleanArchitectureGuard::new().self_conformance().unwrap();
+    // Same constructed tree: `alpha/facade` uses `alpha/core`, which is how a
+    // facade is supposed to reach its own interior, while `beta` reaches into
+    // alpha's. One subject, both halves of the proof.
+    let d = tree_with_a_bypass();
+    let r = CleanArchitectureGuard::new()
+        .evaluate_source_tree(&d.path().join("src"))
+        .unwrap();
     let self_reach = r
         .violations
         .iter()
-        .find(|v| v.file_path.starts_with("src/shape/") && v.target_layer.starts_with("shape::"));
+        .find(|v| v.file_path.contains("alpha") && v.description.contains("reaches past"));
     assert!(
         self_reach.is_none(),
         "a unit was flagged for using its own faces: {self_reach:?}"

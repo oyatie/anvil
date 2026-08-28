@@ -24,7 +24,7 @@
 //!   forge that did not answer into "no overlap" — the exact false green
 //!   this check exists to prevent.
 
-use anvil::change_delivery::core::shard::{SpawnRefused, admit_spawn, anvil_hubs};
+use anvil::change_delivery::facade::occupancy::{SpawnRefused, admit_spawn, anvil_hubs};
 use anvil::pre_merge_guard::report::GateStatus;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;

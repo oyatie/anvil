@@ -791,6 +791,28 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         evidence: "PURE over a source list. `gate_proof` makes a gate demonstrate it can FIRE;                   nothing made a stage demonstrate it RUNS, and three were found dead in one day                   -- `next_phase`, whose reject arm therefore did nothing at all; the local hooks,                   pointed at a directory that did not exist; and the enlist doors, refusing every                   input on a premise that had stopped being true. Each was complete, documented                   and tested. None was a bug in the code that failed, which is why no unit test                   over that code could catch it. Reachability alone answers the wrong question: a                   module inside a reachable parent scores reachable with zero callers, and                   `next_phase` measured that way all session. So each stage names the SYMBOL                   whose presence in production code proves invocation, searched outside the                   stage's own files, with comments, string literals and `#[cfg(test)]` modules                   removed first -- a stage named in a doc comment is documented, not called.                   Six stages have no production caller today, recorded exactly. Migrates because                   every repository can hold a stage nothing runs.",
     },
     MigrationEntry {
+        component: "toolchain",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie pins a channel and declares an MSRV, and nothing reads either",
+        counterpart_loc: 0,
+        evidence: "PURE over two declared strings. MSRV and the toolchain channel are different \
+                   promises that move in opposite directions for opposite reasons: the channel \
+                   should chase stable, because every release carries soundness fixes and new \
+                   deny-by-default lints that become build breaks the day the pin moves; MSRV \
+                   should lag, because raising it strands consumers. Anvil declared 1.97.1 for \
+                   both while stable was 1.98.0 -- not a coincidence to tidy but the signature \
+                   of a pair nobody was managing, and nothing in the tree could tell. Equality \
+                   is therefore itself a finding rather than a consistency. Version ordering is \
+                   numeric because three-digit minors have arrived and 1.100.0 sorts before \
+                   1.98.0 as text. The lag budget is two trains rather than zero, because a \
+                   gate that fires every release Tuesday teaches readers to ignore it, and \
+                   latest-stable is passed in rather than fetched, because a verdict that \
+                   depends on network reachability is not deterministic and cannot run in a \
+                   hermetic build. Migrates because every repository pins a toolchain and \
+                   promises an MSRV.",
+    },
+    MigrationEntry {
         component: "plan",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,

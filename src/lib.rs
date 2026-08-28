@@ -115,6 +115,7 @@ pub mod stage_liveness;
 pub mod state;
 pub mod supply_chain_guard;
 pub mod telemetry_store;
+pub mod toolchain;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;
 pub mod upgrade_train;

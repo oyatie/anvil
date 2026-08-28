@@ -11,9 +11,9 @@ use crate::change_delivery::ports::{
     GateResult, LandingPolicy, LocalGate, PurityViolation, RewriteEngine, Shard, VcsPort,
     select_independent, shard_plan,
 };
-use crate::shape::adapters::GitTreeAtRev;
+use crate::shape::facade::GitTreeAtRev;
+use crate::shape::facade::TreeSource;
 use crate::shape::facade::measure::{MeasureRequest, measure_repo};
-use crate::shape::ports::TreeSource;
 use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 

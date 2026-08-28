@@ -43,6 +43,7 @@
 //! stated rather than implied, because the point of a mechanism is to not
 //! overclaim its coverage: either could hide a hit, and neither can invent one.
 
+pub mod paths;
 use std::fs;
 use std::path::{Path, PathBuf};
 

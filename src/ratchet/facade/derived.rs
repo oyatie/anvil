@@ -82,3 +82,41 @@ pub async fn source_sites_at_merge_base(
     .await
     .ok()
 }
+
+/// Materialise the merge-base tree on disk and judge it there.
+///
+/// For a guard whose entry point takes a filesystem path rather than a source
+/// list — `CleanArchitectureGuard::evaluate_source_tree` among them. The same
+/// binary judges both sides, so the two numbers are the same measure and no
+/// second implementation can drift from the first.
+///
+/// The directory is temporary and removed when `judge` returns.
+pub async fn at_merge_base_on_disk<T>(
+    repo_dir: &Path,
+    base_ref: &str,
+    head: &str,
+    select: impl Fn(&str) -> bool,
+    judge: impl Fn(&Path) -> T,
+) -> Result<Derived<T>, RefError> {
+    let base = GitMergeBase::resolve(repo_dir, base_ref, head).await?;
+    let rev = base.reference_rev().to_string();
+    let tree = GitTreeAtRev::load(repo_dir, &rev, select)
+        .await
+        .map_err(|e| RefError::Unavailable(e.to_string()))?;
+
+    let scratch =
+        tempfile::tempdir().map_err(|e| RefError::Unavailable(format!("tempdir: {e}")))?;
+    for (path, bytes) in tree.loaded() {
+        let out = scratch.path().join(path);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| RefError::Unavailable(format!("{}: {e}", parent.display())))?;
+        }
+        std::fs::write(&out, bytes)
+            .map_err(|e| RefError::Unavailable(format!("{}: {e}", out.display())))?;
+    }
+    Ok(Derived {
+        at_merge_base: judge(scratch.path()),
+        merge_base: rev,
+    })
+}

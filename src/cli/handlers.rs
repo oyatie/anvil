@@ -85,9 +85,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 // `regen_is_monotonic` reachable: without it, `--out` simply
                 // overwrites the committed baseline with whatever the tree
                 // produces now, laundering every key that appeared in between.
-                use crate::ratchet::facade::{
-                    FrozenBaseline as Baseline, FrozenSignoff as Signoff,
-                };
+                use crate::ratchet::facade::{Baseline, Signoff};
                 let previous = out
                     .as_ref()
                     .and_then(|p| std::fs::read(p).ok())

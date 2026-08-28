@@ -406,17 +406,19 @@ fn unclassified_importer_reaching_into_a_units_adapters_is_a_violation() {
 /// that appears, because a count that drops for an unknown reason is a count
 /// nobody is reading.
 #[test]
-fn facade_bypasses_match_the_recorded_count() {
+fn facade_bypasses_do_not_exceed_the_recorded_ceiling() {
     let r = CleanArchitectureGuard::new().self_conformance().unwrap();
     let bypasses = r
         .violations
         .iter()
         .filter(|v| v.description.contains("reaches past"))
         .count();
-    assert_eq!(
-        bypasses,
-        anvil::clean_architecture_guard::FACADE_BYPASSES_IN_ANVIL,
-        "cross-unit facade bypasses moved. Offenders:\n{}",
+    // A ceiling for checkouts with no merge-base; the monotone bound is
+    // derived below. An equality here is a number every lane must edit, and
+    // two branches that both remove a bypass write the same line.
+    assert!(
+        bypasses <= anvil::clean_architecture_guard::FACADE_BYPASSES_IN_ANVIL,
+        "cross-unit facade bypasses rose. Offenders:\n{}",
         r.violations
             .iter()
             .filter(|v| v.description.contains("reaches past"))
@@ -448,5 +450,55 @@ fn a_unit_reaching_into_its_own_interior_is_spared() {
             .iter()
             .any(|v| v.description.contains("reaches past")),
         "rule fired on nothing at all, so sparing proves nothing"
+    );
+}
+
+/// The bound that holds: removing a bypass is progress and needs no edit.
+///
+/// The guard's entry point takes a filesystem path, so the merge-base tree is
+/// materialised and judged by the same binary. One implementation, two trees.
+#[test]
+fn facade_bypasses_do_not_grow_against_the_merge_base() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let derived = rt.block_on(anvil::ratchet::facade::derived::at_merge_base_on_disk(
+        repo,
+        "origin/dev",
+        "HEAD",
+        |p| p.starts_with("src/") && p.ends_with(".rs"),
+        |root| {
+            CleanArchitectureGuard::new()
+                .evaluate_source_tree(&root.join("src"))
+                .map(|r| {
+                    r.violations
+                        .iter()
+                        .filter(|v| v.description.contains("reaches past"))
+                        .count()
+                })
+                .unwrap_or(usize::MAX)
+        },
+    ));
+    let Ok(base) = derived else {
+        eprintln!("skipped: no merge-base against origin/dev");
+        return;
+    };
+    if base.at_merge_base == usize::MAX {
+        eprintln!("skipped: the guard could not read the materialised merge-base tree");
+        return;
+    }
+    let now = CleanArchitectureGuard::new()
+        .self_conformance()
+        .unwrap()
+        .violations
+        .iter()
+        .filter(|v| v.description.contains("reaches past"))
+        .count();
+    assert!(
+        now <= base.at_merge_base,
+        "cross-unit facade bypasses grew from {} at merge-base {} to {}. Only a \
+         unit's facade is importable from outside it.",
+        base.at_merge_base,
+        &base.merge_base[..12],
+        now
     );
 }

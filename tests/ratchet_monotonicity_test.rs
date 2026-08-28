@@ -222,11 +222,10 @@ fn a_signoff_with_entries_but_no_signing_is_rejected() {
 
 #[test]
 fn withdrawing_a_blocking_rule_does_not_launder_its_baselined_keys() {
-    // The baseline is frozen at the merge-base, but the rule SET is read from
-    // the change. Before this was closed, a change that stopped declaring the
-    // rule blocking it produced no measurement, `current` had no entry, and
-    // every baselined key was reported FIXED. The ratchet passed and the
-    // laundering read as progress.
+    // The baseline is frozen at the merge-base; the rule SET comes from the
+    // change. A rule the change stops declaring produces no measurement, so
+    // `current` holds no entry and `reference.difference(now)` would report
+    // every baselined key as FIXED -- laundering that reads as progress.
     let frozen = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a", "b"])]);
     let v = compare(
         &frozen,
@@ -291,4 +290,69 @@ fn an_advisory_rule_that_is_withdrawn_still_does_not_block() {
     let r = &v.per_rule["file_misplaced"];
     assert!(r.withdrawn, "still reported");
     assert!(!r.fails, "advisory never blocks");
+}
+
+/// The second laundering vector, one file over from withdrawing a rule.
+///
+/// A regeneration may only shrink: `anvil shape baseline --out` must not
+/// overwrite the committed document with whatever the tree measures now.
+/// These pin the predicate the reseed path consults.
+#[test]
+fn a_regeneration_that_adds_a_key_is_refused_without_a_signoff() {
+    let frozen = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a"])]);
+    let grown = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a", "b"])]);
+    let err = regen_is_monotonic(&frozen, &grown, &Signoff::default())
+        .expect_err("growth must be refused");
+    assert!(
+        err.iter()
+            .any(|g| matches!(g, Growth::KeyAdded { key, .. } if key == "b")),
+        "the new key must be named so it can be acted on: {err:?}"
+    );
+}
+
+#[test]
+fn a_regeneration_that_downgrades_a_blocking_rule_is_refused() {
+    // Growth is not only new keys. Turning a blocking rule advisory retires
+    // the enforcement while leaving the document looking untouched in size.
+    let frozen = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a"])]);
+    let softened = baseline(&[("file_misplaced", Mode::Advisory, false, &["a"])]);
+    let err = regen_is_monotonic(&frozen, &softened, &Signoff::default())
+        .expect_err("a downgrade is growth");
+    assert!(
+        err.iter()
+            .any(|g| matches!(g, Growth::ModeDowngraded { .. })),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_signed_off_addition_is_admitted_by_the_regeneration() {
+    let frozen = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a"])]);
+    let grown = baseline(&[("file_misplaced", Mode::BlockOnNew, false, &["a", "b"])]);
+    assert!(
+        regen_is_monotonic(&frozen, &grown, &signed("file_misplaced", &["b"])).is_ok(),
+        "a visible, signed decision is the one way debt may grow"
+    );
+}
+
+#[test]
+fn the_reseed_path_consults_the_monotonicity_predicate() {
+    // The predicate was correct and unreachable. This asserts the wiring, not
+    // the logic: a caller that stopped consulting it would leave every test
+    // above passing while the CLI overwrote the baseline freely.
+    let src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/shape/facade/baseline.rs"
+    ))
+    .expect("baseline facade source");
+    assert!(
+        src.contains("regen_is_monotonic"),
+        "the reseed path must consult the shrink-only predicate"
+    );
+    let cli = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/cli/handlers.rs"))
+        .expect("cli source");
+    assert!(
+        cli.contains("reseed_from_commit"),
+        "`shape baseline` must go through the checked reseed, not the raw seed"
+    );
 }

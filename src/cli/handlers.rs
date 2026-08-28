@@ -80,10 +80,29 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 spec_override,
                 out,
             } => {
-                let (baseline, report) = crate::shape::facade::baseline::seed_from_commit(
+                // The document already on disk is the reference a regeneration
+                // must shrink against. Reading it is what makes
+                // `regen_is_monotonic` reachable: without it, `--out` simply
+                // overwrites the committed baseline with whatever the tree
+                // produces now, laundering every key that appeared in between.
+                use crate::ratchet::facade::{
+                    FrozenBaseline as Baseline, FrozenSignoff as Signoff,
+                };
+                let previous = out
+                    .as_ref()
+                    .and_then(|p| std::fs::read(p).ok())
+                    .and_then(|b| Baseline::parse(&b).ok());
+                let signoff =
+                    std::fs::read(repo_dir.join(crate::shape::facade::baseline::SIGNOFF_PATH))
+                        .ok()
+                        .and_then(|b| Signoff::parse(&b).ok())
+                        .unwrap_or_default();
+                let (baseline, report) = crate::shape::facade::baseline::reseed_from_commit(
                     &repo_dir,
                     &rev,
                     spec_override.as_deref(),
+                    previous.as_ref(),
+                    &signoff,
                 )
                 .await?;
                 let json = baseline.to_json();

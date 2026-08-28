@@ -26,6 +26,7 @@
 //! obliges the existing ones to fall.
 
 use anvil::fidelity::registry::AUDITED_GATES;
+use std::path::Path;
 use std::sync::LazyLock;
 
 /// A citation pinned to a line number rather than to a symbol.
@@ -49,14 +50,14 @@ fn count() -> usize {
         .sum()
 }
 
+/// A ceiling, not an equality. See the derived bound below.
 #[test]
-fn the_number_of_line_number_citations_is_exactly_what_was_recorded() {
+fn line_number_citations_do_not_exceed_the_recorded_ceiling() {
     let found = count();
-    assert_eq!(
-        found, LINE_CITATIONS_REMAINING,
-        "line-number citations moved. Falling is the work -- migrate the \
-         citation to `file.rs::symbol` and lower this number in the same \
-         change. Rising means a coordinate was written that the next unrelated \
+    assert!(
+        found <= LINE_CITATIONS_REMAINING,
+        "line-number citations rose. Migrate the citation to `file.rs::symbol`: \
+         a coordinate is a cached search result that the next unrelated \
          edit will invalidate."
     );
 }
@@ -71,5 +72,44 @@ fn the_symbol_form_is_in_real_use_and_not_merely_permitted() {
         symbol_citations >= 9,
         "the remedy must stay reachable: {symbol_citations} symbol citation(s) \
          found. A remedy nothing uses is a remedy nobody will reach for."
+    );
+}
+
+/// The bound that holds without a committed literal.
+///
+/// `LINE_CITATIONS_REMAINING` above stays as a floor for checkouts with no
+/// merge-base. Measured on the registry's source text on both sides, so the
+/// two counts are the same measure even though only one side can be parsed.
+#[test]
+fn line_citations_do_not_grow_against_the_merge_base() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let count = |path: &str, body: &str| {
+        if path != "src/fidelity/registry.rs" {
+            return 0;
+        }
+        LINE_CITATION.find_iter(body).count()
+    };
+    let Some(base) = rt.block_on(anvil::ratchet::facade::derived::source_sites_at_merge_base(
+        repo,
+        "origin/dev",
+        "HEAD",
+        count,
+    )) else {
+        eprintln!("skipped: no merge-base against origin/dev");
+        return;
+    };
+    let now = count(
+        "src/fidelity/registry.rs",
+        &std::fs::read_to_string(repo.join("src/fidelity/registry.rs")).expect("registry"),
+    );
+    assert!(
+        now <= base.at_merge_base,
+        "line-number citations grew from {} at merge-base {} to {}. A \
+         `file.rs:133-137` citation is a cached search result that the next \
+         unrelated edit invalidates; `file.rs::symbol` moves with the code.",
+        base.at_merge_base,
+        &base.merge_base[..12],
+        now
     );
 }

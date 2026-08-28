@@ -46,3 +46,39 @@ pub async fn at_merge_base<T>(
         merge_base: rev,
     })
 }
+
+/// Count matching lines across a repository's Rust sources at the merge-base.
+///
+/// The common shape of a shrink-only source rule: a scan that counts sites and
+/// must not grow. `count` receives one file's path and contents and returns
+/// how many sites it holds.
+///
+/// `Ok(None)` when there is no merge-base to compare against — a source
+/// tarball, a shallow clone. Withheld rather than passed: a bound nobody
+/// computed is not a bound that held.
+pub async fn source_sites_at_merge_base(
+    repo_dir: &Path,
+    base_ref: &str,
+    head: &str,
+    count: impl Fn(&str, &str) -> usize,
+) -> Option<Derived<usize>> {
+    at_merge_base(
+        repo_dir,
+        base_ref,
+        head,
+        |p| p.starts_with("src/") && p.ends_with(".rs"),
+        |tree| {
+            tree.paths()
+                .iter()
+                .filter(|p| p.starts_with("src/") && p.ends_with(".rs"))
+                .filter_map(|p| {
+                    let bytes = tree.read(p).ok().flatten()?;
+                    let text = std::str::from_utf8(bytes).ok()?;
+                    Some(count(p, text))
+                })
+                .sum()
+        },
+    )
+    .await
+    .ok()
+}

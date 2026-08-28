@@ -102,20 +102,16 @@ const DIFF_MARKERS: &[&str] = &["+++ b/", "diff --git"];
 /// Also from that review: the first draft keyed on `pub`/`async` and dropped a
 /// bare `unsafe fn` or `extern "C" fn` entirely, so a parser written either way
 /// was invisible to the gate that exists to see it.
-const FN_INTRODUCERS: &[&str] = &[
-    "fn ",
-    "pub fn ",
-    "pub(crate) fn ",
-    "async fn ",
-    "pub async fn ",
-    "pub(crate) async fn ",
-    "unsafe fn ",
-    "pub unsafe fn ",
-    "const fn ",
-    "pub const fn ",
-    "extern ",
-    "pub extern ",
-];
+/// Qualifiers that may sit between the start of a definition and its `fn`.
+///
+/// A closed grammar, not an enumeration of spellings. The list this replaces
+/// held eighteen literal prefixes and still missed `pub(super) fn`, which is
+/// how splitting a file under the 300-line budget made a real diff parser
+/// invisible and dropped this ratchet's count from 19 to 18. A fall that is
+/// really a blind spot is worse than a rise: it gets recorded as progress.
+///
+/// `pub(...)` in any form is handled separately since its body is arbitrary.
+const FN_QUALIFIERS: &[&str] = &["async", "unsafe", "const", "default", "extern"];
 
 fn rust_sources() -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -125,7 +121,16 @@ fn rust_sources() -> Vec<PathBuf> {
             let p = entry.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "rs") {
+            } else if p.extension().is_some_and(|e| e == "rs")
+                // A file the parent declares as `#[cfg(test)] mod <name>;`
+                // carries no `#[cfg(test)]` of its own, so `strip_test_items`
+                // below cannot see it is test code. Splitting one guard under
+                // the 300-line budget turned five unit tests into five
+                // "hand-rolled diff parsers" here. The answer lives in
+                // `source_scan` because twelve scanners in this tree strip
+                // test code the same way and share the same blind spot.
+                && !anvil::source_scan::is_cfg_test_module_file(&p)
+            {
                 out.push(p);
             }
         }
@@ -192,24 +197,74 @@ fn function_starts(body: &str) -> Vec<(usize, String)> {
     let mut out: Vec<(usize, String)> = Vec::new();
     for (off, line) in line_offsets(body) {
         let t = line.trim_start();
-        if !FN_INTRODUCERS.iter().any(|k| t.starts_with(k)) {
-            continue;
-        }
-        // `extern "C" fn name` and `extern crate` both start with `extern `;
-        // only the one that reaches an `fn` is a definition.
-        let Some(fi) = t.find("fn ") else {
+        let Some(name) = definition_name(t) else {
             continue;
         };
-        let name: String = t[fi + 3..]
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        if name.is_empty() {
-            continue;
-        }
         out.push((off + (line.len() - t.len()), name));
     }
     out
+}
+
+/// The function this line defines, if it defines one.
+///
+/// Strips an optional visibility (`pub`, `pub(crate)`, `pub(super)`,
+/// `pub(in path)`), then any number of qualifiers in any order, and requires
+/// `fn <name>` to be what remains. Matching the grammar rather than listing
+/// spellings is what makes a new combination impossible to slip through.
+fn definition_name(trimmed: &str) -> Option<String> {
+    let mut rest = trimmed;
+
+    if let Some(after) = rest.strip_prefix("pub") {
+        rest = if let Some(open) = after.strip_prefix('(') {
+            // `pub(crate)`, `pub(super)`, `pub(in crate::x)` -- body is
+            // arbitrary, so skip to its closing paren rather than list them.
+            open.find(')').map(|i| &open[i + 1..])?
+        } else {
+            after
+        };
+        if !rest.starts_with(char::is_whitespace) {
+            return None; // `public_thing`, not `pub `
+        }
+    }
+
+    // Qualifiers may appear in any order before `fn`, so consume them in a
+    // loop rather than enumerating the orderings.
+    loop {
+        rest = rest.trim_start();
+        // `extern "C" fn` carries an ABI string; `extern crate` never reaches
+        // an `fn` and falls out below.
+        if let Some(after) = rest.strip_prefix("extern")
+            && (after.starts_with(char::is_whitespace) || after.starts_with('"'))
+        {
+            rest = after.trim_start();
+            if let Some(tail) = rest.strip_prefix('"') {
+                rest = &tail[tail.find('"').map(|i| i + 1)?..];
+            }
+            continue;
+        }
+        let Some(shorter) = FN_QUALIFIERS
+            .iter()
+            .filter(|q| **q != "extern")
+            .find_map(|q| {
+                rest.strip_prefix(*q)
+                    .filter(|r| r.starts_with(char::is_whitespace))
+            })
+        else {
+            break;
+        };
+        rest = shorter;
+    }
+
+    let rest = rest.trim_start().strip_prefix("fn")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None; // `fnord`
+    }
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
 }
 
 fn line_offsets(body: &str) -> Vec<(usize, &str)> {
@@ -303,4 +358,29 @@ fn every_allowlist_entry_still_exists_and_still_parses() {
         "allowlist entries that no longer parse a diff: {stale:?}\n\
          Remove them, or the exemption outlives the reason for it."
     );
+}
+
+/// The helper must find test-only files AND spare production ones.
+///
+/// Seeded against the real case: `src/clean_architecture_guard/tests.rs` is
+/// declared `#[cfg(test)] mod tests;` and contains no `#[cfg(test)]` itself.
+#[test]
+fn cfg_test_module_files_are_recognised_and_production_files_are_not() {
+    use std::path::Path;
+    assert!(
+        anvil::source_scan::is_cfg_test_module_file(Path::new(
+            "src/clean_architecture_guard/tests.rs"
+        )),
+        "a file the parent declares under #[cfg(test)] was read as production code"
+    );
+    for production in [
+        "src/clean_architecture_guard/mod.rs",
+        "src/clean_architecture_guard/analyze.rs",
+        "src/source_scan/mod.rs",
+    ] {
+        assert!(
+            !anvil::source_scan::is_cfg_test_module_file(Path::new(production)),
+            "{production} is production code but was skipped as a test module"
+        );
+    }
 }

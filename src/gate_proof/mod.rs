@@ -49,7 +49,7 @@ pub struct GateProof {
 
 /// Gates that have demonstrated both halves.
 ///
-/// Grows by hand, deliberately. Every row was read before it was written --
+/// Grows by hand, deliberately. Every row is read before it is added --
 /// see the note above on what inference produced.
 pub const GATE_PROOFS: &[GateProof] = &[
     GateProof {

@@ -146,7 +146,7 @@ pub const STAGES: &[Stage] = &[
 /// that lives in a doc comment. A count that falls without that check is how
 /// a blind spot gets laundered into progress.
 /// Four became three when `gate_proof` gained `publish/scorecard.rs`. It knew
-/// which gates had been seeded with their own defect and which had only ever
+/// which gates have been seeded with their own defect and which have only
 /// been green, and no pull request was ever told; the qualifier on the blocked
 /// scorecard is the caller. The three that remain -- `cloud_native_guard`,
 /// `stack_whitelist_guard`, `dual_track_build_guard` -- publish no verdict on

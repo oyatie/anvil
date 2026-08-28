@@ -54,12 +54,9 @@ impl CloudNativeGuard {
             "cloudflare::",
         ];
         // Attribution comes from the diff itself, not from the changed-file
-        // list. This loop used to be `for file in changed_files { if core { for
-        // line in THE WHOLE DIFF } }` -- the path decided whether to look, the
-        // diff decided what was found, and nothing joined the two. An
-        // `aws_sdk_` import added in an adapter (where this guard's own remedy
-        // says to put it) was therefore reported against every core file in the
-        // change, by name, once each.
+        // list. A path-keyed loop over the whole diff joins nothing: the path
+        // chooses whether to look and the diff chooses what is found, so an
+        // SDK import in an adapter lands on every core file in the change.
         //
         // `diffs_by_path` already attributes hunks to paths and is the parser
         // this repository requires; hand-rolling a second one is what the

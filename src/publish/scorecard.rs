@@ -335,7 +335,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         // What the passing half of this score is worth.
         //
         // `gate_proof` was complete, ratcheted and called by nothing: it knew
-        // which gates had been seeded with their own defect and which had only
+        // which gates have been seeded with their own defect and which have only
         // ever been green, and no pull request was ever told. A gate that has
         // never been shown to fire still prints a tick indistinguishable from
         // a gate that has, which is precisely how four checks written in one

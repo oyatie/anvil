@@ -7,7 +7,7 @@
 //! knows what breaks, and finding out by moving it turns a routine bump into
 //! an outage on the branch everyone shares. A release brings new
 //! deny-by-default lints -- 1.98 added `invalid_runtime_symbol_definitions` --
-//! and hard errors that had been warnings, so a bump is a build break with a
+//! and turns warnings into hard errors, so a bump is a build break with a
 //! scheduled date.
 //!
 //! The hyperscaler answer is to meet it early rather than avoid it: build the
@@ -85,10 +85,8 @@ pub async fn probe(repo_dir: &Path, toolchain: &str) -> Safety {
     for (label, args) in steps {
         let mut cmd = Command::new("cargo");
         // Captured, not inherited. Without this the child's build log floods
-        // the probe's own stdout and the verdict scrolls away -- the first run
-        // of this command printed several hundred `Checking ...` lines and
-        // then a refusal with no reason visible above it. A gate whose answer
-        // is buried in the output of the thing it is judging has not reported.
+        // A gate whose answer is buried in the build log of the thing it
+        // judges has not reported.
         cmd.current_dir(repo_dir)
             .env("RUSTUP_TOOLCHAIN", toolchain)
             .stdout(std::process::Stdio::piped())
@@ -157,10 +155,8 @@ pub fn channel_bump(from: Version, to: Version) -> Finding {
 /// explicitly -- omitting it installs `''` and rustup falls back to stable, so
 /// CI would silently build with a different compiler than every developer.
 ///
-/// The first run of `anvil toolchain --apply` moved the manifest and left this
-/// behind, and anvil's own `ci_installs_the_pinned_toolchain_not_stable` test
-/// caught it. A bump that moves some of the pin is a tree whose CI and
-/// developers disagree about the compiler.
+/// A bump that moves only part of the pin leaves CI and developers on
+/// different compilers.
 pub fn ci_toolchain_bump(from: Version, to: Version) -> Finding {
     Finding {
         rule: "toolchain_channel_behind",

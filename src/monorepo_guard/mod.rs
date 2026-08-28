@@ -74,10 +74,20 @@ impl MonorepoGuard {
             }
         }
 
-        // 3. Whole-File Context Expansion: Evaluate entire touched files on disk
-        for file in &diff_ctx.changed_files {
-            let whole_file_violations = WholeFileExpansion::evaluate_whole_file(repo_dir, file);
-            violations.extend(whole_file_violations);
+        // 3. What this change did to each file it touched.
+        //
+        // Driven from `diffs_by_path` rather than `changed_files` so the
+        // added lines and the net growth come from the same hunk as the path.
+        // Charging a toucher for a file's existing size made 57 files in this
+        // repository unmergeable, including by the split the gate demands.
+        for fd in crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content) {
+            let change = crate::monorepo_guard::whole_file_expansion::FileChange {
+                added: fd.added(),
+                net_lines: fd.net_lines(),
+            };
+            violations.extend(WholeFileExpansion::evaluate_whole_file(
+                repo_dir, &fd.path, &change,
+            ));
         }
 
         // 4. Check for Non-Hermetic Path Escapes & Hardcoded Absolute Paths

@@ -17,8 +17,8 @@
 //! the layer each sits at and whether it is `Live` or `Missing`. `Layer`
 //! already is the prevention ladder. `harness::Rule` + `Fixture` already is
 //! what a new mechanical remedy looks like. None of it was reachable from the
-//! fixer, which is the whole defect: the ledger was written, and the component
-//! that decides what to do about a finding never opened it.
+//! fixer, which is the defect: the component that decides what to do about a
+//! finding never opens the ledger of what has already been decided.
 
 use crate::postmortem::{FIX_CLASSES, FixClass, Layer, Mechanism, Status};
 

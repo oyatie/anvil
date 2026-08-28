@@ -1,26 +1,9 @@
 //! Whether a path holds tests rather than shipped code.
-//!
-//! One answer, because there were four and they disagreed. Two were
-//! byte-identical copies of this predicate; one walked path components and
-//! admitted more suffixes; the fourth was `path.contains("test")`, which spares
-//! any production file whose name happens to carry the word and is the spelling
-//! that let `#[cfg(test)]` fixtures be charged to the modules holding them.
-//!
-//! This lives beside the strippers rather than inside `mod.rs` because that
-//! file sits at the 300-line budget, and a scoping question is not a reason to
-//! breach it.
 
-/// Rust that exists to test other Rust.
+/// Rust that exists to test other Rust, by Cargo's layout.
 ///
-/// Cargo's own layout is the whole rule: an integration test is a file under
-/// `tests/`, and a unit test lives beside its subject under a `_test` or
-/// `_tests` suffix by convention. Anything else is shipped code, whatever its
-/// name suggests.
-///
-/// A `#[cfg(test)]` module inside a production file is NOT covered here and
-/// must not be: the file ships, and stripping the module is
-/// [`super::without_test_modules`]'s job. Conflating the two questions is what
-/// made a module answerable for its own fixtures.
+/// A `#[cfg(test)]` module inside a production file is deliberately NOT covered:
+/// that file ships, and stripping the module is [`super::without_test_modules`].
 pub fn is_test_source(path: &str) -> bool {
     path.starts_with("tests/")
         || path.contains("/tests/")

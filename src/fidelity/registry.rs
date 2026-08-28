@@ -270,7 +270,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               identically on both sides was moved and does not count -- is reported `NotMeasured` rather \
               than passed. Adding a brand-new repr type also triggers it, which is why the published \
               sentence says add or remove rather than change -- `layout_files` \
-              (semantic_abi_ratchet/mod.rs:104,116).",
+              (semantic_abi_ratchet/mod.rs:149,152).",
         blocked_on: None,
     },
     GateFidelity {

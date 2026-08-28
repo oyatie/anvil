@@ -363,6 +363,63 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 }
             }
         }
+        Commands::Toolchain {
+            repo_dir,
+            to,
+            apply,
+        } => {
+            let declared = crate::toolchain::read(&repo_dir);
+            let Some(target) = crate::toolchain::Version::parse(&to) else {
+                println!("❌ `{to}` is not a version");
+                return Ok(());
+            };
+            let Some(current) = declared.channel else {
+                println!("❌ no channel declared in rust-toolchain.toml; nothing to move");
+                return Ok(());
+            };
+            println!("Probing {current} -> {target} under the TARGET toolchain...");
+            let safety = crate::toolchain::bump::probe(&repo_dir, &to).await;
+            println!("{}", safety.explain());
+            if !safety.permits_bump() {
+                // No flag skips this. A bump applied without a probe is the
+                // change this command exists to stop anyone making by hand.
+                println!("❌ refusing to move the pin: the bump is not proven.");
+                return Ok(());
+            }
+            // Every site the pin appears at, together. A bump that moves the
+            // manifest and leaves CI behind gives a tree whose CI and whose
+            // developers build with different compilers.
+            let channel = crate::toolchain::bump::channel_bump(current, target);
+            let ci = crate::toolchain::bump::ci_toolchain_bump(current, target);
+            let mut files = std::collections::BTreeMap::new();
+            let mut findings: Vec<&crate::harness::Finding> = vec![&channel];
+            files.insert(
+                "rust-toolchain.toml".to_string(),
+                std::fs::read_to_string(repo_dir.join("rust-toolchain.toml"))?,
+            );
+            let ci_path = repo_dir.join(".github/workflows/ci.yml");
+            if let Ok(body) = std::fs::read_to_string(&ci_path) {
+                files.insert(".github/workflows/ci.yml".to_string(), body);
+                findings.push(&ci);
+            }
+            let plan = crate::harness::apply::plan(&findings, &files);
+            for r in &plan.refused {
+                println!("  refused: {r:?}");
+            }
+            for edit in &plan.edits {
+                match edit {
+                    crate::harness::apply::Edit::Rewrite { path: p, body } => {
+                        if apply {
+                            std::fs::write(repo_dir.join(p), body)?;
+                            println!("✅ {p}: channel moved to {target}");
+                        } else {
+                            println!("would rewrite {p} (pass --apply to write)");
+                        }
+                    }
+                    other => println!("  unexpected edit: {other:?}"),
+                }
+            }
+        }
         Commands::TrainRun { repo } => {
             info!("Running Proactive Upgrade Train for {}", repo);
             let candidates = vec![crate::upgrade_train::DependencyUpgradeCandidate {

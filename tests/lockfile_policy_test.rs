@@ -58,11 +58,23 @@ fn toolchain_is_pinned_to_an_exact_version_not_a_channel_name() {
 }
 
 #[test]
-fn package_rust_version_matches_the_toolchain_pin() {
-    assert_eq!(
-        package_rust_version(),
-        toolchain_channel(),
-        "[package] rust-version and rust-toolchain.toml must name the same version"
+fn package_rust_version_is_not_ahead_of_the_toolchain_pin() {
+    // This asserted EQUALITY, which made the two facts one number: the channel
+    // is what we compile with and should chase stable, MSRV is what consumers
+    // may compile under and should rise rarely. `src/toolchain` now reports
+    // equality as a finding.
+    //
+    // The old assertion had a real point underneath it, kept here: an MSRV
+    // BELOW the channel that no job ever builds under is a promise with no
+    // measurement behind it. That is `Drift::MsrvUnverified`, and anvil is in
+    // that state today -- every CI job installs the channel. The remedy is a
+    // build under MSRV, not a number that agrees with itself.
+    let msrv = package_rust_version();
+    let channel = toolchain_channel();
+    assert!(
+        msrv <= channel,
+        "MSRV {msrv} is newer than the pinned channel {channel}: the promised \
+         minimum cannot build here at all"
     );
 }
 

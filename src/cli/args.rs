@@ -122,6 +122,17 @@ pub enum Commands {
         )]
         message: Option<String>,
     },
+    /// Probe a toolchain, then move the pin only if the probe passed.
+    Toolchain {
+        #[arg(long, default_value = ".", help = "Repository to bump")]
+        repo_dir: PathBuf,
+
+        #[arg(long, help = "Target channel, e.g. 1.98.0")]
+        to: String,
+
+        #[arg(long, help = "Write the edit. Without it, the plan is printed only")]
+        apply: bool,
+    },
     /// Run Proactive Dependency Upgrade Train on a repository
     TrainRun {
         #[arg(short, long, help = "Repository (e.g. oyatie/oyatie)")]

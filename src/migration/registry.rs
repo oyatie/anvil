@@ -332,7 +332,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   real duration source.",
     },
     MigrationEntry {
-        component: "clean_architecture_guard.rs",
+        component: "clean_architecture_guard/",
         verdict: Verdict::Superseded,
         confidence: Confidence::Verified,
         oyatie_counterpart: "ci/facade/facade-core-layering + core-dependency-isolation + port-placement + \

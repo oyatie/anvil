@@ -18,9 +18,9 @@ const SHA: &str = "6746459418c2f0d1a7b3e5c9d2f4a6b8c0e1d3f5";
 #[test]
 fn a_revision_scoped_body_carries_the_short_sha() {
     let b = body(AnvilAction::Reviewed, "a finding", Judged::Rev(SHA.into()));
-    assert!(b.contains("674645941"), "no anchor in:\n{b}");
+    assert!(b.as_str().contains("674645941"), "no anchor in:\n{b}");
     assert!(
-        !b.contains(SHA),
+        !b.as_str().contains(SHA),
         "the full forty characters are noise; twelve is what GitHub shows"
     );
 }
@@ -28,7 +28,7 @@ fn a_revision_scoped_body_carries_the_short_sha() {
 #[test]
 fn the_anchor_sits_with_the_signature_not_in_the_content() {
     let b = body(AnvilAction::Certified, "content", Judged::Rev(SHA.into()));
-    let (before, after) = b.split_once("---").expect("separator");
+    let (before, after) = b.as_str().split_once("---").expect("separator");
     assert!(!before.contains("674645941"), "anchor leaked into content");
     assert!(
         after.contains("674645941"),
@@ -43,15 +43,18 @@ fn a_body_that_is_not_about_a_commit_carries_no_anchor() {
         "the queue was stuck",
         Judged::NotRevisionScoped,
     );
-    assert!(!b.contains('`'), "no anchor should be rendered:\n{b}");
+    assert!(
+        !b.as_str().contains('`'),
+        "no anchor should be rendered:\n{b}"
+    );
 }
 
 #[test]
 fn the_envelope_is_still_signed_and_marked_either_way() {
     for j in [Judged::Rev(SHA.into()), Judged::NotRevisionScoped] {
         let b = body(AnvilAction::Reviewed, "x", j);
-        assert!(is_signed(&b), "signature lost:\n{b}");
-        assert!(b.starts_with("<!--"), "marker must lead:\n{b}");
+        assert!(is_signed(b.as_str()), "signature lost:\n{b}");
+        assert!(b.as_str().starts_with("<!--"), "marker must lead:\n{b}");
     }
 }
 
@@ -75,6 +78,6 @@ fn a_short_or_ragged_sha_does_not_panic_or_overrun() {
     // a panic in the publisher would lose the finding entirely.
     for s in ["", "abc", "  6746459418c2  "] {
         let b = body(AnvilAction::Fixed, "x", Judged::Rev(s.to_string()));
-        assert!(is_signed(&b));
+        assert!(is_signed(b.as_str()));
     }
 }

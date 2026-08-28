@@ -123,14 +123,46 @@ impl Judged {
 /// This is the deterministic half of everything Anvil publishes: the marker,
 /// the action, the separator and the revision are mechanical, and only
 /// `content` is written by a model.
-pub fn body(action: AnvilAction, content: &str, judged: Judged) -> String {
-    format!(
+/// A body that has been through the envelope.
+///
+/// The field is private and this module is the only place that can build one,
+/// so a transport taking a `Published` cannot be handed a raw `String`. That
+/// moves "everything we publish is signed and anchored" from a rule checked at
+/// a few call sites to one the compiler enforces at all of them -- including
+/// call sites nobody has written yet, which is the half a standing test cannot
+/// reach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published(String);
+
+impl Published {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Adopt a body that already carries the envelope.
+    ///
+    /// The one legitimate way in from outside: a comment being amended in
+    /// place was signed when it was first posted, and re-enveloping it would
+    /// double the signature. Refuses anything unsigned, so this is not a hole.
+    pub fn already_enveloped(content: &str) -> Option<Self> {
+        is_signed(content).then(|| Published(content.trim_end().to_string()))
+    }
+}
+
+impl std::fmt::Display for Published {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+pub fn body(action: AnvilAction, content: &str, judged: Judged) -> Published {
+    Published(format!(
         "{}\n{}\n\n---\n{}{}",
         action.marker(),
         content.trim_end(),
         signature(action),
         judged.anchor()
-    )
+    ))
 }
 
 /// A uniformly styled issue: deterministic title, findings-only body.
@@ -164,7 +196,7 @@ pub fn issue(
     }
     Issue {
         title: format!("[anvil] {} — {}", subject.trim(), scope.trim()),
-        body: body(action, &b, judged),
+        body: body(action, &b, judged).to_string(),
     }
 }
 
@@ -209,9 +241,9 @@ mod tests {
     fn every_published_body_carries_a_marker_and_the_signature() {
         for a in ALL {
             let b = body(*a, "some findings", Judged::NotRevisionScoped);
-            assert!(b.starts_with(a.marker()), "marker must lead: {b}");
-            assert!(b.ends_with(&signature(*a)));
-            assert!(b.contains("\n---\n"), "separator missing");
+            assert!(b.as_str().starts_with(a.marker()), "marker must lead: {b}");
+            assert!(b.as_str().ends_with(&signature(*a)));
+            assert!(b.as_str().contains("\n---\n"), "separator missing");
         }
     }
 
@@ -284,11 +316,9 @@ mod tests {
 
     #[test]
     fn is_signed_detects_the_canonical_signature_only() {
-        assert!(is_signed(&body(
-            AnvilAction::Fixed,
-            "x",
-            Judged::NotRevisionScoped
-        )));
+        assert!(is_signed(
+            body(AnvilAction::Fixed, "x", Judged::NotRevisionScoped).as_str()
+        ));
         assert!(!is_signed("a comment with no signature"));
         // The historical unbracketed variant must NOT satisfy the check.
         assert!(!is_signed("*🤖 Fixed by Oyatie Anvil*"));
@@ -297,6 +327,9 @@ mod tests {
     #[test]
     fn body_does_not_double_space_when_content_is_already_padded() {
         let b = body(AnvilAction::Fixed, "done\n\n\n", Judged::NotRevisionScoped);
-        assert!(!b.contains("\n\n\n"), "trailing whitespace must be trimmed");
+        assert!(
+            !b.as_str().contains("\n\n\n"),
+            "trailing whitespace must be trimmed"
+        );
     }
 }

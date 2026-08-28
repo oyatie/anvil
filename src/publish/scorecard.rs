@@ -369,7 +369,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         Some(s) => crate::publish::Judged::Rev(s.head_sha.clone()),
         None => crate::publish::Judged::NotRevisionScoped,
     };
-    body(action, &s, judged)
+    body(action, &s, judged).to_string()
 }
 
 #[cfg(test)]

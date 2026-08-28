@@ -415,6 +415,7 @@ fn published(content: &str, head_sha: &str) -> String {
             content,
             publish::Judged::Rev(head_sha.to_string()),
         )
+        .to_string()
     }
 }
 

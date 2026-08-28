@@ -36,10 +36,9 @@ pub fn unit_graph(
 ) -> BTreeMap<String, BTreeSet<String>> {
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for e in &graph.edges {
-        let (Some((from, _)), Some((to, _))) = (
-            classify(spec, units, &e.from),
-            classify(spec, units, &e.to),
-        ) else {
+        let (Some((from, _)), Some((to, _))) =
+            (classify(spec, units, &e.from), classify(spec, units, &e.to))
+        else {
             continue;
         };
         if from.name != to.name {
@@ -56,10 +55,7 @@ pub fn unit_graph(
 /// Tarjan, iterative: a recursive walk overflows on a 70-member component,
 /// and the component this exists to find is exactly that size.
 pub fn cycles(adj: &BTreeMap<String, BTreeSet<String>>) -> Vec<Vec<String>> {
-    let nodes: BTreeSet<&String> = adj
-        .keys()
-        .chain(adj.values().flatten())
-        .collect();
+    let nodes: BTreeSet<&String> = adj.keys().chain(adj.values().flatten()).collect();
     let mut index = BTreeMap::new();
     let mut low = BTreeMap::new();
     let mut on_stack = BTreeSet::new();

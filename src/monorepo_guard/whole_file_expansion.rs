@@ -21,6 +21,15 @@ pub struct FileChange<'a> {
     pub net_lines: i64,
 }
 
+/// Whether a path is a test source. A substring match on "test" is not this:
+/// it spares any production file whose name happens to contain the word.
+fn is_test_path(path: &str) -> bool {
+    path.starts_with("tests/")
+        || path.contains("/tests/")
+        || path.ends_with("_test.rs")
+        || path.ends_with("_tests.rs")
+}
+
 impl FileChange<'_> {
     fn grew(&self) -> bool {
         self.net_lines > 0
@@ -120,14 +129,26 @@ impl WholeFileExpansion {
             }
         }
 
-        // 3. Rust Safety check: raw unwrap in production
-        if is_rust && !file_path.contains("test") && !file_path.starts_with("tests/") {
-            for (idx, line) in lines.iter().enumerate() {
-                if line.contains(".unwrap()") && !line.trim_start().starts_with("//") {
+        // 3. Raw `unwrap` in production code this change added.
+        //
+        // Three strippers, none of which this rule had. `without_test_modules`
+        // removes `#[cfg(test)]` blocks, which is where `tempdir().unwrap()`
+        // lives and why a production file was charged for its own fixtures.
+        // `code_only` removes comments and string literals, without which the
+        // rule read its own error message and its own comparison line as
+        // findings -- it reported itself, three times, on this pull request.
+        // And a path substring test is not a test check: it skipped
+        // `src/latest_state.rs` for containing "test" while scanning every
+        // `#[cfg(test)]` block in every other file.
+        if is_rust && !is_test_path(file_path) {
+            let production =
+                crate::source_scan::code_only(&crate::source_scan::without_test_modules(&content));
+            for (idx, line) in production.lines().enumerate() {
+                if line.contains(".unwrap()") && change.adds(line) {
                     violations.push(MonorepoViolation {
                         category: "PRODUCTION_UNWRAP_DETECTED".to_string(),
                         description: format!(
-                            "Production file '{}' contains raw .unwrap() at line {}. Use '?' operator, 'unwrap_or_default()', or explicit error handling.",
+                            "Production file '{}' gains a raw unwrap at line {}. Use `?`, `unwrap_or_default()`, or explicit error handling.",
                             file_path, idx + 1
                         ),
                         snippet: line.trim().to_string(),

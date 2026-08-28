@@ -32,7 +32,7 @@ fn one_number_for_both_facts_is_itself_the_finding() {
         channel: Some(v("1.97.1")),
         msrv: Some(v("1.97.1")),
     };
-    let found = drift(&d, Some(v("1.98.0")));
+    let found = drift(&d, Some(v("1.98.0")), true);
     assert!(
         found.iter().any(|f| matches!(f, Drift::Conflated { .. })),
         "equal values are not 'consistent', they are unmanaged: {found:?}"
@@ -45,7 +45,7 @@ fn distinct_and_current_values_are_clean() {
         channel: Some(v("1.98.0")),
         msrv: Some(v("1.94.0")),
     };
-    assert!(drift(&d, Some(v("1.98.0"))).is_empty());
+    assert!(drift(&d, Some(v("1.98.0")), true).is_empty());
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn a_channel_inside_the_budget_is_not_a_finding() {
         channel: Some(v("1.96.0")),
         msrv: Some(v("1.90.0")),
     };
-    assert!(drift(&d, Some(v("1.98.0"))).is_empty());
+    assert!(drift(&d, Some(v("1.98.0")), true).is_empty());
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn a_channel_past_the_budget_is_reported_with_the_distance() {
         channel: Some(v("1.94.0")),
         msrv: Some(v("1.90.0")),
     };
-    let found = drift(&d, Some(v("1.98.0")));
+    let found = drift(&d, Some(v("1.98.0")), true);
     assert!(matches!(
         found.first(),
         Some(Drift::ChannelBehind { by: 4, .. })
@@ -78,7 +78,7 @@ fn an_msrv_newer_than_the_channel_is_unbuildable_and_says_so() {
         channel: Some(v("1.96.0")),
         msrv: Some(v("1.98.0")),
     };
-    let found = drift(&d, Some(v("1.98.0")));
+    let found = drift(&d, Some(v("1.98.0")), true);
     assert!(
         found
             .iter()
@@ -94,7 +94,7 @@ fn an_undeclared_fact_is_reported_rather_than_defaulted() {
         msrv: Some(v("1.90.0")),
     };
     assert!(matches!(
-        drift(&d, Some(v("1.98.0"))).first(),
+        drift(&d, Some(v("1.98.0")), true).first(),
         Some(Drift::Undeclared { .. })
     ));
 }
@@ -107,7 +107,7 @@ fn an_unknown_latest_stable_withholds_the_lag_verdict_only() {
         channel: Some(v("1.90.0")),
         msrv: Some(v("1.90.0")),
     };
-    let found = drift(&d, None);
+    let found = drift(&d, None, true);
     assert!(found.iter().any(|f| matches!(f, Drift::Conflated { .. })));
     assert!(
         !found
@@ -154,13 +154,23 @@ fn every_drift_explains_itself_in_terms_a_person_can_act_on() {
 }
 
 #[test]
-fn anvils_own_pair_is_measured_and_currently_conflated() {
+fn anvils_own_pair_is_distinct() {
+    // This asserted `Conflated` when it was written, and said the change that
+    // fixed it would update it. That change was `anvil toolchain --apply`,
+    // which probed 1.98 and moved the channel while MSRV stayed at the last
+    // version this tree was actually tested on.
     let d = anvil::toolchain::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
-    let found = drift(&d, None);
+    let found = drift(&d, None, true);
     assert!(
-        found.iter().any(|f| matches!(f, Drift::Conflated { .. })),
-        "anvil declares one number for both facts; when that is fixed, this \
-         test is updated by the change that fixed it. Got: {found:?}"
+        !found.iter().any(|f| matches!(f, Drift::Conflated { .. })),
+        "the channel and MSRV must stay two decisions. Got: {found:?}"
+    );
+    assert!(
+        d.channel > d.msrv,
+        "the channel leads MSRV: we compile with something at least as new as \
+         what we promise consumers. channel={:?} msrv={:?}",
+        d.channel,
+        d.msrv
     );
 }
 
@@ -176,4 +186,35 @@ fn a_trailing_comment_does_not_hide_the_pin() {
     // the `#`. Seeding it is what showed the assertion was blind.
     let toml = "[toolchain]\nchannel = \"1.98.0\"  # bumped 2026-08\n";
     assert_eq!(channel_from_toml(toml), Some(v("1.98.0")));
+}
+
+#[test]
+fn an_msrv_nothing_builds_under_is_a_claim_not_a_measurement() {
+    // Separating MSRV from the channel is only an improvement if the lower
+    // number is then PROVEN. Unproven, it is worse than conflation: it looks
+    // managed and is not. Anvil is in exactly this state -- every CI job
+    // installs the channel and nothing installs 1.97.1.
+    let d = Declared {
+        channel: Some(v("1.98.0")),
+        msrv: Some(v("1.97.1")),
+    };
+    let found = drift(&d, Some(v("1.98.0")), false);
+    assert!(
+        found
+            .iter()
+            .any(|f| matches!(f, Drift::MsrvUnverified { .. })),
+        "an MSRV no build exercises must be reported: {found:?}"
+    );
+    // And it is NOT reported as conflated -- the two are different failures
+    // with different remedies.
+    assert!(!found.iter().any(|f| matches!(f, Drift::Conflated { .. })));
+}
+
+#[test]
+fn a_proven_msrv_is_clean() {
+    let d = Declared {
+        channel: Some(v("1.98.0")),
+        msrv: Some(v("1.97.1")),
+    };
+    assert!(drift(&d, Some(v("1.98.0")), true).is_empty());
 }

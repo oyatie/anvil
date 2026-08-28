@@ -360,7 +360,16 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
     } else {
         AnvilAction::Blocked
     };
-    body(action, &s)
+    // The report already carries the sha it judged; publishing without it
+    // would leave the verdict unanchored across a force-push.
+    // The subject carries the sha the run was performed against. A report with
+    // no subject was not produced by a certification run over a commit, so it
+    // is NotRevisionScoped rather than anchored to a sha invented here.
+    let judged = match report.subject() {
+        Some(s) => crate::publish::Judged::Rev(s.head_sha.clone()),
+        None => crate::publish::Judged::NotRevisionScoped,
+    };
+    body(action, &s, judged)
 }
 
 #[cfg(test)]

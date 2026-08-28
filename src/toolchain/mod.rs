@@ -26,6 +26,8 @@
 //! the channel lag is measured and published rather than discovered on the
 //! day someone bumps it.
 
+pub mod bump;
+
 use std::path::Path;
 
 /// A semantic version triple, compared numerically rather than as text.
@@ -79,6 +81,14 @@ pub enum Drift {
     MsrvAheadOfChannel { msrv: Version, channel: Version },
     /// A fact is not declared at all, so nothing can be measured.
     Undeclared { which: &'static str },
+    /// MSRV is declared below the channel and nothing ever builds under it.
+    ///
+    /// A promise no build exercises is a claim, not a measurement -- the same
+    /// class as a gate that reports healthy from constants. Separating MSRV
+    /// from the channel is only an improvement if the lower number is then
+    /// PROVEN; otherwise it is a worse state than conflation, because it looks
+    /// managed and is not.
+    MsrvUnverified { msrv: Version },
 }
 
 impl Drift {
@@ -104,6 +114,12 @@ impl Drift {
             Drift::Undeclared { which } => {
                 format!("{which} is not declared, so it cannot be measured")
             }
+            Drift::MsrvUnverified { msrv } => format!(
+                "MSRV {msrv} is promised and never built: no job installs it, so \
+                 the minimum is a claim rather than a measurement. Add a build \
+                 under it, or raise it to the channel and promise only what is \
+                 tested."
+            ),
         }
     }
 }
@@ -169,7 +185,7 @@ pub const CHANNEL_LAG_BUDGET: u32 = 2;
 /// `latest_stable` is passed in rather than fetched: a gate that reaches the
 /// network cannot run in a hermetic build, and a verdict that depends on
 /// reachability is not deterministic.
-pub fn drift(d: &Declared, latest_stable: Option<Version>) -> Vec<Drift> {
+pub fn drift(d: &Declared, latest_stable: Option<Version>, msrv_built: bool) -> Vec<Drift> {
     let mut out = Vec::new();
     let Some(channel) = d.channel else {
         out.push(Drift::Undeclared {
@@ -185,6 +201,9 @@ pub fn drift(d: &Declared, latest_stable: Option<Version>) -> Vec<Drift> {
     };
     if channel == msrv {
         out.push(Drift::Conflated { at: channel });
+    }
+    if msrv < channel && !msrv_built {
+        out.push(Drift::MsrvUnverified { msrv });
     }
     if msrv > channel {
         out.push(Drift::MsrvAheadOfChannel { msrv, channel });

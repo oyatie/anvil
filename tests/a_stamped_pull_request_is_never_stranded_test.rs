@@ -13,7 +13,13 @@
 //!
 //! Fixing the two instances leaves the class open, so this is keyed to the
 //! shape rather than to those two sites: after the stamp, no `?`, and every
-//! `return` rolls the stamp back.
+//! exit -- `return`, `bail!`, `ensure!` -- rolls the stamp back.
+//!
+//! What it does NOT cover, stated rather than implied: the scan is bounded by
+//! `execute_pr_review`'s own body, so post-stamp work moved into a helper
+//! leaves its exits unseen. That boundary is real and this file cannot close
+//! it; a reviewer moving fallible work out of this function is moving it out
+//! of this guard.
 //!
 //! What `clear_reviewed_sha` itself does is measured next to it, by
 //! `state::tests::clearing_the_reviewed_sha_allows_the_pr_to_be_retried`; this
@@ -104,8 +110,30 @@ fn every_return_after_the_stamp_rolls_it_back() {
     let body = the_review_pipeline();
     let mut checkpoint = the_stamp(&body);
 
+    // Every way out, not just `return ` with a space after it. A bare
+    // `return;` and the `bail!`/`ensure!` macros are exits that leave the stamp
+    // set exactly as a `return Err(e)` does, and matching only `"return "`
+    // meant a one-word edit restored the bug this file exists to prevent.
+    let mut exits: Vec<usize> = Vec::new();
+    for pat in ["return", "bail!", "ensure!"] {
+        for (at, _) in body.match_indices(pat) {
+            let before = body[..at].chars().last();
+            if pat == "return"
+                && (before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                    || body[at + pat.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphanumeric() || c == '_'))
+            {
+                continue; // part of a longer identifier
+            }
+            exits.push(at);
+        }
+    }
+    exits.sort_unstable();
+
     let mut unrolled = Vec::new();
-    for (at, _) in body.match_indices("return ") {
+    for at in exits {
         if at < checkpoint {
             continue;
         }
@@ -122,7 +150,7 @@ fn every_return_after_the_stamp_rolls_it_back() {
 
     assert!(
         unrolled.is_empty(),
-        "{} return(s) after the reviewed-SHA stamp leave it set: {}.\n\
+        "{} exit(s) after the reviewed-SHA stamp leave it set: {}.\n\
          The pull request is not retried after them; it stops. Call \
          `state.state_mgr.clear_reviewed_sha(repo, pr_number).await` first, or \
          move the exit above the stamp.",

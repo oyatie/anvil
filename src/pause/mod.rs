@@ -28,6 +28,30 @@
 //! them makes the failure mode of the check identical to not being paused.
 //! [`Pause::engaged`] separates them and treats "could not tell" as engaged:
 //! the whole point of this control is what it does when things are wrong.
+//!
+//! # What has to read it
+//!
+//! Every task `webhook_handlers` detaches, and every step inside a run that
+//! takes authority. Those are different bounds and both are needed: a read at
+//! task entry does not cover a certification that takes minutes, and a read
+//! before one irreversible step does not cover its siblings.
+//!
+//! The doors, and what each does while paused if it does not read this:
+//!
+//! * the review door -- clones, runs a model turn, and can enlist;
+//! * the fixer door -- clones, runs a model turn, pushes to the contributor;
+//! * the trunk-CI triage door -- runs a model turn and files a PUBLIC issue
+//!   with `gh issue create`, which is what an operator sees appearing after
+//!   they thought they had stopped Anvil;
+//! * the heal door -- pushes a heal commit and enlists, reaching
+//!   `certify_for_enlistment` without passing through the review pipeline.
+//!
+//! Inside a run, the Enlist arm and the AutoFix arm both take authority, and
+//! the AutoFix arm reaches the same fixer the door above guards.
+//!
+//! `every_autonomous_webhook_door_reads_the_pause` is keyed to `tokio::spawn`
+//! rather than to that list, because a rule written as the doors it knows
+//! about cannot see the next one.
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};

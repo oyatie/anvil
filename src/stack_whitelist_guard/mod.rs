@@ -93,18 +93,79 @@ impl StackWhitelistGuard {
         }
 
         // 2. Unapproved Stack / Dependency Hallucination Scanner
-        for line in diff_ctx.diff_content.lines() {
-            if line.starts_with('+') && !line.starts_with("+++") {
+        //
+        // Over `source_scan::code_only`, per file, skipping test sources.
+        //
+        // A bare substring search over every `+` line made this gate refuse the
+        // change that WIRED it, twice. First on a test fixture -- the branch
+        // adds `"+use mongodb::Client;\n"` to `tests/stack_whitelist_guard_test.rs`,
+        // the line that proves the gate catches MongoDB. Then, after a first
+        // fix that stripped only double-quoted spans, on the fix's own comment:
+        //
+        //     // named, not used. Neither can hide a real `use redis::…`
+        //
+        // Backticks are not quotes and `mod.rs` is not a test source, so the
+        // sentence explaining the exclusion was itself read as an adoption of
+        // Redis. That is the fourth hand-rolled "is this code" scan in this
+        // tree to be beaten by prose, which is why this one is not hand-rolled:
+        // `code_only` blanks line comments, block comments and string literals
+        // in one place that is tested once.
+        //
+        // Both exclusions are the rule's subject rather than exemptions from
+        // it. A gate about production code adopting an unapproved dependency
+        // has no subject in a test fixture, and a crate named in a comment or
+        // a string is named, not used. Neither hides a real `use redis::…`,
+        // which is code in a file that ships.
+        let files = crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content);
+        if files.is_empty() && !diff_ctx.diff_content.trim().is_empty() {
+            // A diff with no `diff --git` headers. Nothing can be attributed to
+            // a path, so nothing can be excluded by one either -- and reporting
+            // zero violations because the parse found no files is precisely the
+            // fail-open this rule exists to prevent. Every added line is
+            // scanned, and the finding says it could not name a file.
+            for line in diff_ctx.diff_content.lines() {
+                if !line.starts_with('+') || line.starts_with("+++") {
+                    continue;
+                }
+                let code = crate::source_scan::code_only(line);
                 for (banned_kw, rationale) in Self::BANNED_UNAPPROVED_STACK {
-                    if line.contains(banned_kw) {
+                    if code.contains(banned_kw) {
                         violations.push(StackWhitelistViolation {
                             category: "UNAPPROVED_STACK_TECHNOLOGY".to_string(),
                             item: banned_kw.to_string(),
                             description: format!(
-                                "Unapproved technology '{}' detected in PR diff: {}. Stack additions require an accepted ADR in docs/decisions/.",
+                                "Unapproved technology '{}' added by a diff carrying no file headers, so it cannot be attributed: {}. Stack additions require an accepted ADR in docs/decisions/.",
                                 banned_kw, rationale
                             ),
                         });
+                    }
+                }
+            }
+        } else {
+            for fd in files {
+                if crate::source_scan::paths::is_test_source(&fd.path) {
+                    continue;
+                }
+                // `code_only` preserves line count and offsets, so its output
+                // lines up with the post-image line for line.
+                let after = fd.after_change();
+                let code = crate::source_scan::code_only(&after);
+                let added: Vec<&str> = fd.added().lines().collect();
+                for (code_line, raw_line) in code.lines().zip(after.lines()) {
+                    if !added.contains(&raw_line) {
+                        continue;
+                    }
+                    for (banned_kw, rationale) in Self::BANNED_UNAPPROVED_STACK {
+                        if code_line.contains(banned_kw) {
+                            violations.push(StackWhitelistViolation {
+                                category: "UNAPPROVED_STACK_TECHNOLOGY".to_string(),
+                                item: format!("{}:{}", fd.path, banned_kw),
+                                description: format!(
+                                    "Unapproved technology '{}' added to '{}': {}. Stack additions require an accepted ADR in docs/decisions/.",
+                                    banned_kw, fd.path, rationale
+                                ),
+                            });
+                        }
                     }
                 }
             }

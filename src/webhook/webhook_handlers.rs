@@ -320,6 +320,10 @@ pub async fn webhook_handler(
             let base_sha = pr.base.sha.clone();
 
             tokio::spawn(async move {
+                // Also read inside; a delegated read moves when the callee does.
+                if state_clone.pause.holds(&repo_clone, pr_number, "reviewing") {
+                    return;
+                }
                 if let Err(e) = execute_pr_review(
                     &state_clone,
                     &repo_clone,
@@ -397,12 +401,8 @@ pub async fn webhook_handler(
         };
 
         tokio::spawn(async move {
-            // The fixer clones, runs a model turn, and pushes to the
-            // contributor's branch. A paused Anvil must not push.
-            if state_clone
-                .pause
-                .holds(&repo_clone, pr_number, "running the fixer")
-            {
+            // Clones, model turn, pushes to the contributor. See `pause`.
+            if state_clone.pause.holds(&repo_clone, pr_number, "fixing") {
                 return;
             }
             let _ = state_clone
@@ -447,6 +447,10 @@ pub async fn webhook_handler(
             let wf_name = wf.name.unwrap_or_else(|| "CI Workflow".to_string());
 
             tokio::spawn(async move {
+                // Model turn, then a public issue. PR 0: a workflow run.
+                if state_clone.pause.holds(&repo_clone, 0, "triaging CI") {
+                    return;
+                }
                 if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
                     let _ = state_clone
                         .ci_triager
@@ -489,15 +493,8 @@ pub async fn webhook_handler(
         // would be logged nowhere at all -- the one enlist door where the
         // refusal would have become *less* observable than before.
         tokio::spawn(async move {
-            // The healer pushes a heal commit and then enlists into the merge
-            // queue, reaching `certify_for_enlistment` directly rather than
-            // through `execute_pr_review` -- so it inherits none of that
-            // function's pause reads. A switch that stops one of three doors
-            // is not a switch that stops Anvil.
-            if state_clone
-                .pause
-                .holds(&repo_clone, pr_number, "healing an ejected pull request")
-            {
+            // Pushes a heal commit and enlists directly. See `pause`.
+            if state_clone.pause.holds(&repo_clone, pr_number, "healing") {
                 return;
             }
             match state_clone

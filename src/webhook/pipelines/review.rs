@@ -117,8 +117,6 @@ pub async fn execute_pr_review(
         Ok(report) => report,
         Err(e) => {
             // Retried rather than stranded; `clear_reviewed_sha` says why.
-            // The stamp belongs to this pipeline, so the rollback does too:
-            // an enlist attempt must not be able to un-stamp a pull request.
             state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
             return Err(e);
         }
@@ -174,8 +172,7 @@ pub async fn execute_pr_review(
         )
         .await
     {
-        // Was a bare `?`: a rate-limited forge here, after every gate had run
-        // and passed, stranded the pull request for good.
+        // Was a bare `?`: a rate-limited forge stranded the head for good.
         state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
         return Err(e);
     }
@@ -355,9 +352,7 @@ pub async fn execute_pr_review(
             // this path: certification takes minutes, and a switch sampled
             // only at the start of a long run cannot be used during it.
             if state.pause.holds(repo, pr_number, "enlisting") {
-                // Without this the pause is a one-way door: lifting it would
-                // not resume this pull request, because nothing would review
-                // it again short of a new commit.
+                // Without this the pause is a one-way door.
                 state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
                 return Ok(());
             }
@@ -367,7 +362,13 @@ pub async fn execute_pr_review(
                 .await;
             match &enlistment {
                 Ok(_) => enlisted = true,
-                Err(e) => warn!("Automatic merge queue enlistment notice: {}", e),
+                Err(e) => {
+                    warn!("Automatic merge queue enlistment notice: {}", e);
+                    // Falls through rather than returns, so no earlier
+                    // rollback covers it, and the sweep record.rs relies on
+                    // dispatches with `force: false`. See `clear_reviewed_sha`.
+                    state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+                }
             }
         }
         crate::webhook::next_phase::NextPhase::AutoFix { attempt } => {
@@ -378,6 +379,13 @@ pub async fn execute_pr_review(
                 attempt,
                 crate::webhook::next_phase::MAX_AUTO_FIX_ATTEMPTS
             );
+            // Not a report: reaches the same clone, model turn and push the
+            // fixer door refuses, on a read minutes stale. See `pause`.
+            if state.pause.holds(repo, pr_number, "running the fixer") {
+                state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+                return Ok(());
+            }
+
             // Counted before the run, not after. A fixer that panics or times
             // out must still consume its attempt, or a crashing fixer loops
             // forever -- the bound only holds if it counts tries.

@@ -125,78 +125,104 @@ fn a_pause_that_cannot_be_read_is_a_pause() {
     }
 }
 
-/// Every door Anvil goes through on its own must read the pause.
+/// Every door Anvil goes through on its own must read the pause, and stop.
 ///
-/// The module calls itself "the gesture that stops Anvil" and `Held::reason()`
-/// says "Anvil is paused". Both were false: the pause was read only inside
-/// `execute_pr_review`, while two sibling webhook paths pushed and merged
-/// without consulting it -- `merge_group`/`destroyed` into `heal_ejected_pr`,
-/// which pushes a heal commit and then enlists (reaching
-/// `certify_for_enlistment` directly, so it inherits no pause read), and
-/// `pull_request_review_comment` into `resolve_and_fix`, which pushes to the
-/// contributor's branch.
+/// Keyed to `tokio::spawn`, with no list of verbs. The first version of this
+/// test asked whether a spawn body called one of
+/// `["resolve_and_fix", "heal_ejected_pr", "execute_pr_review"]` -- the three
+/// that existed when it was written -- and classified everything else as
+/// "only reads or reports". The trunk-CI triage door, which runs a model turn
+/// and files a public issue with `gh issue create`, was silently in that
+/// "everything else". So was a door that enlisted into the merge queue. A rule
+/// written as the instances it knew about cannot see the next one, and the
+/// next one is the whole point.
 ///
-/// Keyed to the spawn, because that is what makes a path autonomous: anything
-/// the webhook handler detaches into a task acts without a human in the loop,
-/// and must be able to be stopped.
+/// Read through `code_only`, not `without_commentary`. That one keeps string
+/// literals by documented design, so `warn!("resuming after pause")` satisfied
+/// a scan for the word. The comment half was closed in the first version and
+/// the literal half was left open.
+///
+/// A read that does not stop the door is not a guard, so the `return` is part
+/// of the assertion. `if paused { warn!(...) }` and then pushing anyway passed
+/// before.
 #[test]
 fn every_autonomous_webhook_door_reads_the_pause() {
-    // Code only. The comments beside these doors explain what the pause is for,
-    // and a scan that reads prose as code counts the explanation as the guard.
-    let src = anvil::source_scan::without_commentary(
-        &std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("src/webhook/webhook_handlers.rs"),
-        )
-        .expect("the webhook handlers exist"),
-    );
+    let raw = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webhook/webhook_handlers.rs"),
+    )
+    .expect("the webhook handlers exist");
+    let src = anvil::source_scan::code_only(&raw);
 
-    let spawns: Vec<usize> = src
-        .match_indices("tokio::spawn(async move {")
-        .map(|(i, _)| i)
-        .collect();
+    let doors: Vec<usize> = src.match_indices("tokio::spawn(").map(|(i, _)| i).collect();
     assert!(
-        !spawns.is_empty(),
-        "no detached task found in the webhook handlers. If they moved, this \
+        !doors.is_empty(),
+        "no detached tasks found in the webhook handlers. If they moved, this \
          test must follow them -- a scan that stops finding its subject is not \
          a fix."
     );
 
-    let mut unguarded = Vec::new();
-    for at in spawns {
-        // The body up to the next spawn, or 1200 bytes.
-        let rest = &src[at..];
-        let end = rest[1..]
-            .find("tokio::spawn(")
-            .map(|k| k + 1)
-            .unwrap_or(rest.len())
-            .min(1200);
-        let body = &rest[..end];
-        // A task that only reads or reports is not a door: this is about the
-        // ones that push, fix, heal or enlist.
-        let acts = ["resolve_and_fix", "heal_ejected_pr", "execute_pr_review"]
-            .iter()
-            .find(|verb| body.contains(**verb));
-        if let Some(verb) = acts
-            && !body.contains("pause")
-            && !body.contains("execute_pr_review")
-        {
-            let line = src[..at].matches('\n').count() + 1;
-            unguarded.push(format!(
-                "webhook_handlers.rs:{line}: spawns {verb} without reading the pause"
+    let mut open = Vec::new();
+    for at in doors {
+        let line = src[..at].matches('\n').count() + 1;
+        let body = match spawn_body(&src, at) {
+            Some(b) => b,
+            None => panic!(
+                "could not find the end of the task spawned at \
+                 src/webhook/webhook_handlers.rs:{line}. `code_only` does not \
+                 model raw strings, and a scan that was fooled must not guess."
+            ),
+        };
+        let read = body.find(".holds(");
+        let stops = read.is_some_and(|r| body[r..].contains("return"));
+        if !(body.contains("pause") && stops) {
+            open.push(format!(
+                "src/webhook/webhook_handlers.rs:{line}{}",
+                if read.is_some() {
+                    " (reads the pause and carries on)"
+                } else {
+                    ""
+                }
             ));
         }
     }
 
     assert!(
-        unguarded.is_empty(),
-        "Anvil goes through these doors on its own and cannot be stopped at \
-         them:\n{}\n\
-         A switch that holds one of three doors does not stop Anvil, and the \
-         module claiming it does is worse than no switch, because an operator \
-         believes it.",
-        unguarded.join("\n")
+        open.is_empty(),
+        "{} detached task(s) act with no human in the loop and are not \
+         stoppable: {}.\n\
+         Anything this handler spawns runs unattended, so it must read the \
+         pause and return. If a new door genuinely takes no authority -- it \
+         only reads, or only answers -- it still needs a read here, or an \
+         escape hatch naming the reason, which is what this tree does with \
+         `SubjectRoot::asserted`.",
+        open.len(),
+        open.join(", ")
     );
+}
+
+/// The body of the task spawned at `at`, by brace depth over code-only text.
+///
+/// Refuses rather than guesses when the depth does not return to zero, because
+/// `code_only` does not model raw strings and a scan that was fooled must not
+/// answer. That is the third cut this tree has taken at this shape; the first
+/// two counted braces over text that kept literal bodies and ran to end of
+/// file on one unbalanced brace.
+fn spawn_body(src: &str, at: usize) -> Option<&str> {
+    let open = at + src[at..].find('{')?;
+    let mut depth = 0i32;
+    for (offset, b) in src[open..].bytes().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&src[open..open + offset + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The switch must read the directory the daemon was configured with.

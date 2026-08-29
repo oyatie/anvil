@@ -1442,10 +1442,8 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         oyatie_counterpart: "not established from this repository",
         counterpart_loc: 0,
         evidence: "The port is 'is this fleet, or this repository, held?'; the two filenames are one \
-                  adapter behind it, and an orchestrated deployment answers the same question from a \
-                  ConfigMap. Unresolved, not Probable: no oyatie counterpart was inspected, absence \
-                  would be inferred from anvil's own catalog, and this must not drive a deletion \
-                  until someone has looked.",
+                  adapter behind it. Unresolved, not Probable: no oyatie counterpart was inspected, \
+                  so absence would be inferred from anvil's own catalog.",
     },
     MigrationEntry {
         component: "unresolved_review_guard",

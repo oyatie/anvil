@@ -84,11 +84,7 @@ impl Reviewer {
 
         let output_text = self
             .executor
-            .execute_prompt(
-                &prompt,
-                diff_ctx.repo_working_dir.as_path(),
-                &self.model_config,
-            )
+            .execute_prompt(&prompt, &diff_ctx.repo_working_dir, &self.model_config)
             .await?;
 
         self.parse_review_response(&output_text)

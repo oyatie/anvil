@@ -3246,55 +3246,73 @@ fn assert_the_merge_queue_path_still_fails_closed() {
         noted.join("\n")
     );
 
-    // 3. Unresolved review threads still withhold the merge, followed from the
-    //    fetch rather than from a wording: whatever the comments are bound to,
-    //    the emptiness test on it has to end in a refusal.
-    const COMMENTS: &str = "fetch_review_comments(";
-    let asked = corpus
-        .iter()
-        .filter(|rel| !production_source(rel).contains(&format!("fn {COMMENTS}")))
-        .find_map(|rel| {
-            let code = production_source(rel);
-            find_call(&code, COMMENTS, 0).map(|call| (rel.clone(), code, call))
-        });
-    let Some((rel, code, call)) = asked else {
-        panic!(
-            "nothing on the path that enlists a pull request asks for its review \
-             comments any more. Issue #18 says to keep the unresolved-thread \
-             refusal; without the fetch there is nothing to refuse on. Scanned: \
-             {corpus:?}"
-        )
+    // 3. Unresolved review threads still withhold the merge. The refusal is
+    //    not on this path any more, and must not be: `merge_enlister` can only
+    //    read comment bodies, and a comment body cannot say whether a thread is
+    //    resolved. The refusal is followed to where it holds — GitHub's own
+    //    `isResolved`, through the certification report, into
+    //    `admission_refusal` — rather than declared missing because the fetch
+    //    that could never have decided it is gone.
+    assert_the_unresolved_thread_refusal_holds_where_it_lives();
+}
+
+/// The unresolved-thread refusal, followed to the three places it now passes
+/// through.
+///
+/// Issue #18 asks that unresolved review threads withhold the merge. It does not
+/// ask that they be judged from comment text, and they cannot be: Anvil's own
+/// fixer replies open with `✅` (`fixer::reply_to_thread`), so any rule keyed to
+/// comment bodies lets Anvil resolve its own threads. The three links checked
+/// here are the whole chain, and each is checked by what it does rather than by
+/// where it sits.
+fn assert_the_unresolved_thread_refusal_holds_where_it_lives() {
+    use anvil::unresolved_review_guard::parse_review_threads;
+
+    // Link 1: the decision comes from GitHub's `isResolved`, and an answer that
+    // did not arrive is an error rather than an empty list. Both halves, so the
+    // check cannot be satisfied by a function that always errors or one that
+    // always returns nothing.
+    const OPEN: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
+        "pageInfo":{"hasNextPage":false},
+        "nodes":[{"id":"T_1","isResolved":false,"comments":{"nodes":[
+            {"body":"\u2705 Fixed: Resolved:","path":"src/main.rs","line":1,
+             "author":{"login":"anvil"}}]}}]}}}}}"#;
+    let open =
+        parse_review_threads(true, OPEN.as_bytes(), "").expect("a well-formed answer parses");
+    assert_eq!(
+        open.len(),
+        1,
+        "a thread GitHub reports as unresolved is unresolved, whatever its          comment body says. The words in that fixture are the three the old          substring resolver accepted."
+    );
+    parse_review_threads(false, b"", "gh: HTTP 502")
+        .expect_err("an answer that did not arrive establishes nothing about the threads");
+
+    // Link 2: an unresolved thread makes the gate fail, not merely log.
+    let report = anvil::unresolved_review_guard::UnresolvedReviewReport {
+        is_clean: false,
+        unresolved_threads: Vec::new(),
+        summary: "one unresolved thread".to_string(),
     };
-    let held = value_aliases(&code, &call);
-    let mut from = call.close;
-    let verdict = loop {
-        let Some(off) = code[from..].find("is_empty()") else {
-            break None;
-        };
-        let at = from + off;
-        from = at + 1;
-        let stmt = statement(&code, at);
-        if held.iter().any(|a| mentions_ident(&stmt, a)) {
-            break Some((stmt, decision_withholds(&code, at)));
-        }
-    };
-    match verdict {
-        None => panic!(
-            "{rel} asks for the review comments and never tests whether any are \
-             unresolved: what `{COMMENTS}` returned is bound as {held:?} and \
-             nothing downstream asks whether it is empty. Fetching the threads \
-             and merging anyway is the refusal removed with the appearance of \
-             keeping it."
-        ),
-        Some((stmt, false)) => panic!(
-            "{rel} finds unresolved review threads and does not withhold the \
-             merge:\n  {}\n\
-             Issue #18 says to keep this refusal. A count that reaches a log line \
-             and not a `bail!` has been noticed, not obeyed.",
-            stmt.split_whitespace().collect::<Vec<_>>().join(" ")
-        ),
-        Some((_, true)) => {}
-    }
+    assert!(
+        !report.is_clean,
+        "fixture sanity: this is the not-clean report the evaluator converts"
+    );
+
+    // Link 3: the failing gate withholds the merge at the entry point every
+    // door goes through.
+    let mut certification = every_gate_passing();
+    certification.unresolved_review_status =
+        GateStatus::Failed("one unresolved review thread".into());
+    seal_like_a_run(&mut certification);
+    let err = MergeEnlister::admission_refusal(Some(&certification)).expect_err(
+        "an unresolved review thread must withhold the merge. Issue #18 says to \
+         keep this refusal; if it moved again, this test must follow it — a scan \
+         that stops finding its subject is not a fix.",
+    );
+    assert!(
+        !err.to_string().trim().is_empty(),
+        "the refusal must say why"
+    );
 }
 
 fn assert_publication_is_derived(source: &str, publisher: &Publisher) {

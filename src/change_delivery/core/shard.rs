@@ -169,3 +169,95 @@ pub fn select_independent(
     }
     chosen
 }
+
+/// Why a shard is not in any wave.
+///
+/// Separate from "waits for a later wave" on purpose. A shard held by policy is
+/// never coming, and a caller that cannot tell the two apart reports a plan as
+/// smaller than it is -- which is what a silently shortened list does today.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Held {
+    /// `require_destination_stable` is on and this shard's unit is not stable.
+    DestinationNotStable,
+}
+
+/// Every shard, placed in the round it may open in.
+///
+/// [`select_independent`] answers "what may open now" and drops the rest with
+/// nothing said about them: a plan of forty shards with one conflicting pair
+/// renders as "would open now: 39" and the fortieth is simply absent. The
+/// caller cannot tell a shard that waits one round from one that is excluded
+/// for good, and neither can a reader of the dry run.
+///
+/// This places all of them. Each wave is exactly what `select_independent`
+/// admits given everything already placed, so the wave rules and the
+/// open-now rules are the same rules and cannot drift. `held` carries the
+/// shards no wave can ever contain, with the reason.
+///
+/// Terminates because every round either places at least one eligible shard or
+/// returns the remainder as `stuck`: a round that admits nothing while eligible
+/// shards remain would otherwise loop forever, and reporting it is better than
+/// hanging on a policy that cannot be satisfied.
+pub struct Sequenced {
+    pub waves: Vec<Vec<Shard>>,
+    pub held: Vec<(Shard, Held)>,
+    /// Eligible shards that no round would admit. Empty in every case the
+    /// rules can express; not an `assert!`, because a scheduler that panics on
+    /// a tenant's policy file is worse than one that says what it could not do.
+    pub stuck: Vec<Shard>,
+}
+
+impl Sequenced {
+    /// Every shard that will open, in order, ignoring the wave boundaries.
+    pub fn placed(&self) -> usize {
+        self.waves.iter().map(Vec::len).sum()
+    }
+}
+
+pub fn sequence(shards: &[Shard], in_flight: &[Shard], policy: &LandingPolicy) -> Sequenced {
+    let (eligible, held): (Vec<Shard>, Vec<Shard>) = shards
+        .iter()
+        .cloned()
+        .partition(|s| !(policy.require_destination_stable && !s.destination_stable));
+
+    let mut remaining = eligible;
+    let mut waves: Vec<Vec<Shard>> = Vec::new();
+
+    // What holds paths against the round being planned. Work already open
+    // holds them against the FIRST round only: a later wave is by definition
+    // one that starts after the rounds before it have landed, so nothing from
+    // them is still in flight. Carrying earlier waves forward here would make
+    // every shard after the first conflict with a lane that has already
+    // merged, and the loop would stop after one round -- which is
+    // `select_independent` again, wearing a different name.
+    let mut against: &[Shard] = in_flight;
+
+    while !remaining.is_empty() {
+        let wave = select_independent(&remaining, against, policy);
+        if wave.is_empty() {
+            if against.is_empty() {
+                // Nothing open, nothing placed, and still nothing admitted:
+                // the policy cannot be satisfied by these shards. Report the
+                // remainder rather than loop.
+                break;
+            }
+            // Everything left is waiting on work already open. It opens once
+            // that has landed, which is the next round.
+            against = &[];
+            continue;
+        }
+        let keys: BTreeSet<&str> = wave.iter().map(|s| s.key.0.as_str()).collect();
+        remaining.retain(|s| !keys.contains(s.key.0.as_str()));
+        waves.push(wave);
+        against = &[];
+    }
+
+    Sequenced {
+        waves,
+        held: held
+            .into_iter()
+            .map(|s| (s, Held::DestinationNotStable))
+            .collect(),
+        stuck: remaining,
+    }
+}

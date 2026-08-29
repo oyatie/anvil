@@ -4,8 +4,10 @@ use std::path::Path;
 use tracing::info;
 
 pub mod engine;
+pub mod scan;
 
-pub use engine::{RustQualityEngine, RustQualityFinding, RustRule};
+pub use engine::{RustQualityFinding, RustRule};
+pub use scan::RustQualityEngine;
 
 use crate::git_manager::PrDiffContext;
 use crate::pre_merge_guard::GateStatus;

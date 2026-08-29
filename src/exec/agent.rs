@@ -14,6 +14,24 @@
 //! clears the environment and hands back only [`INHERITED`], so a variable
 //! reaches a model turn because it is on that list, not because it happened to
 //! be set.
+//!
+//! # What a Posture does not yet carry, and why
+//!
+//! A per-site tool grant. `agy --help` offers no allowed-tools flag: the whole
+//! permission surface is `--dangerously-skip-permissions`, `--mode`
+//! (`accept-edits` | `plan`) and `--sandbox`. Its auto-deny message names the
+//! real mechanism -- an allow-rule under `permissions.allow` in a
+//! `settings.json`, spelled `command(<target>)` -- but the file's discovery
+//! path could not be established here: rules placed under
+//! `ANTIGRAVITY_CONFIG_DIR`, `GEMINI_CLI_CONFIG_DIR`, `.agy/`, `.antigravity/`
+//! and the working directory were each ignored, and `--mode plan` alone still
+//! auto-denies.
+//!
+//! So the field is absent rather than guessed. A `Posture` that wrote a
+//! settings.json nothing reads would look like isolation while granting
+//! nothing, and every probe would fail with "permission check failed for
+//! command" -- which `doc_guard`'s own comment records happening once already.
+//! Grants land when the discovery path is known.
 
 use super::inherited::INHERITED;
 use std::path::{Path, PathBuf};

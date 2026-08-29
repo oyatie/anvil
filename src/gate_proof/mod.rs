@@ -168,14 +168,36 @@ pub const GATE_PROOFS: &[GateProof] = &[
     },
 ];
 
-/// Gates with no demonstration that they can fire. EXACT, and it must fall.
+/// The gates that can fire in this deployment and have never been shown to.
 ///
-/// Not every gate can have one. Twenty-six are declared unprovisionable in
-/// `admission::ABSENCE_POLICY` -- no telemetry endpoint, no signing backend, no
-/// cluster -- and a gate that cannot measure in this deployment cannot be
-/// seeded with a defect either. The obligation applies to the gates that CAN
-/// fire, and this counts those still owing it.
-pub const GATES_WITHOUT_PROOF: usize = 23;
+/// Not every gate can have a demonstration. The gates declared unprovisionable
+/// in `admission::ABSENCE_POLICY` -- no telemetry endpoint, no signing backend,
+/// no cluster -- cannot be seeded with a defect either, so the obligation is
+/// over `absence_blocks`, and this names those still owing it.
+///
+/// Derived, not written down, for the reason
+/// `admission::not_provisioned_count` gives: a corpus-wide literal is a global
+/// every lane must edit, and it is what makes a gate migration one
+/// unmergeable pull request instead of a series of small ones. The bound is
+/// still exact and still one-way, against this change's own merge-base, in
+/// `tests/derived_corpus_ratchets_test.rs`.
+///
+/// The corpus and the predicate are arguments rather than something reached
+/// for. `gate_proof` is `Migrating` in `migration::registry` and the corpus
+/// lives in `pre_merge_guard`, which is `Superseded`; a module that cannot
+/// migrate while it depends on something being deleted has not been made ready
+/// to migrate, so the dependency is inverted and the caller supplies both.
+pub fn gates_owing_a_proof(
+    corpus: &[&'static str],
+    can_fire: impl Fn(&str) -> bool,
+) -> Vec<&'static str> {
+    let proven: std::collections::BTreeSet<&str> = GATE_PROOFS.iter().map(|p| p.gate_id).collect();
+    corpus
+        .iter()
+        .copied()
+        .filter(|id| can_fire(id) && !proven.contains(id))
+        .collect()
+}
 
 /// Whether this gate has demonstrated both halves.
 pub fn is_proven(gate_id: &str) -> bool {
@@ -200,7 +222,7 @@ pub fn unproven_among<'a>(passed: &[&'a str]) -> Vec<&'a str> {
 /// `None` when every passing gate is proven -- silence is the correct output
 /// for a report with nothing to qualify, and a line that always prints stops
 /// being read.
-pub fn proof_qualifier(passed: &[&str]) -> Option<String> {
+pub fn proof_qualifier(passed: &[&str], owing_repository_wide: usize) -> Option<String> {
     let unproven = unproven_among(passed);
     if unproven.is_empty() {
         return None;
@@ -216,6 +238,6 @@ pub fn proof_qualifier(passed: &[&str]) -> Option<String> {
         unproven.len(),
         passed.len(),
         unproven.join(", "),
-        GATES_WITHOUT_PROOF
+        owing_repository_wide
     ))
 }

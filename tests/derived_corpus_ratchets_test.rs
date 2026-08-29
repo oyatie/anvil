@@ -44,6 +44,18 @@ fn gate_proof_sites(path: &str, body: &str) -> usize {
     body.matches("    GateProof {").count()
 }
 
+/// Gates in the corpus, counted in source text.
+///
+/// `GATE_LABELS` is pinned to `named_statuses()` in order and in length by
+/// `matrix::every_named_gate_has_exactly_one_label_and_vice_versa`, so counting
+/// its rows counts the corpus.
+fn gate_label_sites(path: &str, body: &str) -> usize {
+    if path != "src/pre_merge_guard/matrix.rs" {
+        return 0;
+    }
+    body.matches("\n    (\n        \"").count()
+}
+
 /// The join the consumer makes: `pre_merge_guard` owns the corpus and the
 /// "can this gate fire here" predicate, `gate_proof` owns the ledger.
 fn owing_a_proof() -> Vec<&'static str> {
@@ -123,6 +135,47 @@ fn the_unprovisionable_count_does_not_rise() {
         "{here} gate(s) are declared unprovisionable, up from {base} at the \
          merge-base. A table that only grows switches the corpus off one gate at a \
          time. Stand the capability up, or argue the row on the pull request."
+    );
+}
+
+/// A gate arrives with its proof, or the obligation grew.
+///
+/// The two counts above bound the ledger's own size in each direction and miss
+/// the thing that actually matters: three gates entering the corpus without
+/// proofs raises the number owing by three while the ledger neither grew nor
+/// shrank, so both of those assertions pass. Measured, not reasoned about --
+/// wiring three callerless guards is exactly what exposed it.
+///
+/// `GATE_LABELS.len() - GATE_PROOFS.len()` is the obligation as a single
+/// number, textual on both sides so the merge-base half can compute it, and it
+/// may not rise.
+#[test]
+fn a_gate_arrives_with_its_proof() {
+    let labels = head_sites(gate_label_sites);
+    let proofs = head_sites(gate_proof_sites);
+    assert_eq!(
+        labels,
+        anvil::pre_merge_guard::matrix::GATE_LABELS.len(),
+        "the text-level count of GATE_LABELS rows ({labels}) disagrees with the \
+         compiled table ({}), so the bound below measures something else",
+        anvil::pre_merge_guard::matrix::GATE_LABELS.len()
+    );
+    let here = labels.saturating_sub(proofs);
+
+    let Some(base_labels) = at_merge_base(gate_label_sites) else {
+        eprintln!("skipped: no merge-base against origin/dev in this checkout");
+        return;
+    };
+    let base_proofs = at_merge_base(gate_proof_sites).unwrap_or(0);
+    let base = base_labels.saturating_sub(base_proofs);
+
+    assert!(
+        here <= base,
+        "{here} gate(s) in the corpus have no proof, up from {base} at the \
+         merge-base. A gate that has never been seeded with the defect it \
+         exists to catch cannot be believed, so it arrives with its proof or it \
+         does not arrive.\n\
+         Corpus {base_labels} -> {labels}, ledger {base_proofs} -> {proofs}."
     );
 }
 

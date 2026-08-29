@@ -2,10 +2,17 @@
 //! made.
 //!
 //! `FileLedger::kill_switch` has read `PAUSE` and `<repo>.PAUSE` since it was
-//! written and has never had a production caller, so touching the file stopped
-//! nothing. This is the same two filenames, read by the review pipeline on
-//! every iteration, so the gesture an operator already believes in is the one
-//! that works.
+//! written and has never had a production caller -- `FileLedger` itself is
+//! never constructed anywhere in `src/` -- so touching those files stopped
+//! nothing. This reads the same two filenames, from the CONFIGURED data
+//! directory, on every iteration of the review pipeline.
+//!
+//! Not `<data_dir>/shape_delivery/`, where `FileLedger` documents its own: that
+//! directory is created lazily by `FileLedger::save`, which never runs, so a
+//! switch placed there would sit in a directory that does not exist and an
+//! operator's `touch` would fail. A process-wide switch belongs at the root of
+//! the data directory.
+
 //!
 //! # Why it is a file and not a flag or an API
 //!

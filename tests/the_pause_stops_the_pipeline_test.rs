@@ -125,6 +125,37 @@ fn a_pause_that_cannot_be_read_is_a_pause() {
     }
 }
 
+/// The switch must read the directory the daemon was configured with.
+///
+/// `Pause::in_dir("data")` compiles, passes every fixture in this file, and is
+/// silently inert under `DATA_DIR=/var/lib/anvil`: `present()` maps `NotFound`
+/// to "not paused", so a wrong directory is indistinguishable from no pause at
+/// all, and the `Unreadable` fail-closed path does not fire. Every other
+/// fixture here builds its own `Pause`, so none of them can see how the live
+/// one is wired.
+#[test]
+fn the_daemon_points_the_pause_at_its_configured_data_directory() {
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+    )
+    .expect("the daemon's composition root exists");
+
+    let at = src.find("Pause::in_dir(").unwrap_or_else(|| {
+        panic!(
+            "the daemon no longer constructs a Pause. If that moved, this test \
+             must follow it -- a scan that stops finding its subject is not a fix."
+        )
+    });
+    let call: String = src[at..].chars().take(120).collect();
+    assert!(
+        call.contains("config.data_dir"),
+        "the pause is wired to a literal rather than to the configured data \
+         directory, so an operator who set DATA_DIR touches a file nothing \
+         reads:\n  {}",
+        call.lines().next().unwrap_or_default()
+    );
+}
+
 /// The switch is worth what the pipeline does with it, so the wiring is
 /// asserted too — keyed to the call rather than to a line.
 #[test]

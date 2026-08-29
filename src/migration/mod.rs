@@ -48,11 +48,10 @@ pub fn deletable_today() -> Vec<&'static MigrationEntry> {
 /// Returns `Err(reason)` when the source tree cannot be read, so the caller can
 /// report `NotMeasured` rather than an absence of violations. A gate that
 /// cannot see the code must not report that the code is clean.
-pub fn live_tree_violations() -> Result<Vec<BoundaryViolation>, String> {
+pub fn live_tree_violations(repo_root: &std::path::Path) -> Result<Vec<BoundaryViolation>, String> {
     use std::collections::BTreeSet;
-    use std::path::Path;
 
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let root = repo_root.join("src");
     if !root.is_dir() {
         return Err(format!("source tree not readable at {}", root.display()));
     }

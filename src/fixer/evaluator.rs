@@ -128,7 +128,22 @@ async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<Strin
     let turn = crate::exec::turn::run(cmd, prompt, budget, "agy evaluation")
         .await
         .context("Failed to run agy")?;
-    Ok(turn.response)
+    // `into_result` and not `turn.response`. A failed or timed-out turn has an
+    // empty response, and the caller's parse-failure arm reads an unparseable
+    // evaluation as "the finding is valid" -- so discarding the status turns a
+    // turn that never ran into a fabricated verdict on every review comment.
+    let response = turn.into_result()?;
+    // An empty answer from a turn that exited zero is still no answer, and the
+    // caller's parse-failure arm reads an unparseable evaluation as "every
+    // finding is valid" -- fabricating a verdict on review comments nothing
+    // judged. Absent evidence must not be mistaken for a measurement (I1).
+    if response.trim().is_empty() {
+        anyhow::bail!(
+            "agy evaluation returned no output, so nothing judged these review \
+             comments; defaulting them to valid would fabricate the verdict"
+        );
+    }
+    Ok(response)
 }
 
 #[cfg(test)]

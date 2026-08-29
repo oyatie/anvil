@@ -8,7 +8,7 @@
 //! So every row is checked twice: the test exists, and its body names the thing
 //! under test.
 
-use anvil::gate_proof::{GATE_PROOFS, GATES_WITHOUT_PROOF, GateProof};
+use anvil::gate_proof::{GATE_PROOFS, GateProof, gates_owing_a_proof};
 use anvil::pre_merge_guard::admission::absence_blocks;
 use anvil::pre_merge_guard::report::PreMergeCertificationReport;
 use anvil::source_scan::without_commentary;
@@ -133,26 +133,27 @@ fn every_proof_names_a_real_gate_and_names_it_once() {
     }
 }
 
+/// The set is what the corpus says, and nothing else says it.
+///
+/// The one-way direction lives in `tests/derived_corpus_ratchets_test.rs`,
+/// against this change's own merge-base. What is left here is that the library
+/// function computes the same set this test would compute by hand — so the
+/// ratchet cannot be satisfied by a function that has quietly stopped counting.
 #[test]
-fn gates_owing_a_demonstration_may_fall_but_never_rise() {
-    // The obligation, as a number. A gate that cannot fire in this deployment
-    // cannot be seeded with a defect either, so the count is over the gates
-    // that CAN -- `absence_blocks` is exactly that set.
+fn the_gates_owing_a_proof_are_the_unproven_ones_that_can_fire() {
     let proven: BTreeSet<&str> = GATE_PROOFS.iter().map(|p: &GateProof| p.gate_id).collect();
-    let owing: Vec<&str> = every_gate_id()
+    let by_hand: Vec<&str> = every_gate_id()
         .into_iter()
         .filter(|id| absence_blocks(id) && !proven.contains(id))
         .collect();
 
     assert_eq!(
-        owing.len(),
-        GATES_WITHOUT_PROOF,
-        "{} gate(s) can fire in this deployment and have not demonstrated that they do; \
-         the ledger records {GATES_WITHOUT_PROOF}.\n\
-         If this ROSE, a gate was added without a seeded defect -- it cannot be believed \
-         until it has one.\n\
-         If this FELL, lower the constant in the change that proved the gate.\n  {}",
-        owing.len(),
-        owing.join("\n  ")
+        gates_owing_a_proof(&every_gate_id(), absence_blocks,),
+        by_hand,
+        "the set must be derived from the corpus and the proof ledger"
+    );
+    assert!(
+        !by_hand.is_empty(),
+        "fixture sanity: an empty set would make the ratchet vacuous"
     );
 }

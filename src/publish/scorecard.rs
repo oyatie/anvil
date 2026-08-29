@@ -347,7 +347,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         // and a certified verdict is one counted line by contract.
         let ids = passing_gate_ids(report);
         let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-        if let Some(line) = crate::gate_proof::proof_qualifier(&refs) {
+        if let Some(line) = super::proof_line::qualifier(&refs) {
             s.push_str(&line);
             s.push('\n');
         }

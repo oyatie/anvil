@@ -6,6 +6,7 @@
 //! - The action is a typed enum, so a call site cannot invent a variant.
 
 pub mod issue;
+pub mod proof_line;
 pub mod scorecard;
 pub use issue::{Issue, issue};
 

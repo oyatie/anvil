@@ -34,7 +34,7 @@
 //! answers "how much should you trust that answer at all?". A gate at
 //! `Aspirational` fidelity must report `GateStatus::NotMeasured`, which blocks
 //! merge admission via `unmeasured_gates` while making no false accusation.
-
+pub mod drift;
 pub mod proof;
 pub mod registry;
 
@@ -178,7 +178,7 @@ pub fn gap_report(total_gates: usize) -> GapReport {
         partial: count(Fidelity::Partial),
         measured: count(Fidelity::Measured),
         unaudited: registry::unaudited_count(total_gates),
-        drift: Vec::new(),
+        drift: crate::fidelity::drift::against_the_proof_ledger(),
     }
 }
 

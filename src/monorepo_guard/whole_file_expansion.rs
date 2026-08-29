@@ -77,10 +77,16 @@ impl WholeFileExpansion {
         // Over budget AND made worse here. A change that shrinks an oversized
         // file is the remedy this gate asks for and must not be refused for
         // arriving mid-way.
+        //
+        // Test code is exempt by Cargo's layout, not by whether the word
+        // "test" appears in the path. The substring spelling exempted
+        // `attestation_guard.rs` and `predictive_test_selector/workspace_dag.rs`
+        // -- both production, both already past this ceiling -- because
+        // "attestation" and "predictive_test_selector" contain it.
         if line_count > Self::MAX_WHOLE_FILE_LINES
             && change.grew()
             && is_rust
-            && !file_path.contains("test")
+            && !is_test_path(file_path)
         {
             violations.push(MonorepoViolation {
                 category: "OVERSIZED_WHOLE_FILE".to_string(),

@@ -349,6 +349,9 @@ async fn main() -> Result<()> {
         broadcaster,
         telemetry_store,
         fleet_observer,
+        // The same directory `FileLedger` reads its PAUSE files from, so an
+        // operator has one gesture rather than two.
+        pause: Arc::new(anvil::pause::Pause::in_dir("data")),
     };
 
     let res = handle_cli(app_state).await;

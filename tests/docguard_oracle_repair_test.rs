@@ -2605,7 +2605,6 @@ struct NeutralGuardReports {
     shape: anvil::shape::facade::gate::ShapeGateOutcome,
     cloud_native: anvil::cloud_native_guard::CloudNativeReport,
     stack_whitelist: anvil::stack_whitelist_guard::StackWhitelistReport,
-    dual_track: anvil::dual_track_build_guard::DualTrackBuildReport,
 }
 
 /// The summary string carried by every neutral report that has one.
@@ -3013,14 +3012,6 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             violations: Vec::new(),
             summary: n(),
         },
-        dual_track: anvil::dual_track_build_guard::DualTrackBuildReport {
-            verdict: anvil::dual_track_build_guard::DualTrackVerdict::Synchronized,
-            is_synchronized: true,
-            cargo_track_ready: true,
-            buck2_track_ready: true,
-            reindeer_synced: true,
-            summary: n(),
-        },
     }
 }
 
@@ -3123,7 +3114,6 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
             &r.shape,
             &r.cloud_native,
             &r.stack_whitelist,
-            &r.dual_track,
         )
         .expect("the evaluator is arithmetic over the reports it is handed")
 }

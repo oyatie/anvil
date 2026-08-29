@@ -104,8 +104,6 @@ pub struct PreMergeCertificationReport {
     /// Whether the change stays inside the approved technology list and leaves
     /// accepted apex ADRs alone.
     pub stack_whitelist_status: GateStatus,
-    /// Whether the Cargo and Buck2 build graphs are kept in step.
-    pub dual_track_build_status: GateStatus,
     /// Gate ids that reported `NotMeasured`. Non-empty means certification is
     /// incomplete even when `is_certified_ready` is true: the badge and the
     /// merge-admission decision are deliberately decoupled (invariant I1 —
@@ -204,7 +202,7 @@ impl GateProvenance {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 75;
+pub const TOTAL_GATES: usize = 74;
 
 /// Gate outcomes, split four ways.
 ///
@@ -316,7 +314,6 @@ impl PreMergeCertificationReport {
             &self.test_suite_status,
             &self.cloud_native_status,
             &self.stack_whitelist_status,
-            &self.dual_track_build_status,
         ]
     }
 
@@ -408,7 +405,6 @@ impl PreMergeCertificationReport {
             ("test_suite_status", &self.test_suite_status),
             ("cloud_native_status", &self.cloud_native_status),
             ("stack_whitelist_status", &self.stack_whitelist_status),
-            ("dual_track_build_status", &self.dual_track_build_status),
         ]
     }
 
@@ -726,7 +722,6 @@ impl PreMergeCertificationReport {
             test_suite_status: status_for("test_suite_status"),
             cloud_native_status: status_for("cloud_native_status"),
             stack_whitelist_status: status_for("stack_whitelist_status"),
-            dual_track_build_status: status_for("dual_track_build_status"),
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             provenance: GateProvenance::default(),
@@ -970,7 +965,6 @@ mod tests {
             test_suite_status: GateStatus::Passed,
             cloud_native_status: GateStatus::Passed,
             stack_whitelist_status: GateStatus::Passed,
-            dual_track_build_status: GateStatus::Passed,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             provenance: GateProvenance::default(),

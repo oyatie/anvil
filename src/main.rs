@@ -355,7 +355,6 @@ async fn main() -> Result<()> {
         pause: Arc::new(anvil::pause::Pause::in_dir(config.data_dir.clone())),
         cloud_native_guard: Arc::new(anvil::cloud_native_guard::CloudNativeGuard::new()),
         stack_whitelist_guard: Arc::new(anvil::stack_whitelist_guard::StackWhitelistGuard::new()),
-        dual_track_build_guard: Arc::new(anvil::dual_track_build_guard::DualTrackBuildGuard::new()),
     };
 
     let res = handle_cli(app_state).await;

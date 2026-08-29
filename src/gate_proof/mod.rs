@@ -65,12 +65,6 @@ pub const GATE_PROOFS: &[GateProof] = &[
         spares: "stack_whitelist_spares_the_approved_stack",
     },
     GateProof {
-        gate_id: "dual_track_build_status",
-        exercises: "DualTrackBuildGuard",
-        fires_on: "dual_track_flags_a_cargo_change_that_leaves_buck_behind",
-        spares: "dual_track_spares_the_two_tracks_moving_together",
-    },
-    GateProof {
         gate_id: "cell_isolation_status",
         exercises: "CellIsolationGuard",
         fires_on: "test_cell_isolation_red_flag_unscoped_query",

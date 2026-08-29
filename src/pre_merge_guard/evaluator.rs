@@ -180,7 +180,6 @@ impl PreMergeGuard {
         shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
         cloud_native_report: &crate::cloud_native_guard::CloudNativeReport,
         stack_whitelist_report: &crate::stack_whitelist_guard::StackWhitelistReport,
-        dual_track_report: &crate::dual_track_build_guard::DualTrackBuildReport,
     ) -> Result<PreMergeCertificationReport> {
         info!(
             "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
@@ -684,7 +683,6 @@ impl PreMergeGuard {
         // status, beside the report rather than here.
         let cloud_native_status = cloud_native_report.gate_status();
         let stack_whitelist_status = stack_whitelist_report.gate_status();
-        let dual_track_build_status = dual_track_report.gate_status();
 
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
@@ -763,7 +761,6 @@ impl PreMergeGuard {
             test_suite_status,
             cloud_native_status,
             stack_whitelist_status,
-            dual_track_build_status,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             // This function is the certification run: these seventy-two

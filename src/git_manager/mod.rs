@@ -6,9 +6,11 @@ use tracing::{info, warn};
 
 pub mod diff_context;
 pub mod hook_liveness;
+pub mod subject;
 pub mod worktree;
 
 pub use diff_context::PrDiffContext;
+pub use subject::{SubjectRoot, Uncloned};
 pub use worktree::EphemeralWorktree;
 
 /// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes
@@ -81,7 +83,7 @@ impl GitManager {
     }
 
     /// Ensures the primary repository clone is present locally and up to date
-    pub async fn ensure_repo_cloned(&self, repo: &str) -> Result<PathBuf> {
+    pub async fn ensure_repo_cloned(&self, repo: &str) -> Result<SubjectRoot> {
         let repo_dir = self.get_repo_dir(repo);
 
         if !self.repos_base_dir.exists() {
@@ -126,7 +128,7 @@ impl GitManager {
 
         let _ = Self::install_repo_hooks(&repo_dir).await;
 
-        Ok(repo_dir)
+        Ok(SubjectRoot::cloned(repo_dir))
     }
 
     /// Native hooks live in `$(git rev-parse --git-common-dir)/hooks`.
@@ -423,14 +425,17 @@ impl GitManager {
 
         let diff_content = if is_incremental {
             let prev_sha = last_reviewed_sha.unwrap();
-            self.run_git_diff(&repo_dir, prev_sha, head_sha).await?
+            self.run_git_diff(repo_dir.as_path(), prev_sha, head_sha)
+                .await?
         } else {
-            let diff_res = self.run_git_diff(&repo_dir, base_sha, head_sha).await;
+            let diff_res = self
+                .run_git_diff(repo_dir.as_path(), base_sha, head_sha)
+                .await;
             match diff_res {
                 Ok(diff) if !diff.trim().is_empty() => diff,
                 _ => {
                     let base_ref = format!("origin/{}", base_branch);
-                    self.run_git_diff(&repo_dir, &base_ref, head_sha)
+                    self.run_git_diff(repo_dir.as_path(), &base_ref, head_sha)
                         .await
                         .with_context(|| {
                             format!(
@@ -444,7 +449,7 @@ impl GitManager {
 
         let changed_files = self
             .get_changed_files(
-                &repo_dir,
+                repo_dir.as_path(),
                 if is_incremental {
                     last_reviewed_sha.unwrap()
                 } else {

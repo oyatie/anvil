@@ -60,7 +60,10 @@ pub async fn seed_from_commit(
         );
     }
     let req = MeasureRequest {
-        repo_dir: repo_dir.to_path_buf(),
+        repo_dir: crate::git_manager::SubjectRoot::asserted(
+            repo_dir.to_path_buf(),
+            crate::git_manager::Uncloned::OperatorSupplied,
+        ),
         rev: rev.to_string(),
         repo: repo_dir
             .file_name()
@@ -120,11 +123,12 @@ async fn measure_with_spec(req: &MeasureRequest) -> Result<(ShapeReport, ShapeSp
     let spec = match &req.spec_override {
         Some(p) => ShapeSpec::parse(&std::fs::read_to_string(p)?).map_err(|e| anyhow!("{e}"))?,
         None => {
-            let probe = crate::shape::adapters::GitTreeAtRev::load(&req.repo_dir, &req.rev, |p| {
-                p == super::cli::SPEC_PATH
-            })
-            .await
-            .map_err(|e| anyhow!("{e}"))?;
+            let probe =
+                crate::shape::adapters::GitTreeAtRev::load(req.repo_dir.as_path(), &req.rev, |p| {
+                    p == super::cli::SPEC_PATH
+                })
+                .await
+                .map_err(|e| anyhow!("{e}"))?;
             let bytes = crate::shape::ports::TreeSource::read(&probe, super::cli::SPEC_PATH)
                 .map_err(|e| anyhow!("{e}"))?
                 .ok_or_else(|| anyhow!("no spec at {}", req.rev))?;
@@ -157,7 +161,10 @@ pub async fn judge(
     spec_override: Option<&Path>,
 ) -> Result<Judgement> {
     let req = MeasureRequest {
-        repo_dir: repo_dir.to_path_buf(),
+        repo_dir: crate::git_manager::SubjectRoot::asserted(
+            repo_dir.to_path_buf(),
+            crate::git_manager::Uncloned::OperatorSupplied,
+        ),
         rev: head.to_string(),
         repo: repo_dir
             .file_name()

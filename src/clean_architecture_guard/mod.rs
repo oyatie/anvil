@@ -102,7 +102,7 @@ impl CleanArchitectureGuard {
         Ok(analyze::analyze_unified_diff(
             &diff_ctx.diff_content,
             format!("{}#{}", diff_ctx.repo, diff_ctx.pr_number),
-            &source_tree::workspace_members(&diff_ctx.repo_working_dir),
+            &source_tree::workspace_members(diff_ctx.repo_working_dir.as_path()),
         ))
     }
 

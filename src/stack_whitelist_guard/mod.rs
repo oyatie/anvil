@@ -190,7 +190,10 @@ mod tests {
                 "docs/decisions/ADR-0701-monorepo-capability-live-apex.md".to_string(),
                 "crates/cache/src/lib.rs".to_string(),
             ],
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

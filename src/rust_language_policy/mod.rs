@@ -192,7 +192,10 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: "+++ b/src/handler.rs\n+ let token = parse_header().unwrap();"
                 .to_string(),
             changed_files: vec!["src/handler.rs".to_string()],
@@ -217,7 +220,7 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(std::path::PathBuf::from("/tmp"), crate::git_manager::Uncloned::TestFixture),
             diff_content: "+++ b/src/service.rs\n+ pub fn process_name(name: &String) { println!(\"{}\", name); }".to_string(),
             changed_files: vec!["src/service.rs".to_string()],
             is_incremental: false,
@@ -241,7 +244,10 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: "+++ b/src/ffi.rs\n+ let ptr = unsafe { get_raw() };".to_string(),
             changed_files: vec!["src/ffi.rs".to_string()],
             is_incremental: false,

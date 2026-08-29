@@ -150,7 +150,10 @@ mod tests {
                 "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn add(a: i32, b: i32) -> i32 { a + b }"
                     .to_string(),
             changed_files: vec!["src/lib.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };
@@ -173,7 +176,7 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "diff --git a/src/raw.rs b/src/raw.rs\n+unsafe fn raw_deref(ptr: *const u8) -> u8 { *ptr }".to_string(),
             changed_files: vec!["src/raw.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(std::path::PathBuf::from("."), crate::git_manager::Uncloned::TestFixture),
             is_incremental: false,
             previous_head_sha: None,
         };
@@ -196,7 +199,7 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "diff --git a/src/raw.rs b/src/raw.rs\n+// SAFETY: the caller upholds non-null and alignment\n+unsafe fn raw_deref(ptr: *const u8) -> u8 { *ptr }".to_string(),
             changed_files: vec!["src/raw.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(std::path::PathBuf::from("."), crate::git_manager::Uncloned::TestFixture),
             is_incremental: false,
             previous_head_sha: None,
         };

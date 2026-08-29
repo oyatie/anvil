@@ -1,5 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
+
+use super::subject::SubjectRoot;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -10,7 +12,7 @@ pub struct EphemeralWorktree {
     pub repo: String,
     pub pr_number: u64,
     pub worktree_path: PathBuf,
-    pub repo_dir: PathBuf,
+    pub repo_dir: SubjectRoot,
 }
 
 /// Synchronous bound for the `Drop` path.

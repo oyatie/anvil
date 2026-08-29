@@ -101,7 +101,10 @@ fn diff(diff_content: String) -> PrDiffContext {
         head_sha: "bbbbbbb".to_string(),
         diff_content,
         changed_files: Vec::new(),
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }

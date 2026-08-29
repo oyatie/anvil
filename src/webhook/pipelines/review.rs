@@ -99,7 +99,7 @@ pub async fn execute_pr_review(
         title,
         body,
         head_sha,
-        &repo_dir,
+        repo_dir.as_path(),
         &diff_ctx,
         &review_resp.verdict,
         test_suite_passed,
@@ -143,7 +143,7 @@ pub async fn execute_pr_review(
     if let Err(e) = state
         .attestation_guard
         .stamp_lane_receipt(
-            &repo_dir,
+            repo_dir.as_path(),
             repo,
             pr_number,
             head_sha,

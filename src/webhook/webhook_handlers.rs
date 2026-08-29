@@ -448,7 +448,7 @@ pub async fn webhook_handler(
                             &branch_str,
                             &commit_sha,
                             &wf_name,
-                            &repo_dir,
+                            repo_dir.as_path(),
                         )
                         .await;
                 }

@@ -104,7 +104,7 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ image: ghcr.io/oyatie/console@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
             changed_files: vec!["infra/gitops/app.yaml".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(std::path::PathBuf::from("."), crate::git_manager::Uncloned::TestFixture),
             is_incremental: false,
             previous_head_sha: None,
         };

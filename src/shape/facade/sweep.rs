@@ -73,7 +73,7 @@ pub async fn sweep_repo(deps: &SweepDeps, repo: &str) -> Result<Swept, String> {
         .ensure_repo_cloned(repo)
         .await
         .map_err(|e| e.to_string())?;
-    let rev = trunk_rev(&repo_dir).await?;
+    let rev = trunk_rev(repo_dir.as_path()).await?;
     let report = match measure_repo(&MeasureRequest {
         repo_dir: repo_dir.clone(),
         rev: rev.clone(),

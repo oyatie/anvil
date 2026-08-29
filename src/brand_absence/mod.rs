@@ -40,6 +40,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use crate::git_manager::SubjectRoot;
+
 /// The file that defines the vocabulary unavoidably contains every term in it,
 /// so [`BrandAbsenceGate::scan_tree`] skips it. This is a mechanical necessity
 /// rather than an exemption: [`BrandAbsenceGate::scan_source`] is path-agnostic
@@ -320,7 +322,14 @@ impl BrandAbsenceGate {
     /// Walks every `.rs` file under `root` and scans it. Paths are reported
     /// relative to `root`'s parent-of-`src` view, i.e. as they appear in the
     /// ledger.
-    pub fn scan_tree(&self, repo_root: &Path) -> BrandAbsenceReport {
+    /// Scans the tree under review.
+    ///
+    /// Takes a [`SubjectRoot`] and not a `&Path` because this gate once
+    /// scanned anvil's own tree and published a finding no author of the
+    /// pull request could act on. A caller now has to hold a subject to call
+    /// it, and the only thing that hands one out is the clone step.
+    pub fn scan_tree(&self, repo_root: &SubjectRoot) -> BrandAbsenceReport {
+        let repo_root = repo_root.as_path();
         let mut hits = Vec::new();
         let mut files = Vec::new();
         collect_rs_files(&repo_root.join("src"), &mut files);
@@ -854,7 +863,10 @@ mod tests {
     #[ignore = "generator: prints the KNOWN_VIOLATIONS body for this file"]
     fn print_ledger() {
         let gate = BrandAbsenceGate::with_allowlist(Vec::new());
-        let report = gate.scan_tree(Path::new(env!("CARGO_MANIFEST_DIR")));
+        let report = gate.scan_tree(&crate::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            crate::git_manager::Uncloned::TestFixture,
+        ));
         let mut counts: std::collections::BTreeMap<(String, String, BrandViolationKind), usize> =
             std::collections::BTreeMap::new();
         for v in &report.new_violations {
@@ -904,7 +916,10 @@ mod tests {
     #[test]
     #[ignore = "reporter: prints the warn-only verdict for src/"]
     fn print_tree_status() {
-        let report = BrandAbsenceGate::new().scan_tree(Path::new(env!("CARGO_MANIFEST_DIR")));
+        let report = BrandAbsenceGate::new().scan_tree(&crate::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            crate::git_manager::Uncloned::TestFixture,
+        ));
         for v in &report.new_violations {
             println!(
                 "{}:{} {:?} [{}] {}",

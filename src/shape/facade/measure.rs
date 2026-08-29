@@ -3,6 +3,7 @@
 //! unit registry, read dependency edges, and run the engine.
 
 use super::cli::SPEC_PATH;
+use crate::git_manager::SubjectRoot;
 use crate::shape::adapters::{
     BuckLabelDeps, CargoManifestDeps, GitTreeAtRev, RustUseDeps, TsImportDeps,
 };
@@ -15,7 +16,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub struct MeasureRequest {
-    pub repo_dir: PathBuf,
+    pub repo_dir: SubjectRoot,
     pub rev: String,
     /// Label for the report (e.g. `oyatie/oyatie`).
     pub repo: String,
@@ -73,7 +74,7 @@ pub fn selector(spec: &ShapeSpec) -> impl Fn(&str) -> bool {
 
 pub async fn measure_repo(req: &MeasureRequest) -> Result<ShapeReport> {
     let (spec, source) = load_spec(req).await?;
-    let tree = GitTreeAtRev::load(&req.repo_dir, &req.rev, selector(&spec))
+    let tree = GitTreeAtRev::load(req.repo_dir.as_path(), &req.rev, selector(&spec))
         .await
         .map_err(|e| anyhow!("{e}"))?;
 
@@ -122,7 +123,7 @@ async fn load_spec(req: &MeasureRequest) -> Result<(ShapeSpec, SpecSource)> {
         let spec = ShapeSpec::parse(&raw).map_err(|e| anyhow!("{e}"))?;
         return Ok((spec, SpecSource::Proposed(p.display().to_string())));
     }
-    let probe = GitTreeAtRev::load(&req.repo_dir, &req.rev, |p| p == SPEC_PATH)
+    let probe = GitTreeAtRev::load(req.repo_dir.as_path(), &req.rev, |p| p == SPEC_PATH)
         .await
         .map_err(|e| anyhow!("{e}"))?;
     match probe.read(SPEC_PATH) {

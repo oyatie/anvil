@@ -165,7 +165,10 @@ fn anvil_tree_as_diff() -> (PrDiffContext, Vec<String>) {
             previous_head_sha: None,
             diff_content: diff,
             changed_files: rels.clone(),
-            repo_working_dir: root,
+            repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+                root,
+                anvil::git_manager::Uncloned::TestFixture,
+            ),
         },
         rels,
     )

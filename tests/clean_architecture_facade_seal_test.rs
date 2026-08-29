@@ -28,7 +28,10 @@ fn diff_of(path: &str, body: &str) -> PrDiffContext {
         previous_head_sha: None,
         diff_content: d,
         changed_files: Vec::new(),
-        repo_working_dir: std::path::PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     }
 }
 

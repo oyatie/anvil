@@ -3024,7 +3024,10 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
         previous_head_sha: None,
         diff_content: "+pub fn newly_public() {}\n".to_string(),
         changed_files: vec!["src/lib.rs".to_string()],
-        repo_working_dir: workdir.path().to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            workdir.path().to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     };
 
     PreMergeGuard::new()

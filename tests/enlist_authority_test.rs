@@ -3287,15 +3287,32 @@ fn assert_the_unresolved_thread_refusal_holds_where_it_lives() {
     parse_review_threads(false, b"", "gh: HTTP 502")
         .expect_err("an answer that did not arrive establishes nothing about the threads");
 
-    // Link 2: an unresolved thread makes the gate fail, not merely log.
-    let report = anvil::unresolved_review_guard::UnresolvedReviewReport {
-        is_clean: false,
-        unresolved_threads: Vec::new(),
-        summary: "one unresolved thread".to_string(),
-    };
+    // Link 2: an unresolved thread makes the gate FAIL, not merely log.
+    //
+    // Built from what Link 1 just returned and run through the conversion the
+    // evaluator uses, in both directions. This read `assert!(!report.is_clean)`
+    // against a struct literal whose own initialiser said `is_clean: false` --
+    // it restated its fixture, exercised nothing, and would have passed with
+    // the conversion inverted.
+    use anvil::pre_merge_guard::evaluator::unresolved_review_gate;
+    use anvil::unresolved_review_guard::UnresolvedReviewReport;
+
+    let unresolved = UnresolvedReviewReport::from_threads(open);
     assert!(
-        !report.is_clean,
-        "fixture sanity: this is the not-clean report the evaluator converts"
+        matches!(unresolved_review_gate(&unresolved), GateStatus::Failed(_)),
+        "the thread GitHub reported as unresolved produced {:?}. A gate that \
+         does not fail on it leaves Link 3 nothing to refuse.",
+        unresolved_review_gate(&unresolved)
+    );
+
+    // The other direction, so the gate is not simply always `Failed` -- which
+    // would satisfy the assertion above and refuse every pull request.
+    let clean = UnresolvedReviewReport::from_threads(Vec::new());
+    assert!(
+        matches!(unresolved_review_gate(&clean), GateStatus::Passed),
+        "no unresolved threads produced {:?}, so this gate withholds every \
+         merge whatever GitHub reports",
+        unresolved_review_gate(&clean)
     );
 
     // Link 3: the failing gate withholds the merge at the entry point every

@@ -392,11 +392,7 @@ impl PreMergeGuard {
         let shadow_traffic_status = shadow_traffic_report.status.clone();
 
         // 37. Zero-Unresolved-Comments Review Gate
-        let unresolved_review_status = if unresolved_review_report.is_clean {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(unresolved_review_report.summary.clone())
-        };
+        let unresolved_review_status = unresolved_review_gate(unresolved_review_report);
 
         // 38. Pre-Commit Conventional-Commit & Secret Probe
         // Rebuilt from `is_valid`, which is false both for a violation and for a
@@ -869,5 +865,25 @@ pub fn doc_parity_status(report: &DocGuardReport) -> GateStatus {
         GateStatus::AutoUpdated
     } else {
         GateStatus::Passed
+    }
+}
+
+/// The gate an unresolved-thread report produces.
+///
+/// Named, and outside `evaluate_pre_merge_gates`, because it is the middle
+/// link of the chain Issue #18 asks for -- GitHub's `isResolved`, this
+/// conversion, then `admission_refusal` -- and a link inside a
+/// twenty-five-argument function is a link no test can reach. The check that
+/// an unresolved thread FAILS the gate used to be
+/// `assert!(!report.is_clean)` against a struct literal that set
+/// `is_clean: false`: it restated its own fixture and would have passed had
+/// this conversion been inverted.
+pub fn unresolved_review_gate(
+    report: &crate::unresolved_review_guard::UnresolvedReviewReport,
+) -> GateStatus {
+    if report.is_clean {
+        GateStatus::Passed
+    } else {
+        GateStatus::Failed(report.summary.clone())
     }
 }

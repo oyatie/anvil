@@ -5,9 +5,9 @@ use tracing::{info, warn};
 
 pub mod fork_guard;
 pub mod reviews;
+pub mod submit;
 
 use crate::exec::{ExecClass, run_bounded};
-use crate::reviewer::ReviewResponse;
 
 /// How long a caller waits for GitHub to agree about a head it has just pushed,
 /// and how often it asks. See `GitHubClient::fetch_pr_metadata_at`.
@@ -251,16 +251,6 @@ impl GitHubClient {
             seen,
             HEAD_AGREEMENT_ATTEMPTS
         )
-    }
-
-    pub async fn submit_pr_review(
-        &self,
-        repo: &str,
-        pr_number: u64,
-        head_sha: &str,
-        review: &ReviewResponse,
-    ) -> Result<()> {
-        reviews::submit_pr_review_impl(repo, pr_number, head_sha, review).await
     }
 
     pub async fn post_pr_comment(&self, repo: &str, pr_number: u64, body: &str) -> Result<()> {

@@ -718,7 +718,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               request files overwritten in place inside a per-run clone, so there is no \
               append-only log to chain in the first place. The receipt was also swept onto the \
               pull request by the certification pipeline's own staging sweep; all four staging \
-              sites now share `stage_excluding_receipts` (git_manager/mod.rs:32).",
+              sites now share `stage_excluding_receipts` (git_manager/mod.rs:35).",
         blocked_on: Some(
             "a signing identity and a log to publish to -- a key or an OIDC issuer plus Fulcio, \
              and a transparency log; none is reachable from here",
@@ -821,15 +821,15 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               fixture, so the gate published a green no pull request could turn red. \
               What runs now is the half that has a real counterpart: a regex over the added lines \
               for a toggle read by a key written at the call site \
-              (feature_flag_ratchet.rs:124), which is what ld-find-code-refs does. It is a proxy \
+              (feature_flag_ratchet/mod.rs:124), which is what ld-find-code-refs does. It is a proxy \
               in both directions. The call names are a fixed list -- `is_feature_enabled`, \
               `useFeatureFlag` and two more -- so a wrapper spelled any other way is invisible, and \
               a key passed as a variable, a constant or an enum is invisible to any text scan; \
               equally, a map lookup spelled the same way is counted as a toggle. \
               Whether a key it finds is stale is answered from a ledger the repository under \
-              review may keep, `LEDGER_PATHS` (feature_flag_ratchet.rs:65), matched by `ledger_records_stale`, \
+              review may keep, `LEDGER_PATHS` (feature_flag_ratchet/mod.rs:65), matched by `ledger_records_stale`, \
               which asks whether the key appears between backticks on a line \
-              (feature_flag_ratchet.rs:245). That ledger is \
+              (feature_flag_ratchet/mod.rs:245). That ledger is \
               Anvil's own convention rather than an industry one -- Chromium is the nearest real \
               precedent and keeps expiry in a JSON metadata file, not in source -- and it is \
               self-attested by whoever edits it. No tracked file in this repository is such a \
@@ -855,7 +855,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               message to a check that was `starts_with` on a type prefix, which accepts a header \
               with no colon and no description and accepts `feature` as a type, none of which \
               Conventional Commits 1.0.0 admits. The subjects are now read from the clone the \
-              pipeline already holds, by `commit_subjects` (git_manager/mod.rs:525), and judged \
+              pipeline already holds, by `commit_subjects` (git_manager/mod.rs:531), and judged \
               against `CONVENTIONAL_HEADER` (harness/judgement.rs:257) with commitlint's default type \
               list plus this repository's own promote type -- type-enum is configuration, not \
               specification, and hardcoding the default made the check red on the convention the \

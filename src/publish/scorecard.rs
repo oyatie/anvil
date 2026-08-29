@@ -111,8 +111,8 @@ fn finding_line(gate_id: &str, kind: &str, detail: &str) -> String {
 /// The passing gates the fidelity registry records as `Heuristic` or `Partial`.
 ///
 /// A gate can pass on a keyword scan; the registry is where that is written
-/// down. Naming them next to the score is what stops "72/72" from being read
-/// as 72 measurements.
+/// down. Naming them next to the score is what stops a full-marks total from
+/// being read as that many measurements.
 ///
 /// `Aspirational` is excluded rather than merely absent in practice.
 /// `withhold_aspirational_passes` turns such a gate's pass into `NotMeasured`
@@ -245,7 +245,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         // `Warning` is `is_acceptable()`, so a report whose only findings are
         // warnings certifies -- the warning could not reach the blocked branch
         // by itself, and was discarded on the only branch it could reach. All
-        // seventy-two gates were exposed: the two capped scanner gates, and
+        // the whole corpus was exposed: the two capped scanner gates, and
         // `trace_context_guard`, which chose `Warning` over `Passed` in so many
         // words *to avoid* rendering as a bare tick.
         //

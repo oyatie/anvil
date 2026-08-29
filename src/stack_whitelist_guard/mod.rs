@@ -19,6 +19,22 @@ pub struct StackWhitelistReport {
     pub summary: String,
 }
 
+impl StackWhitelistReport {
+    /// This report as the certification corpus reads it. See
+    /// `CloudNativeReport::gate_status` for why it lives here.
+    pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
+        if self.is_compliant {
+            crate::pre_merge_guard::report::GateStatus::Passed
+        } else {
+            crate::pre_merge_guard::report::GateStatus::Failed(format!(
+                "{} added line(s) introduce a technology the approved list does \
+                 not name, or edit an accepted apex ADR in place",
+                self.violations.len()
+            ))
+        }
+    }
+}
+
 pub struct StackWhitelistGuard;
 
 impl Default for StackWhitelistGuard {

@@ -128,7 +128,11 @@ fn a_spelled_out_total_that_disagrees_is_caught() {
     assert!(remaining_claim("the sixty-gate matrix", TOTAL_GATES).is_some());
     assert!(remaining_claim("all seventy gates run", TOTAL_GATES).is_some());
     assert!(remaining_claim("all 70 gates run", TOTAL_GATES).is_some());
-    assert!(remaining_claim("the seventy-two gates", TOTAL_GATES).is_none());
+    // Spelled with the current total, so this fixture follows `TOTAL_GATES`
+    // rather than pinning it: a corpus that grows must not make the
+    // "agrees with the code" case unwritable.
+    assert!(remaining_claim("the seventy-five gates", TOTAL_GATES).is_none());
+    assert!(remaining_claim("the seventy-two gates", TOTAL_GATES).is_some());
     assert!(remaining_claim("the pre-merge gates", TOTAL_GATES).is_none());
 }
 
@@ -137,7 +141,7 @@ fn a_subset_count_is_refused_even_when_its_total_is_right() {
     // This is the sentence that rotted. It contains a CORRECT total, so a
     // detector that only validates totals reads it as clean -- which is exactly
     // what happened for however long "thirty-seven" stood.
-    let sentence = "That exemption covers thirty-seven of the seventy-two gates.";
+    let sentence = "That exemption covers thirty-seven of the seventy-five gates.";
     let why = remaining_claim(sentence, TOTAL_GATES).expect("a subset count must be refused");
     assert!(why.contains("subset"), "{why}");
 

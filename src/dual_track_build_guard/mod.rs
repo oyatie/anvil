@@ -84,6 +84,27 @@ pub struct DualTrackBuildReport {
     pub summary: String,
 }
 
+impl DualTrackBuildReport {
+    /// This report as the certification corpus reads it.
+    ///
+    /// The absence arms are `NotMeasured` and not a pass: a repository with no
+    /// Buck2 track cannot be judged, and treating that as a pass is the defect
+    /// `DualTrackVerdict` exists to remove.
+    pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
+        use crate::pre_merge_guard::report::GateStatus;
+        match self.verdict.missing_capability() {
+            Some(missing) => GateStatus::NotMeasured {
+                gate_id: "dual_track_build_status".to_string(),
+                reason: format!("no {missing} in this repository"),
+            },
+            None if self.verdict.is_pass() => GateStatus::Passed,
+            None => GateStatus::Failed(
+                "the Cargo and Buck2 build graphs name different targets".to_string(),
+            ),
+        }
+    }
+}
+
 pub struct DualTrackBuildGuard;
 
 impl Default for DualTrackBuildGuard {

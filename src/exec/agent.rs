@@ -202,6 +202,30 @@ mod tests {
             "these variables reached a model turn: {leaked:?}"
         );
 
+        // The env is a SUBSET of what was named, which is the assertion that
+        // exercises `env_clear`. Checking only that three fixture literals were
+        // filtered tests the allowlist and nothing else: those literals arrive
+        // through the synthetic environment, the allowlist alone keeps them
+        // out, and `env_clear` touches only the REAL parent environment, which
+        // does not contain them. Deleting `env_clear` left this whole module
+        // green -- measured, by deleting it.
+        let allowed: std::collections::BTreeSet<&str> = INHERITED
+            .iter()
+            .copied()
+            .chain(["GH_CONFIG_DIR"])
+            .collect();
+        let unexpected: Vec<&str> = seen
+            .lines()
+            .filter_map(|l| l.split('=').next())
+            .filter(|n| !n.is_empty() && !allowed.contains(n))
+            .collect();
+        assert!(
+            unexpected.is_empty(),
+            "the turn was handed variables nobody named: {unexpected:?}. The \
+             daemon's environment reaches a model turn unless it is cleared \
+             first, so this is what `env_clear` is for."
+        );
+
         // And the turn is still able to run: PATH is on the list, so the tool
         // can find its own helpers. A posture that starves the turn is not
         // isolation, it is breakage.

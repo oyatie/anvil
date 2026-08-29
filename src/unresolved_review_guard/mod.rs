@@ -15,6 +15,31 @@ pub struct UnresolvedReviewReport {
     pub summary: String,
 }
 
+impl UnresolvedReviewReport {
+    /// The report the threads imply.
+    ///
+    /// `is_clean` is derived here rather than passed in, so no caller -- test
+    /// or production -- can build a report that says it is clean while
+    /// carrying unresolved threads, or the reverse. A fixture that states the
+    /// answer cannot exercise the code that computes it.
+    pub fn from_threads(unresolved: Vec<UnresolvedReviewThread>) -> Self {
+        let is_clean = unresolved.is_empty();
+        let summary = if is_clean {
+            "✅ PASSED (Zero unresolved review comments or threads on PR)".to_string()
+        } else {
+            format!(
+                "❌ FAILED ({} unresolved review thread(s) must be addressed before merge queue admission)",
+                unresolved.len()
+            )
+        };
+        Self {
+            is_clean,
+            unresolved_threads: unresolved,
+            summary,
+        }
+    }
+}
+
 /// How many review threads one query asks GitHub for.
 ///
 /// A page boundary is not a clean bill of health, so [`parse_review_threads`]
@@ -205,20 +230,6 @@ impl UnresolvedReviewGuard {
         )
         .with_context(|| format!("🚨 Merge queue admission blocked on {}#{}", repo, pr_number))?;
 
-        let is_clean = unresolved.is_empty();
-        let summary = if is_clean {
-            "✅ PASSED (Zero unresolved review comments or threads on PR)".to_string()
-        } else {
-            format!(
-                "❌ FAILED ({} unresolved review thread(s) must be addressed before merge queue admission)",
-                unresolved.len()
-            )
-        };
-
-        Ok(UnresolvedReviewReport {
-            is_clean,
-            unresolved_threads: unresolved,
-            summary,
-        })
+        Ok(UnresolvedReviewReport::from_threads(unresolved))
     }
 }

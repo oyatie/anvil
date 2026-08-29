@@ -16,7 +16,7 @@
 //!     and how many are gated when it sits in an open pull request.
 //!
 //! Measured, not asserted: these three numbers were computed by hand over
-//! oyatie's 791 crates before this module existed — depth 9, worst fan-in 173
+//! oyatie's 791 crates — depth 9, worst fan-in 173
 //! (22% of the repo), one cycle. Hand-computing them four times is what this
 //! module exists to stop.
 

@@ -10,7 +10,7 @@
 //!     `pre-commit.stale-untracked.bak`, `.bak2`, and no `pre-commit`.
 //!
 //! Both were live at once, and every local rung -- pre-commit, commit-msg,
-//! pre-push -- had been dead for days. `tests/git_hooks_installed_test.rs`
+//! pre-push -- can be dead while a test reads only the installer.
 //! stayed green throughout: it asserts the templates are tracked and that the
 //! installer's SOURCE does not set the retired path. Neither question is
 //! "does this checkout run hooks", so neither could catch it.

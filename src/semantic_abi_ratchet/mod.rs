@@ -1,3 +1,4 @@
+use crate::ratchet::facade::Signoff;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -12,6 +13,18 @@ pub use signature_scanner::{AbiScan, BreakingAbiFinding, SignatureScanner};
 /// The gate this report publishes under, so an unmeasured layout is recorded
 /// against the same id the scorecard renders.
 pub const SEMANTIC_ABI_GATE_ID: &str = "semantic_abi_status";
+
+/// Where a human records that a public signature change was intended.
+pub const ABI_SIGNOFF_PATH: &str = ".anvil/baselines/semantic-abi.signoff.json";
+
+/// The key a signoff names a finding by.
+///
+/// Symbol and file, never the line: a signed-off change that moves down its
+/// file has not become a different decision, and a key that says otherwise
+/// would expire for the wrong reason.
+fn abi_key(f: &BreakingAbiFinding) -> String {
+    format!("{}@{}", f.symbol_name, f.file_path)
+}
 
 /// What no diff-reading gate can answer, said once so every sentence below says
 /// the same thing.
@@ -69,7 +82,7 @@ impl SemanticAbiRatchet {
     /// layout. Every sentence it publishes is scoped to that.
     pub fn evaluate_abi_stability(
         &self,
-        _repo_dir: &Path,
+        repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<SemanticAbiReport> {
         info!(
@@ -77,7 +90,39 @@ impl SemanticAbiRatchet {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let scan = self.scanner.scan_abi_diff(&diff_ctx.diff_content);
+        let mut scan = self.scanner.scan_abi_diff(&diff_ctx.diff_content);
+
+        // A deliberate signature change is still a signature change; what a
+        // signoff records is that someone decided to make it. Until this
+        // existed the gate had no such path -- no allowlist, no waiver, no
+        // baseline -- so the only ways past a considered API change were to
+        // revert it or to leave the gate red.
+        //
+        // The entry expires on its own. This gate compares the two sides of a
+        // diff rather than a stored baseline, so once the change merges the
+        // diff no longer carries it and the key matches nothing. A key still
+        // listed after that is inert and should be deleted; it is not doing
+        // anything.
+        let signoff = std::fs::read(repo_dir.join(ABI_SIGNOFF_PATH))
+            .ok()
+            .and_then(|b| Signoff::parse(&b).ok())
+            .unwrap_or_default();
+        let signed: Vec<String> = scan
+            .findings
+            .iter()
+            .filter(|f| signoff.covers(SEMANTIC_ABI_GATE_ID, &abi_key(f)))
+            .map(abi_key)
+            .collect();
+        scan.findings
+            .retain(|f| !signoff.covers(SEMANTIC_ABI_GATE_ID, &abi_key(f)));
+        if !signed.is_empty() {
+            info!(
+                "SemanticAbiRatchet: {} signed-off change(s): {}",
+                signed.len(),
+                signed.join(", ")
+            );
+        }
+
         let is_abi_stable = scan.findings.is_empty();
 
         let unpaired = if scan.unpaired_names == 0 {

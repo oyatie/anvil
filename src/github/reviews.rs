@@ -128,7 +128,7 @@ pub async fn submit_pr_review_with_diff(
             stderr
         );
 
-        return submit_fallback_review(repo, pr_number, review, &validation).await;
+        return submit_fallback_review(repo, pr_number, head_sha, review, &validation).await;
     }
 
     info!(
@@ -141,10 +141,11 @@ pub async fn submit_pr_review_with_diff(
 async fn submit_fallback_review(
     repo: &str,
     pr_number: u64,
+    head_sha: &str,
     review: &ReviewResponse,
     validation: &CommentValidation,
 ) -> Result<()> {
-    let full_body = build_fallback_body(review, validation);
+    let full_body = build_fallback_body(review, validation, head_sha);
 
     let endpoint = format!("repos/{}/issues/{}/comments", repo, pr_number);
     let mut cmd = Command::new("gh");
@@ -399,12 +400,22 @@ pub fn validate_comments_against_diff(
     validation
 }
 
-/// Applies the mandatory signature exactly once.
-fn published(content: &str) -> String {
+/// Applies the mandatory signature exactly once, anchored to the revision.
+///
+/// The sha is threaded rather than defaulted: a review comment with no
+/// revision anchor cannot be told apart from one describing a head that a
+/// force-push has replaced, and the reader has no way to know which they are
+/// looking at.
+fn published(content: &str, head_sha: &str) -> String {
     if publish::is_signed(content) {
         content.trim_end().to_string()
     } else {
-        publish::body(AnvilAction::Reviewed, content)
+        publish::body(
+            AnvilAction::Reviewed,
+            content,
+            publish::Judged::Rev(head_sha.to_string()),
+        )
+        .to_string()
     }
 }
 
@@ -444,7 +455,7 @@ fn build_review_request(
 
     CreateReviewRequest {
         commit_id: head_sha.to_string(),
-        body: published(&content),
+        body: published(&content, head_sha),
         event: review.verdict.clone(),
         comments: validation
             .kept
@@ -453,7 +464,7 @@ fn build_review_request(
                 path: c.path.clone(),
                 line: c.line,
                 side: normalize_side(&c.side),
-                body: published(&c.body),
+                body: published(&c.body, head_sha),
             })
             .collect(),
     }
@@ -465,7 +476,11 @@ fn build_review_request(
 /// unvalidated republication would put back the line numbers validation just
 /// removed -- and goes through `crate::publish`, so the fallback carries the
 /// mandatory signature like every other published artifact.
-fn build_fallback_body(review: &ReviewResponse, validation: &CommentValidation) -> String {
+fn build_fallback_body(
+    review: &ReviewResponse,
+    validation: &CommentValidation,
+    head_sha: &str,
+) -> String {
     let mut content = review.summary.trim_end().to_string();
 
     if !validation.kept.is_empty() {
@@ -482,7 +497,7 @@ fn build_fallback_body(review: &ReviewResponse, validation: &CommentValidation) 
     }
     content.push_str(&render_dropped(validation));
 
-    published(&content)
+    published(&content, head_sha)
 }
 
 #[cfg(test)]
@@ -991,7 +1006,7 @@ index 0000000..3333333
             ],
         };
         let validation = validate_comments_against_diff(DIFF, &review.comments);
-        let body = build_fallback_body(&review, &validation);
+        let body = build_fallback_body(&review, &validation, "deadbeefcafe");
 
         assert!(
             crate::publish::is_signed(&body),

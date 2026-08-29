@@ -1,25 +1,13 @@
 //! Standardized formatting for everything Anvil publishes to GitHub.
 //!
-//! # Why
-//!
-//! Nine distinct signature variants were in use across seven files, and they had
-//! drifted in ways that showed: `🤖 Reviewed by Oyatie Anvil*` appeared both with
-//! and without its closing asterisk, so the same nominal signature rendered as
-//! italic in some comments and emitted a literal `*` in others.
-//!
-//! A machine account that comments on human pull requests needs one recognisable
-//! voice. Readers should be able to tell at a glance that a comment is
-//! machine-authored, which action produced it, and that it will be updated in
-//! place rather than duplicated.
-//!
-//! # Guarantees
-//!
 //! - One signature form: `*🤖 [Action] by Oyatie Anvil*`, always closed.
-//! - Every published artifact carries a hidden idempotency marker, so it can be
-//!   found and amended instead of re-posted.
-//! - The action is a typed enum, so a new call site cannot invent a variant.
+//! - Every artifact carries a hidden idempotency marker, so it is amended in
+//!   place rather than re-posted.
+//! - The action is a typed enum, so a call site cannot invent a variant.
 
+pub mod issue;
 pub mod scorecard;
+pub use issue::{Issue, issue};
 
 use serde::{Deserialize, Serialize};
 
@@ -83,53 +71,90 @@ pub fn signature(action: AnvilAction) -> String {
     format!("*🤖 [{}] by Oyatie Anvil*", action.label())
 }
 
+/// What revision an artifact judged.
+///
+/// Not an `Option<&str>`. A published comment with no revision anchor is
+/// ambiguous the moment anyone force-pushes: a reader cannot tell whether the
+/// findings describe the head they are looking at or one that no longer
+/// exists. Making the choice a type means a call site must DECIDE rather than
+/// default, and `NotRevisionScoped` has to be written down and justified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Judged {
+    /// The commit this artifact was computed against.
+    Rev(String),
+    /// The artifact is about a repository or a queue rather than a commit --
+    /// a stale-environment sweep, a trunk-health issue. Deliberate, not a
+    /// fallback for "the sha was inconvenient to thread through".
+    NotRevisionScoped,
+}
+
+impl Judged {
+    /// The anchor as it renders: twelve characters, which is what GitHub shows
+    /// and enough to be unambiguous in any repository this will ever see.
+    fn anchor(&self) -> String {
+        match self {
+            Judged::Rev(sha) => {
+                let short: String = sha.trim().chars().take(12).collect();
+                format!(" · `{short}`")
+            }
+            Judged::NotRevisionScoped => String::new(),
+        }
+    }
+}
+
 /// Assembles a complete published body: marker, content, separator, signature.
 ///
 /// The marker leads so it is present even if the body is later truncated by the
-/// GitHub comment size limit.
-pub fn body(action: AnvilAction, content: &str) -> String {
-    format!(
-        "{}\n{}\n\n---\n{}",
+/// GitHub comment size limit. The revision closes it, because that is the fact
+/// a reader needs to know whether the content above still applies.
+///
+/// This is the deterministic half of everything Anvil publishes: the marker,
+/// the action, the separator and the revision are mechanical, and only
+/// `content` is written by a model.
+/// A body that has been through the envelope.
+///
+/// The field is private and this module is the only place that can build one,
+/// so a transport taking a `Published` cannot be handed a raw `String`. That
+/// moves "everything we publish is signed and anchored" from a rule checked at
+/// a few call sites to one the compiler enforces at all of them -- including
+/// call sites nobody has written yet, which is the half a standing test cannot
+/// reach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published(String);
+
+impl Published {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Adopt a body that already carries the envelope.
+    ///
+    /// The one legitimate way in from outside: a comment being amended in
+    /// place was signed when it was first posted, and re-enveloping it would
+    /// double the signature. Refuses anything unsigned, so this is not a hole.
+    pub fn already_enveloped(content: &str) -> Option<Self> {
+        is_signed(content).then(|| Published(content.trim_end().to_string()))
+    }
+}
+
+impl std::fmt::Display for Published {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+pub fn body(action: AnvilAction, content: &str, judged: Judged) -> Published {
+    Published(format!(
+        "{}\n{}\n\n---\n{}{}",
         action.marker(),
         content.trim_end(),
-        signature(action)
-    )
+        signature(action),
+        judged.anchor()
+    ))
 }
 
 /// A uniformly styled issue: deterministic title, findings-only body.
 ///
-/// Same rules as the scorecard. Issue titles are a queue that engineers scan,
-/// so the title is `[anvil] <subject> — <scope>`: prefix first so machine-filed
-/// issues are filterable, subject before scope so the list is readable at a
-/// glance without expanding.
-pub struct Issue {
-    pub title: String,
-    pub body: String,
-}
-
-/// Builds an issue with a stable title shape and a signed body.
-///
-/// `evidence` is rendered verbatim and should already be terse -- a log tail, a
-/// failing command, a diff excerpt. `next_step` is what the reader should do;
-/// pass `None` rather than inventing one.
-pub fn issue(
-    action: AnvilAction,
-    subject: &str,
-    scope: &str,
-    evidence: &str,
-    next_step: Option<&str>,
-) -> Issue {
-    let mut b = String::new();
-    b.push_str(evidence.trim());
-    if let Some(step) = next_step {
-        b.push_str(&format!("\n\n**Next step:** {}", step.trim()));
-    }
-    Issue {
-        title: format!("[anvil] {} — {}", subject.trim(), scope.trim()),
-        body: body(action, &b),
-    }
-}
-
 /// Whether a body carries the mandatory signature.
 ///
 /// Used by the GitHub transport to catch an unsigned publication at its source
@@ -170,10 +195,10 @@ mod tests {
     #[test]
     fn every_published_body_carries_a_marker_and_the_signature() {
         for a in ALL {
-            let b = body(*a, "some findings");
-            assert!(b.starts_with(a.marker()), "marker must lead: {b}");
-            assert!(b.ends_with(&signature(*a)));
-            assert!(b.contains("\n---\n"), "separator missing");
+            let b = body(*a, "some findings", Judged::NotRevisionScoped);
+            assert!(b.as_str().starts_with(a.marker()), "marker must lead: {b}");
+            assert!(b.as_str().ends_with(&signature(*a)));
+            assert!(b.as_str().contains("\n---\n"), "separator missing");
         }
     }
 
@@ -218,6 +243,7 @@ mod tests {
             "oyatie/console@main",
             "cargo test failed: 3 tests",
             Some("re-run locally with `cargo test --all-targets`"),
+            Judged::NotRevisionScoped,
         );
         assert!(
             i.title.starts_with("[anvil] "),
@@ -232,13 +258,22 @@ mod tests {
 
     #[test]
     fn an_issue_without_a_known_next_step_states_none() {
-        let i = issue(AnvilAction::Triaged, "s", "c", "evidence", None);
+        let i = issue(
+            AnvilAction::Triaged,
+            "s",
+            "c",
+            "evidence",
+            None,
+            Judged::NotRevisionScoped,
+        );
         assert!(!i.body.contains("Next step"), "must not invent a next step");
     }
 
     #[test]
     fn is_signed_detects_the_canonical_signature_only() {
-        assert!(is_signed(&body(AnvilAction::Fixed, "x")));
+        assert!(is_signed(
+            body(AnvilAction::Fixed, "x", Judged::NotRevisionScoped).as_str()
+        ));
         assert!(!is_signed("a comment with no signature"));
         // The historical unbracketed variant must NOT satisfy the check.
         assert!(!is_signed("*🤖 Fixed by Oyatie Anvil*"));
@@ -246,7 +281,10 @@ mod tests {
 
     #[test]
     fn body_does_not_double_space_when_content_is_already_padded() {
-        let b = body(AnvilAction::Fixed, "done\n\n\n");
-        assert!(!b.contains("\n\n\n"), "trailing whitespace must be trimmed");
+        let b = body(AnvilAction::Fixed, "done\n\n\n", Judged::NotRevisionScoped);
+        assert!(
+            !b.as_str().contains("\n\n\n"),
+            "trailing whitespace must be trimmed"
+        );
     }
 }

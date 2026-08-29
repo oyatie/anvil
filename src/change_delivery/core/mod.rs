@@ -2,6 +2,7 @@ pub mod ledger;
 pub mod model;
 pub mod naming;
 pub mod owners;
+pub mod pattern;
 pub mod policy;
 pub mod purity;
 pub mod shard;

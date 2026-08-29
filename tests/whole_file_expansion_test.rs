@@ -1,4 +1,5 @@
 use anvil::monorepo_guard::WholeFileExpansion;
+use anvil::monorepo_guard::whole_file_expansion::FileChange;
 use tempfile::tempdir;
 
 #[test]
@@ -13,10 +14,17 @@ fn test_whole_file_expansion_catches_dark_code_violations() {
     for i in 0..350 {
         file_content.push_str(&format!("fn method_{}() {{}}\n", i));
     }
-    std::fs::write(core_dir.join("account.rs"), file_content).unwrap();
+    std::fs::write(core_dir.join("account.rs"), &file_content).unwrap();
 
+    // A change that CREATES the file owns everything in it: every line is
+    // added and the net growth is the whole file. Both findings are this
+    // change's, which is what the gate is for.
+    let change = FileChange {
+        added: &file_content,
+        net_lines: file_content.lines().count() as i64,
+    };
     let violations =
-        WholeFileExpansion::evaluate_whole_file(dir.path(), "finance/core/src/account.rs");
+        WholeFileExpansion::evaluate_whole_file(dir.path(), "finance/core/src/account.rs", &change);
     assert_eq!(violations.len(), 2);
     assert!(
         violations

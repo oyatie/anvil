@@ -6,6 +6,8 @@ use super::args::{Cli, Commands};
 use super::server;
 use crate::webhook::{AppState, execute_pr_certify, execute_pr_fix, execute_pr_review};
 
+mod shape;
+
 pub async fn handle_cli(state: AppState) -> Result<()> {
     let cli = Cli::parse();
 
@@ -23,164 +25,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             state.config.assert_webhook_ingress_is_authenticated()?;
             server::run_server(state).await?;
         }
-        Commands::Shape { action } => match action {
-            crate::cli::args::ShapeAction::ValidateSpec { path, registry } => {
-                let summary =
-                    crate::shape::facade::cli::validate_spec_file(&path, registry.as_deref())?;
-                println!("{}", summary.render());
-            }
-            crate::cli::args::ShapeAction::Measure {
-                repo_dir,
-                rev,
-                repo,
-                spec_override,
-                registry,
-                json,
-            } => {
-                let label = repo.unwrap_or_else(|| {
-                    repo_dir
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| repo_dir.display().to_string())
-                });
-                let req = crate::shape::facade::measure::MeasureRequest {
-                    repo_dir,
-                    rev,
-                    repo: label,
-                    spec_override,
-                    registry_override: registry,
-                };
-                let report = crate::shape::facade::measure::measure_repo(&req).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&report)?);
-                } else {
-                    print!("{}", crate::shape::facade::measure::render(&report));
-                }
-            }
-            crate::cli::args::ShapeAction::Baseline {
-                repo_dir,
-                rev,
-                spec_override,
-                out,
-            } => {
-                let (baseline, report) = crate::shape::facade::baseline::seed_from_commit(
-                    &repo_dir,
-                    &rev,
-                    spec_override.as_deref(),
-                )
-                .await?;
-                let json = baseline.to_json();
-                match out {
-                    Some(p) => {
-                        if let Some(parent) = p.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-                        std::fs::write(&p, format!("{json}\n"))?;
-                        println!(
-                            "baseline written to {} ({} key(s) across {} rule(s), measured at {})",
-                            p.display(),
-                            baseline.total_keys(),
-                            baseline.rules.len(),
-                            &report.rev[..12]
-                        );
-                    }
-                    None => println!("{json}"),
-                }
-            }
-            crate::cli::args::ShapeAction::Plan {
-                repo_dir,
-                rev,
-                spec_override,
-                policy,
-                plan_out,
-            } => {
-                let req = crate::shape::facade::measure::MeasureRequest {
-                    repo_dir: repo_dir.clone(),
-                    rev,
-                    repo: repo_dir
-                        .canonicalize()
-                        .ok()
-                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                        .unwrap_or_default(),
-                    spec_override,
-                    registry_override: None,
-                };
-                let report = crate::shape::facade::measure::measure_repo(&req).await?;
-                let spec_version = format!("{:?}", report.spec_source);
-                let plan =
-                    crate::change_delivery::facade::plan::plan_from_report(&report, &spec_version);
-                let owners =
-                    crate::change_delivery::facade::plan::owners_from_tree(&repo_dir, &report.rev)
-                        .await;
-                let manifests = crate::change_delivery::facade::plan::manifests_from_tree(
-                    &repo_dir,
-                    &report.rev,
-                )
-                .await;
-                let policy_bytes = policy.map(std::fs::read).transpose()?;
-                let (policy, problem) =
-                    crate::change_delivery::core::LandingPolicy::load(policy_bytes.as_deref());
-                if let Some(p) = problem {
-                    println!("warning: {p}");
-                }
-                let d = crate::change_delivery::facade::plan::dry_run(
-                    &plan, &owners, &manifests, policy,
-                );
-                print!(
-                    "{}",
-                    crate::change_delivery::facade::plan::render(&d, &plan)
-                );
-                if let Some(p) = plan_out {
-                    std::fs::write(&p, format!("{}\n", plan.to_json()))?;
-                    println!("move plan written to {}", p.display());
-                }
-            }
-            crate::cli::args::ShapeAction::Deliver {
-                repo_dir,
-                max,
-                spec_override,
-                allow_same_repo,
-            } => {
-                let label = repo_dir
-                    .canonicalize()
-                    .ok()
-                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                    .unwrap_or_default();
-                let req = crate::change_delivery::facade::deliver::DeliverRequest {
-                    repo_dir,
-                    repo: label,
-                    max,
-                    spec_override,
-                    allow_same_repo,
-                };
-                let (runs, shards, policy) =
-                    crate::change_delivery::facade::deliver::deliver_dry_run(&req).await?;
-                print!(
-                    "{}",
-                    crate::change_delivery::facade::deliver::render(&runs, shards.len(), &policy)
-                );
-            }
-            crate::cli::args::ShapeAction::Ratchet {
-                repo_dir,
-                base_ref,
-                head,
-                spec_override,
-            } => {
-                let j = crate::shape::facade::baseline::judge(
-                    &repo_dir,
-                    &base_ref,
-                    &head,
-                    spec_override.as_deref(),
-                )
-                .await?;
-                print!("{}", crate::shape::facade::baseline::render_judgement(&j));
-                if let crate::shape::facade::baseline::Judgement::Judged { verdict, .. } = &j
-                    && verdict.fails
-                {
-                    anyhow::bail!("ratchet regressions present");
-                }
-            }
-        },
+        Commands::Shape { action } => shape::dispatch(action).await?,
         Commands::Review { repo, pr, force } => {
             info!("Running on-demand review for {}#{}", repo, pr);
             let meta = state
@@ -284,7 +129,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 target_path
             );
         }
-        Commands::Probe { diff } => {
+        Commands::Probe { diff, message } => {
             let diff_content = if let Some(d) = diff {
                 d
             } else {
@@ -314,11 +159,28 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 }
             };
 
-            let validator = crate::local_inner_loop::FastValidator::new();
-            let findings = validator.validate_pre_commit("chore: probe check", &diff_content);
+            // The harness supersedes both hand-wired checks rather than joining
+            // them. `secret_on_added_line` delegates to the same
+            // `judgement::scan_for_secrets` the old path reached through a thin
+            // `PreMergeScanner` wrapper, and adds what that path could not: it
+            // names the file the credential is on, and it proves itself against
+            // a seeded fixture before its verdict is trusted.
+            // `conventional_commit_subject` likewise carries the full
+            // Conventional Commits 1.0.0 header rule. Running both would report
+            // every secret twice, once without a filename.
+            let findings =
+                crate::local_inner_loop::harness_findings(&diff_content, message.as_deref());
             let is_valid = findings.iter().all(|f| f.is_valid);
             if is_valid {
-                println!("✅ PASSED (Sub-100ms Inner-Loop Local Probe Verified: 0 findings)");
+                let header = match &message {
+                    Some(_) => "commit header graded",
+                    None => "commit header NOT MEASURED (no --message; a pre-commit hook has none)",
+                };
+                println!(
+                    "✅ PASSED (Sub-100ms Inner-Loop Local Probe: {} finding(s) over {} check(s); {header})",
+                    0,
+                    findings.len()
+                );
             } else {
                 println!(
                     "❌ FAILED ({} Inner-Loop Local Probe Violations Detected):",
@@ -326,6 +188,63 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 );
                 for f in findings.iter().filter(|f| !f.is_valid) {
                     println!("  - {}: {}", f.check_name, f.message);
+                }
+            }
+        }
+        Commands::Toolchain {
+            repo_dir,
+            to,
+            apply,
+        } => {
+            let declared = crate::toolchain::read(&repo_dir);
+            let Some(target) = crate::toolchain::Version::parse(&to) else {
+                println!("❌ `{to}` is not a version");
+                return Ok(());
+            };
+            let Some(current) = declared.channel else {
+                println!("❌ no channel declared in rust-toolchain.toml; nothing to move");
+                return Ok(());
+            };
+            println!("Probing {current} -> {target} under the TARGET toolchain...");
+            let safety = crate::toolchain::bump::probe(&repo_dir, &to).await;
+            println!("{}", safety.explain());
+            if !safety.permits_bump() {
+                // No flag skips this. A bump applied without a probe is the
+                // change this command exists to stop anyone making by hand.
+                println!("❌ refusing to move the pin: the bump is not proven.");
+                return Ok(());
+            }
+            // Every site the pin appears at, together. A bump that moves the
+            // manifest and leaves CI behind gives a tree whose CI and whose
+            // developers build with different compilers.
+            let channel = crate::toolchain::bump::channel_bump(current, target);
+            let ci = crate::toolchain::bump::ci_toolchain_bump(current, target);
+            let mut files = std::collections::BTreeMap::new();
+            let mut findings: Vec<&crate::harness::Finding> = vec![&channel];
+            files.insert(
+                "rust-toolchain.toml".to_string(),
+                tokio::fs::read_to_string(repo_dir.join("rust-toolchain.toml")).await?,
+            );
+            let ci_path = repo_dir.join(".github/workflows/ci.yml");
+            if let Ok(body) = tokio::fs::read_to_string(&ci_path).await {
+                files.insert(".github/workflows/ci.yml".to_string(), body);
+                findings.push(&ci);
+            }
+            let plan = crate::harness::apply::plan(&findings, &files);
+            for r in &plan.refused {
+                println!("  refused: {r:?}");
+            }
+            for edit in &plan.edits {
+                match edit {
+                    crate::harness::apply::Edit::Rewrite { path: p, body } => {
+                        if apply {
+                            tokio::fs::write(repo_dir.join(p), body).await?;
+                            println!("✅ {p}: channel moved to {target}");
+                        } else {
+                            println!("would rewrite {p} (pass --apply to write)");
+                        }
+                    }
+                    other => println!("  unexpected edit: {other:?}"),
                 }
             }
         }

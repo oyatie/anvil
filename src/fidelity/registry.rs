@@ -129,7 +129,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               have measured and did not. \
               What remains: the \
               scorecard renderer collapses an admissible report to a single verdict line and \
-              enumerates no finding at all (publish/scorecard.rs:133-137), so on a pull request \
+              enumerates no finding at all (publish/scorecard.rs::render), so on a pull request \
               carrying no other finding the warning row is still not printed and the row \
               \"End-to-end span instrumentation across async tasks\" \
               (pre_merge_guard/matrix.rs:102-104) is counted in the total without a word. Making a \
@@ -270,7 +270,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               identically on both sides was moved and does not count -- is reported `NotMeasured` rather \
               than passed. Adding a brand-new repr type also triggers it, which is why the published \
               sentence says add or remove rather than change -- `layout_files` \
-              (semantic_abi_ratchet/mod.rs:104,116).",
+              (semantic_abi_ratchet/mod.rs:149,152).",
         blocked_on: None,
     },
     GateFidelity {

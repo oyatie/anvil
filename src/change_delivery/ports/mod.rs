@@ -9,6 +9,10 @@ pub use crate::change_delivery::core::{
     conflict_pairs, diff_is_structure_only, pr_marker, select_independent, shard_key, shard_plan,
 };
 
+pub use crate::change_delivery::core::shard::occupancy::{
+    SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, path_sets_disjoint,
+};
+
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 

@@ -4,6 +4,7 @@
 
 pub mod dependency;
 pub mod glob;
+pub mod graph_shape;
 pub mod measure;
 pub mod naming;
 pub mod placement;

@@ -167,7 +167,7 @@ pub async fn execute_pr_review(
     }
 
     // Post or amend the scorecard in place, keyed on its marker (Zero Clutter).
-    state
+    if let Err(e) = state
         .github_client
         .upsert_pr_comment(
             repo,
@@ -175,7 +175,17 @@ pub async fn execute_pr_review(
             "<!-- ANVIL_SCORECARD_RECEIPT -->",
             &scorecard_comment(&cert_report),
         )
-        .await?;
+        .await
+    {
+        // Was a bare `?`. A rate-limited or flaky forge on the comment call --
+        // the one step here that touches the network for a reason that is not
+        // a decision -- stranded the pull request permanently, because the
+        // reviewed-SHA stamp above was already set and the early-exit guard
+        // skips every later delivery for that SHA. The gates had all run and
+        // passed; the PR stopped anyway, and nothing said why.
+        state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+        return Err(e);
+    }
 
     info!(
         "Pre-Merge, GitOps, CI Velocity & Security Certification completed for {}#{}. Ready: {}",
@@ -352,6 +362,15 @@ pub async fn execute_pr_review(
             // this path: certification takes minutes, and a switch sampled
             // only at the start of a long run cannot be used during it.
             if state.pause.holds(repo, pr_number, "enlisting") {
+                // Roll the reviewed-SHA stamp back, for the same reason the
+                // certification failure above does. The stamp was set before
+                // any gate ran, and the early-exit guard skips every later
+                // delivery for this SHA -- so leaving it set makes the pause a
+                // one-way door. Lifting it would not resume this pull request;
+                // nothing would review it again short of a new commit, and an
+                // operator who paused for ten minutes would have stopped it
+                // for good without being told.
+                state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
                 return Ok(());
             }
             let enlistment = state

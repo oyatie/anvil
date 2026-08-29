@@ -31,9 +31,13 @@ fn production_sources() -> Vec<(String, String)> {
 /// branches that both wire a stage write the same line and merge cleanly.
 #[test]
 fn the_uninvoked_count_does_not_exceed_the_ceiling() {
+    // Equality rather than `<=`: at a ceiling of zero the two say the same
+    // thing about a rise, and `len() <= 0` on a `usize` is a comparison clippy
+    // correctly calls always-true-or-false.
     let dead = uninvoked(&production_sources());
-    assert!(
-        dead.len() <= STAGES_WITHOUT_A_CALLER,
+    assert_eq!(
+        dead.len(),
+        STAGES_WITHOUT_A_CALLER,
         "stages with no production caller moved. Each of these is written, \
          tested and run by nothing:\n{}",
         dead.iter()

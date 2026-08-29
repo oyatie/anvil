@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// Re-exported so every `report::GateStatus` path keeps working.
+pub use super::status::GateStatus;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreMergeCertificationReport {
     pub is_certified_ready: bool,
@@ -95,6 +98,14 @@ pub struct PreMergeCertificationReport {
     pub schema_compat_status: GateStatus,
     pub performance_concurrency_status: GateStatus,
     pub test_suite_status: GateStatus,
+    /// Whether the change keeps core layers free of proprietary cloud SDKs and
+    /// hardcoded cloud endpoints.
+    pub cloud_native_status: GateStatus,
+    /// Whether the change stays inside the approved technology list and leaves
+    /// accepted apex ADRs alone.
+    pub stack_whitelist_status: GateStatus,
+    /// Whether the Cargo and Buck2 build graphs are kept in step.
+    pub dual_track_build_status: GateStatus,
     /// Gate ids that reported `NotMeasured`. Non-empty means certification is
     /// incomplete even when `is_certified_ready` is true: the badge and the
     /// merge-admission decision are deliberately decoupled (invariant I1 —
@@ -193,7 +204,7 @@ impl GateProvenance {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 72;
+pub const TOTAL_GATES: usize = 75;
 
 /// Gate outcomes, split four ways.
 ///
@@ -303,6 +314,9 @@ impl PreMergeCertificationReport {
             &self.schema_compat_status,
             &self.performance_concurrency_status,
             &self.test_suite_status,
+            &self.cloud_native_status,
+            &self.stack_whitelist_status,
+            &self.dual_track_build_status,
         ]
     }
 
@@ -392,6 +406,9 @@ impl PreMergeCertificationReport {
                 &self.performance_concurrency_status,
             ),
             ("test_suite_status", &self.test_suite_status),
+            ("cloud_native_status", &self.cloud_native_status),
+            ("stack_whitelist_status", &self.stack_whitelist_status),
+            ("dual_track_build_status", &self.dual_track_build_status),
         ]
     }
 
@@ -707,6 +724,9 @@ impl PreMergeCertificationReport {
             schema_compat_status: status_for("schema_compat_status"),
             performance_concurrency_status: status_for("performance_concurrency_status"),
             test_suite_status: status_for("test_suite_status"),
+            cloud_native_status: status_for("cloud_native_status"),
+            stack_whitelist_status: status_for("stack_whitelist_status"),
+            dual_track_build_status: status_for("dual_track_build_status"),
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             provenance: GateProvenance::default(),
@@ -851,90 +871,6 @@ impl PreMergeCertificationReport {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GateStatus {
-    Passed,
-    AutoUpdated,
-    Warning(String),
-    Failed(String),
-    /// The gate was configured to run and had a data source, but could not
-    /// produce a measurement: the tool was missing, the subprocess failed to
-    /// spawn, the call timed out, or the response could not be parsed.
-    ///
-    /// This is NOT acceptable. Invariant I1: absent evidence is never a pass.
-    Errored(String),
-    /// The gate has no data source configured, so it makes no claim in either
-    /// direction. Acceptable on its own — reporting a failure here would be a
-    /// fabricated accusation, the symmetric violation of I1 — but it is
-    /// recorded in `PreMergeCertificationReport::unmeasured_gates` and blocks
-    /// merge-queue admission separately from `is_certified_ready`.
-    NotMeasured {
-        gate_id: String,
-        reason: String,
-    },
-    /// The gate ran, searched a named subject set, and found it empty.
-    ///
-    /// Not a pass and not a defect: the correct outcome for a change that
-    /// carries no subject for this gate. Acceptable, and it does not withhold
-    /// merge-queue admission.
-    ///
-    /// Separate from `NotMeasured` because one gate can produce both. The trace
-    /// guard reports this when a diff crosses no async boundary, and
-    /// `NotMeasured` when it crosses boundaries it could not resolve -- the
-    /// first is complete evidence that happens to be empty, the second is
-    /// missing evidence. A per-gate table cannot tell those apart, so the gate
-    /// says which it is.
-    NotApplicable {
-        gate_id: String,
-        subject: String,
-    },
-}
-
-impl GateStatus {
-    pub fn badge(&self) -> &'static str {
-        match self {
-            GateStatus::Passed => "✅ PASSED",
-            GateStatus::AutoUpdated => "✨ AUTO-SYNCED",
-            GateStatus::Warning(_) => "⚠️ WARNING",
-            GateStatus::Failed(_) => "❌ FAILED",
-            GateStatus::Errored(_) => "🛑 ERRORED",
-            GateStatus::NotMeasured { .. } => "➖ NOT MEASURED",
-            GateStatus::NotApplicable { .. } => "➖ NOT APPLICABLE",
-        }
-    }
-
-    /// Whether this status permits certification.
-    ///
-    /// `Errored` is deliberately false: a gate that could not measure must not
-    /// pass. `NotMeasured` is deliberately true, because an unconfigured gate
-    /// has not found a defect — it is gated instead via `unmeasured_gates`.
-    pub fn is_acceptable(&self) -> bool {
-        match self {
-            GateStatus::Passed | GateStatus::AutoUpdated => true,
-            GateStatus::Warning(_) => true,
-            GateStatus::Failed(_) => false,
-            GateStatus::Errored(_) => false,
-            GateStatus::NotMeasured { .. } => true,
-            // The gate ran and its subject set was empty. That is complete
-            // evidence which happens to be empty, not absent evidence.
-            GateStatus::NotApplicable { .. } => true,
-        }
-    }
-
-    /// Whether this gate actually produced a measurement.
-    pub fn is_measured(&self) -> bool {
-        !matches!(self, GateStatus::NotMeasured { .. })
-    }
-
-    /// The gate id, when this status is `NotMeasured`.
-    pub fn unmeasured_gate_id(&self) -> Option<&str> {
-        match self {
-            GateStatus::NotMeasured { gate_id, .. } => Some(gate_id.as_str()),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -1032,6 +968,9 @@ mod tests {
             schema_compat_status: GateStatus::Passed,
             performance_concurrency_status: GateStatus::Passed,
             test_suite_status: GateStatus::Passed,
+            cloud_native_status: GateStatus::Passed,
+            stack_whitelist_status: GateStatus::Passed,
+            dual_track_build_status: GateStatus::Passed,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             provenance: GateProvenance::default(),

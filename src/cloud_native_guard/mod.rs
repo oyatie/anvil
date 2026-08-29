@@ -19,6 +19,26 @@ pub struct CloudNativeReport {
     pub summary: String,
 }
 
+impl CloudNativeReport {
+    /// This report as the certification corpus reads it.
+    ///
+    /// Beside the report rather than in `pre_merge_guard::evaluator`, which is
+    /// one function computing every status and is far past ADR-0719 D-35's
+    /// budget. `rust_language_policy::RustSkillsReport::gate_status` is the
+    /// same shape.
+    pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
+        if self.is_compliant {
+            crate::pre_merge_guard::report::GateStatus::Passed
+        } else {
+            crate::pre_merge_guard::report::GateStatus::Failed(format!(
+                "{} added line(s) import a proprietary cloud SDK from a core \
+                 layer, hardcode a cloud endpoint, or add non-Rust tooling",
+                self.violations.len()
+            ))
+        }
+    }
+}
+
 pub struct CloudNativeGuard;
 
 impl Default for CloudNativeGuard {

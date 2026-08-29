@@ -148,10 +148,17 @@ pub const STAGES: &[Stage] = &[
 /// Four became three when `gate_proof` gained `publish/scorecard.rs`. It knew
 /// which gates have been seeded with their own defect and which have only
 /// been green, and no pull request was ever told; the qualifier on the blocked
-/// scorecard is the caller. The three that remain -- `cloud_native_guard`,
-/// `stack_whitelist_guard`, `dual_track_build_guard` -- publish no verdict on
-/// any pull request, which is the same defect in the same shape.
-pub const STAGES_WITHOUT_A_CALLER: usize = 3;
+/// scorecard is the caller.
+/// Three became zero when `cloud_native_guard`, `stack_whitelist_guard` and
+/// `dual_track_build_guard` entered the corpus. Each already measured its
+/// subject and each already had seeded fixtures; the missing part was a
+/// `GateStatus` field, a row in `GATE_LABELS`, and a call in the certify
+/// pipeline. TOTAL_GATES went 72 -> 75 in the same change, because a stage with
+/// a caller and no published verdict is the same defect one step along.
+///
+/// Zero is the floor and the whole point: a stage added without a caller is
+/// noticed by this number rising, and nothing else in the tree notices it.
+pub const STAGES_WITHOUT_A_CALLER: usize = 0;
 
 /// Stages nothing outside their own files invokes.
 ///

@@ -132,7 +132,7 @@ fn collect_owned_pages(repo_dir: &Path) -> Result<Vec<String>> {
 
 fn count_regex() -> Regex {
     // Matches "23-gate", "60-Gate", "68 gates", and now the spelled-out forms
-    // too: "sixty-gate", "seventy-two gates". Does not match "100-300 lines",
+    // too: "sixty-gate", "seventy-odd gates". Does not match "100-300 lines",
     // "16-lens", or "380 Rust rules"; a group-1 word that is not a numeral is
     // rejected by `numeral` rather than by the pattern, so "the gates" and
     // "pre-merge gates" fall out for free.
@@ -145,8 +145,8 @@ fn count_regex() -> Regex {
 /// A count written as prose, in the form `<numeral> of the <numeral> gates`.
 ///
 /// The left number is a SUBSET, and no total can verify it: "thirty-seven of
-/// the seventy-two gates" was true when written, was 18 by the time anyone read
-/// it, and passed every check this module had because only the seventy-two was
+/// the gate corpus" was true when written, was 18 by the time anyone read
+/// it, and passed every check this module had because only the total was
 /// checkable. A subset count in prose has no honest home -- the symbol that
 /// derives it does -- so the shape is refused outright rather than validated.
 fn subset_regex() -> Regex {
@@ -253,7 +253,7 @@ pub fn numeral(word: &str) -> Option<usize> {
 fn rewrite_page(input: &str, total_gates: usize) -> String {
     let n = total_gates.to_string();
     // Only a claim that DISAGREES is rewritten. Replacing every match would
-    // churn a page that already says "seventy-two gates" into "72 gates" and
+    // churn a page that already spells the total in words into digits and
     // report it as repaired, which is a diff that teaches a reader nothing.
     let mut out = count_regex()
         .replace_all(input, |caps: &regex::Captures| match numeral(&caps[1]) {

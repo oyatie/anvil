@@ -57,8 +57,20 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
-/// Every `Command::new("<provider>")` in `src/`, as (path, the 400 characters
-/// that follow it).
+/// Production Rust under `src/`, with `#[cfg(test)]` modules removed.
+///
+/// A fixture that builds a `Command` only to read its argv back is not a spawn
+/// site, and judging it as one would push every such fixture out of the module
+/// it tests. `without_test_modules` is the stripper the rest of this codebase
+/// already relies on, rather than a fourth hand-rolled one.
+fn production(path: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|b| anvil::source_scan::without_test_modules(&b))
+}
+
+/// Every `Command::new("<provider>")` in production `src/`, as (path, the 400
+/// characters that follow it).
 fn provider_spawns() -> Vec<(String, String)> {
     let mut files = Vec::new();
     rust_sources(&repo().join("src"), &mut files);
@@ -70,7 +82,7 @@ fn provider_spawns() -> Vec<(String, String)> {
             .unwrap_or(&p)
             .to_string_lossy()
             .replace('\\', "/");
-        let Ok(body) = fs::read_to_string(&p) else {
+        let Some(body) = production(&p) else {
             continue;
         };
         for cli in PROVIDER_CLIS {
@@ -150,4 +162,59 @@ fn the_only_bare_spawn_outside_the_seam_carries_no_prompt() {
             statement.split_whitespace().collect::<Vec<_>>().join(" ")
         );
     }
+}
+
+/// No prompt travels on argv.
+///
+/// argv is world-readable through `ps` and is recorded by process accounting.
+/// The prompts these sites build carry the diff, review-comment bodies, merge
+/// conflict text and pull-request titles -- text an outsider wrote -- so a
+/// prompt on argv discloses attacker-supplied content to every process on the
+/// host, and Anvil's own reasoning about it alongside.
+///
+/// Keyed to the shape rather than to a file: `--print` immediately followed by
+/// anything that is not the empty string is a prompt on argv, whoever wrote it.
+#[test]
+fn no_prompt_is_passed_as_a_command_line_argument() {
+    let mut files = Vec::new();
+    rust_sources(&repo().join("src"), &mut files);
+    files.sort();
+
+    let mut offenders = Vec::new();
+    let mut checked = 0usize;
+    for p in files {
+        let rel = p
+            .strip_prefix(repo())
+            .unwrap_or(&p)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let Some(body) = production(&p) else {
+            continue;
+        };
+        for (at, _) in body.match_indices("\"--print\",") {
+            checked += 1;
+            // The next non-blank token after the flag is its value.
+            let after: String = body[at + "\"--print\",".len()..].chars().take(80).collect();
+            let value = after.split([',', ']']).next().unwrap_or("").trim();
+            if value != "\"\"" {
+                offenders.push(format!("{rel}: --print {value}"));
+            }
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "no `--print` argument was found anywhere under src/. Either the flag \
+         is spelled differently now -- in which case this test must follow it -- \
+         or the scan would pass whatever the tree did."
+    );
+    assert!(
+        offenders.is_empty(),
+        "a prompt is passed on the command line:\n{}\n\
+         argv is world-readable through `ps`, and these prompts carry text an \
+         outsider wrote. Build the turn with `exec::turn::agy_turn`, which \
+         passes `--print \"\"` and delivers the prompt on STDIN as a \
+         stream-json message.",
+        offenders.join("\n")
+    );
 }

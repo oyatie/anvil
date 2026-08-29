@@ -122,20 +122,13 @@ pub fn extract_json_block(text: &str) -> String {
 }
 
 async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<String> {
+    let budget = crate::exec::ExecClass::Model.timeout();
     let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
-    cmd.args([
-        "--print",
-        prompt,
-        "--effort",
-        effort,
-        "--print-timeout",
-        &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
-        "--dangerously-skip-permissions",
-    ]);
-    let output = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy evaluation")
+    crate::exec::turn::agy_turn(&mut cmd, effort, budget);
+    let turn = crate::exec::turn::run(cmd, prompt, budget, "agy evaluation")
         .await
         .context("Failed to run agy")?;
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(turn.response)
 }
 
 #[cfg(test)]

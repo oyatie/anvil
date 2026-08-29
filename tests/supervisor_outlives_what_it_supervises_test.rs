@@ -69,15 +69,25 @@ fn the_doc_parity_probe_takes_all_three_deadlines_from_that_one_value() {
         code.contains("SupervisedTurn::bounded_at"),
         "the probe's budget is not a SupervisedTurn, so its deadlines can drift again"
     );
+    // Three, not two. The tool's own deadline used to be spelled here as
+    // `DOC_PARITY_PROBE.tool_arg()`; it is now derived inside
+    // `exec::turn::agy_turn`, which this site hands the same budget. So all
+    // three deadlines still come from the one value, and the value is now
+    // written once per consumer rather than once per deadline: the watchdog,
+    // the argv builder, and the process bound.
     assert_eq!(
         code.matches("DOC_PARITY_PROBE.supervisor()").count(),
-        2,
-        "the watchdog and the process bound must both come from the one value"
+        3,
+        "every deadline for this turn must come from the one value"
     );
     assert!(
-        code.contains("DOC_PARITY_PROBE.tool_arg()"),
-        "agy must be told a deadline derived from the same value"
+        code.contains("agy_turn("),
+        "agy must be told a deadline derived from the same value, which is what \
+         `agy_turn` does with the budget it is handed"
     );
+    // And that `agy_turn` really derives it is
+    // `agy_print_timeout_test::the_constructor_every_site_defers_to_passes_the_flag`,
+    // asserted there rather than restated here.
     assert!(
         !code.contains("from_secs(30)"),
         "a hardcoded supervisor budget is back"

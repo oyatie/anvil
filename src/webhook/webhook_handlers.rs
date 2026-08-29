@@ -397,6 +397,14 @@ pub async fn webhook_handler(
         };
 
         tokio::spawn(async move {
+            // The fixer clones, runs a model turn, and pushes to the
+            // contributor's branch. A paused Anvil must not push.
+            if state_clone
+                .pause
+                .holds(&repo_clone, pr_number, "running the fixer")
+            {
+                return;
+            }
             let _ = state_clone
                 .fixer
                 .resolve_and_fix(
@@ -481,6 +489,17 @@ pub async fn webhook_handler(
         // would be logged nowhere at all -- the one enlist door where the
         // refusal would have become *less* observable than before.
         tokio::spawn(async move {
+            // The healer pushes a heal commit and then enlists into the merge
+            // queue, reaching `certify_for_enlistment` directly rather than
+            // through `execute_pr_review` -- so it inherits none of that
+            // function's pause reads. A switch that stops one of three doors
+            // is not a switch that stops Anvil.
+            if state_clone
+                .pause
+                .holds(&repo_clone, pr_number, "healing an ejected pull request")
+            {
+                return;
+            }
             match state_clone
                 .queue_healer
                 .heal_ejected_pr(&state_clone, &repo_clone, pr_number)

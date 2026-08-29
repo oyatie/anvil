@@ -49,8 +49,15 @@ fn gate_proof_sites(path: &str, body: &str) -> usize {
 /// `GATE_LABELS` is pinned to `named_statuses()` in order and in length by
 /// `matrix::every_named_gate_has_exactly_one_label_and_vice_versa`, so counting
 /// its rows counts the corpus.
-fn gate_label_sites(path: &str, body: &str) -> usize {
-    if path != "src/pre_merge_guard/matrix.rs" {
+///
+/// Keyed to the file that DECLARES the table, not to a path. A path would make
+/// this a filename-keyed check -- the class task #34 censused -- and it would
+/// bite: moving the table to its own module to satisfy the oversized-file
+/// ratchet takes the text count to zero while the compiled table is unchanged.
+/// The cross-check below caught exactly that, which is what it is for; keying
+/// to the declaration means there is nothing to catch.
+fn gate_label_sites(_path: &str, body: &str) -> usize {
+    if !body.contains("pub const GATE_LABELS:") {
         return 0;
     }
     body.matches("\n    (\n        \"").count()

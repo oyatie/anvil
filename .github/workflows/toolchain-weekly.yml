@@ -1,0 +1,103 @@
+name: toolchain-weekly
+
+# Is the pinned channel still current, and is the MSRV still honest?
+#
+# Two facts a single "Rust version" reading conflates. The channel is what this
+# repository compiles with; the MSRV is the oldest release it promises to
+# compile on. They move in opposite directions, and a gate reading one as the
+# other is wrong twice.
+#
+# Weekly because upstream releases on a six-week train and neither question has
+# a subject in any diff.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  channel:
+    name: channel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # Discovered, never hardcoded. A pin that names the answer cannot notice
+      # the answer changing, which is the whole failure this lane exists for.
+      - name: Resolve latest stable
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: stable
+
+      - name: Compare the three numbers
+        id: compare
+        run: |
+          set -eu
+          latest=$(rustc --version | cut -d' ' -f2)
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)
+          msrv=$(sed -n 's/^rust-version *= *"\(.*\)".*/\1/p' Cargo.toml)
+          edition=$(sed -n 's/^edition *= *"\(.*\)".*/\1/p' Cargo.toml)
+          echo "latest stable : ${latest}"
+          echo "pinned channel: ${channel}"
+          echo "declared MSRV : ${msrv}"
+          echo "edition       : ${edition}"
+          [ "${edition}" = "2024" ] || { echo "edition must be 2024"; exit 1; }
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          [ "${channel}" = "${latest}" ] && echo "behind=no" >> "$GITHUB_OUTPUT" || echo "behind=yes" >> "$GITHUB_OUTPUT"
+
+      # The bump is applied by the same code that reports the drift, so the
+      # report and the edit cannot disagree. It lands as a pull request and is
+      # proven by presubmit like any change -- never pushed to the trunk.
+      - name: Open the bump
+        if: steps.compare.outputs.behind == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+          CHANNEL: ${{ steps.compare.outputs.channel }}
+        run: |
+          set -eu
+          branch="chore/toolchain-${LATEST}"
+          git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1 && {
+            echo "${branch} already open; nothing to raise"
+            exit 0
+          }
+          cargo run --quiet --bin anvil -- toolchain --repo-dir . --to "${LATEST}" --apply
+          git config user.name  "anvil"
+          git config user.email "anvil@users.noreply.github.com"
+          git checkout -b "${branch}"
+          git commit -qam "chore(toolchain): move the channel from ${CHANNEL} to ${LATEST}"
+          git push -q origin "${branch}"
+          gh pr create --base dev --head "${branch}" \
+            --title "chore(toolchain): move the channel from ${CHANNEL} to ${LATEST}" \
+            --body "Raised by \`toolchain-weekly\`. The pinned channel was ${CHANNEL}; latest stable is ${LATEST}.
+
+          The edit is written by \`anvil toolchain --apply\`, so the report and the change come from one place. Presubmit proves it: a bump that does not compile or does not pass the suite is refused here like any other change, which is what makes the move safe rather than asserted."
+
+  nightly:
+    name: nightly-canary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Advisory. Nightly breaking is information about a future stable, not a
+    # defect in this tree, and it must never gate a merge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Resolve latest nightly
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: nightly
+          components: clippy
+      - name: Which nightly
+        run: rustc --version
+      - name: Compile and test on nightly
+        run: |
+          cargo build --all-targets --locked
+          cargo test --locked --no-run
+      - name: Clippy on nightly
+        run: cargo clippy --all-targets -- -D warnings

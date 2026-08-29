@@ -454,7 +454,7 @@ fn feature_flag_source_carries_no_invented_flag_vocabulary() {
     const INVENTED: &[&str] = &["@deprecated_flag", "@stale_flag", "EXPIRATION:", "202[0-5]"];
 
     let mut offenders = Vec::new();
-    for (rel, src) in module_sources("src/feature_flag_ratchet.rs") {
+    for (rel, src) in module_sources("src/feature_flag_ratchet") {
         for (n, line) in src.lines().enumerate() {
             for token in INVENTED {
                 if line.contains(token) {

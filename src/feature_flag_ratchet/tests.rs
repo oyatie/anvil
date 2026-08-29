@@ -2,8 +2,6 @@
 
 use super::*;
 
-use super::*;
-
 fn diff_ctx(diff: &str) -> PrDiffContext {
     PrDiffContext {
         repo: "oyatie/console".to_string(),

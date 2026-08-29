@@ -64,6 +64,26 @@ impl AsRef<Path> for SubjectRoot {
     }
 }
 
+/// The same one-way rule, as a coercion, mirroring `PathBuf: Deref<Target = Path>`.
+///
+/// Without it every existing call that passed `&repo_dir` to a `&Path`
+/// parameter has to be respelled `repo_dir.as_path()`, which is longer, wraps
+/// under rustfmt, and buries the type change in reformatting at sites where
+/// nothing about the meaning changed.
+///
+/// It does not widen anything. The guarantee is on the parameters that ask for
+/// `&SubjectRoot`: those still cannot be handed a stray `PathBuf`, and the only
+/// ways to build one remain `cloned` and `asserted`. Coercing the other way --
+/// a subject used where a path is wanted -- is what this type has always
+/// declared sound.
+impl std::ops::Deref for SubjectRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// Why a [`SubjectRoot`] was asserted instead of cloned.
 ///
 /// Unused at runtime. Its job is to make the caller state, in code a reviewer

@@ -604,7 +604,15 @@ fn diff_ctx(diff: &str) -> anvil::git_manager::PrDiffContext {
         head_sha: "bbb".to_string(),
         diff_content: diff.to_string(),
         changed_files: vec![],
-        repo_working_dir: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        // Anvil's own tree, and on purpose: this test asks whether anvil
+        // conforms to the architecture it publishes. `SelfMeasurement` rather
+        // than `TestFixture` so it reads differently from the defect it
+        // resembles -- a gate that meant the subject and reached for
+        // `CARGO_MANIFEST_DIR`.
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            anvil::git_manager::Uncloned::SelfMeasurement,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }

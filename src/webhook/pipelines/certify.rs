@@ -555,7 +555,7 @@ pub async fn certify_pull_request(
     // Shape Program: judge the head against the baseline frozen at the
     // merge-base of the branch this PR targets, and record what was measured.
     let shape_outcome = crate::shape::facade::gate::judge_pr(
-        diff_ctx.repo_working_dir.as_path(),
+        &diff_ctx.repo_working_dir,
         &diff_ctx.base_branch,
         &diff_ctx.head_sha,
         &diff_ctx.repo,
@@ -970,7 +970,7 @@ async fn certify_for_enlistment(
         &meta.title,
         body,
         &meta.head_ref_oid,
-        repo_dir.as_path(),
+        &repo_dir,
         &diff_ctx,
         &review_verdict,
         test_suite_passed,

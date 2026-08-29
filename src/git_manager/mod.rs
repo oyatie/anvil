@@ -425,17 +425,14 @@ impl GitManager {
 
         let diff_content = if is_incremental {
             let prev_sha = last_reviewed_sha.unwrap();
-            self.run_git_diff(repo_dir.as_path(), prev_sha, head_sha)
-                .await?
+            self.run_git_diff(&repo_dir, prev_sha, head_sha).await?
         } else {
-            let diff_res = self
-                .run_git_diff(repo_dir.as_path(), base_sha, head_sha)
-                .await;
+            let diff_res = self.run_git_diff(&repo_dir, base_sha, head_sha).await;
             match diff_res {
                 Ok(diff) if !diff.trim().is_empty() => diff,
                 _ => {
                     let base_ref = format!("origin/{}", base_branch);
-                    self.run_git_diff(repo_dir.as_path(), &base_ref, head_sha)
+                    self.run_git_diff(&repo_dir, &base_ref, head_sha)
                         .await
                         .with_context(|| {
                             format!(
@@ -449,7 +446,7 @@ impl GitManager {
 
         let changed_files = self
             .get_changed_files(
-                repo_dir.as_path(),
+                &repo_dir,
                 if is_incremental {
                     last_reviewed_sha.unwrap()
                 } else {

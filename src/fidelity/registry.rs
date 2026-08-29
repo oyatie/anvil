@@ -855,7 +855,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               message to a check that was `starts_with` on a type prefix, which accepts a header \
               with no colon and no description and accepts `feature` as a type, none of which \
               Conventional Commits 1.0.0 admits. The subjects are now read from the clone the \
-              pipeline already holds, by `commit_subjects` (git_manager/mod.rs:531), and judged \
+              pipeline already holds, by `commit_subjects` (git_manager/mod.rs:528), and judged \
               against `CONVENTIONAL_HEADER` (harness/judgement.rs:257) with commitlint's default type \
               list plus this repository's own promote type -- type-enum is configuration, not \
               specification, and hardcoding the default made the check red on the convention the \

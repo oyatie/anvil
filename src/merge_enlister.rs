@@ -351,10 +351,14 @@ impl MergeEnlister {
     /// Verifies if PR has an approving review; if not, submits a formal APPROVE
     /// review derived from `report`.
     ///
-    /// Fails closed on CHANGES_REQUESTED, on unresolved review comment threads,
-    /// and on *either read failing* -- an unreadable review state is not an
-    /// absent one, and this function may not sign an APPROVE on evidence it did
-    /// not obtain.
+    /// Fails closed on CHANGES_REQUESTED, on the review-state read failing --
+    /// an unreadable review state is not an absent one, and this function may
+    /// not sign an APPROVE on evidence it did not obtain -- and on GitHub
+    /// refusing to record the approving review it submits.
+    ///
+    /// It does not judge thread resolution. `UnresolvedReviewGuard` does, from
+    /// `reviewThreads.nodes { isResolved }`, and its verdict reaches merge
+    /// admission as `unresolved_review_status` in the certification report.
     ///
     /// The `report` argument is defence in depth and nothing more. Its `None`
     /// arm below is unreachable in the shipped code: `enlist_into_merge_queue`
@@ -455,39 +459,20 @@ impl MergeEnlister {
             }
         }
 
-        // Step 2: Check for unresolved review comment threads. Propagated, not
-        // `unwrap_or_default()`: an API failure turned into an empty list reads
-        // as "zero unresolved threads" and satisfies the check below, which is
-        // the same fail-open shape as the one above.
-        let comments = self
-            .github_client
-            .fetch_review_comments(repo, pr_number)
-            .await
-            .with_context(|| {
-                format!(
-                    "🚨 Merge queue enlistment blocked: the review threads on {}#{} could not be \
-                     read, so nothing establishes that none are unresolved",
-                    repo, pr_number
-                )
-            })?;
-
-        let unresolved_comments: Vec<_> = comments
-            .into_iter()
-            .filter(|c| {
-                !c.body.contains("Fixed:")
-                    && !c.body.contains("Resolved:")
-                    && !c.body.contains("✅")
-            })
-            .collect();
-
-        if !unresolved_comments.is_empty() {
-            bail!(
-                "🚨 Merge queue enlistment blocked: PR {}#{} has {} unaddressed review comment(s). Zero Unresolved Review Threads Invariant violated.",
-                repo,
-                pr_number,
-                unresolved_comments.len()
-            );
-        }
+        // Thread resolution is not decided here, and must not be: a comment
+        // body cannot answer it. Anvil's own fixer replies open with "✅"
+        // (`fixer::reply_to_thread`), so any rule keyed to comment text lets
+        // Anvil resolve its own threads and lets anyone resolve theirs with an
+        // emoji, which makes doctrine §2 satisfiable by string.
+        //
+        // The authoritative answer is `UnresolvedReviewGuard`, which asks
+        // GitHub for `reviewThreads.nodes { isResolved }` and lands in the
+        // certification report as `unresolved_review_status`.
+        // `enlist_into_merge_queue` runs `Self::admission_refusal(report)?` at
+        // its entry point, so a failing thread gate refuses admission before
+        // this function is reached. A second, weaker check here would only
+        // ever agree with the first; it would borrow that authority rather
+        // than add any.
 
         if needs_approval {
             info!(
@@ -495,12 +480,11 @@ impl MergeEnlister {
                 repo, pr_number
             );
             // Absent evidence is not a reason to report success from the one
-            // function whose job is to guarantee an approving review exists.
-            // This used to `return Ok(())`, which is the wrong answer to give
-            // whoever asked. It is unreachable behind the entry-point
-            // `admission_refusal` -- see this function's doc comment -- so what
-            // changed here is the answer a second caller would get, not a live
-            // path into `gh pr merge --auto`.
+            // function whose job is to guarantee an approving review exists,
+            // so this arm bails rather than returning `Ok`. It is unreachable
+            // behind the entry-point `admission_refusal` -- see this
+            // function's doc comment -- and exists so that a second caller
+            // cannot walk from "no report" into `gh pr merge --auto`.
             let Some(summary) = Self::approval_summary(report) else {
                 bail!(
                     "🚨 Merge queue enlistment blocked: approving review not submitted on PR {}#{}: \
@@ -516,26 +500,25 @@ impl MergeEnlister {
                 comments: Vec::new(),
             };
 
-            if let Err(e) = self
-                .github_client
+            // Every refusal is fatal, including GitHub's "own pull request"
+            // and "Can not approve". Excusing those two is exactly the case
+            // that matters: on the dogfood repository Anvil is the author, so
+            // treating them as success makes the mandatory-approving-review
+            // invariant a no-op on the only repository it runs against. A
+            // review GitHub refused to record is not a review.
+            self.github_client
                 .submit_pr_review(repo, pr_number, &meta.head_ref_oid, &approval)
                 .await
-            {
-                let err_str = e.to_string();
-                if err_str.contains("own pull request") || err_str.contains("Can not approve") {
-                    info!(
-                        "PR {}#{} is authored by repository owner/operator. Proceeding to merge queue enlistment via authorized role...",
-                        repo, pr_number
-                    );
-                } else {
-                    bail!(
-                        "🚨 Merge queue enlistment blocked: Failed to submit mandatory approving review on PR {}#{}: {}. Invariant 2 requires strict review authorization.",
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "🚨 Merge queue enlistment blocked: failed to submit the mandatory \
+                         approving review on PR {}#{}: {}. Invariant 2 requires an approving \
+                         review that GitHub actually recorded.",
                         repo,
                         pr_number,
                         e
-                    );
-                }
-            }
+                    )
+                })?;
         }
 
         Ok(())

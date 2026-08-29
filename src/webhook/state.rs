@@ -184,5 +184,4 @@ pub struct AppState {
     pub pause: Arc<crate::pause::Pause>,
     pub cloud_native_guard: Arc<crate::cloud_native_guard::CloudNativeGuard>,
     pub stack_whitelist_guard: Arc<crate::stack_whitelist_guard::StackWhitelistGuard>,
-    pub dual_track_build_guard: Arc<crate::dual_track_build_guard::DualTrackBuildGuard>,
 }

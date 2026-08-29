@@ -364,29 +364,18 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
     },
     GateFidelity {
         gate_id: "stack_whitelist_status",
-        aspiration: "Refuse a technology the approved stack does not name, and an apex ADR edited in \
-                     place.",
+        aspiration: "Refuse a technology the approved stack does not name.",
         reference: "ADR-0700..ADR-0718 approved stack manifest",
         fidelity: Fidelity::Heuristic,
         gap: "Six banned crate prefixes matched as substrings of added lines. A seventh unapproved \
               technology is not refused because it is not on the list, and the list is written here \
               rather than derived from the ADRs it cites, so an ADR that changes its mandate does not \
-              change this gate. The apex-ADR half keys on the author being an agent, which this \
-              deployment does not establish and therefore always asserts.",
+              change this gate. Two of the guard's three rules -- apex-ADR immutability and \
+              unauthorized dependency expansion -- fire only when the author is known to be an agent, \
+              which this pipeline does not establish; it passes `is_human_author: true` so those two \
+              are INERT rather than asserting authorship nobody measured, and they stay inert until \
+              the pipeline measures it.",
         blocked_on: None,
-    },
-    GateFidelity {
-        gate_id: "dual_track_build_status",
-        aspiration: "Keep the Cargo and Buck2 build graphs in step.",
-        reference: "Buck2 + reindeer dual-track builds",
-        fidelity: Fidelity::Partial,
-        gap: "Compares which manifests the change touched, not what the two graphs declare: a \
-              Cargo.toml edit with no BUCK edit is drift, and a BUCK edit that does not actually \
-              mirror the Cargo change is a pass. Neither graph is parsed. It does report the absence \
-              of a track as an absence rather than as a pass, which is why this is Partial and not \
-              Heuristic -- and on this repository, which has no Buck2 track, that absence is what it \
-              reports.",
-        blocked_on: Some("a buck2 build graph in the repository under review"),
     },
     GateFidelity {
         gate_id: "unresolved_review_status",

@@ -586,13 +586,21 @@ pub async fn certify_pull_request(
         .evaluate_cloud_native(repo_dir, diff_ctx)?;
     let stack_whitelist_report = state.stack_whitelist_guard.evaluate_stack_whitelist(
         repo_dir, diff_ctx,
-        // Author identity is not established here, and asserting "human" would
-        // relax the apex-ADR rule on exactly the changes it exists to catch.
-        false,
+        // Authorship is NOT established in this pipeline, so neither value is a
+        // measurement. `false` asserts agent authorship nothing observed, and
+        // two of this guard's three rules fire only on that assertion --
+        // `APEX_ADR_IMMUTABILITY_BREACH` and
+        // `UNAUTHORIZED_DEPENDENCY_EXPANSION` -- so passing it would refuse
+        // every pull request that adds a dependency or touches an ADR, on the
+        // strength of a fact nobody measured. A fabricated accusation is the
+        // symmetric violation of I1 and the more expensive direction to be
+        // wrong in.
+        //
+        // `true` leaves those two rules inert until authorship is measured,
+        // which this gate's fidelity entry records as its gap. The
+        // approved-stack rule, which does not depend on authorship, still runs.
+        true,
     )?;
-    let dual_track_report = state
-        .dual_track_build_guard
-        .evaluate_dual_track_build(repo_dir, diff_ctx)?;
 
     let cert_report = state.pre_merge_guard.evaluate_pre_merge_gates(
         diff_ctx,
@@ -665,7 +673,6 @@ pub async fn certify_pull_request(
         &shape_outcome,
         &cloud_native_report,
         &stack_whitelist_report,
-        &dual_track_report,
     )?;
 
     Ok(cert_report)

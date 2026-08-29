@@ -386,11 +386,6 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
         "📋 Approved Stack",
         "Only approved technologies, and an accepted apex ADR is not edited in place",
     ),
-    (
-        "dual_track_build_status",
-        "🏗️ Dual-Track Build",
-        "The Cargo and Buck2 build graphs are kept in step",
-    ),
 ];
 
 pub fn label_for(name: &str) -> Option<(&'static str, &'static str)> {

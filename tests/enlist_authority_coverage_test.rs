@@ -556,9 +556,6 @@ async fn report_from_the_corpus(
             &anvil::stack_whitelist_guard::StackWhitelistGuard::new()
                 .evaluate_stack_whitelist(dir, d, false)
                 .expect("the stack-whitelist guard reads this diff"),
-            &anvil::dual_track_build_guard::DualTrackBuildGuard::new()
-                .evaluate_dual_track_build(dir, d)
-                .expect("the dual-track guard reads this tree"),
         )
         .expect("the corpus produces a report for a change it can read")
 }

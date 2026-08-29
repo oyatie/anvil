@@ -652,7 +652,6 @@ mod stub {
                 // gate, not about them.
                 &neutral(),
                 &neutral(),
-                &neutral(),
             )
             .expect("the evaluator must map a set of gate reports without failing")
     }

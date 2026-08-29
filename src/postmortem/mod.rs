@@ -252,7 +252,7 @@ pub const FIX_CLASSES: &[FixClass] = &[
                 what: "`NotApplicable` is a separate status from `NotMeasured`, so a gate cannot \
                        report an empty subject set as a defect or as a pass",
                 status: Status::Live {
-                    named: "src/pre_merge_guard/report.rs::NotApplicable",
+                    named: "src/pre_merge_guard/status.rs::NotApplicable",
                 },
             },
             Remedy {

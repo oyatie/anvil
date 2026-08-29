@@ -208,12 +208,18 @@ fn the_opener_can_only_open_never_merge_approve_or_delete() {
 
 #[test]
 fn every_rung_is_covered_by_ci() {
-    let ci = workflow("ci.yml");
+    // Both rungs that carry a branch filter. Presubmit admits a change onto a
+    // branch; postsubmit compiles what landed there. A rung named in neither is
+    // a branch that receives promoted code with nothing reading it.
+    let ci = format!(
+        "{}\n{}",
+        workflow("presubmit.yml"),
+        workflow("postsubmit.yml")
+    );
     let next = ladder(&workflow("promotion-open-next.yml"), "next");
 
     // Both ends of every rung: the branch that promotes and the branch promoted
-    // into. A rung missing from ci.yml is a branch that receives promoted code
-    // without anything compiling or testing it.
+    // into.
     let mut rungs: Vec<&str> = next.keys().map(String::as_str).collect();
     rungs.extend(next.values().map(String::as_str));
 

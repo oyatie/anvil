@@ -1,0 +1,41 @@
+name: nightly
+
+# The whole tree, nightly, against no diff.
+#
+# Presubmit is diff-scoped by construction: it judges what a change touched. A
+# file nobody touches is therefore never judged, and drift in it is invisible
+# until someone edits it. This rung exists to ask the questions that have no
+# subject in a diff.
+
+on:
+  schedule:
+    - cron: "27 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  whole-tree:
+    name: whole-tree
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.98.0"
+          components: rustfmt, clippy
+      - name: Rust Cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: anvil-nightly
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Suite over the merged tree
+        run: cargo nextest run --all-targets --no-fail-fast
+      - name: Clippy over the merged tree
+        run: cargo clippy --all-targets -- -D warnings

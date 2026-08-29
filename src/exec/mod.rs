@@ -13,6 +13,11 @@
 //!
 //! Invariant I5: every subprocess has a timeout AND `kill_on_drop(true)`.
 
+pub mod agent;
+pub mod inherited;
+pub use agent::{Posture, agent};
+pub use inherited::INHERITED;
+
 use anyhow::{Result, bail};
 use std::process::Output;
 use std::time::Duration;

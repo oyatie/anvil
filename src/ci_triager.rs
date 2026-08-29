@@ -228,7 +228,7 @@ Output strictly valid JSON matching this schema:
     }
 
     async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
-        let mut cmd = Command::new("agy");
+        let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
         cmd.args([
             "--print",
             prompt,
@@ -238,9 +238,6 @@ Output strictly valid JSON matching this schema:
             &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
             "--dangerously-skip-permissions",
         ]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
 
         let output =
             crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy (ci triager)")

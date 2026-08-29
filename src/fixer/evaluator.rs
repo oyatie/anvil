@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,7 +122,7 @@ pub fn extract_json_block(text: &str) -> String {
 }
 
 async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<String> {
-    let mut cmd = Command::new("agy");
+    let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
     cmd.args([
         "--print",
         prompt,
@@ -133,7 +132,6 @@ async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<Strin
         &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
         "--dangerously-skip-permissions",
     ]);
-    cmd.current_dir(working_dir);
     let output = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy evaluation")
         .await
         .context("Failed to run agy")?;

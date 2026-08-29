@@ -125,6 +125,80 @@ fn a_pause_that_cannot_be_read_is_a_pause() {
     }
 }
 
+/// Every door Anvil goes through on its own must read the pause.
+///
+/// The module calls itself "the gesture that stops Anvil" and `Held::reason()`
+/// says "Anvil is paused". Both were false: the pause was read only inside
+/// `execute_pr_review`, while two sibling webhook paths pushed and merged
+/// without consulting it -- `merge_group`/`destroyed` into `heal_ejected_pr`,
+/// which pushes a heal commit and then enlists (reaching
+/// `certify_for_enlistment` directly, so it inherits no pause read), and
+/// `pull_request_review_comment` into `resolve_and_fix`, which pushes to the
+/// contributor's branch.
+///
+/// Keyed to the spawn, because that is what makes a path autonomous: anything
+/// the webhook handler detaches into a task acts without a human in the loop,
+/// and must be able to be stopped.
+#[test]
+fn every_autonomous_webhook_door_reads_the_pause() {
+    // Code only. The comments beside these doors explain what the pause is for,
+    // and a scan that reads prose as code counts the explanation as the guard.
+    let src = anvil::source_scan::without_commentary(
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/webhook/webhook_handlers.rs"),
+        )
+        .expect("the webhook handlers exist"),
+    );
+
+    let spawns: Vec<usize> = src
+        .match_indices("tokio::spawn(async move {")
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        !spawns.is_empty(),
+        "no detached task found in the webhook handlers. If they moved, this \
+         test must follow them -- a scan that stops finding its subject is not \
+         a fix."
+    );
+
+    let mut unguarded = Vec::new();
+    for at in spawns {
+        // The body up to the next spawn, or 1200 bytes.
+        let rest = &src[at..];
+        let end = rest[1..]
+            .find("tokio::spawn(")
+            .map(|k| k + 1)
+            .unwrap_or(rest.len())
+            .min(1200);
+        let body = &rest[..end];
+        // A task that only reads or reports is not a door: this is about the
+        // ones that push, fix, heal or enlist.
+        let acts = ["resolve_and_fix", "heal_ejected_pr", "execute_pr_review"]
+            .iter()
+            .find(|verb| body.contains(**verb));
+        if let Some(verb) = acts
+            && !body.contains("pause")
+            && !body.contains("execute_pr_review")
+        {
+            let line = src[..at].matches('\n').count() + 1;
+            unguarded.push(format!(
+                "webhook_handlers.rs:{line}: spawns {verb} without reading the pause"
+            ));
+        }
+    }
+
+    assert!(
+        unguarded.is_empty(),
+        "Anvil goes through these doors on its own and cannot be stopped at \
+         them:\n{}\n\
+         A switch that holds one of three doors does not stop Anvil, and the \
+         module claiming it does is worse than no switch, because an operator \
+         believes it.",
+        unguarded.join("\n")
+    );
+}
+
 /// The switch must read the directory the daemon was configured with.
 ///
 /// `Pause::in_dir("data")` compiles, passes every fixture in this file, and is

@@ -4,7 +4,7 @@
 
 use crate::change_delivery::ports::{
     LandingPolicy, MOVE_PLAN_SCHEMA_V1, Move, MoveKind, OwnerMap, ShapeMovePlan, Shard,
-    conflict_pairs, select_independent, shard_plan,
+    conflict_pairs, sequence, shard_plan,
 };
 use crate::shape::facade::{Fix, ShapeReport};
 
@@ -73,7 +73,13 @@ pub fn plan_from_report(report: &ShapeReport, spec_version: &str) -> ShapeMovePl
 
 pub struct DryRun {
     pub shards: Vec<Shard>,
+    /// What may open now: the first wave.
     pub selected: Vec<Shard>,
+    /// Every shard, in the round it may open in, plus the ones no round will
+    /// take. A dry run that reports only `selected` is shorter than the plan
+    /// it describes, and a reader cannot tell a shard that waits a round from
+    /// one that was never planned.
+    pub sequenced: crate::change_delivery::ports::Sequenced,
     pub conflicts: usize,
     pub policy: LandingPolicy,
 }
@@ -86,10 +92,12 @@ pub fn dry_run(
 ) -> DryRun {
     let shards = shard_plan(plan, owners, manifests, &policy);
     let conflicts = conflict_pairs(&shards).len();
-    let selected = select_independent(&shards, &[], &policy);
+    let sequenced = sequence(&shards, &[], &policy);
+    let selected = sequenced.waves.first().cloned().unwrap_or_default();
     DryRun {
         shards,
         selected,
+        sequenced,
         conflicts,
         policy,
     }
@@ -113,6 +121,15 @@ pub fn render(d: &DryRun, plan: &ShapeMovePlan) -> String {
         d.policy.require_destination_stable,
         d.selected.len()
     );
+    // The rounds this plan takes, and what no round takes. A conflicting pair
+    // is two rounds, not one round and a disappearance.
+    out.push_str(&format!(
+        "  waves: {} round(s) placing {} shard(s); {} held by policy; {} that no round admits\n",
+        d.sequenced.waves.len(),
+        d.sequenced.placed(),
+        d.sequenced.held.len(),
+        d.sequenced.stuck.len()
+    ));
     for s in d.shards.iter().take(25) {
         out.push_str(&format!(
             "  [{}] {:<28} {:<20} {:>3} move(s)  owners={:?}{}{}\n",

@@ -1,0 +1,38 @@
+name: postsubmit
+
+# Runs on the merged tree. Not merge authority -- the merge already happened.
+# A red run here is a revert signal, never a second required check.
+
+on:
+  push:
+    branches: [main, dev, staging, canary, production]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    uses: ./.github/workflows/build-and-test.yml
+
+
+  # Post-submit compile check under the release profile. Nothing is uploaded:
+  # `scripts/start.sh` builds its own binary on the host. Not a merge-queue
+  # gate — the release profile is a different rustc than the test profile.
+  release:
+    name: release-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+      - name: Rust Cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: anvil-release
+          cache-workspace-crates: "true"
+      - name: Release profile compile check
+        run: cargo build --release --locked

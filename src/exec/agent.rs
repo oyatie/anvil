@@ -209,11 +209,8 @@ mod tests {
         // out, and `env_clear` touches only the REAL parent environment, which
         // does not contain them. Deleting `env_clear` left this whole module
         // green -- measured, by deleting it.
-        let allowed: std::collections::BTreeSet<&str> = INHERITED
-            .iter()
-            .copied()
-            .chain(["GH_CONFIG_DIR"])
-            .collect();
+        let allowed: std::collections::BTreeSet<&str> =
+            INHERITED.iter().copied().chain(["GH_CONFIG_DIR"]).collect();
         let unexpected: Vec<&str> = seen
             .lines()
             .filter_map(|l| l.split('=').next())

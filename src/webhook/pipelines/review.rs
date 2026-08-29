@@ -116,12 +116,9 @@ pub async fn execute_pr_review(
     {
         Ok(report) => report,
         Err(e) => {
-            // Roll back the reviewed-SHA stamp so this PR is retried rather
-            // than stranded: the stamp is set above, and the early-exit guard
-            // would otherwise skip every later webhook for this SHA. The stamp
-            // belongs to this pipeline, so the rollback does too — the corpus
-            // is shared with the enlistment paths, and an enlist attempt must
-            // not be able to un-stamp a pull request.
+            // Retried rather than stranded; `clear_reviewed_sha` says why.
+            // The stamp belongs to this pipeline, so the rollback does too:
+            // an enlist attempt must not be able to un-stamp a pull request.
             state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
             return Err(e);
         }
@@ -177,12 +174,8 @@ pub async fn execute_pr_review(
         )
         .await
     {
-        // Was a bare `?`. A rate-limited or flaky forge on the comment call --
-        // the one step here that touches the network for a reason that is not
-        // a decision -- stranded the pull request permanently, because the
-        // reviewed-SHA stamp above was already set and the early-exit guard
-        // skips every later delivery for that SHA. The gates had all run and
-        // passed; the PR stopped anyway, and nothing said why.
+        // Was a bare `?`: a rate-limited forge here, after every gate had run
+        // and passed, stranded the pull request for good.
         state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
         return Err(e);
     }
@@ -362,14 +355,9 @@ pub async fn execute_pr_review(
             // this path: certification takes minutes, and a switch sampled
             // only at the start of a long run cannot be used during it.
             if state.pause.holds(repo, pr_number, "enlisting") {
-                // Roll the reviewed-SHA stamp back, for the same reason the
-                // certification failure above does. The stamp was set before
-                // any gate ran, and the early-exit guard skips every later
-                // delivery for this SHA -- so leaving it set makes the pause a
-                // one-way door. Lifting it would not resume this pull request;
-                // nothing would review it again short of a new commit, and an
-                // operator who paused for ten minutes would have stopped it
-                // for good without being told.
+                // Without this the pause is a one-way door: lifting it would
+                // not resume this pull request, because nothing would review
+                // it again short of a new commit.
                 state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
                 return Ok(());
             }

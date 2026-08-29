@@ -68,7 +68,7 @@ fn package_rust_version_matches_the_toolchain_pin() {
 
 #[test]
 fn ci_installs_the_pinned_toolchain_not_stable() {
-    let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
+    let ci = merge_path_text();
     // rust-toolchain.toml is the pin. Repeating the version in YAML is a drift
     // surface; dtolnay/rust-toolchain with no `toolchain:` input honours the file.
     let channel = toolchain_channel();
@@ -84,7 +84,7 @@ fn ci_installs_the_pinned_toolchain_not_stable() {
 
 #[test]
 fn ci_and_hooks_build_with_locked_dependencies() {
-    let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
+    let ci = merge_path_text();
     // Cheap local: pre-push `cargo check --locked`.
     // Pre-merge: clippy + nextest, both --locked.
     // Post-submit: `cargo build --release --locked` (release-profile compile check).
@@ -98,22 +98,32 @@ fn ci_and_hooks_build_with_locked_dependencies() {
             "`{step}` in ci.yml must pass --locked: {line}"
         );
     }
-    // Parsed, not substring-matched: `ci.contains("if: github.event_name ==
-    // 'push'")` passes with that string in a comment or on any other job. The
-    // property is that the *release* job is the gated one.
-    let workflow: serde_yaml::Value = serde_yaml::from_str(&ci).expect("ci.yml must be valid YAML");
-    let release = &workflow["jobs"]["release"];
+    // Parsed, not substring-matched. The property is that the release build is
+    // post-submit, and the rung split makes that structural rather than a
+    // condition: `release` lives in the file whose only trigger is `push`, so
+    // there is no `if:` left to get wrong. Asserting the trigger asserts more
+    // than the old guard did -- an `if:` can be edited off a job, a file's `on:`
+    // cannot be without moving the job.
+    let post: serde_yaml::Value = serde_yaml::from_str(
+        &fs::read_to_string(repo_root().join(".github/workflows/postsubmit.yml"))
+            .expect("postsubmit.yml"),
+    )
+    .expect("postsubmit.yml must be valid YAML");
     assert!(
-        !release.is_null(),
-        "ci.yml must define a `release` job; found jobs: {:?}",
-        workflow["jobs"]
+        !post["jobs"]["release"].is_null(),
+        "postsubmit.yml must define the `release` job; found: {:?}",
+        post["jobs"]
             .as_mapping()
             .map(|m| m.keys().collect::<Vec<_>>())
     );
+    let triggers = post["on"]
+        .as_mapping()
+        .expect("postsubmit.yml declares triggers");
+    let names: Vec<&str> = triggers.keys().filter_map(|k| k.as_str()).collect();
     assert_eq!(
-        release["if"].as_str(),
-        Some("github.event_name == 'push'"),
-        "the release job must be post-submit (push to trunk), not a PR merge gate"
+        names,
+        vec!["push"],
+        "the release build is post-submit: postsubmit.yml must trigger on push and nothing else"
     );
     let pre_push =
         fs::read_to_string(repo_root().join("src/git_manager/hooks/pre-push")).expect("pre-push");
@@ -169,4 +179,20 @@ fn lockfile_is_format_version_4() {
         version_line, "version = 4",
         "Cargo.lock must stay at format v4 (smaller merge diffs; the 1.83+ default)"
     );
+}
+
+/// The workflows on the merge path, as one text.
+///
+/// Presubmit, the lane it calls, and postsubmit. Deliberately NOT the scheduled
+/// lanes: `toolchain-weekly` installs `stable` on purpose, because resolving
+/// what latest stable IS is the question it exists to answer. A pin is a
+/// merge-path property, and asking it of a drift detector inverts the rule.
+fn merge_path_text() -> String {
+    let dir = repo_root().join(".github/workflows");
+    let mut all = String::new();
+    for name in ["presubmit.yml", "build-and-test.yml", "postsubmit.yml"] {
+        all.push_str(&fs::read_to_string(dir.join(name)).unwrap_or_else(|_| panic!("{name}")));
+        all.push('\n');
+    }
+    all
 }

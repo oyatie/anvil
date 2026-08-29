@@ -12,16 +12,40 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The merge path, as one text. Presubmit owns occupancy and the fan-in; the
+/// lane it calls owns fmt and test. Reading the pair keeps these assertions
+/// about the RUNG rather than about a filename, so the next split does not
+/// silently empty the corpus.
 fn ci_text() -> String {
-    fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml")
+    let root = repo_root().join(".github/workflows");
+    let presubmit = fs::read_to_string(root.join("presubmit.yml")).expect("presubmit.yml");
+    let lane = fs::read_to_string(root.join("build-and-test.yml")).expect("build-and-test.yml");
+    format!("{presubmit}\n{lane}")
 }
 
+/// Presubmit, parsed. `ci_text` concatenates the rung for substring questions;
+/// a structural question needs one document, and every job this file asks about
+/// -- occupancy and the fan-in that waits on it -- lives in presubmit.
 fn ci() -> Value {
-    serde_yaml::from_str(&ci_text()).expect("ci.yml parses as YAML")
+    let p = repo_root().join(".github/workflows/presubmit.yml");
+    serde_yaml::from_str(&fs::read_to_string(p).expect("presubmit.yml"))
+        .expect("presubmit.yml parses as YAML")
+}
+
+/// The lane presubmit calls, parsed. `fmt` and `test` moved there.
+fn lane() -> Value {
+    let p = repo_root().join(".github/workflows/build-and-test.yml");
+    serde_yaml::from_str(&fs::read_to_string(p).expect("build-and-test.yml"))
+        .expect("build-and-test.yml parses as YAML")
 }
 
 fn job(name: &str) -> Value {
-    ci()["jobs"][name].clone()
+    let here = ci()["jobs"][name].clone();
+    if here.is_null() {
+        lane()["jobs"][name].clone()
+    } else {
+        here
+    }
 }
 
 fn steps(job_name: &str) -> Vec<Value> {

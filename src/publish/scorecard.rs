@@ -132,6 +132,21 @@ fn low_fidelity_passing_gates(report: &PreMergeCertificationReport) -> Vec<Strin
         .collect()
 }
 
+/// The gates that passed on this change, as the proof registry names them.
+///
+/// Deliberately the raw `gate_id`, not `gate_name`: the registry keys on the
+/// id, and translating to a display name here would mean two spellings of the
+/// same gate had to agree forever. `low_fidelity_passing_gates` above renders
+/// display names because it only ever prints them; this list is matched.
+fn passing_gate_ids(report: &PreMergeCertificationReport) -> Vec<String> {
+    report
+        .named_statuses()
+        .into_iter()
+        .filter(|(_, status)| matches!(status, GateStatus::Passed | GateStatus::AutoUpdated))
+        .map(|(gate_id, _)| gate_id.to_string())
+        .collect()
+}
+
 /// Renders the scorecard body, signature included.
 pub fn render(report: &PreMergeCertificationReport) -> String {
     let counts = report.gate_counts();
@@ -298,6 +313,44 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         ));
         s.push_str(&findings.join("\n"));
         s.push('\n');
+
+        // The prevention ledger, where a reader is already acting.
+        //
+        // It records each defect CLASS, the layer each remedy sits at and
+        // whether that remedy is mechanical or semantic -- and it was
+        // unreachable from production, running only from a pre-push test. A
+        // ledger nobody reads does not change what anyone does, which is the
+        // same defect as a gate nothing calls.
+        //
+        // On the BLOCKED path only. Three guards refused this line on the
+        // certified scorecard and were right to: a certified verdict is one
+        // counted line by contract, and this measures the state of the
+        // repository rather than anything about the change. Published rather
+        // than gated, for the same reason -- a finding a change cannot act on
+        // must not withhold it.
+        s.push('\n');
+        s.push_str(&crate::postmortem::prevention_debt_line());
+        s.push('\n');
+
+        // What the passing half of this score is worth.
+        //
+        // `gate_proof` was complete, ratcheted and called by nothing: it knew
+        // which gates have been seeded with their own defect and which have only
+        // ever been green, and no pull request was ever told. A gate that has
+        // never been shown to fire still prints a tick indistinguishable from
+        // a gate that has, which is precisely how four checks written in one
+        // session stayed green for the defect they existed to catch.
+        //
+        // Published, not gated, and on the blocked path only -- the same two
+        // constraints `prevention_debt_line` above is under, for the same two
+        // reasons. An author cannot act on a gate their change never touched,
+        // and a certified verdict is one counted line by contract.
+        let ids = passing_gate_ids(report);
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        if let Some(line) = crate::gate_proof::proof_qualifier(&refs) {
+            s.push_str(&line);
+            s.push('\n');
+        }
     }
 
     s.push_str(&absence_note(declared_absent.len() != 1));
@@ -307,7 +360,16 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
     } else {
         AnvilAction::Blocked
     };
-    body(action, &s)
+    // The report already carries the sha it judged; publishing without it
+    // would leave the verdict unanchored across a force-push.
+    // The subject carries the sha the run was performed against. A report with
+    // no subject was not produced by a certification run over a commit, so it
+    // is NotRevisionScoped rather than anchored to a sha invented here.
+    let judged = match report.subject() {
+        Some(s) => crate::publish::Judged::Rev(s.head_sha.clone()),
+        None => crate::publish::Judged::NotRevisionScoped,
+    };
+    body(action, &s, judged).to_string()
 }
 
 #[cfg(test)]

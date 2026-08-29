@@ -4,6 +4,7 @@
 //! layering; `facade-core-layering` in oyatie).
 
 pub use crate::shape::core::dependency::{DepEdge, DepGraph, classify};
+pub use crate::shape::core::load_bearing::{LoadIndex, Standing};
 pub use crate::shape::core::measure::measure;
 pub use crate::shape::core::profile::LanguageProfile;
 pub use crate::shape::core::report::{

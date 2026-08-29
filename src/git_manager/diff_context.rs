@@ -24,7 +24,7 @@ pub struct PrDiffContext {
 /// A closed set, so asking for both sides is a named, reviewable act rather
 /// than a field access. Adding a variant is a diff someone can challenge --
 /// which is the whole mechanism: seven times a scanner read the removed side
-/// by accident, and once (#115) it was written fresh with the same defect
+/// by accident, and once (#115) a fresh scanner arrived with the same defect
 /// after the first two were fixed. Reading the whole diff is what you get by
 /// NOT thinking about it, so the type stops being silent about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +47,12 @@ pub struct FileDiff {
     /// reference an Idempotency-Key" is about `all`, since a key already
     /// present is context the diff never adds.
     all: String,
+    /// Lines added minus lines removed for this file.
+    ///
+    /// Counted while parsing, so a rule asking "did this change grow the file"
+    /// needs neither the removed side nor a second parser. `both_sides` is
+    /// reserved for rules whose SUBJECT is a removal; size is not one.
+    net_lines: i64,
     /// This file's hunk lines exactly as the diff spells them, `+` and `-`
     /// markers intact.
     ///
@@ -58,6 +64,11 @@ pub struct FileDiff {
 }
 
 impl FileDiff {
+    /// Lines added minus lines removed. Negative means the file shrank.
+    pub fn net_lines(&self) -> i64 {
+        self.net_lines
+    }
+
     /// The lines this change ADDS, without their `+`.
     ///
     /// What an ordinary rule wants. It contains no removed line, so a rule
@@ -137,6 +148,7 @@ pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
                 None => {
                     out.push(FileDiff {
                         path,
+                        net_lines: 0,
                         added: String::new(),
                         all: String::new(),
                         raw: String::new(),
@@ -162,6 +174,7 @@ pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
         out[i].raw.push('\n');
 
         if let Some(body) = line.strip_prefix('+') {
+            out[i].net_lines += 1;
             out[i].added.push_str(body);
             out[i].added.push('\n');
             out[i].all.push_str(body);
@@ -171,8 +184,17 @@ pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
             out[i].all.push_str(body);
             out[i].all.push('\n');
         }
-        // A `-` line is what the change REMOVES. It belongs to neither: a gate
-        // that reads it accuses the pull request of the thing it deletes.
+        // A `-` line is what the change REMOVES. It belongs to neither `added`
+        // nor `all`: a gate that reads it accuses the pull request of the thing
+        // it deletes.
+        //
+        // It is COUNTED, though. "Did this change grow the file" is a question
+        // about size, not about the removed content, and answering it here is
+        // what stops a size gate reaching for `both_sides` -- which is reserved
+        // for rules whose subject IS a removal.
+        else if line.starts_with('-') {
+            out[i].net_lines -= 1;
+        }
     }
     out
 }

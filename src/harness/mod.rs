@@ -178,7 +178,7 @@ impl Evaluated {
 /// `RetargetDependency`/`CreatePath` against `Move`/`Rename`/`DependOnInstead`/
 /// `Create`. Two vocabularies for one concept is the duplication this harness
 /// exists to end, and it was introduced by the harness itself.
-pub use crate::shape::core::report::Fix;
+pub use crate::shape::facade::Fix;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {

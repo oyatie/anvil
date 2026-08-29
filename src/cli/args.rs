@@ -108,6 +108,29 @@ pub enum Commands {
             help = "Optional diff content to validate (default: git diff staged)"
         )]
         diff: Option<String>,
+        /// The commit message to grade, as a `commit-msg` hook receives it.
+        ///
+        /// Optional because a `pre-commit` hook runs BEFORE a message exists.
+        /// When it is absent the header check is reported as not measured
+        /// rather than passed: a literal supplied here would be graded, and
+        /// the green would describe Anvil's source rather than the commit.
+        #[arg(
+            short,
+            long,
+            help = "Commit message to grade (commit-msg hook passes $1); omitted at pre-commit time"
+        )]
+        message: Option<String>,
+    },
+    /// Probe a toolchain, then move the pin only if the probe passed.
+    Toolchain {
+        #[arg(long, default_value = ".", help = "Repository to bump")]
+        repo_dir: PathBuf,
+
+        #[arg(long, help = "Target channel, e.g. 1.98.0")]
+        to: String,
+
+        #[arg(long, help = "Write the edit. Without it, the plan is printed only")]
+        apply: bool,
     },
     /// Run Proactive Dependency Upgrade Train on a repository
     TrainRun {
@@ -258,6 +281,19 @@ pub enum ShapeAction {
 
         #[arg(long, help = "Print the full report as JSON")]
         json: bool,
+    },
+    /// Project ADR-0719 D-8 admission over a repository: which directories
+    /// nothing loads. Read-only -- reads a revision by git plumbing, so a
+    /// dirty working tree cannot affect the answer and nothing is written.
+    Admit {
+        #[arg(long, help = "Path to a local clone")]
+        repo_dir: PathBuf,
+
+        #[arg(long, default_value = "HEAD", help = "Commit to project from")]
+        rev: String,
+
+        #[arg(long, help = "Report label; defaults to the directory name")]
+        repo: Option<String>,
     },
     /// Seed a ratchet baseline from a named commit (full sha; never the
     /// working directory). Prints the baseline JSON or writes it to --out.

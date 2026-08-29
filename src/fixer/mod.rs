@@ -1,3 +1,5 @@
+pub mod triage;
+
 use anyhow::{Context, Result, bail};
 use std::sync::Arc;
 use tokio::process::Command;

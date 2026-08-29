@@ -147,6 +147,83 @@ impl LocalInnerLoopProbe {
     }
 }
 
+/// The rule harness, run over a staged diff, as probe findings.
+///
+/// This is `Harness::run`'s first production consumer. The harness -- `Rule`,
+/// `Fixture`, `Corpus`, the codemod in `apply` -- was complete, tested and
+/// called by nothing, which made it the largest built-and-unused subsystem in
+/// the tree. Four rules were registered and none of them examined a real
+/// change.
+///
+/// Running it at the probe rather than at certification is deliberate. The
+/// prevention ladder puts a defect's cost at the rung that catches it, and
+/// `secret_on_added_line` is worth far more before the commit exists than on a
+/// scorecard afterwards. The pre-commit hook already invokes `anvil probe`.
+///
+/// A withheld rule is reported, never silently dropped: `Harness::run` inserts
+/// an entry for every registered rule on every path, and a rule that could not
+/// run has not passed. That is the same distinction the probe's own commit
+/// header check needed.
+pub fn harness_findings(staged_diff: &str, message: Option<&str>) -> Vec<ProbeFinding> {
+    use crate::harness::corpus::Corpus;
+    use crate::harness::{Evaluated, rules};
+
+    let paths: Vec<String> = crate::git_manager::diff_context::diffs_by_path(staged_diff)
+        .into_iter()
+        .map(|fd| fd.path)
+        .collect();
+    let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let mut corpus = Corpus::of_diff(&path_refs, staged_diff);
+    // The subject rule is REGISTERED whether or not a message exists. With one
+    // it is measured; without one the harness withholds it as `InputsAbsent`
+    // and says so. Leaving it unregistered would have been indistinguishable
+    // from a rule that ran and found nothing -- which is precisely the
+    // confusion the probe's hardcoded commit literal created.
+    if let Some(m) = message {
+        corpus = corpus.with_commits(vec![m.to_string()]);
+    }
+
+    // `rules::registered()` is the one registration point. A second list here
+    // would drift from it silently: a rule added there and forgotten here is
+    // invisible, which is the shape of every defect this probe now catches.
+    let harness = rules::registered();
+
+    // Every registered rule is declared here. The probe is not spec-driven:
+    // there is no tenant spec at pre-commit time, and a rule silently
+    // undeclared would be indistinguishable from a rule that passed.
+    let run = harness.run(&corpus, &|_| true);
+
+    let mut out = Vec::new();
+    for (id, evaluated) in &run.per_rule {
+        match evaluated {
+            Evaluated::Measured { findings, .. } if findings.is_empty() => out.push(ProbeFinding {
+                check_name: format!("harness:{id}"),
+                is_valid: true,
+                message: "measured, nothing found".to_string(),
+            }),
+            Evaluated::Measured { findings, .. } => {
+                for f in findings {
+                    out.push(ProbeFinding {
+                        check_name: format!("harness:{id}"),
+                        is_valid: false,
+                        message: format!("{}: {}", f.subject, f.detail),
+                    });
+                }
+            }
+            // Not a pass. A rule whose inputs are absent measured nothing, and
+            // one whose fixture failed cannot be trusted to have measured
+            // anything -- reporting either as clean is the defect the fixture
+            // mechanism exists to prevent.
+            Evaluated::Withheld(w) => out.push(ProbeFinding {
+                check_name: format!("harness:{id}"),
+                is_valid: true,
+                message: format!("NOT MEASURED ({w:?})"),
+            }),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

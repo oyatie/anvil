@@ -783,6 +783,52 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   because every governance scan in either repository needs it.",
     },
     MigrationEntry {
+        component: "stage_liveness",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie proves gates fire, not that stages run",
+        counterpart_loc: 0,
+        evidence: "PURE over a source list. `gate_proof` makes a gate demonstrate it can FIRE;                   nothing made a stage demonstrate it RUNS, and three were found dead in one day                   -- `next_phase`, whose reject arm therefore did nothing at all; the local hooks,                   pointed at a directory that did not exist; and the enlist doors, refusing every                   input on a premise that had stopped being true. Each was complete, documented                   and tested. None was a bug in the code that failed, which is why no unit test                   over that code could catch it. Reachability alone answers the wrong question: a                   module inside a reachable parent scores reachable with zero callers, and                   `next_phase` measured that way all session. So each stage names the SYMBOL                   whose presence in production code proves invocation, searched outside the                   stage's own files, with comments, string literals and `#[cfg(test)]` modules                   removed first -- a stage named in a doc comment is documented, not called.                   Six stages have no production caller today, recorded exactly. Migrates because                   every repository can hold a stage nothing runs.",
+    },
+    MigrationEntry {
+        component: "toolchain",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie pins a channel and declares an MSRV, and nothing reads either",
+        counterpart_loc: 0,
+        evidence: "PURE over two declared strings. MSRV and the toolchain channel are different \
+                   promises that move in opposite directions for opposite reasons: the channel \
+                   should chase stable, because every release carries soundness fixes and new \
+                   deny-by-default lints that become build breaks the day the pin moves; MSRV \
+                   should lag, because raising it strands consumers. Anvil declared 1.97.1 for \
+                   both while stable was 1.98.0 -- not a coincidence to tidy but the signature \
+                   of a pair nobody was managing, and nothing in the tree could tell. Equality \
+                   is therefore itself a finding rather than a consistency. Version ordering is \
+                   numeric because three-digit minors have arrived and 1.100.0 sorts before \
+                   1.98.0 as text. The lag budget is two trains rather than zero, because a \
+                   gate that fires every release Tuesday teaches readers to ignore it, and \
+                   latest-stable is passed in rather than fetched, because a verdict that \
+                   depends on network reachability is not deterministic and cannot run in a \
+                   hermetic build. Migrates because every repository pins a toolchain and \
+                   promises an MSRV.",
+    },
+    MigrationEntry {
+        component: "plan",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie plans structural moves, not work",
+        counterpart_loc: 0,
+        evidence: "PURE. What a work item proposes, declared before it is done, so that it can be                   REFUSED before anyone writes a line. Every refusal is free at this point and                   expensive later: two lanes given overlapping write-sets become an N-squared                   consolidation, and a sequence with no valid order becomes a stack of pull                   requests that lands in no order at all. Waves group plans whose dependencies                   have landed AND whose write sets are pairwise disjoint -- both conditions are                   necessary, since dependencies alone give an order that still conflicts and                   disjointness alone gives lanes that cannot build. Holding a plan back is not                   refusing it: a sequenced plan still lands, a refused one needs a person, and                   conflicts are reported separately from sequencing so a write set can be                   changed while that is still cheap. `adds_edges` is carried and not yet                   checked: whether an added edge closes a cycle belongs with the graph, and                   depending on that module would stack this change on an unmerged branch -- the                   diamond this module exists to help avoid. Migrates because every repository                   that dispatches parallel work needs the write-set question answered before                   dispatch rather than at merge.",
+    },
+    MigrationEntry {
+        component: "intake",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie has no unified work-item queue",
+        counterpart_loc: 0,
+        evidence: "PURE. One shape for every intent, and a queue keyed on DERIVED identity.                   Seven producers raise work here -- issue reconciler, roadmap guard, incident                   sentry, zero-day patcher, GitOps drift, corpus auditor, review memory -- and                   each raises its own type, so nothing can compare across them, prioritise                   between them, or say what is outstanding. Worse, the standing audits print                   findings that re-enter nothing, so LEARN back to INTAKE is an arc and a                   finding that is not queued will be found again. Identity is a function of                   source, subject and finding, never generated: every sweep re-reports                   everything it can still see, and a generated id would grow the backlog                   linearly with the number of passes and never converge -- exactly the defect                   the recovery sweep had when it re-certified every open pull request on every                   pass. `Remedy` separates Mechanical from NeedsJudgement from Unclassified,                   because collapsing the last two lets `nobody looked` pass as `a machine                   cannot`. Migrates because every repository accumulates work from more than                   one source.",
+    },
+    MigrationEntry {
         component: "postmortem",
         verdict: Verdict::Migrating,
         confidence: Confidence::Probable,

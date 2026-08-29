@@ -455,3 +455,98 @@ pub fn missing_remedies() -> Vec<(&'static FixClass, &'static Remedy)> {
 pub fn total_instances() -> usize {
     FIX_CLASSES.iter().map(|c| c.instances).sum()
 }
+
+/// Classes whose every built remedy is semantic rather than mechanical.
+///
+/// Prose is probabilistic. It catches what slips past the deterministic layer,
+/// and that is its job — but a class defended ONLY by prose is a class that
+/// will recur, because the next instance depends on a reviewer noticing again.
+/// Measured on one day of this repository's history: the same class, prose
+/// read as code, recurred THREE times within hours. The mechanical remedy
+/// existed the whole time and was reached for on the third.
+///
+/// Each such class is where investing once now removes a cost that otherwise
+/// accrues on every future change. `Mechanism::Semantic` already demands
+/// `why_not_mechanical`, so a class listed here has either a real reason or an
+/// unwritten rule.
+pub fn defended_only_by_prose() -> Vec<&'static FixClass> {
+    FIX_CLASSES
+        .iter()
+        .filter(|c| {
+            let live: Vec<_> = c
+                .remedies
+                .iter()
+                .filter(|r| matches!(r.status, Status::Live { .. }))
+                .collect();
+            !live.is_empty()
+                && live
+                    .iter()
+                    .all(|r| matches!(r.mechanism, Mechanism::Semantic { .. }))
+        })
+        .collect()
+}
+
+/// The unbuilt remedies, as work items.
+///
+/// A remedy recorded as `Missing` is a decision already taken and not carried
+/// out. Left in a registry only a test reads, a decision becomes a comment.
+///
+/// Declared here rather than in `intake` so that `intake` stays a leaf: a
+/// vocabulary module that imports each of its producers, while each producer
+/// imports it back, is how seventy modules ended up in one cycle.
+pub fn work_items(repo: &str) -> Vec<crate::intake::WorkItem> {
+    use crate::intake::{Remedy as WorkRemedy, Source, WorkItem, sources::subject};
+    missing_remedies()
+        .into_iter()
+        .map(|(class, remedy)| WorkItem {
+            source: Source::PostmortemRemedy,
+            subject: subject(repo, class.id),
+            what: format!("unbuilt remedy: {}", remedy.what),
+            consequence: format!(
+                "`{}` has {} recorded instance(s) and this remedy is not built, \
+                 so the class is still open at the layer this was meant to close",
+                class.id, class.instances
+            ),
+            class: Some(class.id.to_string()),
+            remedy: match &remedy.mechanism {
+                Mechanism::Semantic { why_not_mechanical } => WorkRemedy::NeedsJudgement {
+                    why: (*why_not_mechanical).to_string(),
+                },
+                _ => WorkRemedy::Mechanical {
+                    how: remedy.what.to_string(),
+                },
+            },
+        })
+        .collect()
+}
+
+/// One line stating the prevention debt, for publication on every review.
+///
+/// The ledger was complete, ratcheted and unreachable from production: it ran
+/// only from a pre-push test, so the mechanism that makes "CI is debt"
+/// measurable was not part of the running system. This is the caller.
+pub fn prevention_debt_line() -> String {
+    let awaiting = awaiting_early_remedy().len();
+    let missing = missing_remedies().len();
+    let prose = defended_only_by_prose().len();
+    format!(
+        // Continuations escaped. A wrapped literal without `\\` carries its
+        // indentation into the text a person reads -- the same defect fixed in
+        // `formal_verification`'s reason string earlier the same day, and
+        // committed again here within the hour. Two instances, one class.
+        "Prevention ledger: {} class(es), {} instance(s); {awaiting} caught no \
+         earlier than CI, {missing} remedy(ies) named but not built, {prose} \
+         defended only by review prose.",
+        FIX_CLASSES.len(),
+        total_instances()
+    )
+}
+
+/// Remedies already built, which must never be raised as outstanding work.
+pub fn built_remedy_count() -> usize {
+    FIX_CLASSES
+        .iter()
+        .flat_map(|c| c.remedies.iter())
+        .filter(|r| matches!(r.status, Status::Live { .. }))
+        .count()
+}

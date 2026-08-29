@@ -6,7 +6,7 @@
 
 use regex::Regex;
 
-use super::paths::{classify_layer, is_import_line, layer_name};
+use super::paths::{classify_layer, is_import_line, is_test_source, layer_name};
 use super::report::{ArchLayer, ArchMeasurement, ArchViolation, CleanArchitectureReport};
 use super::scan::{FaceScan, scan_faces};
 
@@ -47,7 +47,18 @@ pub(super) fn analyze_unified_diff(
     for line in diff_content.lines() {
         if let Some(stripped) = line.strip_prefix("+++ b/") {
             current_file = stripped.trim().to_string();
-            current_layer = classify_layer(&current_file);
+            // Test sources are out of scope, as they are for
+            // `evaluate_source_tree`, which reads `src/` alone. The seal
+            // governs the dependency structure that ships; a test reaching
+            // into the unit under test is what a unit test IS, and holding the
+            // two entry points to different scopes made the same guard report
+            // four violations on a pull request and zero on the tree those
+            // files live in.
+            current_layer = if is_test_source(&current_file) {
+                None
+            } else {
+                classify_layer(&current_file)
+            };
             files_inspected += 1;
             if current_layer.is_some() {
                 files_classified += 1;
@@ -121,6 +132,14 @@ pub(super) fn analyze_unified_diff(
             };
 
             let scan = match &statement {
+                // Test sources are out of scope for the seal as well as for
+                // layer classification. The seal flags an UNLAYERED importer
+                // too, so checking only `classify_layer` left every test file
+                // still reported.
+                Some(_) if is_test_source(&current_file) => FaceScan {
+                    bypasses: Vec::new(),
+                    subjects: 0,
+                },
                 Some(text) => scan_faces(text, &current_file, local_crates),
                 // Still collecting the rest of this statement.
                 None => FaceScan {

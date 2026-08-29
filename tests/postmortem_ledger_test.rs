@@ -204,3 +204,64 @@ fn zero_after_the_fact_is_not_read_as_zero_work_left() {
         );
     }
 }
+
+/// The ledger must reach the artifact a person reads.
+///
+/// It was complete, ratcheted, and unreachable from production: it ran only
+/// from a pre-push test, so the mechanism that makes "CI is debt" measurable
+/// was not part of the running system. A caller alone is not enough — the
+/// output has to arrive somewhere, or this is a stage that runs and says
+/// nothing.
+#[test]
+fn the_prevention_debt_reaches_the_scorecard() {
+    let line = anvil::postmortem::prevention_debt_line();
+    assert!(
+        line.contains("Prevention ledger"),
+        "the published line does not identify itself: {line}"
+    );
+    for expected in [
+        "class(es)",
+        "instance(s)",
+        "no earlier than CI",
+        "review prose",
+    ] {
+        assert!(
+            line.contains(expected),
+            "the line drops `{expected}`, so a reader cannot tell which kind \
+             of debt this is: {line}"
+        );
+    }
+    // The scorecard is where it is published; assert the caller is there
+    // rather than trusting that it is.
+    let scorecard = std::fs::read_to_string("src/publish/scorecard.rs").expect("scorecard.rs");
+    assert!(
+        anvil::source_scan::code_only(&scorecard).contains("prevention_debt_line"),
+        "nothing in the scorecard calls the ledger, so it is written, tested \
+         and published nowhere"
+    );
+}
+
+/// A class defended only by prose will recur, because the next instance needs
+/// a reviewer to notice again. Measured: one class recurred three times in a
+/// single day of this repository's history.
+#[test]
+fn classes_defended_only_by_prose_are_identifiable() {
+    let prose_only = anvil::postmortem::defended_only_by_prose();
+    for class in &prose_only {
+        assert!(
+            class
+                .remedies
+                .iter()
+                .any(|r| matches!(r.mechanism, anvil::postmortem::Mechanism::Semantic { .. })),
+            "`{}` is reported as prose-defended and names no semantic remedy",
+            class.id
+        );
+    }
+    // Not vacuous in the other direction: a class with a live mechanical
+    // remedy must not be listed.
+    assert!(
+        anvil::postmortem::FIX_CLASSES.len() > prose_only.len(),
+        "every class is reported as prose-defended, which would mean the \
+         mechanical remedies this ledger records do not exist"
+    );
+}

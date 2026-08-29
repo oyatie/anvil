@@ -7,7 +7,7 @@
 //! next to the other gates where it is reviewed.
 
 use super::baseline::{Judgement, judge};
-use crate::ratchet::ports::Mode;
+use crate::ratchet::facade::Mode;
 use crate::shape::ports::{ShapeDistance, SpecSource};
 use std::collections::BTreeMap;
 use std::path::Path;

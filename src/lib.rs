@@ -3,6 +3,11 @@
 //! Provides the PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
 //! deterministic PR & issue self-healing loops, zero-trust workload validation, and fail-closed merge train orchestration.
 
+// Zero `unsafe` exists in this crate today, so the guarantee is free and
+// belongs at the rung where a defect cannot be written rather than at a gate
+// that reports one afterwards. `forbid` rather than `deny`: an inner
+// `allow` cannot reopen it. oyatie carries the same line in three crates.
+#![forbid(unsafe_code)]
 pub mod adr_drift_ratchet;
 pub mod ai_driver;
 pub mod api_contract_guard;
@@ -64,6 +69,7 @@ pub mod hermetic_build;
 pub mod idempotency_guard;
 pub mod incident_healer;
 pub mod incident_sentry;
+pub mod intake;
 pub mod issue_reconciler;
 pub mod jittered_backoff;
 pub mod kani_guard;
@@ -77,6 +83,7 @@ pub mod migration;
 pub mod migration_orchestrator;
 pub mod modularization_guard;
 pub mod monorepo_guard;
+pub mod plan;
 pub mod postmortem;
 pub mod pr_self_healer;
 pub mod pre_merge_guard;
@@ -104,9 +111,11 @@ pub mod slo_canary_guard;
 pub mod source_scan;
 pub mod stack_whitelist_guard;
 pub mod stacked_diffs;
+pub mod stage_liveness;
 pub mod state;
 pub mod supply_chain_guard;
 pub mod telemetry_store;
+pub mod toolchain;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;
 pub mod upgrade_train;

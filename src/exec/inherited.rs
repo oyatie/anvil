@@ -13,6 +13,22 @@
 /// so each addition is a decision rather than an accident of what the daemon
 /// happened to be started with.
 ///
+/// # What this list does NOT bound
+///
+/// Environment variables, and only those. `HOME` is on the list -- a provider
+/// CLI cannot start without it -- and `~/.config/gh/hosts.yml` holds the forge
+/// token on this machine, so a turn that can read files can read that token
+/// whatever this list says. Clearing `GITHUB_TOKEN` from the environment does
+/// not put it out of reach; it only stops it being handed over.
+///
+/// `GH_CONFIG_DIR` is therefore pointed at a per-turn directory below, so the
+/// `gh` a turn invokes finds no host configuration of its own. That is a real
+/// narrowing of the tool path and NOT a containment boundary: a turn that
+/// reads the file directly still reads it. Containment is the sandbox this
+/// repository does not yet have (`wasm_sandbox` is a substring scan;
+/// `ephemeral_sandbox` returns `NotMeasured`), and until it does, the honest
+/// claim for this list is the narrow one.
+///
 /// The line it draws is between the credential the turn *is* and the authority
 /// Anvil *has*. A model turn must be able to authenticate to its own provider,
 /// so the provider's key or token is on the list; holding it is not an
@@ -71,7 +87,7 @@ mod tests {
 
     /// The list is an allowlist, so what is not on it is the assertion.
     #[test]
-    fn the_inherited_list_names_no_forge_or_signing_credential() {
+    fn the_inherited_list_hands_over_no_forge_or_signing_credential() {
         for forbidden in [
             "GITHUB_WEBHOOK_SECRET",
             "GITHUB_TOKEN",
@@ -84,11 +100,30 @@ mod tests {
             assert!(
                 !INHERITED.contains(&forbidden),
                 "{forbidden} is authority Anvil holds over the forge or over \
-                 signing, not a credential the model turn is. A turn acting on \
-                 an attacker's diff must not be able to open, approve or merge \
-                 on Anvil's behalf."
+                 signing, not a credential the model turn is, and this list \
+                 must not hand it over."
             );
         }
+    }
+
+    /// The residual, asserted so nobody reads the list above as containment.
+    ///
+    /// `HOME` is on the list because a provider CLI cannot start without it,
+    /// and the forge token lives under it. Not handing a credential over is
+    /// not the same as putting it out of reach, and a test that did not say so
+    /// would certify a protection this list does not provide.
+    #[test]
+    fn the_list_bounds_what_is_handed_over_not_what_is_reachable() {
+        assert!(
+            INHERITED.contains(&"HOME"),
+            "fixture sanity: the residual exists because HOME is on the list"
+        );
+        let doc = include_str!("inherited.rs");
+        assert!(
+            doc.contains("does NOT bound"),
+            "the residual must be stated where a reader of this list will find \
+             it, or the list reads as containment"
+        );
     }
 
     /// And the other half: a turn that cannot authenticate to its own provider

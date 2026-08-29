@@ -103,6 +103,16 @@ impl Posture {
         for (name, value) in &self.credentials {
             cmd.env(name, value);
         }
+        // Point `gh` at a directory that holds no host configuration, so a
+        // `gh` invoked from inside a turn is not already logged in as Anvil.
+        //
+        // A narrowing of the tool path, NOT a containment boundary, and the
+        // difference matters: `HOME` is on `INHERITED` because a provider CLI
+        // cannot start without it, and the forge token lives under it, so a
+        // turn that reads the file directly still reads it. This closes the
+        // path where the turn does not have to try -- `gh` finding the
+        // credential by itself -- and `inherited.rs` states the residual.
+        cmd.env("GH_CONFIG_DIR", self.workspace.join(".anvil-no-gh-config"));
         cmd.current_dir(&self.workspace);
     }
 }
@@ -168,6 +178,12 @@ mod tests {
         // Names, never values. A failure message that prints the child's
         // environment to prove a secret was in it has put the secret in the
         // build log, which is the defect in a second place.
+        assert!(
+            seen.contains("GH_CONFIG_DIR="),
+            "a `gh` run from inside a turn must not find Anvil's own host \
+             configuration"
+        );
+
         let leaked: Vec<&str> = seen
             .lines()
             .filter(|line| {

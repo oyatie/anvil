@@ -656,25 +656,26 @@ impl PreMergeGuard {
         // `is_blocking` is always false -- a module that had decided not to
         // block, blocking anyway, over a scan of Anvil's own tree that no
         // author of the pull request under review can act on.
-        let brand_absence_report = crate::brand_absence::BrandAbsenceGate::new()
-            .scan_tree(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+        let brand_absence_report =
+            crate::brand_absence::BrandAbsenceGate::new().scan_tree(&diff_ctx.repo_working_dir);
         let brand_absence_status = brand_absence_report.gate_status();
 
-        let migration_boundary_status = match crate::migration::live_tree_violations() {
-            Ok(v) if v.is_empty() => GateStatus::Passed,
-            Ok(v) => GateStatus::Failed(format!(
-                "{} component(s) marked Migrating depend on code oyatie supersedes: {}",
-                v.len(),
-                v.iter()
-                    .map(|x| format!("{} -> {}", x.from, x.to))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
-            Err(reason) => GateStatus::NotMeasured {
-                gate_id: "migration_boundary_status".to_string(),
-                reason,
-            },
-        };
+        let migration_boundary_status =
+            match crate::migration::live_tree_violations(&diff_ctx.repo_working_dir) {
+                Ok(v) if v.is_empty() => GateStatus::Passed,
+                Ok(v) => GateStatus::Failed(format!(
+                    "{} component(s) marked Migrating depend on code oyatie supersedes: {}",
+                    v.len(),
+                    v.iter()
+                        .map(|x| format!("{} -> {}", x.from, x.to))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+                Err(reason) => GateStatus::NotMeasured {
+                    gate_id: "migration_boundary_status".to_string(),
+                    reason,
+                },
+            };
 
         let shape_status = shape_gate_status(shape_outcome);
 

@@ -29,69 +29,6 @@ pub async fn run_with_prompt_on_stdin(
     crate::exec::run_bounded_with_stdin(cmd, prompt, limit, what).await
 }
 
-/// Wraps a prompt in one line of agy's NDJSON stream protocol.
-///
-/// agy is the one provider with no plain "read the prompt from stdin"
-/// spelling: `--print` is a flag that TAKES a value, so omitting the value
-/// makes Go's flag parser swallow the next flag as the prompt and treat
-/// everything after it as positional -- which silently drops
-/// `--dangerously-skip-permissions` and makes the run fail on a permission
-/// check. Its stream protocol is the supported stdin channel, verified
-/// against the installed CLI:
-///
-/// ```text
-/// {"event":"user","message":{"content":"..."}}
-/// ```
-fn agy_stream_input(prompt: &str) -> String {
-    let message = serde_json::json!({
-        "event": "user",
-        "message": { "content": prompt },
-    });
-    format!("{message}\n")
-}
-
-/// Pulls the final response out of agy's NDJSON event stream.
-///
-/// `--input-format stream-json` requires `--output-format stream-json`, so the
-/// answer arrives as a `result` event rather than as plain stdout.
-///
-/// A stream with no `result` event, or one whose result is not `SUCCESS`, is an
-/// error -- never an empty successful review. An empty string here would reach
-/// `reviewer::parse_review_response` as unparseable output, and absent evidence
-/// must not be mistaken for a measurement (invariant I1).
-fn agy_stream_response(stdout: &str) -> Result<String> {
-    let mut failure: Option<String> = None;
-
-    for line in stdout.lines() {
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
-            continue;
-        };
-        let Some(result) = event.get("result") else {
-            continue;
-        };
-
-        if result.get("status").and_then(|s| s.as_str()) == Some("SUCCESS") {
-            return Ok(result
-                .get("response")
-                .and_then(|r| r.as_str())
-                .unwrap_or_default()
-                .to_string());
-        }
-        failure = Some(
-            result
-                .get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("no error was reported")
-                .to_string(),
-        );
-    }
-
-    match failure {
-        Some(error) => bail!("agy reported a failed turn: {}", error),
-        None => bail!("agy emitted no result event, so no response was obtained"),
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SubscriptionExecutor {
     account_pool: Arc<AccountPoolManager>,
@@ -550,21 +487,7 @@ impl SubscriptionExecutor {
         };
 
         let mut cmd = crate::exec::agent("agy", &posture);
-        // `--print ""` keeps the flag parser happy while the real prompt
-        // arrives on STDIN as a stream-json message; see `agy_stream_input`.
-        cmd.args([
-            "--print",
-            "",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--effort",
-            &config.reasoning_effort,
-            "--print-timeout",
-            &crate::exec::agy_print_timeout_arg(turn_limit),
-            "--dangerously-skip-permissions",
-        ]);
+        crate::exec::turn::agy_turn(&mut cmd, &config.reasoning_effort, turn_limit);
 
         if !model.is_empty() && model != "default" {
             cmd.args(["--model", model]);
@@ -572,35 +495,19 @@ impl SubscriptionExecutor {
 
         // print_timeout_secs was set in 23 places and read nowhere; it now
         // actually bounds the call (invariant I5).
-        let output = run_with_prompt_on_stdin(
-            cmd,
-            &agy_stream_input(prompt),
-            turn_limit,
-            "agy subscription CLI",
-        )
-        .await?;
+        let turn = crate::exec::turn::run(cmd, prompt, turn_limit, "agy subscription CLI").await?;
 
-        let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if !output.status.success() {
-            error!(
-                "agy subscription process returned status: {}",
-                output.status
-            );
-            warn!("agy stderr: {}", stderr_str);
+        if !turn.status.success() {
+            error!("agy subscription process returned status: {}", turn.status);
+            warn!("agy stderr: {}", turn.stderr);
         }
 
-        // A non-zero exit fails the call outright. This previously fell through
-        // whenever any stdout had been produced, so a stream truncated by
-        // `Error: timeout waiting for response` was handed to the parser below
-        // and became a review verdict -- a judgement assembled from however much
-        // of the model's answer happened to arrive.
-        let stdout_str =
-            crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)?;
-
-        let response = agy_stream_response(&stdout_str)
-            .map_err(|e| anyhow::anyhow!("{}; agy stderr: {}", e, stderr_str.trim()))?;
+        // A non-zero exit fails the call outright rather than falling through
+        // on whatever stdout arrived: a stream truncated by
+        // `Error: timeout waiting for response` would otherwise be handed to
+        // the parser below and become a review verdict -- a judgement assembled
+        // from however much of the model's answer happened to arrive.
+        let response = turn.into_result()?;
 
         // Record token usage in pool
         let tokens = ((prompt.len() + response.len()) as f64 / 3.8).ceil() as usize;

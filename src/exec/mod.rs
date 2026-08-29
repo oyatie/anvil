@@ -15,6 +15,7 @@
 
 pub mod agent;
 pub mod inherited;
+pub mod turn;
 pub use agent::{Posture, agent};
 pub use inherited::INHERITED;
 

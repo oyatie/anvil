@@ -8,6 +8,12 @@ on:
   merge_group:
     types: [checks_requested]
 
+# The occupancy job reads the open pull requests on this trunk and their
+# changed files. Nothing here writes, so nothing here is granted write.
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
 
   # The merge_group skip below is deliberate, not an oversight. Do not

@@ -77,7 +77,7 @@ jobs:
             --title "chore(toolchain): move the channel from ${CHANNEL} to ${LATEST}" \
             --body "Raised by \`toolchain-weekly\`. The pinned channel was ${CHANNEL}; latest stable is ${LATEST}.
 
-The edit is written by \`anvil toolchain --apply\`, so the report and the change come from one place. Presubmit proves it: a bump that does not compile or does not pass the suite is refused here like any other change, which is what makes the move safe rather than asserted."
+          The edit is written by \`anvil toolchain --apply\`, so the report and the change come from one place. Presubmit proves it: a bump that does not compile or does not pass the suite is refused here like any other change, which is what makes the move safe rather than asserted."
 
   nightly:
     name: nightly-canary

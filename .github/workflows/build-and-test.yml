@@ -6,6 +6,11 @@ name: build-and-test
 on:
   workflow_call:
 
+# A called workflow may not exceed its caller's grant; both callers give
+# `contents: read`, and compiling needs nothing beyond it.
+permissions:
+  contents: read
+
 jobs:
 
   fmt:

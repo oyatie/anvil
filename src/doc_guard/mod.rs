@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod corpus_sync;
@@ -402,7 +401,8 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             &target,
             DOC_PARITY_PROBE.supervisor(),
             move || async move {
-                let mut cmd = Command::new("agy");
+                let mut cmd =
+                    crate::exec::agent("agy", &crate::exec::Posture::in_workspace(&repo_dir_owned));
                 // Match the invocation form used by every other agy call site
                 // (`--print <prompt> --effort <e>`); the previous
                 // `prompt --raw` form was unique to this guard.
@@ -424,10 +424,6 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                     // widens the S5 surface by one more call site.
                     "--dangerously-skip-permissions",
                 ]);
-                // Run inside the repository under review. Previously unset, so
-                // this probe executed in anvil's own working directory and
-                // judged the wrong tree.
-                cmd.current_dir(&repo_dir_owned);
 
                 match crate::exec::run_bounded_for(
                     cmd,

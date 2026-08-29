@@ -162,14 +162,10 @@ impl SubscriptionExecutor {
             .account_pool
             .lease_account(ModelProvider::AnthropicClaudeCode)
             .await;
-        let mut cmd = Command::new("claude");
-        // `-p` with no positional argument: the prompt arrives on STDIN.
-        cmd.arg("-p");
-        cmd.args(["--model", model_name]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
+        // The lease is read before the spawn, because a leased credential is
+        // part of the posture rather than something added to a command that
+        // already exists.
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
@@ -178,11 +174,12 @@ impl SubscriptionExecutor {
                     acc.account_id, model_name, config.reasoning_effort
                 );
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("CLAUDE_CONFIG_DIR", dir);
+                    posture = posture.with_credential("CLAUDE_CONFIG_DIR", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("CLAUDE_CODE_OAUTH_TOKEN", tok);
-                    cmd.env("ANTHROPIC_AUTH_TOKEN", tok);
+                    posture = posture
+                        .with_credential("CLAUDE_CODE_OAUTH_TOKEN", tok)
+                        .with_credential("ANTHROPIC_AUTH_TOKEN", tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -190,7 +187,7 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    cmd.env("ANTHROPIC_API_KEY", key);
+                    posture = posture.with_credential("ANTHROPIC_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
@@ -202,6 +199,11 @@ impl SubscriptionExecutor {
                 "claude-default".to_string()
             }
         };
+
+        let mut cmd = crate::exec::agent("claude", &posture);
+        // `-p` with no positional argument: the prompt arrives on STDIN.
+        cmd.arg("-p");
+        cmd.args(["--model", model_name]);
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -278,14 +280,7 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::OpenAiCodex)
             .await;
 
-        let mut cmd = Command::new("codex");
-        // `-` is codex's explicit "read the prompt from STDIN" argument.
-        cmd.args(["exec", "-"]);
-        cmd.args(["--model", model_name]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
@@ -294,11 +289,12 @@ impl SubscriptionExecutor {
                     acc.account_id, model_name, config.reasoning_effort
                 );
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("CODEX_HOME", dir);
+                    posture = posture.with_credential("CODEX_HOME", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("OPENAI_AUTH_TOKEN", tok);
-                    cmd.env("CODEX_AUTH_TOKEN", tok);
+                    posture = posture
+                        .with_credential("OPENAI_AUTH_TOKEN", tok)
+                        .with_credential("CODEX_AUTH_TOKEN", tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -306,12 +302,17 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    cmd.env("OPENAI_API_KEY", key);
+                    posture = posture.with_credential("OPENAI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
             Err(_) => "codex-default".to_string(),
         };
+
+        let mut cmd = crate::exec::agent("codex", &posture);
+        // `-` is codex's explicit "read the prompt from STDIN" argument.
+        cmd.args(["exec", "-"]);
+        cmd.args(["--model", model_name]);
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -370,30 +371,27 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::CursorAgent)
             .await;
 
-        let mut cmd = Command::new("cursor");
-        // No positional prompt: it is written to STDIN below.
-        cmd.args(["agent", "--print"]);
-        if !model.is_empty() && model != "default" {
-            cmd.args(["--model", model]);
-        }
-
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("CURSOR_CONFIG_DIR", dir);
+                    posture = posture.with_credential("CURSOR_CONFIG_DIR", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("CURSOR_AUTH_TOKEN", tok);
+                    posture = posture.with_credential("CURSOR_AUTH_TOKEN", tok);
                 }
                 acc.account_id.clone()
             }
             Err(_) => "cursor-default".to_string(),
         };
 
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        let mut cmd = crate::exec::agent("cursor", &posture);
+        // No positional prompt: it is written to STDIN below.
+        cmd.args(["agent", "--print"]);
+        if !model.is_empty() && model != "default" {
+            cmd.args(["--model", model]);
+        }
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -442,23 +440,17 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::XAiGrok)
             .await;
 
-        let mut cmd = Command::new("grok");
-        // grok takes its single-turn prompt as a positional argument or from a
-        // file. `/dev/stdin` is the file that IS the pipe, so the prompt still
-        // travels on STDIN and argv stays a fixed dozen bytes. Verified against
-        // the installed CLI. (The previous `--prompt <text>` was not a flag
-        // this CLI has at all.)
-        cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
-
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("GROK_CONFIG_DIR", dir);
+                    posture = posture.with_credential("GROK_CONFIG_DIR", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("GROK_AUTH_TOKEN", tok);
-                    cmd.env("XAI_API_KEY", tok);
+                    posture = posture
+                        .with_credential("GROK_AUTH_TOKEN", tok)
+                        .with_credential("XAI_API_KEY", tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -466,16 +458,19 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    cmd.env("XAI_API_KEY", key);
+                    posture = posture.with_credential("XAI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
             Err(_) => "grok-default".to_string(),
         };
 
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        let mut cmd = crate::exec::agent("grok", &posture);
+        // grok takes its single-turn prompt as a positional argument or from a
+        // file. `/dev/stdin` is the file that IS the pipe, so the prompt still
+        // travels on STDIN and argv stays a fixed dozen bytes. Verified against
+        // the installed CLI; `--prompt <text>` is not a flag this CLI has.
+        cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -526,7 +521,35 @@ impl SubscriptionExecutor {
             .await;
 
         let turn_limit = std::time::Duration::from_secs(config.print_timeout_secs);
-        let mut cmd = Command::new("agy");
+
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
+        let account_id = match &leased {
+            Ok(acc_arc) => {
+                let acc = acc_arc.read().await;
+                if let Some(dir) = &acc.config_dir {
+                    posture = posture
+                        .with_credential("ANTIGRAVITY_CONFIG_DIR", dir)
+                        .with_credential("GEMINI_CLI_CONFIG_DIR", dir);
+                }
+                if let Some(tok) = &acc.oauth_token {
+                    posture = posture
+                        .with_credential("ANTIGRAVITY_AUTH_TOKEN", tok)
+                        .with_credential("GEMINI_API_KEY", tok);
+                }
+                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
+                // host-managed profile name rather than a key, and must never be
+                // exported as one.
+                if let Some(key) = &acc.auth_profile_or_key
+                    && !key.starts_with("HOST_")
+                {
+                    posture = posture.with_credential("GEMINI_API_KEY", key);
+                }
+                acc.account_id.clone()
+            }
+            Err(_) => "agy-default".to_string(),
+        };
+
+        let mut cmd = crate::exec::agent("agy", &posture);
         // `--print ""` keeps the flag parser happy while the real prompt
         // arrives on STDIN as a stream-json message; see `agy_stream_input`.
         cmd.args([
@@ -546,34 +569,6 @@ impl SubscriptionExecutor {
         if !model.is_empty() && model != "default" {
             cmd.args(["--model", model]);
         }
-
-        let account_id = match &leased {
-            Ok(acc_arc) => {
-                let acc = acc_arc.read().await;
-                if let Some(dir) = &acc.config_dir {
-                    cmd.env("ANTIGRAVITY_CONFIG_DIR", dir);
-                    cmd.env("GEMINI_CLI_CONFIG_DIR", dir);
-                }
-                if let Some(tok) = &acc.oauth_token {
-                    cmd.env("ANTIGRAVITY_AUTH_TOKEN", tok);
-                    cmd.env("GEMINI_API_KEY", tok);
-                }
-                // Let-chain, stable in edition 2024: the HOST_ prefix marks a
-                // host-managed profile name rather than a key, and must never be
-                // exported as one.
-                if let Some(key) = &acc.auth_profile_or_key
-                    && !key.starts_with("HOST_")
-                {
-                    cmd.env("GEMINI_API_KEY", key);
-                }
-                acc.account_id.clone()
-            }
-            Err(_) => "agy-default".to_string(),
-        };
-
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
 
         // print_timeout_secs was set in 23 places and read nowhere; it now
         // actually bounds the call (invariant I5).

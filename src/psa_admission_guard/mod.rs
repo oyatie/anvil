@@ -93,7 +93,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ pod-security.kubernetes.io/enforce: restricted".to_string(),
             changed_files: vec!["infra/ns.yaml".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

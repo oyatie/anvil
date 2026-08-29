@@ -97,9 +97,13 @@ impl Fixer {
         );
 
         // Step 1: Evaluate signals (Valid Issue vs. False Signal)
-        let eval_result =
-            evaluator::evaluate_feedback_items(repo, &repo_dir, feedback_items, &self.agy_effort)
-                .await?;
+        let eval_result = evaluator::evaluate_feedback_items(
+            repo,
+            repo_dir.as_path(),
+            feedback_items,
+            &self.agy_effort,
+        )
+        .await?;
 
         let mut valid_items = Vec::new();
         let mut false_signal_items = Vec::new();
@@ -148,15 +152,23 @@ impl Fixer {
 
         // Step 3: Apply code fixes using Antigravity
         self.engine
-            .apply_code_fixes(repo, &repo_dir, &valid_items)
+            .apply_code_fixes(repo, repo_dir.as_path(), &valid_items)
             .await?;
 
         // Step 4: Run local verification gate (tests/typecheck)
-        let test_ok = self.engine.run_test_verification_gate(&repo_dir).await?;
+        let test_ok = self
+            .engine
+            .run_test_verification_gate(repo_dir.as_path())
+            .await?;
         if !test_ok {
             warn!("Test gate reported failures. Attempting self-correction with Antigravity...");
-            self.engine.attempt_self_correction(&repo_dir).await?;
-            let retest_ok = self.engine.run_test_verification_gate(&repo_dir).await?;
+            self.engine
+                .attempt_self_correction(repo_dir.as_path())
+                .await?;
+            let retest_ok = self
+                .engine
+                .run_test_verification_gate(repo_dir.as_path())
+                .await?;
             if !retest_ok {
                 // Previously this only warned "Proceeding with caution" and then
                 // committed and pushed anyway, so the verification gate never
@@ -193,7 +205,7 @@ impl Fixer {
         // `repo_dir` is the clone `review.rs` stamps the lane receipt into, so
         // a bare sweep here committed Anvil's own bookkeeping onto the pull
         // request it was fixing.
-        let add_cmd = crate::git_manager::stage_excluding_receipts(&repo_dir);
+        let add_cmd = crate::git_manager::stage_excluding_receipts(repo_dir.as_path());
         let _ = crate::exec::run_bounded(add_cmd, crate::exec::ExecClass::Quick, "git add (fixer)")
             .await;
 

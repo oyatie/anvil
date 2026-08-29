@@ -228,7 +228,14 @@ pub async fn manual_triage_handler(
         if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo).await {
             let _ = state_clone
                 .ci_triager
-                .triage_workflow_run(&repo, run_id, &branch, &commit_sha, &wf_name, &repo_dir)
+                .triage_workflow_run(
+                    &repo,
+                    run_id,
+                    &branch,
+                    &commit_sha,
+                    &wf_name,
+                    repo_dir.as_path(),
+                )
                 .await;
         }
     });

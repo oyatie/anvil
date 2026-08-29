@@ -144,7 +144,10 @@ async fn main() -> Result<()> {
     // and the fleet sweep produce, recorded at boot so the trend starts here.
     {
         let req = anvil::shape::facade::measure::MeasureRequest {
-            repo_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            repo_dir: anvil::git_manager::SubjectRoot::asserted(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                anvil::git_manager::Uncloned::SelfMeasurement,
+            ),
             rev: "HEAD".to_string(),
             repo: config.self_repo.clone(),
             spec_override: None,

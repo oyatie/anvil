@@ -91,7 +91,10 @@ fn diff_ctx(files: &[&str], diff_content: &str, working_dir: &Path) -> PrDiffCon
         base_sha: "base123".to_string(),
         head_sha: "head456".to_string(),
         previous_head_sha: None,
-        repo_working_dir: working_dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            working_dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: diff_content.to_string(),
         changed_files: files.iter().map(|f| f.to_string()).collect(),
         is_incremental: false,

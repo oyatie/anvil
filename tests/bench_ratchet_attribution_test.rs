@@ -25,7 +25,10 @@ fn eval(diff: &str) -> anvil::criterion_bench_ratchet::BenchmarkReport {
         previous_head_sha: None,
         diff_content: diff.to_string(),
         changed_files: vec!["src/crypto/token.rs".to_string()],
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     };
     CriterionBenchRatchet
         .evaluate_benchmarks(Path::new("."), &ctx)

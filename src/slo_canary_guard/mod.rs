@@ -203,7 +203,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: String::new(),
             changed_files: files.iter().map(|f| f.to_string()).collect(),
-            repo_working_dir: dir.to_path_buf(),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                dir.to_path_buf(),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         }

@@ -174,7 +174,10 @@ mod tests {
                  @@ -1,0 +1,1 @@\n+use aws_sdk_s3::Client;\n"
                     .to_string(),
             changed_files: vec!["billing/core/src/invoice.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

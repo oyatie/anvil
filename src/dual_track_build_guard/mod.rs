@@ -192,7 +192,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ let x = 1;".to_string(),
             changed_files: vec!["src/lib.rs".to_string()],
-            repo_working_dir: dir.path().to_path_buf(),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                dir.path().to_path_buf(),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

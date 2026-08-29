@@ -456,7 +456,10 @@ fn diff_context(diff: &str) -> PrDiffContext {
         base_sha: "base123".to_string(),
         head_sha: "head456".to_string(),
         previous_head_sha: None,
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: diff.to_string(),
         changed_files: vec!["src/lib.rs".to_string()],
         is_incremental: false,

@@ -76,7 +76,14 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
 
             state
                 .ci_triager
-                .triage_workflow_run(&repo, run_id, &branch_str, &sha_str, &wf_str, &repo_dir)
+                .triage_workflow_run(
+                    &repo,
+                    run_id,
+                    &branch_str,
+                    &sha_str,
+                    &wf_str,
+                    repo_dir.as_path(),
+                )
                 .await?;
         }
         Commands::Enlist { repo, pr } => {
@@ -308,7 +315,9 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
             let healer = crate::pr_self_healer::PrSelfHealer::new();
-            let report = healer.auto_heal_pr_branch(&repo_dir, &branch, pr).await?;
+            let report = healer
+                .auto_heal_pr_branch(repo_dir.as_path(), &branch, pr)
+                .await?;
             println!(
                 "🛠️ PR Self-Healing Summary for {}#{}:\n  - Files Formatted: {}\n  - OWNERS Created: {:?}\n  - Commit SHA: {:?}",
                 repo, pr, report.files_formatted, report.owners_files_created, report.commit_sha
@@ -321,7 +330,8 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
             let report = crate::doc_archival_sweeper::DocArchivalSweeper::sweep_repository(
-                &repo_dir, dry_run,
+                repo_dir.as_path(),
+                dry_run,
             )
             .await?;
             println!(
@@ -341,7 +351,9 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
             let report = crate::monorepo_guard::ComponentDispositionClassifier::evaluate_component(
-                &repo_dir, &target, 1, // default 1 inbound caller
+                repo_dir.as_path(),
+                &target,
+                1, // default 1 inbound caller
             );
             println!(
                 "🔍 Component Disposition Evaluation for '{}' on {}:\n  - Disposition: {:?}\n  - Clean Architecture Compliant: {}\n  - Max File Lines: {}\n  - Rationale: {}\n  - Action: {}",
@@ -360,8 +372,10 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 repo, stale_days
             );
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
-            let report =
-                crate::corpus_auditor::CorpusAuditor::audit_repository(&repo_dir, stale_days)?;
+            let report = crate::corpus_auditor::CorpusAuditor::audit_repository(
+                repo_dir.as_path(),
+                stale_days,
+            )?;
             println!(
                 "📊 100% Full-Corpus Audit Report for {}:\n  - Total Files Audited: {}\n  - Freshness Ratio: {:.1}%\n  - Dormant Files (>{}d): {}\n  - Stale ADRs in Archive: {}\n  - Unauthorized SSOT Claims: {}\n  - Frontmatter Violations: {}\n  - Summary: {}",
                 repo,
@@ -387,7 +401,9 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
             let report =
                 crate::corpus_auditor::ContinuousHygieneEngine::generate_maintenance_batch(
-                    &repo_dir, batch_size, dry_run,
+                    repo_dir.as_path(),
+                    batch_size,
+                    dry_run,
                 )?;
             println!(
                 "🌱 Continuous Hygiene Batch Report for {} (dry_run: {}):\n  - Batch ID: {}\n  - Files Refreshed/Healed: {}\n  - Summary: {}",
@@ -426,7 +442,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             );
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
             let report = crate::doc_archival_sweeper::IssueDocConsolidator::consolidate_issue_docs(
-                &repo_dir,
+                repo_dir.as_path(),
                 issue,
                 "Resolving issue and archiving sprint plans",
                 dry_run,

@@ -42,7 +42,10 @@ fn create_test_diff_context(file_path: &str, diff_content: &str) -> PrDiffContex
         base_sha: "base123".to_string(),
         head_sha: "head456".to_string(),
         previous_head_sha: None,
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: full_diff,
         changed_files: vec![file_path.to_string()],
         is_incremental: false,
@@ -1251,7 +1254,10 @@ fn test_slo_canary_red_flag_high_burn_rate() {
         "service.openslo.yaml",
         "+ apiVersion: openslo/v1\n+ kind: SLO\n+ spec:\n+   objectives: []",
     );
-    bad_diff.repo_working_dir = temp_dir.path().to_path_buf();
+    bad_diff.repo_working_dir = anvil::git_manager::SubjectRoot::asserted(
+        temp_dir.path().to_path_buf(),
+        anvil::git_manager::Uncloned::TestFixture,
+    );
     let report = guard
         .evaluate_slo_canary_health(temp_dir.path(), &bad_diff)
         .unwrap();

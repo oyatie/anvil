@@ -103,7 +103,10 @@ fn diff_of(files: &[(&str, &str)]) -> PrDiffContext {
         previous_head_sha: None,
         diff_content: diff,
         changed_files: files.iter().map(|(p, _)| p.to_string()).collect(),
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     }
 }
 
@@ -542,7 +545,10 @@ fn pack_rule(rule_id: &str, pattern: &str) -> String {
 
 fn compliance_ctx(root: &Path, file: &str, added: &str) -> PrDiffContext {
     let mut ctx = diff_of(&[(file, added)]);
-    ctx.repo_working_dir = root.to_path_buf();
+    ctx.repo_working_dir = anvil::git_manager::SubjectRoot::asserted(
+        root.to_path_buf(),
+        anvil::git_manager::Uncloned::TestFixture,
+    );
     ctx
 }
 

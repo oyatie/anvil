@@ -84,7 +84,11 @@ impl Reviewer {
 
         let output_text = self
             .executor
-            .execute_prompt(&prompt, &diff_ctx.repo_working_dir, &self.model_config)
+            .execute_prompt(
+                &prompt,
+                diff_ctx.repo_working_dir.as_path(),
+                &self.model_config,
+            )
             .await?;
 
         self.parse_review_response(&output_text)
@@ -315,7 +319,10 @@ mod tests {
             base_sha: "base".to_string(),
             head_sha: "head".to_string(),
             previous_head_sha: None,
-            repo_working_dir: PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: "d".repeat(MAX_DIFF_CHARS * 4),
             changed_files: vec!["src/lib.rs".to_string()],
             is_incremental: false,

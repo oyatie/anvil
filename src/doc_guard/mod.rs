@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod corpus_sync;
@@ -402,49 +401,38 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             &target,
             DOC_PARITY_PROBE.supervisor(),
             move || async move {
-                let mut cmd = Command::new("agy");
-                // Match the invocation form used by every other agy call site
-                // (`--print <prompt> --effort <e>`); the previous
-                // `prompt --raw` form was unique to this guard.
-                cmd.args([
-                    "--print",
-                    &prompt_clone,
-                    "--effort",
+                let mut cmd =
+                    crate::exec::agent("agy", &crate::exec::Posture::in_workspace(&repo_dir_owned));
+                // The prompt travels on STDIN. It carries the pull request's
+                // title, body and diff -- text an outsider wrote -- and argv is
+                // world-readable through `ps`.
+                //
+                // `--dangerously-skip-permissions` is still passed, and is still
+                // more than this probe needs: it only READS. A scoped grant is
+                // the right long-term fix; agy's grant surface is
+                // `permissions.allow` in a settings.json rather than a flag,
+                // measured against the installed CLI, so it is not a change that
+                // can be made here.
+                crate::exec::turn::agy_turn(
+                    &mut cmd,
                     &agy_effort,
-                    "--print-timeout",
-                    &DOC_PARITY_PROBE.tool_arg(),
-                    // Required for agy to read the repository at all. Omitting it
-                    // in the Phase 0a rewrite made every doc-parity probe fail
-                    // with "permission check failed for command", which the
-                    // fail-closed change then surfaced as a blocked gate --
-                    // correctly, but for a reason this code introduced.
-                    //
-                    // This probe only READS, so a scoped read-only agy mode would
-                    // be the right long-term fix; passing the blanket flag here
-                    // widens the S5 surface by one more call site.
-                    "--dangerously-skip-permissions",
-                ]);
-                // Run inside the repository under review. Previously unset, so
-                // this probe executed in anvil's own working directory and
-                // judged the wrong tree.
-                cmd.current_dir(&repo_dir_owned);
-
-                match crate::exec::run_bounded_for(
-                    cmd,
                     // The third consumer of the same budget: the process bound,
                     // alongside the watchdog above and agy's own
                     // `--print-timeout`. Three deadlines for one turn, from one
                     // value, so none can be tightened without the others.
                     DOC_PARITY_PROBE.supervisor(),
+                );
+
+                match crate::exec::turn::run(
+                    cmd,
+                    &prompt_clone,
+                    DOC_PARITY_PROBE.supervisor(),
                     "doc parity probe",
                 )
                 .await
                 {
-                    Ok(output) => classify_probe_output(
-                        output.status,
-                        &String::from_utf8_lossy(&output.stdout),
-                        &String::from_utf8_lossy(&output.stderr),
-                    ),
+                    Ok(turn) => classify_probe_output(turn.status, &turn.response, &turn.stderr),
+                    // `run` already distinguishes "failed to run"
                     // `run_bounded_for` already distinguishes "failed to run"
                     // from "timed out" in its message, and both stay errors.
                     Err(e) => Err(e),

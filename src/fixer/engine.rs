@@ -175,35 +175,23 @@ impl FixEngine {
     }
 
     async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
-        let mut cmd = Command::new("agy");
-        cmd.args([
-            "--print",
-            prompt,
-            "--effort",
-            &self.agy_effort,
-            "--print-timeout",
-            &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
-            "--dangerously-skip-permissions",
-        ]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        let budget = crate::exec::ExecClass::Model.timeout();
+        let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
+        crate::exec::turn::agy_turn(&mut cmd, &self.agy_effort, budget);
 
-        let output = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy fix prompt")
+        let turn = crate::exec::turn::run(cmd, prompt, budget, "agy fix prompt")
             .await
             .context("Failed to run agy command")?;
-        let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
 
-        if !output.status.success() {
-            error!("agy returned non-zero status: {}", output.status);
-            warn!("agy stderr: {}", stderr_str);
+        if !turn.status.success() {
+            error!("agy returned non-zero status: {}", turn.status);
+            warn!("agy stderr: {}", turn.stderr);
         }
 
         // Same rule as the queue healer, and for the same reason: this agent
         // edits the workspace directly, so a run that died mid-edit has left
         // the tree in a state nobody chose. Partial output is not partial
         // success.
-        crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
+        turn.into_result()
     }
 }

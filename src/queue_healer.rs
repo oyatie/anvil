@@ -780,34 +780,21 @@ impl QueueHealer {
     }
 
     async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
-        let mut cmd = Command::new("agy");
-        cmd.args([
-            "--print",
-            prompt,
-            "--effort",
-            &self.agy_effort,
-            "--print-timeout",
-            &crate::exec::agy_print_timeout_arg(AGY_TURN_LIMIT),
-            "--dangerously-skip-permissions",
-        ]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
+        crate::exec::turn::agy_turn(&mut cmd, &self.agy_effort, AGY_TURN_LIMIT);
 
-        let output = crate::exec::run_bounded_for(cmd, AGY_TURN_LIMIT, "agy (queue healer)")
+        let turn = crate::exec::turn::run(cmd, prompt, AGY_TURN_LIMIT, "agy (queue healer)")
             .await
             .context("Failed to run agy command")?;
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
 
-        if !output.status.success() {
+        if !turn.status.success() {
             error!(
                 "agy returned non-zero status in QueueHealer: {}",
-                output.status
+                turn.status
             );
-            warn!("agy stderr: {}", stderr_str.trim());
+            warn!("agy stderr: {}", turn.stderr.trim());
         }
-        crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)
+        turn.into_result()
     }
 }
 

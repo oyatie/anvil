@@ -1,4 +1,6 @@
 use anyhow::Result;
+
+pub use super::gates::{review_verdict_gate, unresolved_review_gate};
 use tracing::info;
 
 use super::matrix::MatrixRenderer;
@@ -629,17 +631,7 @@ impl PreMergeGuard {
         // may pass. VERDICT_ERRORED means the harness obtained no review at all —
         // that is Errored, not Failed, because the model did not judge the code
         // adversely; the review simply did not happen. Both block (invariant I1).
-        let review_verdict_status = match review_verdict {
-            "APPROVE" | "COMMENT" => GateStatus::Passed,
-            crate::reviewer::VERDICT_ERRORED => GateStatus::Errored(
-                "AI Code Review produced no parseable verdict; the review did not complete"
-                    .to_string(),
-            ),
-            other => GateStatus::Failed(format!(
-                "AI Code Review & 16-Lens Matrix issued blocking verdict: {}",
-                other
-            )),
-        };
+        let review_verdict_status = review_verdict_gate(review_verdict);
 
         // Anvil turns these two inward. Every other gate in this matrix runs
         // against the pull request's repository; these run against Anvil's own
@@ -872,25 +864,5 @@ pub fn doc_parity_status(report: &DocGuardReport) -> GateStatus {
         GateStatus::AutoUpdated
     } else {
         GateStatus::Passed
-    }
-}
-
-/// The gate an unresolved-thread report produces.
-///
-/// Named, and outside `evaluate_pre_merge_gates`, because it is the middle
-/// link of the chain Issue #18 asks for -- GitHub's `isResolved`, this
-/// conversion, then `admission_refusal` -- and a link inside a
-/// twenty-five-argument function is a link no test can reach. The check that
-/// an unresolved thread FAILS the gate used to be
-/// `assert!(!report.is_clean)` against a struct literal that set
-/// `is_clean: false`: it restated its own fixture and would have passed had
-/// this conversion been inverted.
-pub fn unresolved_review_gate(
-    report: &crate::unresolved_review_guard::UnresolvedReviewReport,
-) -> GateStatus {
-    if report.is_clean {
-        GateStatus::Passed
-    } else {
-        GateStatus::Failed(report.summary.clone())
     }
 }

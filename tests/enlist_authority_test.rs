@@ -3319,10 +3319,26 @@ fn assert_the_unresolved_thread_refusal_holds_where_it_lives() {
         .expect("the evaluator exists"),
     );
     assert!(
-        evaluator.matches("unresolved_review_gate(").count() >= 2,
+        evaluator.contains("unresolved_review_gate("),
         "`evaluate_pre_merge_gates` does not call `unresolved_review_gate`, so \
-         the conversion this test exercises is not the one the pipeline uses. \
-         Two occurrences are expected: the definition and the call."
+         the conversion this test exercises is not the one the pipeline uses."
+    );
+    // Keyed to the CALL, not to a count of occurrences in one file. The first
+    // spelling required two — "the definition and the call" — so moving the
+    // definition into `pre_merge_guard::gates` to satisfy the oversized-file
+    // ratchet broke a check about wiring that was still perfectly wired. That
+    // is the same path-keyed defect `gate_proof_sites` carried, in a test
+    // written to close a different one.
+    let gates = anvil::source_scan::code_only(
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pre_merge_guard/gates.rs"),
+        )
+        .expect("the gate conversions live somewhere"),
+    );
+    assert!(
+        gates.contains("pub fn unresolved_review_gate"),
+        "the conversion the pipeline calls is not defined where this test can \
+         find it; if it moved, follow it"
     );
 
     // The other direction, so the gate is not simply always `Failed` -- which

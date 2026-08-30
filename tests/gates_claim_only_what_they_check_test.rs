@@ -591,11 +591,49 @@ fn the_evaluation_date_comes_from_the_clock() {
 #[test]
 fn no_date_literal_survives_in_the_compliance_guards_evaluation_path() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let src = format!(
-        "{}\n{}",
-        anvil::source_scan::paths::module_source("src/compliance_guard/mod", manifest),
-        anvil::source_scan::paths::module_source("src/compliance_guard/engine", manifest),
+
+    // The EVALUATION path, which is narrower than the module.
+    //
+    // `registry` and `upstream_sync` carry statutes' own enacted and effective
+    // dates, which are properties of the law rather than a clock this guard
+    // reads. Scanning them would accuse the data of being the defect. The
+    // defect is a date the guard COMPARES AGAINST, and it lives where the
+    // comparing happens.
+    const EVALUATES: &[&str] = &["src/compliance_guard/mod", "src/compliance_guard/engine"];
+    const CARRIES_STATUTE_DATES: &[&str] = &["registry", "upstream_sync"];
+
+    // Naming two files is a scope, and a scope goes stale. If the module gains
+    // a file that is neither scanned nor excused, the evaluation may have moved
+    // into it and this scan would report a clean guard it never read -- so the
+    // new file has to be classified here before this passes again.
+    let held: Vec<String> = std::fs::read_dir(manifest.join("src/compliance_guard"))
+        .expect("the guard is a directory")
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension()? == "rs").then(|| p.file_stem()?.to_str().map(str::to_string))?
+        })
+        .collect();
+    let unclassified: Vec<&String> = held
+        .iter()
+        .filter(|f| {
+            !CARRIES_STATUTE_DATES.contains(&f.as_str())
+                && !EVALUATES.iter().any(|m| m.ends_with(f.as_str()))
+        })
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "`src/compliance_guard` holds {unclassified:?}, which this scan neither \
+         reads nor excuses. Add it to EVALUATES if the guard decides there, or \
+         to CARRIES_STATUTE_DATES if it holds a statute's own dates -- an \
+         unclassified file is one the evaluation may have moved into."
     );
+
+    let src = EVALUATES
+        .iter()
+        .map(|m| anvil::source_scan::paths::module_source(m, manifest))
+        .collect::<Vec<_>>()
+        .join("\n");
     let code_only = anvil::source_scan::without_commentary(&src);
     let re = regex::Regex::new(r#""(19|20)\d\d-\d\d-\d\d"#).expect("valid");
     assert!(

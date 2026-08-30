@@ -27,11 +27,23 @@ fn test_bodies() -> Vec<(String, String)> {
         // exercised it, and citing one would be the same fabrication the
         // registry exists to prevent.
         let src = without_commentary(&fs::read_to_string(&p).unwrap_or_default());
-        let marks: Vec<usize> = src.match_indices("\nfn ").map(|(i, _)| i + 1).collect();
-        for (idx, start) in marks.iter().enumerate() {
-            let end = marks.get(idx + 1).copied().unwrap_or(src.len());
+        // `async fn` as well as `fn`. Matching only the latter made every
+        // `#[tokio::test]` in the suite invisible, so a proof citing one was
+        // reported as naming a test that does not exist -- an accusation drawn
+        // from the scan's own blind spot, which is I1 in the direction that
+        // refuses honest work rather than the one that certifies dishonest work.
+        let mut marks: Vec<(usize, usize)> = Vec::new();
+        for (i, _) in src.match_indices("\nfn ") {
+            marks.push((i + 1, 3));
+        }
+        for (i, _) in src.match_indices("\nasync fn ") {
+            marks.push((i + 1, 9));
+        }
+        marks.sort_unstable();
+        for (idx, (start, skip)) in marks.iter().enumerate() {
+            let end = marks.get(idx + 1).map(|(s, _)| *s).unwrap_or(src.len());
             let chunk = &src[*start..end];
-            let name: String = chunk[3..]
+            let name: String = chunk[*skip..]
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
@@ -153,7 +165,41 @@ fn the_gates_owing_a_proof_are_the_unproven_ones_that_can_fire() {
         "the set must be derived from the corpus and the proof ledger"
     );
     assert!(
-        !by_hand.is_empty(),
-        "fixture sanity: an empty set would make the ratchet vacuous"
+        !every_gate_id().is_empty(),
+        "fixture sanity: an empty corpus makes every gate look proven, so the \
+         equality above would hold between two empty sets"
+    );
+
+    // Non-vacuity by construction rather than by requiring the count to be
+    // above zero. Zero is the goal; a fixture that fails when the work
+    // succeeds is not measuring the work.
+    let mut with_one_more = every_gate_id();
+    with_one_more.push("a_gate_no_ledger_row_covers");
+    assert_eq!(
+        gates_owing_a_proof(&with_one_more, |id| id == "a_gate_no_ledger_row_covers"
+            || absence_blocks(id))
+        .len(),
+        by_hand.len() + 1,
+        "a gate with no ledger row did not enter the set, so the set is not \
+         read from the ledger"
+    );
+}
+
+/// The scan must see an async test, or a proof citing one reads as missing.
+///
+/// Named rather than counted: the four proofs this caught were all
+/// `#[tokio::test]`, and reverting the scan to bare `fn` makes this fail
+/// instead of quietly accusing them.
+#[test]
+fn the_scan_finds_an_async_test() {
+    let bodies = test_bodies();
+    assert!(
+        body_of(
+            &bodies,
+            "monorepo_fires_on_an_agent_scratch_directory_in_a_commit"
+        )
+        .is_some(),
+        "the scan did not find a known `#[tokio::test]`, so every proof citing \
+         one would be reported as naming a test that does not exist"
     );
 }

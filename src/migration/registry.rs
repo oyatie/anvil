@@ -551,7 +551,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         evidence: "127 lines; cargo/Buck dual-track parity. oyatie's build-target-parity gate enforces \
                   precisely this: 'every member must carry a tracked BUCK file, and every member with Rust \
                   test code must declare a rust_test target' (ci/facade/build-target-parity/src/lib.rs \
-                  header), backed by oya-buck-syntax-kernel and oya-buck-test-wiring-app.",
+                  header), backed by oya-buck-syntax-kernel and oya-buck-test-wiring-app. DELETED: no production caller, counterpart verified.",
     },
     MigrationEntry {
         component: "early_exit_cascade",

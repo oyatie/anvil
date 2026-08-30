@@ -30,6 +30,18 @@ pub const GATE_PROOFS: &[GateProof] = &[
         spares: "review_verdict_spares_an_approval",
     },
     GateProof {
+        gate_id: "shape_status",
+        exercises: "shape_gate_status",
+        fires_on: "shape_fires_on_a_regression_against_a_blocking_rule",
+        spares: "shape_spares_a_judgement_with_no_regression",
+    },
+    GateProof {
+        gate_id: "performance_concurrency_status",
+        exercises: "PreMergeScanner",
+        fires_on: "performance_concurrency_fires_on_a_hardcoded_real_clock_sleep",
+        spares: "performance_concurrency_spares_a_diff_that_waits_on_a_condition",
+    },
+    GateProof {
         gate_id: "security_scan_status",
         exercises: "PreMergeScanner",
         fires_on: "security_scan_fires_on_a_credential_added_to_the_diff",

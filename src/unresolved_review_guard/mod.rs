@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
@@ -13,6 +13,138 @@ pub struct UnresolvedReviewReport {
     pub is_clean: bool,
     pub unresolved_threads: Vec<UnresolvedReviewThread>,
     pub summary: String,
+}
+
+impl UnresolvedReviewReport {
+    /// The report the threads imply.
+    ///
+    /// `is_clean` is derived here rather than passed in, so no caller -- test
+    /// or production -- can build a report that says it is clean while
+    /// carrying unresolved threads, or the reverse. A fixture that states the
+    /// answer cannot exercise the code that computes it.
+    pub fn from_threads(unresolved: Vec<UnresolvedReviewThread>) -> Self {
+        let is_clean = unresolved.is_empty();
+        let summary = if is_clean {
+            "✅ PASSED (Zero unresolved review comments or threads on PR)".to_string()
+        } else {
+            format!(
+                "❌ FAILED ({} unresolved review thread(s) must be addressed before merge queue admission)",
+                unresolved.len()
+            )
+        };
+        Self {
+            is_clean,
+            unresolved_threads: unresolved,
+            summary,
+        }
+    }
+}
+
+/// How many review threads one query asks GitHub for.
+///
+/// A page boundary is not a clean bill of health, so [`parse_review_threads`]
+/// refuses a truncated answer rather than judging the PR on the threads that
+/// happened to fit.
+pub const THREAD_PAGE_SIZE: usize = 50;
+
+/// The unresolved threads GitHub reports, or an error saying why it did not
+/// report.
+///
+/// This function is the whole decision: above it is a `gh` spawn, below it is
+/// `is_empty()`. An empty `Vec` is what a clean pull request looks like, so
+/// every way of learning nothing must be an error and not a fallthrough --
+/// otherwise a non-zero `gh` exit, an unparseable body, a GraphQL error
+/// payload, a thread carrying no `isResolved` field, an unresolved thread
+/// whose comments did not come back, or a fifty-first thread each publishes a
+/// passing gate on no evidence at all.
+///
+/// # Errors
+///
+/// Every one of those six, each with the reason. Absent evidence of resolution
+/// is not evidence of resolution.
+pub fn parse_review_threads(
+    status_success: bool,
+    stdout: &[u8],
+    stderr: &str,
+) -> Result<Vec<UnresolvedReviewThread>> {
+    if !status_success {
+        let why = stderr.trim();
+        bail!(
+            "the review threads could not be read, so nothing establishes that none are \
+             unresolved: gh exited non-zero{}",
+            if why.is_empty() {
+                String::new()
+            } else {
+                format!(": {why}")
+            }
+        );
+    }
+
+    let val: serde_json::Value = serde_json::from_slice(stdout).context(
+        "the review threads could not be read, so nothing establishes that none are unresolved: \
+         the answer did not parse as JSON",
+    )?;
+
+    // GraphQL reports failure in-band, with HTTP 200 and a null `data`.
+    if let Some(errors) = val.get("errors").and_then(|e| e.as_array())
+        && !errors.is_empty()
+    {
+        bail!(
+            "the review threads could not be read, so nothing establishes that none are \
+             unresolved: GraphQL returned {} error(s), first: {}",
+            errors.len(),
+            errors[0]["message"].as_str().unwrap_or("(no message)")
+        );
+    }
+
+    let threads = &val["data"]["repository"]["pullRequest"]["reviewThreads"];
+    let Some(nodes) = threads["nodes"].as_array() else {
+        bail!(
+            "the review threads could not be read, so nothing establishes that none are \
+             unresolved: the answer carried no reviewThreads.nodes"
+        );
+    };
+
+    // `first: THREAD_PAGE_SIZE` truncates silently, so a pull request that
+    // outgrows the page would otherwise pass by being busy.
+    if threads["pageInfo"]["hasNextPage"].as_bool().unwrap_or(true) {
+        bail!(
+            "the review threads could not be read in full, so nothing establishes that none are \
+             unresolved: GitHub reports more than the {THREAD_PAGE_SIZE} threads requested"
+        );
+    }
+
+    let mut unresolved = Vec::new();
+    for thread in nodes {
+        // Absent means unresolved: a thread that does not say it is resolved
+        // has not been shown to be.
+        if thread["isResolved"].as_bool().unwrap_or(false) {
+            continue;
+        }
+        // An unresolved thread blocks whether or not its first comment came
+        // back; the comment is how the refusal is described, not what makes it
+        // one.
+        let comment = thread["comments"]["nodes"]
+            .as_array()
+            .and_then(|a| a.first());
+        unresolved.push(UnresolvedReviewThread {
+            thread_id: thread["id"].as_str().unwrap_or("").to_string(),
+            path: comment
+                .and_then(|c| c["path"].as_str())
+                .unwrap_or("")
+                .to_string(),
+            line: comment.and_then(|c| c["line"].as_u64()),
+            comment_body: comment
+                .and_then(|c| c["body"].as_str())
+                .unwrap_or("(comment body not returned)")
+                .to_string(),
+            author: comment
+                .and_then(|c| c["author"]["login"].as_str())
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
+    Ok(unresolved)
 }
 
 pub struct UnresolvedReviewGuard {
@@ -48,7 +180,8 @@ impl UnresolvedReviewGuard {
             query {{
               repository(owner: "{owner}", name: "{name}") {{
                 pullRequest(number: {pr}) {{
-                  reviewThreads(first: 50) {{
+                  reviewThreads(first: {page}) {{
+                    pageInfo {{ hasNextPage }}
                     nodes {{
                       id
                       isResolved
@@ -70,7 +203,8 @@ impl UnresolvedReviewGuard {
             "#,
             owner = repo.split('/').next().unwrap_or(""),
             name = repo.split('/').nth(1).unwrap_or(""),
-            pr = pr_number
+            pr = pr_number,
+            page = THREAD_PAGE_SIZE
         );
 
         let mut gh_cmd = tokio::process::Command::new("gh");
@@ -86,51 +220,16 @@ impl UnresolvedReviewGuard {
         .await
         .context("Failed to query PR review threads")?;
 
-        let mut unresolved = Vec::new();
+        // Propagated, not swallowed: an unreadable answer must reach the
+        // caller as an error, because an empty `Vec` is what a clean pull
+        // request looks like.
+        let unresolved = parse_review_threads(
+            output.status.success(),
+            &output.stdout,
+            &String::from_utf8_lossy(&output.stderr),
+        )
+        .with_context(|| format!("🚨 Merge queue admission blocked on {}#{}", repo, pr_number))?;
 
-        {
-            let out = output;
-            if out.status.success()
-                && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
-                && let Some(nodes) =
-                    val["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"].as_array()
-            {
-                for thread in nodes {
-                    let is_resolved = thread["isResolved"].as_bool().unwrap_or(true);
-                    if !is_resolved
-                        && let Some(comment) = thread["comments"]["nodes"]
-                            .as_array()
-                            .and_then(|a| a.first())
-                    {
-                        unresolved.push(UnresolvedReviewThread {
-                            thread_id: thread["id"].as_str().unwrap_or("").to_string(),
-                            path: comment["path"].as_str().unwrap_or("").to_string(),
-                            line: comment["line"].as_u64(),
-                            comment_body: comment["body"].as_str().unwrap_or("").to_string(),
-                            author: comment["author"]["login"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        let is_clean = unresolved.is_empty();
-        let summary = if is_clean {
-            "✅ PASSED (Zero unresolved review comments or threads on PR)".to_string()
-        } else {
-            format!(
-                "❌ FAILED ({} unresolved review thread(s) must be addressed before merge queue admission)",
-                unresolved.len()
-            )
-        };
-
-        Ok(UnresolvedReviewReport {
-            is_clean,
-            unresolved_threads: unresolved,
-            summary,
-        })
+        Ok(UnresolvedReviewReport::from_threads(unresolved))
     }
 }

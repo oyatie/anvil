@@ -353,9 +353,14 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         gate_id: "unresolved_review_status",
         aspiration: "Block on unresolved review threads using authoritative thread state.",
         reference: "GitHub GraphQL pullRequest.reviewThreads.nodes { isResolved }",
-        fidelity: Fidelity::Heuristic,
-        gap: "Infers resolution from comment text rather than querying isResolved, so informational comments \
-              can hold a PR at 'unresolved' indefinitely.",
+        fidelity: Fidelity::Measured,
+        // Was Heuristic, for inferring resolution from comment text. The
+        // inference is gone -- `merge_enlister` no longer reads comment bodies
+        // at all, and `unresolved_review_guard::parse_review_threads` answers
+        // only from `isResolved`, refusing every way the answer can fail to
+        // arrive rather than reporting an empty list. Every one of those ways
+        // is a seeded defect in the proof named by `FAILURE_PROOFS`.
+        gap: "",
         blocked_on: None,
     },
     GateFidelity {

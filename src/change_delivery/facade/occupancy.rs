@@ -5,7 +5,12 @@
 //! alone and only from trunk HEAD. Exposing it here is what lets a scheduler
 //! use that decision instead of reimplementing set intersection and silently
 //! losing the hub half.
+//!
+//! `admit_in_queue` is the same decision taken against the hops *ahead* of one
+//! hop rather than against all of them, which is what turns an overlapping pair
+//! from a standoff into an order.
 
 pub use crate::change_delivery::ports::{
-    SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, path_sets_disjoint,
+    Hop, SpawnKind, SpawnRefused, admit_in_queue, admit_spawn, ahead_of, anvil_hubs,
+    path_sets_disjoint,
 };

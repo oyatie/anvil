@@ -31,10 +31,10 @@ use anvil::source_scan::code_only;
 /// so a scan cannot be satisfied by prose. Offsets are preserved by
 /// `code_only`, so the returned string indexes the same as the file.
 fn the_review_pipeline() -> String {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webhook/pipelines/review.rs"),
-    )
-    .expect("the review pipeline exists");
+    let src = anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code = code_only(&src);
 
     let start = code

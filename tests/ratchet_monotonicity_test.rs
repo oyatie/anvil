@@ -1,8 +1,6 @@
 //! The ratchet only turns one way (I7). Growth without a signed one-way door
 //! fails; shrink passes; advisory rules never block; an inert door fails.
 
-use std::path::Path;
-
 use anvil::ratchet::core::{
     BASELINE_SCHEMA_V1, Baseline, Growth, Mode, RuleBaseline, Signing, Signoff, compare,
     regen_is_monotonic,
@@ -342,11 +340,10 @@ fn the_reseed_path_consults_the_monotonicity_predicate() {
     // The predicate was correct and unreachable. This asserts the wiring, not
     // the logic: a caller that stopped consulting it would leave every test
     // above passing while the CLI overwrote the baseline freely.
-    let src = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/shape/facade/baseline.rs"
-    ))
-    .expect("baseline facade source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/shape/facade/baseline",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         src.contains("regen_is_monotonic"),
         "the reseed path must consult the shrink-only predicate"
@@ -355,22 +352,10 @@ fn the_reseed_path_consults_the_monotonicity_predicate() {
     // `handlers/shape.rs` moved this symbol and broke the check while changing
     // nothing it was checking -- the third time this session a gate keyed on a
     // filename failed for a move.
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli");
-    let mut cli = String::new();
-    let mut stack = vec![dir];
-    while let Some(d) = stack.pop() {
-        for entry in std::fs::read_dir(&d)
-            .expect("cli module is readable")
-            .flatten()
-        {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                cli.push_str(&std::fs::read_to_string(&path).expect("cli source"));
-            }
-        }
-    }
+    let cli = anvil::source_scan::paths::module_source(
+        "src/cli",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         !cli.is_empty(),
         "no cli sources read; this assertion would pass vacuously"

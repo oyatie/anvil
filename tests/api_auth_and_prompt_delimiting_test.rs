@@ -71,25 +71,22 @@ use anvil::webhook::admin_auth::{
     ADMIN_TOKEN_ENV, ADMIN_TOKEN_HEADER, AdminAuthDecision, DenyReason, authorize, is_loopback,
 };
 
-fn source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    fs::read_to_string(&p).unwrap_or_else(|e| panic!("cannot read {}: {e}", p.display()))
-}
-
-/// The production half of a source file: everything above `#[cfg(test)]`.
+/// The production half of a module: what ships, with its test modules removed.
 ///
 /// A mechanism scan that asks "is `authorize` actually called?" must not be
-/// answerable by a call from the file's own unit tests. Scanning the whole file
-/// let the guard be gutted -- `admin_guarded` returning `self.inner.call(..)`
-/// with no check -- while the scan still found a call site in the test module
-/// and reported the control plane guarded. The gate must be unfailable only
-/// when production really is correct.
-fn production_source(rel: &str) -> String {
-    let src = source(rel);
-    match src.find("#[cfg(test)]") {
-        Some(i) => src[..i].to_string(),
-        None => src,
-    }
+/// answerable by a call from the module's own unit tests. Scanning the whole
+/// file let the guard be gutted -- `admin_guarded` returning
+/// `self.inner.call(..)` with no check -- while the scan still found a call
+/// site in the test module and reported the control plane guarded. The gate
+/// must be unfailable only when production really is correct.
+///
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 // =========================================================================
@@ -290,7 +287,7 @@ const UNGUARDED_BY_DESIGN: &[(&str, &str)] = &[
 /// fails it too, which is the case that got through.
 #[test]
 fn test_admin_auth_mechanism_every_route_is_guarded_or_named() {
-    let src = production_source("src/webhook/mod.rs");
+    let src = production_source("src/webhook");
     let router = src
         .split_once("pub fn create_router")
         .expect("create_router must exist")
@@ -347,7 +344,7 @@ fn test_admin_auth_mechanism_every_route_is_guarded_or_named() {
 /// nothing.
 #[test]
 fn the_html_dashboard_renders_the_same_state_the_guarded_endpoint_serves() {
-    let src = production_source("src/dashboard/mod.rs");
+    let src = production_source("src/dashboard");
     for handler in ["dashboard_html_handler", "dashboard_state_api_handler"] {
         let body = src
             .split_once(&format!("pub async fn {handler}"))
@@ -371,7 +368,7 @@ fn the_html_dashboard_renders_the_same_state_the_guarded_endpoint_serves() {
 /// or worse, is edited to add a path that was never a route.
 #[test]
 fn every_named_exemption_is_a_route_this_router_serves() {
-    let src = production_source("src/webhook/mod.rs");
+    let src = production_source("src/webhook");
     let router = src
         .split_once("pub fn create_router")
         .expect("create_router must exist")
@@ -393,7 +390,7 @@ fn every_named_exemption_is_a_route_this_router_serves() {
 /// Kubernetes marks the pod unhealthy and the operator removes the guard.
 #[test]
 fn test_admin_auth_false_red_health_and_metrics_stay_unguarded() {
-    let src = production_source("src/webhook/mod.rs");
+    let src = production_source("src/webhook");
     let router = src
         .split_once("pub fn create_router")
         .expect("create_router must exist")
@@ -423,7 +420,7 @@ fn test_admin_auth_false_red_health_and_metrics_stay_unguarded() {
 /// webhook HMAC check.
 #[test]
 fn test_admin_auth_mechanism_uses_a_constant_time_comparison() {
-    let src = production_source("src/webhook/admin_auth.rs");
+    let src = production_source("src/webhook/admin_auth");
     assert!(
         src.contains("ConstantTimeEq") || src.contains("subtle::"),
         "False Green prevention: token comparison must go through `subtle`, \
@@ -457,8 +454,8 @@ fn test_admin_auth_mechanism_guard_actually_calls_authorize() {
     // `#[cfg(test)]` module is not the guard calling it.
     let guard_src = format!(
         "{}\n{}",
-        production_source("src/webhook/mod.rs"),
-        production_source("src/webhook/admin_auth.rs")
+        production_source("src/webhook"),
+        production_source("src/webhook/admin_auth")
     );
 
     assert!(
@@ -1025,7 +1022,7 @@ async fn test_stdin_false_red_child_exiting_before_reading_is_not_a_crash() {
 /// argv. Enforced over the source so a new provider cannot reintroduce it.
 #[test]
 fn test_stdin_mechanism_no_provider_passes_the_prompt_in_argv() {
-    let src = production_source("src/ai_driver/router.rs");
+    let src = production_source("src/ai_driver/router");
 
     // Enumerating today's six exact spellings (`"-p", prompt`, `"--print",\n
     // prompt`, ...) tests the formatter, not the property: `rustfmt` moving a
@@ -1144,7 +1141,7 @@ fn test_stdin_mechanism_argv_scanner_detects_and_discriminates() {
 /// nowhere to go.
 #[test]
 fn test_stdin_mechanism_provider_commands_do_not_close_stdin() {
-    let src = production_source("src/ai_driver/router.rs");
+    let src = production_source("src/ai_driver/router");
     // Narrowed to STDIN specifically. A blanket ban on `Stdio::null()` also
     // outlaws `.stderr(Stdio::null())`, which is legitimate and would make this
     // a false red that an implementer works around rather than satisfies.
@@ -1164,7 +1161,7 @@ fn test_stdin_mechanism_provider_commands_do_not_close_stdin() {
 /// loses the kill and orphans provider processes.
 #[test]
 fn test_stdin_mechanism_no_hand_rolled_timeout_bypasses_crate_exec() {
-    let src = production_source("src/ai_driver/router.rs");
+    let src = production_source("src/ai_driver/router");
     assert!(
         !src.contains("tokio::time::timeout"),
         "invariant I5: the STDIN path must be bounded by crate::exec, not by a \
@@ -1192,7 +1189,7 @@ fn test_stdin_mechanism_no_hand_rolled_timeout_bypasses_crate_exec() {
 
     // And the bound must actually exist there: a `crate::exec` that cannot
     // write stdin means the delivery happened somewhere unbounded.
-    let exec_src = production_source("src/exec/mod.rs");
+    let exec_src = production_source("src/exec");
     assert!(
         exec_src.contains("stdin"),
         "P16/I5: src/exec/mod.rs still has no stdin-capable bounded runner, so \

@@ -172,7 +172,10 @@ fn certified_scorecard_published_is_a_single_counted_line() {
 /// function itself cannot be invoked without a live AppState.
 #[test]
 fn false_green_prevention_upsert_call_site_must_not_publish_summary_markdown() {
-    let src = include_str!("../src/webhook/pipelines/review.rs");
+    let src = &anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         !src.contains("&cert_report.summary_markdown"),
         "Expected False Green prevention: the upsert path must stop publishing \
@@ -450,7 +453,10 @@ fn false_red_prevention_matrix_renderer_survives_for_its_remaining_callers() {
         "Expected False Red prevention: red_green_gates_test.rs asserts this marker"
     );
 
-    let evaluator = include_str!("../src/pre_merge_guard/evaluator.rs");
+    let evaluator = anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         evaluator.contains("MatrixRenderer::render("),
         "Expected False Red prevention: evaluator.rs is a remaining caller and \
@@ -461,7 +467,10 @@ fn false_red_prevention_matrix_renderer_survives_for_its_remaining_callers() {
 /// P2. The call site keeps the marker it upserts on.
 #[test]
 fn false_red_prevention_upsert_call_site_keeps_the_existing_marker() {
-    let src = include_str!("../src/webhook/pipelines/review.rs");
+    let src = &anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         src.contains("\"<!-- ANVIL_SCORECARD_RECEIPT -->\""),
         "Expected False Red prevention: the upsert marker must be unchanged so \

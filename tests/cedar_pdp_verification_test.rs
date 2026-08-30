@@ -53,7 +53,6 @@ use anvil::cedar_guard::{
 };
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::report::GateStatus;
-use std::path::PathBuf;
 
 fn files(paths: &[&str]) -> Vec<String> {
     paths.iter().map(|s| s.to_string()).collect()
@@ -550,12 +549,14 @@ async fn a_change_touching_no_policy_file_reports_the_missing_schema() {
 /// rule, stated in `fidelity_registry_citations_test.rs`: a claim is
 /// answerable by code, not by the prose sitting next to it.
 fn cedar_guard_production_source() -> String {
-    std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/cedar_guard.rs"))
-        .expect("src/cedar_guard.rs")
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    anvil::source_scan::paths::module_source(
+        "src/cedar_guard",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+    .lines()
+    .filter(|l| !l.trim_start().starts_with("//"))
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 /// Catches: the model comes back.
@@ -625,10 +626,10 @@ async fn a_missing_checker_reports_not_measured_instead_of_ending_the_run() {
 /// The other end of the same wire: the call site must not reintroduce the `?`.
 #[test]
 fn the_certification_pipeline_cannot_propagate_a_failure_out_of_this_gate() {
-    let src = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/webhook/pipelines/certify.rs"),
-    )
-    .expect("certify.rs");
+    let src = anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/certify",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let at = src
         .find("evaluate_cedar_policies")
         .expect("certify.rs must still run gate 2");

@@ -664,7 +664,7 @@ impl QueueHealer {
         }
 
         let label = "npm test";
-        let mut cmd = Command::new("npm");
+        let mut cmd = crate::exec::build_env::command("npm");
         cmd.args(["test", "--silent"]).current_dir(repo_dir);
         Self::classify(
             label,
@@ -693,12 +693,8 @@ impl QueueHealer {
         let label = "cargo test";
         let deadline = Instant::now() + ExecClass::Build.timeout();
 
-        let mut build = Command::new("cargo");
-        build
-            .args(["test", "--no-run"])
-            .current_dir(repo_dir)
-            .env_remove("CARGO_TARGET_DIR")
-            .env_remove("CARGO_BUILD_TARGET_DIR");
+        let mut build = crate::exec::build_env::command("cargo");
+        build.args(["test", "--no-run"]).current_dir(repo_dir);
         match crate::exec::run_bounded(build, ExecClass::Build, BUILD_LABEL).await {
             Ok(out) if out.status.success() => {}
             // Not `Failed`. A tree that does not build ran no test, so it is a
@@ -729,11 +725,8 @@ impl QueueHealer {
         // build consumed it, which `run_bounded_for` reports as a timeout —
         // correctly, because no test ran.
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let mut run = Command::new("cargo");
-        run.args(["test", "--no-fail-fast"])
-            .current_dir(repo_dir)
-            .env_remove("CARGO_TARGET_DIR")
-            .env_remove("CARGO_BUILD_TARGET_DIR");
+        let mut run = crate::exec::build_env::command("cargo");
+        run.args(["test", "--no-fail-fast"]).current_dir(repo_dir);
         Self::classify(
             label,
             crate::exec::run_bounded_for(run, remaining, label).await,

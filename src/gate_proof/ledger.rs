@@ -30,6 +30,18 @@ pub const GATE_PROOFS: &[GateProof] = &[
         spares: "review_verdict_spares_an_approval",
     },
     GateProof {
+        gate_id: "predictive_test_status",
+        exercises: "PredictiveTestSelector",
+        fires_on: "predictive_test_fires_when_nothing_can_be_spared",
+        spares: "predictive_test_spares_a_change_confined_to_one_package",
+    },
+    GateProof {
+        gate_id: "bench_status",
+        exercises: "CriterionBenchRatchet",
+        fires_on: "bench_fires_on_a_clone_marked_hot_path",
+        spares: "bench_spares_a_borrow_in_the_same_hot_path_file",
+    },
+    GateProof {
         gate_id: "compile_profile_status",
         exercises: "CompileTimeProfiler",
         fires_on: "compile_profile_fires_on_a_build_script_with_no_rerun_trigger",

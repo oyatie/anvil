@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod fork_guard;
@@ -82,7 +81,7 @@ impl GitHubClient {
     }
 
     pub async fn check_auth(&self) -> Result<()> {
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args(["auth", "status"]);
         let output = run_bounded(cmd, ExecClass::Api, "gh auth status")
             .await
@@ -96,7 +95,7 @@ impl GitHubClient {
     }
 
     pub async fn ensure_webhook_extension(&self) -> Result<()> {
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args(["extension", "list"]);
         let output = run_bounded(cmd, ExecClass::Api, "gh extension list")
             .await
@@ -105,7 +104,7 @@ impl GitHubClient {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains("gh-webhook") && !stdout.contains("cli/gh-webhook") {
             info!("Installing gh-webhook extension...");
-            let mut install_cmd = Command::new("gh");
+            let mut install_cmd = crate::exec::gh();
             install_cmd.args(["extension", "install", "cli/gh-webhook"]);
             let install_out = run_bounded(
                 install_cmd,
@@ -126,7 +125,7 @@ impl GitHubClient {
     }
 
     pub async fn cleanup_stale_forward_webhooks(&self, repo: &str) -> Result<()> {
-        let mut list_cmd = Command::new("gh");
+        let mut list_cmd = crate::exec::gh();
         list_cmd.args(["api", &format!("repos/{}/hooks", repo)]);
         let list_out = run_bounded(list_cmd, ExecClass::Api, "gh api repos/:repo/hooks").await;
 
@@ -140,7 +139,7 @@ impl GitHubClient {
                     if (url.contains("forwarder") || url.contains("webhook.github.com"))
                         && let Some(id) = hook.get("id").and_then(|i| i.as_u64())
                     {
-                        let mut del_cmd = Command::new("gh");
+                        let mut del_cmd = crate::exec::gh();
                         del_cmd.args([
                             "api",
                             "--method",
@@ -161,7 +160,7 @@ impl GitHubClient {
     }
 
     pub async fn fetch_pr_metadata(&self, repo: &str, pr_number: u64) -> Result<PrMetadata> {
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args([
             "pr",
             "view",
@@ -255,7 +254,7 @@ impl GitHubClient {
     }
 
     pub async fn post_pr_comment(&self, repo: &str, pr_number: u64, body: &str) -> Result<()> {
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args([
             "pr",
             "comment",
@@ -290,7 +289,7 @@ impl GitHubClient {
         body: &str,
     ) -> Result<()> {
         let list_endpoint = format!("repos/{}/issues/{}/comments", repo, pr_number);
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args(["api", &list_endpoint]);
         let output = run_bounded(cmd, ExecClass::Api, "gh api list PR issue comments")
             .await
@@ -313,7 +312,7 @@ impl GitHubClient {
                     existing.id, repo, pr_number
                 );
                 let patch_endpoint = format!("repos/{}/issues/comments/{}", repo, existing.id);
-                let mut patch_cmd = Command::new("gh");
+                let mut patch_cmd = crate::exec::gh();
                 patch_cmd.args([
                     "api",
                     "--method",
@@ -344,7 +343,7 @@ impl GitHubClient {
         pr_number: u64,
     ) -> Result<Vec<GitHubReviewComment>> {
         let endpoint = format!("repos/{}/pulls/{}/comments", repo, pr_number);
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args(["api", &endpoint]);
         let output = run_bounded(cmd, ExecClass::Api, "gh api list PR review comments")
             .await
@@ -370,7 +369,7 @@ impl GitHubClient {
             "repos/{}/pulls/{}/comments/{}/replies",
             repo, pr_number, comment_id
         );
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args([
             "api",
             "--method",
@@ -397,7 +396,7 @@ impl GitHubClient {
 
     /// Fetches all open pull requests for a given repository
     pub async fn list_open_prs(&self, repo: &str) -> Result<Vec<PrMetadata>> {
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args([
             "pr",
             "list",
@@ -438,7 +437,7 @@ impl GitHubClient {
     /// Fetches the latest commit SHA for a specific branch
     pub async fn fetch_branch_sha(&self, repo: &str, branch: &str) -> Result<String> {
         let endpoint = format!("repos/{}/commits/{}", repo, branch);
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args(["api", &endpoint, "--jq", ".sha"]);
         let output = run_bounded(cmd, ExecClass::Api, "gh api branch commit sha")
             .await
@@ -456,7 +455,7 @@ impl GitHubClient {
     /// Fetches merge queue depth for a branch
     pub async fn fetch_merge_queue_depth(&self, repo: &str, _branch: &str) -> Result<usize> {
         // Query PRs in merge_queue or currently running checks in merge group
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args([
             "pr",
             "list",
@@ -499,7 +498,7 @@ impl GitHubClient {
         }
 
         // 1. Fetch merged PRs
-        let mut pr_cmd = Command::new("gh");
+        let mut pr_cmd = crate::exec::gh();
         pr_cmd.args([
             "pr",
             "list",
@@ -559,7 +558,7 @@ impl GitHubClient {
             updated_at: String,
         }
 
-        let mut run_cmd = Command::new("gh");
+        let mut run_cmd = crate::exec::gh();
         run_cmd.args([
             "run",
             "list",

@@ -15,9 +15,11 @@
 
 pub mod agent;
 pub mod build_env;
+pub mod gh;
 pub mod inherited;
 pub mod turn;
 pub use agent::{Posture, agent};
+pub use gh::command as gh;
 pub use inherited::INHERITED;
 
 use anyhow::{Result, bail};

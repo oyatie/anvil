@@ -207,7 +207,7 @@ impl UnresolvedReviewGuard {
             page = THREAD_PAGE_SIZE
         );
 
-        let mut gh_cmd = tokio::process::Command::new("gh");
+        let mut gh_cmd = crate::exec::gh();
         gh_cmd.args(["api", "graphql", "-f", &format!("query={}", query)]);
         // Fail closed: this guard blocks merge-queue admission, so a query that
         // never completed (spawn failure or the api-class timeout) must not fall

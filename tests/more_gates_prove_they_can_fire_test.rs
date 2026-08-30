@@ -83,8 +83,12 @@ fn ephemeral_secret_spares_a_workflow_that_assumes_a_role_by_oidc() {
     assert!(
         report.is_zero_trust,
         "a role assumed by OIDC mints a token per run and is the conformant \
-         form; flagging it is a fabricated accusation: {}",
-        report.summary
+         form; flagging it is a fabricated accusation. {} finding(s).\n\
+         The count, not the summary: this report derives from a fixture that \
+         carries a credential-shaped line, and echoing text tainted by one is \
+         how a real key reaches a log the day somebody swaps the fixture for a \
+         live value. `rust/cleartext-logging` flagged exactly that here.",
+        report.findings.len()
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

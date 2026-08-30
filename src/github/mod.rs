@@ -44,9 +44,18 @@ pub struct GitHubReviewComment {
     pub user: Option<GitHubUser>,
 }
 
+/// Who the REST API says acted.
+///
+/// `id` and `user_type` are the typed identity GitHub already sends: a stable
+/// numeric actor id, and one of "User", "Bot" or "Organization". Both are
+/// optional so a response omitting either still parses; `identity::answerable_by`
+/// refuses on an absent type rather than reading it as "not a bot".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubUser {
     pub login: String,
+    pub id: Option<u64>,
+    #[serde(rename = "type")]
+    pub user_type: Option<String>,
 }
 
 #[derive(Deserialize)]

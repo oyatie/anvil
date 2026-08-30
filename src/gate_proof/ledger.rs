@@ -12,6 +12,18 @@ use super::GateProof;
 /// see the note above on what inference produced.
 pub const GATE_PROOFS: &[GateProof] = &[
     GateProof {
+        gate_id: "security_scan_status",
+        exercises: "PreMergeScanner",
+        fires_on: "security_scan_fires_on_a_credential_added_to_the_diff",
+        spares: "security_scan_spares_a_diff_that_adds_no_credential",
+    },
+    GateProof {
+        gate_id: "schema_compat_status",
+        exercises: "PreMergeScanner",
+        fires_on: "schema_compat_fires_on_a_destructive_migration",
+        spares: "schema_compat_spares_an_additive_migration",
+    },
+    GateProof {
         gate_id: "ephemeral_secret_status",
         exercises: "EphemeralSecretInjector",
         fires_on: "ephemeral_secret_fires_on_a_static_aws_key_in_a_workflow",

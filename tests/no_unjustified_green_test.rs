@@ -274,8 +274,22 @@ fn every_rule_the_engine_reports_is_in_the_table_the_count_comes_from() {
             "own-slice-over-vec",
             "pub fn takes(s: &String) -> u32 { 0 }",
         ),
-        ("async-spawn-blocking", "std::thread::sleep(backoff);"),
-        ("async-no-lock-await", "let g = std::sync::Mutex::lock(&m);"),
+        // Both async fixtures now carry the async scope, because both rules
+        // now require it: they are named for what they do to an executor, and
+        // the same call in a synchronous function is simply how blocking code
+        // works. A fixture that trips them from a plain `fn` was exercising
+        // the accusation, not the rule.
+        (
+            "async-spawn-blocking",
+            "async fn wait() { std::thread::sleep(backoff); }",
+        ),
+        // `.expect("held")` rather than `.unwrap()`: the std lock spelling is
+        // what this rule matches, and `.unwrap()` would also trip
+        // `err-no-unwrap-prod`, which would make the fixture trip two rules.
+        (
+            "async-no-lock-await",
+            "async fn take(m: &Mutex<u8>) { let g = m.lock().expect(\"held\"); }",
+        ),
         ("mem-avoid-format", "let s = format!(\"literal\");"),
         ("unsafe-safety-comment", "unsafe { *raw }"),
         (

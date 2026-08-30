@@ -25,7 +25,7 @@ pub fn qualifier(passed: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    /// A gate the ledger does not cover, used to show the figure reacts.
+    /// A gate the ledger does not cover, so the figure must react to it.
     const UNCOVERED: &str = "a_gate_no_ledger_row_covers";
 
     /// The figure is a join, not a literal: adding one uncovered gate to the

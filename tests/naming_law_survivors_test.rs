@@ -537,8 +537,13 @@ fn a_type_name_is_exempt_and_a_prose_stamp_is_not() {
     assert!(is_identifier_shaped("CloudNativeGuard"));
     assert!(is_identifier_shaped("DualTrackBuildGuard"));
     assert!(is_identifier_shaped("hyperscaler_consensus_guard"));
+    // Names a thing: the third of Rust's three conventions.
+    assert!(is_identifier_shaped("GH_ENTERPRISE_TOKEN"));
+    assert!(is_identifier_shaped("GITHUB_WEBHOOK_SECRET"));
     // Asserts a thing.
     assert!(!is_identifier_shaped("Cloud-Native"));
+    assert!(!is_identifier_shaped("ENTERPRISE APPROVED"));
+    assert!(!is_identifier_shaped("HYPERSCALER"));
     assert!(!is_identifier_shaped("Hyperscalers"));
     assert!(!is_identifier_shaped("cloud"));
     // And the whole rule, on the two shapes that matter:
@@ -625,7 +630,26 @@ fn is_identifier_shaped(token: &str) -> bool {
             || IDENTIFIER_EXTRAS.contains(&c)
     });
     let has_separator = token.chars().any(|c| IDENTIFIER_SEPARATORS.contains(&c));
-    (all_machine && has_separator) || is_a_rust_type_name(token)
+    (all_machine && has_separator) || is_a_rust_type_name(token) || is_a_rust_constant_name(token)
+}
+
+/// A `SCREAMING_SNAKE_CASE` word: `GITHUB_WEBHOOK_SECRET`, `GH_ENTERPRISE_TOKEN`.
+///
+/// The third of Rust's three conventions, and the one an environment variable
+/// name always takes. `is_a_rust_type_name` below was added because the
+/// separator rule covered only `snake_case`; this closes the same gap for
+/// constants, on the same grounds -- it NAMES a thing rather than asserts one.
+///
+/// Deliberately narrow, and narrower than it looks: prose is not written in
+/// this shape. `ENTERPRISE APPROVED` is two words and stays flagged, and a
+/// single shouted word like `HYPERSCALER` has no separator and stays flagged
+/// too. What passes is a token that could only ever be a constant or an
+/// environment variable.
+fn is_a_rust_constant_name(token: &str) -> bool {
+    token.contains('_')
+        && token
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// A bare `UpperCamelCase` word: `CloudNativeGuard`, `DualTrackBuildGuard`.
@@ -650,6 +674,10 @@ fn is_a_rust_type_name(token: &str) -> bool {
     first.is_ascii_uppercase()
         && token.chars().all(|c| c.is_ascii_alphanumeric())
         && token.chars().skip(1).any(|c| c.is_ascii_uppercase())
+        // Real `UpperCamelCase` has lowercase in it. Without this, any shouted
+        // word passes as a type name -- `HYPERSCALER` did, and a single
+        // all-caps claim is the plainest form of the stamp this scan is for.
+        && token.chars().any(|c| c.is_ascii_lowercase())
 }
 
 // ---------------------------------------------------------------------------

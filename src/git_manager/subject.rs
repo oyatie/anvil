@@ -2,6 +2,48 @@
 
 use std::path::{Path, PathBuf};
 
+/// A subject root proven to be at a named commit.
+///
+/// [`SubjectRoot`] answers which REPOSITORY a scanner was handed. It does not
+/// answer which COMMIT, and for certification those are different questions
+/// with different answers: the shared clone is never checked out at the head
+/// under review. `ensure_repo_cloned` only fetches, `prepare_pr_diff` only
+/// fetches and diffs by SHA, and the one thing that moves that working tree is
+/// the fixer. A gate reading a file from it read the base branch, or whichever
+/// pull request the fixer last touched.
+///
+/// So a gate handed one of these has a tree somebody asked `git rev-parse HEAD`
+/// about. Not "is checked and reported"; the constructor is
+/// `EphemeralWorktree::verified_at`, and there is no other way to make one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertifiedTree {
+    root: SubjectRoot,
+    head_sha: String,
+}
+
+impl CertifiedTree {
+    /// `pub(crate)` and called from one place: `EphemeralWorktree::verified_at`,
+    /// after the `rev-parse` agreed. A `pub` constructor here would let a
+    /// caller assert the commit it hoped for, which is the assertion this type
+    /// exists to replace with a measurement.
+    pub(crate) fn proven(root: SubjectRoot, head_sha: String) -> Self {
+        Self { root, head_sha }
+    }
+
+    pub fn as_path(&self) -> &Path {
+        self.root.as_path()
+    }
+
+    pub fn root(&self) -> &SubjectRoot {
+        &self.root
+    }
+
+    /// The commit this tree was proven to be at.
+    pub fn head_sha(&self) -> &str {
+        &self.head_sha
+    }
+}
+
 /// A checkout of the repository a review is about.
 ///
 /// The defect this exists to refuse: a gate that means to scan the subject and

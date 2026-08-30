@@ -10,7 +10,7 @@ pub mod subject;
 pub mod worktree;
 
 pub use diff_context::PrDiffContext;
-pub use subject::{SubjectRoot, Uncloned};
+pub use subject::{CertifiedTree, SubjectRoot, Uncloned};
 pub use worktree::EphemeralWorktree;
 
 /// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes

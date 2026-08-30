@@ -119,6 +119,21 @@ impl EphemeralWorktree {
         Ok(())
     }
 
+    /// The tree, proven to be at `head_sha`, as a type a gate can be handed.
+    ///
+    /// [`Self::verify_at`] answers the question; this carries the answer. A
+    /// gate taking [`CertifiedTree`] cannot be given the shared clone, which
+    /// is never checked out at the head under review -- so a filesystem read
+    /// inside it is a read of this pull request rather than of whichever one
+    /// the fixer last touched.
+    pub async fn verified_at(&self, head_sha: &str) -> Result<crate::git_manager::CertifiedTree> {
+        self.verify_at(head_sha).await?;
+        Ok(crate::git_manager::CertifiedTree::proven(
+            self.repo_dir.clone(),
+            head_sha.to_string(),
+        ))
+    }
+
     /// Explicit asynchronous cleanup of the ephemeral worktree
     pub async fn cleanup(&self) -> Result<()> {
         info!(
@@ -187,6 +202,42 @@ impl Drop for EphemeralWorktree {
                 crate::exec::ExecClass::Quick.timeout(),
                 "git worktree prune (drop)",
             );
+        }
+    }
+}
+
+impl super::GitManager {
+    /// A worktree at `head_sha`, proven to be there.
+    ///
+    /// Both certification paths need it and neither may fall back to the shared
+    /// clone: that clone is never checked out at the head under review, so a
+    /// filesystem-reading gate in it measures the base branch or whichever pull
+    /// request the fixer last touched. The report would still carry a genuine
+    /// provenance mark and a subject naming this head, so `subject_refusal`
+    /// admits it and Anvil signs an approval over a tree it never read.
+    ///
+    /// `Err` withholds the whole certification. A withheld certification is
+    /// retried; a certification of the wrong tree is signed.
+    pub async fn certified_tree_at(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        head_sha: &str,
+    ) -> Result<super::CertifiedTree> {
+        let worktree = self
+            .create_ephemeral_worktree(repo, pr_number, head_sha)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "no tree at {head_sha} for {repo}#{pr_number}, so nothing was certified: {e:#}"
+                )
+            })?;
+        match worktree.verified_at(head_sha).await {
+            Ok(tree) => Ok(tree),
+            Err(e) => {
+                let _ = worktree.cleanup().await;
+                Err(e)
+            }
         }
     }
 }

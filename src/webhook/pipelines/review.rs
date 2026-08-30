@@ -105,8 +105,13 @@ pub async fn execute_pr_review(
     // to be on. This used to be a literal `Some(true)` for a suite nothing in
     // this pipeline ran, which the corpus turned into `test_suite_status:
     // Passed` and the approving review published as a measured pass.
-    let test_suite_passed =
-        super::certify::local_verification_gate(&state.git_mgr, repo, pr_number, head_sha).await;
+    let test_suite_passed = super::local_verification::local_verification_gate(
+        &state.git_mgr,
+        repo,
+        pr_number,
+        head_sha,
+    )
+    .await;
 
     // 2..69. The gate corpus, run for this pull request.
     let cert_report = match super::certify::certify_pull_request(
@@ -116,7 +121,6 @@ pub async fn execute_pr_review(
         title,
         body,
         head_sha,
-        &repo_dir,
         &diff_ctx,
         &review_resp.verdict,
         test_suite_passed,

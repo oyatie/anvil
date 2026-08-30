@@ -63,17 +63,20 @@ pub async fn metrics_handler(
 ///   - `/webhook`, which authenticates differently and more strongly: it
 ///     verifies the GitHub HMAC signature over the request body.
 ///
-/// The dashboard at `/` and `/dashboard` is HTML only; every byte of data it
-/// renders arrives through the guarded `/api/dashboard/state`.
+/// The dashboard at `/` and `/dashboard` is guarded like the rest. It is an
+/// operator surface, not a probe: `dashboard_html_handler` calls the same
+/// `fetch_current_dashboard_state` the guarded JSON endpoint does, and renders
+/// every watched repository's open pull request titles, branch names and head
+/// SHAs into the page. HTML is a rendering, not a category of data.
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route(
             "/",
-            axum::routing::get(crate::dashboard::dashboard_html_handler),
+            axum::routing::get(admin_guarded(crate::dashboard::dashboard_html_handler)),
         )
         .route(
             "/dashboard",
-            axum::routing::get(crate::dashboard::dashboard_html_handler),
+            axum::routing::get(admin_guarded(crate::dashboard::dashboard_html_handler)),
         )
         .route(
             "/api/dashboard/state",

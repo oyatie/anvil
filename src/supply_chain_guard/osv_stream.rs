@@ -226,16 +226,16 @@ impl OsvAdvisoryStream {
 
 /// POSTs `payload` and returns the response body, or the reason there is none.
 ///
-/// `program` is a parameter so every way the subprocess can fail -- absent
-/// binary, non-zero exit, a kill on the deadline -- is reachable from a test
-/// that makes no network request. Production always passes `CURL`.
+/// Built through `crate::exec::net`. `program` is a parameter so every way
+/// the subprocess can fail -- absent binary, non-zero exit, a kill on the
+/// deadline -- is reachable from a test with no network. Production passes `CURL`.
 pub async fn post_json(
     program: &str,
     url: &str,
     payload: &str,
     budget: Duration,
 ) -> Result<String, String> {
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = crate::exec::net(program);
     cmd.args([
         "-s",
         "-X",

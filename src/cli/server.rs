@@ -213,7 +213,7 @@ pub async fn run_server(state: AppState) -> Result<()> {
                             {
                                 warn!("stale-hook cleanup for {repo} noticed: {e}");
                             }
-                            let mut fwd = Command::new("gh");
+                            let mut fwd = crate::exec::gh();
                             // Detach stdin from the operator's terminal.
                             //
                             // These children previously inherited the pane's tty and
@@ -304,7 +304,7 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
         let target_url = format!("http://{}:{}/webhook", config.host, config.port);
         let task = tokio::spawn(async move {
             info!("Forwarding webhooks for {} to {}", repo_clone, target_url);
-            let mut cmd = Command::new("gh");
+            let mut cmd = crate::exec::gh();
             // See the boot-time forwarder: keep the child off the operator's tty.
             cmd.stdin(std::process::Stdio::null());
             // Unbounded by design, same as the boot-time forwarder: this child is
@@ -351,7 +351,7 @@ pub async fn check_environment(github_client: &GitHubClient, config: &Config) ->
     println!("\n🔍 Checking Oyatie Autonomous Engineering Pipeline Environment:\n");
 
     print!("1. GitHub CLI (`gh`): ");
-    let mut gh_ver = Command::new("gh");
+    let mut gh_ver = crate::exec::gh();
     gh_ver.arg("--version");
     match crate::exec::run_bounded(gh_ver, crate::exec::ExecClass::Quick, "gh --version").await {
         Ok(out) if out.status.success() => {

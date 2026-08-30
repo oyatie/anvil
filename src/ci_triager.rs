@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use crate::github::GitHubClient;
@@ -72,7 +71,7 @@ impl CiTriager {
     }
 
     async fn fetch_failed_run_logs(&self, repo: &str, run_id: u64) -> Result<String> {
-        let mut logs_cmd = Command::new("gh");
+        let mut logs_cmd = crate::exec::gh();
         logs_cmd.args([
             "run",
             "view",
@@ -205,7 +204,7 @@ Output strictly valid JSON matching this schema:
         );
 
         // Open an issue on GitHub to alert maintainers
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args([
             "issue", "create", "--repo", repo, "--title", &title, "--body", &body,
         ]);

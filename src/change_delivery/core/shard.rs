@@ -214,6 +214,14 @@ impl Sequenced {
     }
 }
 
+/// Rounds of shards, each independent within itself.
+///
+/// `in_flight` holds paths against the FIRST round only. A later wave is by
+/// definition one that starts after the rounds before it have landed, so
+/// nothing from them is still open. Carrying earlier waves forward would make
+/// every shard after the first conflict with a lane that had already merged,
+/// and the loop would stop after one round — which is `select_independent`
+/// again, wearing a different name.
 pub fn sequence(shards: &[Shard], in_flight: &[Shard], policy: &LandingPolicy) -> Sequenced {
     let (eligible, held): (Vec<Shard>, Vec<Shard>) = shards
         .iter()
@@ -223,13 +231,7 @@ pub fn sequence(shards: &[Shard], in_flight: &[Shard], policy: &LandingPolicy) -
     let mut remaining = eligible;
     let mut waves: Vec<Vec<Shard>> = Vec::new();
 
-    // What holds paths against the round being planned. Work already open
-    // holds them against the FIRST round only: a later wave is by definition
-    // one that starts after the rounds before it have landed, so nothing from
-    // them is still in flight. Carrying earlier waves forward here would make
-    // every shard after the first conflict with a lane that has already
-    // merged, and the loop would stop after one round -- which is
-    // `select_independent` again, wearing a different name.
+    // Work already open holds paths against the first round only.
     let mut against: &[Shard] = in_flight;
 
     while !remaining.is_empty() {

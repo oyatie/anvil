@@ -74,10 +74,8 @@ pub async fn deliver_dry_run(
         tracing::warn!("{p}");
     }
     let shards = shard_plan(&plan, &owners, &manifests, &policy);
-    // The first wave is what may open now; the rest are rounds behind it, and
-    // are reported rather than dropped. `truncate` bounds this run, not the
-    // plan -- a shard cut here comes back in the next dispatch instead of
-    // vanishing from the account of what the plan contains.
+    // The first wave may open now; the rest are reported, not dropped.
+    // `truncate` bounds this run, not the plan.
     let sequenced = sequence(&shards, &[], &policy);
     let mut selected = sequenced.waves.first().cloned().unwrap_or_default();
     selected.truncate(req.max);

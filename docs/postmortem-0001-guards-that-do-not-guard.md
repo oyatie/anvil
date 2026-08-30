@@ -69,13 +69,27 @@ scan that cannot meet them is not a guard:
 corpus, a gate whose parse found no files, and a gate that examined 400 files and
 found nothing all publish the same word.
 
-This is the root cause of the three numbers that have not moved:
-`NOT_PROVISIONED_COUNT = 26`, `GATES_WITHOUT_PROOF = 23`,
+This is the root cause of `NOT_PROVISIONED_COUNT = 26` and
 `honesty_ratio() = 0.0`. Thirty-four of seventy-odd gates needed an
 absence-exemption policy *to be admissible at all* — that policy is not a
 feature, it is the shape of the missing distinction. No amount of per-gate
-patching moves those numbers, because each patch re-establishes the same
-ambiguity in a new place.
+patching moves those two, because each patch re-establishes the same ambiguity
+in a new place.
+
+**Correction, after the attempt.** This section originally named a third number,
+`GATES_WITHOUT_PROOF = 23`, and asserted that per-gate work could not move it.
+Per-gate work took it to **0**: forty-four gates now carry a red/green pair and
+a ledger row, each seeded against its own defect before it was believed. The
+attribution was wrong. `GATES_WITHOUT_PROOF` counts gates with no demonstrated
+failure, which is a question about the *test suite*; the other two count gates
+that cannot tell an empty corpus from a clean one, which is a question about the
+*status type*. Bundling them read as one cause because all three were stuck at
+the same time. Being stuck together is not evidence of a shared cause, and this
+document asserted one without measuring it — the same substitution of a cheap
+proxy for the thing that RC-1 through RC-6 are about. Taking `GATES_WITHOUT_PROOF`
+to zero also isolates the remaining two: forty-four gates can now demonstrably
+fail and `honesty_ratio` still reads ≈0.02, which is the cleanest available
+evidence that what holds it down is the type, not the coverage.
 
 **Corrective action.** `ARCHITECTURE.md` M4, and it is the highest-leverage work
 in the tree:
@@ -176,7 +190,7 @@ it loud when it cannot answer.**
 
 | # | Action | Moves |
 |---|--------|-------|
-| 1 | M4 `Evaluated` with `NonZeroUsize`; delete `ABSENCE_POLICY` | `NOT_PROVISIONED_COUNT` 26→0, `GATES_WITHOUT_PROOF` 23→0, `honesty_ratio` 0.0→ |
+| 1 | M4 `Evaluated` with `NonZeroUsize`; delete `ABSENCE_POLICY` | `NOT_PROVISIONED_COUNT` 26→0, `honesty_ratio` 0.0→ |
 | 2 | Merge-train rehearsal as a required check | RC-5, and every future cross-PR break |
 | 3 | `ContributorSupplied<T>` at the webhook boundary | RC-3 |
 | 4 | One retriable-abort primitive in the review pipeline | RC-4, the stranding class |

@@ -4,6 +4,7 @@
 pub mod admission;
 pub mod evaluator;
 pub mod gate_labels;
+pub mod gates;
 pub mod matrix;
 pub mod report;
 pub mod scanner;

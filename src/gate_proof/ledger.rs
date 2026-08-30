@@ -12,6 +12,18 @@ use super::GateProof;
 /// see the note above on what inference produced.
 pub const GATE_PROOFS: &[GateProof] = &[
     GateProof {
+        gate_id: "test_suite_status",
+        exercises: "PreMergeGuard",
+        fires_on: "test_suite_fires_when_the_suite_reported_failures",
+        spares: "test_suite_spares_a_suite_that_passed",
+    },
+    GateProof {
+        gate_id: "review_verdict_status",
+        exercises: "review_verdict_gate",
+        fires_on: "review_verdict_fires_on_a_blocking_verdict",
+        spares: "review_verdict_spares_an_approval",
+    },
+    GateProof {
         gate_id: "security_scan_status",
         exercises: "PreMergeScanner",
         fires_on: "security_scan_fires_on_a_credential_added_to_the_diff",

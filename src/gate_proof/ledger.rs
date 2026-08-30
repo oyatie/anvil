@@ -12,6 +12,18 @@ use super::GateProof;
 /// see the note above on what inference produced.
 pub const GATE_PROOFS: &[GateProof] = &[
     GateProof {
+        gate_id: "api_contract_status",
+        exercises: "ensure_contract_integrity",
+        fires_on: "api_contract_fires_on_a_schema_the_checker_refuses",
+        spares: "api_contract_spares_a_schema_change_nothing_flags",
+    },
+    GateProof {
+        gate_id: "mutation_status",
+        exercises: "report_from_outcome",
+        fires_on: "mutation_fires_on_a_mutant_the_suite_failed_to_kill",
+        spares: "mutation_spares_a_diff_whose_mutants_the_suite_all_killed",
+    },
+    GateProof {
         gate_id: "migration_boundary_status",
         exercises: "live_tree_violations",
         fires_on: "migration_boundary_fires_when_migrating_code_depends_on_superseded_code",
@@ -28,6 +40,18 @@ pub const GATE_PROOFS: &[GateProof] = &[
         exercises: "review_verdict_gate",
         fires_on: "review_verdict_fires_on_a_blocking_verdict",
         spares: "review_verdict_spares_an_approval",
+    },
+    GateProof {
+        gate_id: "doc_parity_status",
+        exercises: "doc_parity_status",
+        fires_on: "doc_parity_fires_on_an_under_documented_change",
+        spares: "doc_parity_spares_a_change_whose_documentation_is_sufficient",
+    },
+    GateProof {
+        gate_id: "monorepo_status",
+        exercises: "MonorepoGuard",
+        fires_on: "monorepo_fires_on_an_agent_scratch_directory_in_a_commit",
+        spares: "monorepo_spares_a_change_that_leaks_no_harness",
     },
     GateProof {
         gate_id: "predictive_test_status",

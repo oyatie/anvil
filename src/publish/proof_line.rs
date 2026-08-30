@@ -25,15 +25,42 @@ pub fn qualifier(passed: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    /// The repository-wide figure is measured, not written down: it falls when
-    /// a gate is proven and rises when one is added without a proof, and
-    /// `tests/derived_corpus_ratchets_test.rs` bounds the direction.
+    /// A gate the ledger does not cover, used to show the figure reacts.
+    const UNCOVERED: &str = "a_gate_no_ledger_row_covers";
+
+    /// The figure is a join, not a literal: adding one uncovered gate to the
+    /// corpus raises it by exactly one.
+    ///
+    /// It deliberately does not assert the figure is above zero. Zero is the
+    /// goal, and a fixture that forbids reaching it is a check that fails when
+    /// the work succeeds. What zero must not be allowed to mean is "the corpus
+    /// was empty", so that is what is asserted instead -- the same distinction
+    /// I1 draws between measuring nothing and finding nothing.
     #[test]
-    fn the_repository_wide_figure_is_derived_and_non_trivial() {
+    fn the_repository_wide_figure_is_a_join_and_not_a_literal() {
+        let mut corpus: Vec<&'static str> = crate::pre_merge_guard::matrix::GATE_LABELS
+            .iter()
+            .map(|(id, _, _)| *id)
+            .collect();
+        assert!(
+            !corpus.is_empty(),
+            "an empty corpus makes every gate look proven"
+        );
+
         let owing = super::gates_owing();
         assert!(
-            owing > 0 && owing < crate::pre_merge_guard::report::TOTAL_GATES,
-            "{owing} is not a count of the gates that can fire and have no proof"
+            owing < crate::pre_merge_guard::report::TOTAL_GATES,
+            "{owing} exceeds the corpus it is drawn from, so it is not this join"
+        );
+
+        corpus.push(UNCOVERED);
+        let probe =
+            |id: &str| id == UNCOVERED || crate::pre_merge_guard::admission::absence_blocks(id);
+        assert_eq!(
+            crate::gate_proof::gates_owing_a_proof(&corpus, probe).len(),
+            owing + 1,
+            "a gate with no ledger row did not raise the figure, so the figure \
+             is not read from the ledger"
         );
     }
 }

@@ -287,7 +287,10 @@ fn the_status_follows_the_modules_own_blocking_switch() {
 /// wiring, which is the exact edit that produced the defect.
 #[test]
 fn the_evaluator_constructs_no_severity_for_the_brand_absence_gate() {
-    let src = include_str!("../src/pre_merge_guard/evaluator.rs");
+    let src = anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     let bindings: Vec<&str> = src
         .lines()

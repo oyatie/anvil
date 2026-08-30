@@ -94,10 +94,10 @@ async fn the_diffless_door_refuses_a_review_that_carries_comments() {
 /// a line, and loud if the call is no longer there to find.
 #[test]
 fn the_review_pipeline_submits_with_the_diff_it_reviewed() {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webhook/pipelines/review.rs"),
-    )
-    .expect("the review pipeline exists");
+    let src = anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     let at = src.find("submit_pr_review").unwrap_or_else(|| {
         panic!(

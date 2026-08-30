@@ -209,8 +209,10 @@ fn a_hub_plan_and_an_ordinary_plan_still_share_a_wave() {
 fn the_disjointness_decision_is_not_reimplemented_here() {
     // `plan` must not carry its own copy of the occupancy predicate. The first
     // version did, and lost the hub rule with it.
-    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/plan/mod.rs"))
-        .expect("plan source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/plan",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         src.contains("admit_spawn"),
         "waves must delegate the admission decision to change_delivery"

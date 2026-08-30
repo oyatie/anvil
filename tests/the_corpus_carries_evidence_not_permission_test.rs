@@ -23,10 +23,10 @@ fn one_subject() -> Corpus {
 /// permission flag, and moving it to another file must not silently pass.
 #[test]
 fn the_corpus_declares_no_boolean_field() {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/harness/corpus.rs"),
-    )
-    .expect("the corpus source is readable");
+    let src = anvil::source_scan::paths::module_source(
+        "src/harness/corpus",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let body = anvil::source_scan::without_commentary(&src);
     let decl = body
         .split_once("pub struct Corpus {")

@@ -233,7 +233,10 @@ fn the_prevention_debt_reaches_the_scorecard() {
     }
     // The scorecard is where it is published; assert the caller is there
     // rather than trusting that it is.
-    let scorecard = std::fs::read_to_string("src/publish/scorecard.rs").expect("scorecard.rs");
+    let scorecard = anvil::source_scan::paths::module_source(
+        "src/publish/scorecard",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         anvil::source_scan::code_only(&scorecard).contains("prevention_debt_line"),
         "nothing in the scorecard calls the ledger, so it is written, tested \

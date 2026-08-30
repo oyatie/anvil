@@ -134,10 +134,10 @@ fn raising_the_same_finding_twice_yields_one_item() {
 /// too — keyed to the call, and loud if the call is no longer there to find.
 #[test]
 fn the_hourly_sweep_raises_every_pass() {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/sweep_task.rs"),
-    )
-    .expect("the sweep task exists");
+    let src = anvil::source_scan::paths::module_source(
+        "src/cli/sweep_task",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     let raise = src
         .find("intake_sweep::raise_for_repo(")
@@ -168,10 +168,10 @@ fn the_hourly_sweep_raises_every_pass() {
 /// queue's depth a statement about nothing.
 #[test]
 fn the_two_unwirable_producers_are_named_rather_than_silently_skipped() {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/intake_sweep.rs"),
-    )
-    .expect("the intake sweep exists");
+    let src = anvil::source_scan::paths::module_source(
+        "src/cli/intake_sweep",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     for named in ["incident_sentry", "review_memory"] {
         assert!(
             src.contains(named),
@@ -181,10 +181,10 @@ fn the_two_unwirable_producers_are_named_rather_than_silently_skipped() {
     }
 
     // And the claim itself, measured rather than asserted in prose.
-    let sentry = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/incident_sentry/mod.rs"),
-    )
-    .expect("the sentry exists");
+    let sentry = anvil::source_scan::paths::module_source(
+        "src/incident_sentry",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         sentry.contains("fn live_golden_signals"),
         "if the sentry gained a real signal source, this exemption is stale \

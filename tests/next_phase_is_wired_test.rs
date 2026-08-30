@@ -49,7 +49,10 @@ fn the_decision_has_a_caller_in_production_code() {
 
 #[test]
 fn the_review_pipeline_runs_the_fixer_on_its_own_verdict() {
-    let src = fs::read_to_string("src/webhook/pipelines/review.rs").expect("review.rs");
+    let src = anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code = anvil::source_scan::code_only(&src);
     assert!(
         code.contains("execute_pr_fix"),
@@ -67,7 +70,10 @@ fn the_review_pipeline_runs_the_fixer_on_its_own_verdict() {
 /// The bound must survive a restart, or it is not a bound.
 #[test]
 fn the_attempt_count_is_persisted_not_only_held_in_memory() {
-    let src = fs::read_to_string("src/state.rs").expect("state.rs");
+    let src = anvil::source_scan::paths::module_source(
+        "src/state",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code = anvil::source_scan::code_only(&src);
     let body = code
         .split("pub async fn record_auto_fix_attempt")

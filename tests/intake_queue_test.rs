@@ -129,24 +129,26 @@ fn sweeping_twice_does_not_grow_the_backlog() {
 /// already has seventy modules inside of.
 #[test]
 fn intake_stays_a_leaf() {
-    for f in ["src/intake/mod.rs", "src/intake/sources.rs"] {
-        let code = anvil::source_scan::code_only(&std::fs::read_to_string(f).unwrap());
-        for producer in [
-            "postmortem",
-            "gitops_drift",
-            "zero_day",
-            "incident_sentry",
-            "review_memory",
-            "issue_reconciler",
-            "corpus_auditor",
-        ] {
-            assert!(
-                !code.contains(&format!("crate::{producer}")),
-                "{f} imports `{producer}`. `intake` is shared vocabulary and \
-                 must stay a leaf: a module every producer imports, importing \
-                 every producer back, is the hub-and-spoke shape that put \
-                 seventy modules into one dependency cycle."
-            );
-        }
+    let module = "src/intake";
+    let code = anvil::source_scan::code_only(&anvil::source_scan::paths::module_source(
+        module,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    ));
+    for producer in [
+        "postmortem",
+        "gitops_drift",
+        "zero_day",
+        "incident_sentry",
+        "review_memory",
+        "issue_reconciler",
+        "corpus_auditor",
+    ] {
+        assert!(
+            !code.contains(&format!("crate::{producer}")),
+            "{module} imports `{producer}`. `intake` is shared vocabulary and \
+             must stay a leaf: a module every producer imports, importing \
+             every producer back, is the hub-and-spoke shape that put \
+             seventy modules into one dependency cycle."
+        );
     }
 }

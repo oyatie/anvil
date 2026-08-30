@@ -461,8 +461,6 @@ async fn report_from_the_corpus(
         .evaluate_active_active_invariants(&d.diff_content);
     let flake_quarantine_report = anvil::flake_quarantine::FlakeQuarantineLifecycle::new()
         .evaluate_quarantine_lifecycle(&d.changed_files);
-    let zero_trust_report = anvil::zero_trust_workload::ZeroTrustWorkloadGate::new()
-        .evaluate_cleartext_transport(&d.diff_content);
     let carbon_report =
         anvil::carbon_aware::CarbonAwareComputeRatchet::new().evaluate_compute_carbon(30.0, 12.0);
     let replay_report =
@@ -533,7 +531,6 @@ async fn report_from_the_corpus(
             &wasm_report,
             &consistency_report,
             &flake_quarantine_report,
-            &zero_trust_report,
             &carbon_report,
             &replay_report,
             &mutation_report,

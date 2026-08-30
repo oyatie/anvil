@@ -90,7 +90,6 @@ use anvil::vex_scanner::OpenVexReachabilityScanner;
 use anvil::wasm_sandbox::WasmPolicySandbox;
 use anvil::webhook::AppState;
 use anvil::zero_day_patcher::ZeroDayAutoPatcher;
-use anvil::zero_trust_workload::ZeroTrustWorkloadGate;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -225,7 +224,6 @@ async fn main() -> Result<()> {
     let wasm_sandbox = Arc::new(WasmPolicySandbox::new());
     let consistency_guard = Arc::new(ActiveActiveConsistencyGuard::new());
     let flake_quarantine = Arc::new(FlakeQuarantineLifecycle::new());
-    let zero_trust_workload = Arc::new(ZeroTrustWorkloadGate::new());
     let carbon_aware = Arc::new(CarbonAwareComputeRatchet::new());
     let replay_harness = Arc::new(DeterministicReplayHarness::new());
     let chaos_mutation_guard = Arc::new(ChaosMutationGuard::new());
@@ -327,7 +325,6 @@ async fn main() -> Result<()> {
         wasm_sandbox: wasm_sandbox.clone(),
         consistency_guard: consistency_guard.clone(),
         flake_quarantine: flake_quarantine.clone(),
-        zero_trust_workload: zero_trust_workload.clone(),
         carbon_aware: carbon_aware.clone(),
         replay_harness: replay_harness.clone(),
         chaos_mutation_guard: chaos_mutation_guard.clone(),

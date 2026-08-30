@@ -484,7 +484,6 @@ mod stub {
     use anvil::vex_scanner::OpenVexReport;
     use anvil::wasm_sandbox::WasmSandboxReport;
     use anvil::zero_day_patcher::ZeroDayReport;
-    use anvil::zero_trust_workload::ZeroTrustWorkloadReport;
     use serde::de::{
         self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess,
         Visitor,
@@ -544,12 +543,6 @@ mod stub {
             passed: true,
             quarantined_tests_isolated: 0,
             rehabilitated_tests_restored: 0,
-            summary: STUB.to_string(),
-        };
-        let zero_trust = ZeroTrustWorkloadReport {
-            passed: true,
-            cleartext_transport_findings: 0,
-            violations: Vec::new(),
             summary: STUB.to_string(),
         };
         let carbon = CarbonComputeReport {
@@ -626,7 +619,6 @@ mod stub {
                 &wasm,
                 &consistency,
                 &flake,
-                &zero_trust,
                 &carbon,
                 &replay,
                 &neutral::<MutationAdequacyReport>(),

@@ -253,11 +253,43 @@ fn test_admin_auth_false_red_header_and_env_names_are_the_documented_ones() {
     assert_eq!(ADMIN_TOKEN_ENV, "ANVIL_ADMIN_TOKEN");
 }
 
-/// MECHANISM (P1, invariant I22). Enforcement is structural: every `/api/*`
-/// route must be registered through the guard wrapper, so adding an unguarded
-/// route fails this test rather than depending on a reviewer noticing.
+/// Routes served without the admin guard, each with the reason it is exempt.
+///
+/// An enumerated escape hatch, not a prefix. The previous scan skipped any
+/// route whose path did not start `/api/`, which is why `/` and `/dashboard`
+/// were never examined: they served every watched repository's open pull
+/// request titles, branch names and head SHAs to anyone who could reach the
+/// socket, and the check that existed to prevent exactly that could not see
+/// them.
+///
+/// Keying a check to a path prefix decides in advance which routes are worth
+/// checking, and a route added outside the prefix is not a failure -- it is
+/// invisible. Default-deny inverts that: a new route is guarded or it is
+/// written down here with a reason a reviewer reads.
+const UNGUARDED_BY_DESIGN: &[(&str, &str)] = &[
+    (
+        "/healthz",
+        "Kubernetes liveness probe: pulled by infrastructure that cannot \
+         present a token, and a probe that fails takes the pod down.",
+    ),
+    (
+        "/metrics",
+        "Prometheus scrape target, same constraint as the liveness probe.",
+    ),
+    (
+        "/webhook",
+        "Authenticates differently and more strongly: it verifies the GitHub \
+         HMAC signature over the request body.",
+    ),
+];
+
+/// MECHANISM (P1, invariant I22). Enforcement is structural: every route is
+/// registered through the guard wrapper unless it is named in
+/// `UNGUARDED_BY_DESIGN`, so adding an unguarded route fails this test rather
+/// than depending on a reviewer noticing -- and adding one outside `/api/`
+/// fails it too, which is the case that got through.
 #[test]
-fn test_admin_auth_mechanism_every_api_route_is_guarded() {
+fn test_admin_auth_mechanism_every_route_is_guarded_or_named() {
     let src = production_source("src/webhook/mod.rs");
     let router = src
         .split_once("pub fn create_router")
@@ -265,34 +297,96 @@ fn test_admin_auth_mechanism_every_api_route_is_guarded() {
         .1;
 
     let mut unguarded: Vec<String> = Vec::new();
-    let mut api_routes = 0usize;
+    let mut routes = 0usize;
     for chunk in router.split(".route(").skip(1) {
         let decl = chunk.split(".route(").next().unwrap_or(chunk);
         let decl = decl
             .split_once(".with_state(")
             .map(|(a, _)| a)
             .unwrap_or(decl);
-        if !decl.contains("\"/api/") {
+        let Some(path) = decl
+            .split_once('"')
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(p, _)| p)
+        else {
+            continue;
+        };
+        routes += 1;
+        if UNGUARDED_BY_DESIGN.iter().any(|(p, _)| *p == path) {
             continue;
         }
-        api_routes += 1;
         if !decl.contains("admin_guarded") {
-            unguarded.push(decl.split('\n').take(3).collect::<Vec<_>>().join(" "));
+            unguarded.push(path.to_string());
         }
     }
 
     assert!(
-        api_routes >= 11,
-        "route scan found only {api_routes} /api/ routes; the scan is broken, \
-         not the router"
+        routes >= 14,
+        "route scan found only {routes} route(s); the scan is broken, not the \
+         router"
     );
     assert!(
         unguarded.is_empty(),
-        "False Green prevention: {} /api/* route(s) registered without \
-         admin_guarded: {:#?}",
+        "False Green prevention: {} route(s) registered without \
+         admin_guarded and not named in UNGUARDED_BY_DESIGN: {:#?}\n\
+         A route that serves fleet state must go through the guard. If it \
+         genuinely cannot -- a probe, or a surface that authenticates another \
+         way -- add it above with the reason.",
         unguarded.len(),
         unguarded
     );
+}
+
+/// The HTML dashboard reads the same fleet state the guarded JSON endpoint does.
+///
+/// The reason `/` needs the guard, kept as a check rather than as a sentence.
+/// The module doc used to assert the HTML carried no data of its own -- "every
+/// byte of data it renders arrives through the guarded `/api/dashboard/state`"
+/// -- and both handlers call `fetch_current_dashboard_state`. Someone reading
+/// only that sentence could unguard `/` again and believe they had changed
+/// nothing.
+#[test]
+fn the_html_dashboard_renders_the_same_state_the_guarded_endpoint_serves() {
+    let src = production_source("src/dashboard/mod.rs");
+    for handler in ["dashboard_html_handler", "dashboard_state_api_handler"] {
+        let body = src
+            .split_once(&format!("pub async fn {handler}"))
+            .unwrap_or_else(|| panic!("{handler} must exist"))
+            .1;
+        let body = body.split_once("\npub ").map(|(b, _)| b).unwrap_or(body);
+        assert!(
+            body.contains("fetch_current_dashboard_state"),
+            "`{handler}` no longer reads fleet state through \
+             `fetch_current_dashboard_state`. If the HTML path genuinely stopped \
+             carrying fleet data, this test should be deleted in the same change \
+             that proves it -- not left passing on a handler it no longer describes."
+        );
+    }
+}
+
+/// Every exemption names a route the router actually registers.
+///
+/// Without this the list rots into a set of names nothing matches, and a
+/// default-deny check whose exemptions are stale silently exempts nothing --
+/// or worse, is edited to add a path that was never a route.
+#[test]
+fn every_named_exemption_is_a_route_this_router_serves() {
+    let src = production_source("src/webhook/mod.rs");
+    let router = src
+        .split_once("pub fn create_router")
+        .expect("create_router must exist")
+        .1;
+    for (path, reason) in UNGUARDED_BY_DESIGN {
+        assert!(
+            router.contains(&format!("\"{path}\"")),
+            "`{path}` is exempted from the admin guard but is not a route this \
+             router registers"
+        );
+        assert!(
+            reason.len() > 30,
+            "`{path}` is exempted with no reason a reviewer can weigh"
+        );
+    }
 }
 
 /// FALSE RED prevention (P7). Liveness and scrape endpoints must stay open, or

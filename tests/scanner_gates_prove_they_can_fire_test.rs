@@ -95,3 +95,40 @@ fn schema_compat_spares_an_additive_migration() {
          migration, so the rule had a subject and spared it: {status:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// performance_concurrency_status — PreMergeScanner
+// ---------------------------------------------------------------------------
+//
+// A real-clock sleep in a test is the flake this gate exists to catch: it
+// passes on an idle machine and fails on a loaded one, which is the same shape
+// as the transport fixtures that failed under a full-suite run in this very
+// repository and passed 3/3 in isolation.
+
+#[test]
+fn performance_concurrency_fires_on_a_hardcoded_real_clock_sleep() {
+    let status = PreMergeScanner::scan_for_concurrency_and_flakes(concat!(
+        "diff --git a/tests/slow.rs b/tests/slow.rs\n",
+        "+++ b/tests/slow.rs\n",
+        "+    thread::sleep(Duration::from_millis(250));\n",
+    ));
+    assert!(
+        !matches!(status, GateStatus::Passed),
+        "an added test sleeps on the real clock, which passes idle and fails \
+         loaded; the gate did not see it"
+    );
+}
+
+#[test]
+fn performance_concurrency_spares_a_diff_that_waits_on_a_condition() {
+    let status = PreMergeScanner::scan_for_concurrency_and_flakes(concat!(
+        "diff --git a/tests/slow.rs b/tests/slow.rs\n",
+        "+++ b/tests/slow.rs\n",
+        "+    rx.recv_timeout(budget).expect(\"the worker answered\");\n",
+    ));
+    assert!(
+        matches!(status, GateStatus::Passed),
+        "waiting on a condition with a budget is the remedy this gate wants; \
+         flagging it would refuse the fix along with the defect"
+    );
+}

@@ -201,6 +201,13 @@ fn the_certification_pipeline_does_not_recover_from_an_unreadable_answer() {
             "unwrap_or",
             "unwrap_or_default",
             "unwrap_or_else",
+            // `.or_else(` was missing, and it is the one combinator that can
+            // fabricate a clean report AND keep the `?` -- so the call still
+            // looks fallible while an unreadable answer becomes an empty list
+            // of unresolved threads. That is precisely the shape this file
+            // exists to refuse.
+            ".or_else(",
+            ".or(",
             ".ok()",
             "if let Ok",
         ] {

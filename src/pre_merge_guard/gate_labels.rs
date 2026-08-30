@@ -249,7 +249,7 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
     (
         "automated_canary_status",
         "📊 Automated Canary Analysis (ACA)",
-        "Mann-Whitney U-test statistical distribution validation",
+        "Not measured: no canary deployment or metrics endpoint; no statistical test runs",
     ),
     (
         "progressive_ring_status",

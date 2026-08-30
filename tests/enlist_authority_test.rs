@@ -453,10 +453,22 @@ fn cfg_test_item_end(code: &[char], attr: usize) -> usize {
 }
 
 /// Reads production source: no comments, no string contents, no test modules.
+///
+/// Resolved as a MODULE, not a path. `merge_enlister.rs` became
+/// `merge_enlister/` to satisfy the oversized-file ratchet, and this read --
+/// which names the file -- stopped finding its subject. It failed loudly only
+/// because of the `expect`; a scan that returned an empty string would have
+/// reported the module clean. `module_source` reads whichever form exists, so
+/// the next split changes nothing here.
+///
+/// Line numbers below are within the module's concatenated source when it is a
+/// directory. These checks are about what is published and by whom, not about
+/// a coordinate, so that is a report detail rather than a lost fact.
 fn production(rel: &str) -> Production {
-    let path = repo_path(rel);
-    let text =
-        fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let text = anvil::source_scan::paths::module_source(
+        rel.trim_end_matches(".rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let src: Vec<char> = text.chars().collect();
     let mut code: Vec<char> = Vec::with_capacity(src.len());
     let mut literals: Vec<(usize, String)> = Vec::new();

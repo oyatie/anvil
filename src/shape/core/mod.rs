@@ -2,6 +2,7 @@
 //! profiles, and the report vocabulary. Nothing here touches the filesystem,
 //! git, a clock or a subprocess.
 
+pub mod adapter_naming;
 pub mod dependency;
 pub mod glob;
 pub mod graph_shape;

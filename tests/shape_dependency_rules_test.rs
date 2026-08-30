@@ -262,3 +262,107 @@ fn an_unreadable_profile_makes_the_dependency_rules_not_measured() {
         "{nm:?}"
     );
 }
+
+/// The console fixture is the ts-workspace tenant: its dependency edges are
+/// module specifiers, not manifests. Relative specifiers carry the edges
+/// inside a unit; a bare specifier resolved through a workspace manifest name
+/// carries the edges between units, and dropping that half would hide exactly
+/// what `cross_unit_non_facade` exists to find.
+#[test]
+fn typescript_imports_are_edges_within_a_unit_and_across_units() {
+    let tree = InMemoryTree::from_paths("fx", &[])
+        .with_file("iam/manifest.json", "{}")
+        .with_file("billing/manifest.json", "{}")
+        .with_file(
+            "iam/core/domain/package.json",
+            "{ \"name\": \"@t/iam-domain\" }",
+        )
+        .with_file(
+            "iam/facade/app/package.json",
+            "{ \"name\": \"@t/iam-app\" }",
+        )
+        .with_file(
+            "billing/facade/app/package.json",
+            "{ \"name\": \"@t/billing-app\" }",
+        )
+        .with_file("iam/core/domain/index.ts", "export const a = 1;\n")
+        .with_file(
+            "iam/facade/app/main.ts",
+            "import { a } from '../../core/domain/index.js';\nimport x from 'react';\n",
+        )
+        .with_file(
+            "billing/facade/app/main.ts",
+            "import { a } from '@t/iam-domain';\nconst y = require('@t/iam-app');\n",
+        );
+    let resolved = resolve(&spec("console.shape.json"), None).unwrap();
+    let g = graph_for(&tree, &resolved, &[&TsImportDeps]);
+    assert!(g.unavailable.is_empty(), "{:?}", g.unavailable);
+    assert!(
+        !g.edges.iter().any(|e| e.to.is_empty()),
+        "an unresolved bare specifier must be skipped, never pointed at the repository root: {:?}",
+        g.edges
+    );
+    let report = measure(&resolved, &tree, "fx", SpecSource::Adopted, &g);
+    let denied: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.rule == RuleId::new("face_edge_denied"))
+        .map(|f| f.key.as_str())
+        .collect();
+    assert_eq!(
+        denied,
+        vec!["iam/facade/app/main.ts->iam/core/domain"],
+        "facade may reach ports and adapters, not core"
+    );
+    let cross: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.rule == RuleId::new("cross_unit_non_facade"))
+        .map(|f| f.key.as_str())
+        .collect();
+    assert_eq!(
+        cross,
+        vec!["billing/facade/app/main.ts->iam/core/domain"],
+        "the bare specifier into another unit's core is the cross-unit defect; the one into \
+         its facade is legitimate"
+    );
+}
+
+/// A reader that never receives its files reports Unavailable forever, and
+/// the rules that need it stay NotMeasured — an adapter wired only in fixtures
+/// while production loads nothing for it is not a wired adapter.
+#[test]
+fn the_production_tree_loader_asks_for_typescript_sources_only_where_declared() {
+    let (console, rust_only) = (spec("console.shape.json"), spec("anvil.shape.json"));
+    let ts = anvil::shape::facade::measure::selector(&console);
+    assert!(
+        ts("iam/facade/app/main.ts"),
+        "declared, so it must be loaded"
+    );
+    assert!(ts("iam/core/domain/package.json"), "the workspace manifest");
+    let rust = anvil::shape::facade::measure::selector(&rust_only);
+    assert!(
+        !rust("src/shape/facade/main.ts"),
+        "a spec that does not declare ts-workspace has no use for the file"
+    );
+}
+
+#[test]
+fn a_typescript_tree_with_no_source_loaded_is_unavailable_not_clean() {
+    let tree = InMemoryTree::from_paths("fx", &[])
+        .with_file("iam/manifest.json", "{}")
+        .with_file(
+            "iam/core/domain/package.json",
+            "{ \"name\": \"@t/iam-domain\" }",
+        );
+    let resolved = resolve(&spec("console.shape.json"), None).unwrap();
+    let g = graph_for(&tree, &resolved, &[&TsImportDeps]);
+    assert_eq!(g.unavailable.len(), 1, "{:?}", g.unavailable);
+    let report = measure(&resolved, &tree, "fx", SpecSource::Adopted, &g);
+    let nm: Vec<&str> = report
+        .not_measured
+        .iter()
+        .map(|(r, _)| r.0.as_str())
+        .collect();
+    assert!(nm.contains(&"face_edge_denied"), "{nm:?}");
+}

@@ -28,6 +28,7 @@ fn measurement(blocking: usize, advisory: usize) -> ShapeMeasurement {
         blocking_regressions: blocking,
         advisory_regressions: advisory,
         fixed: 0,
+        blocking_unmeasured: Vec::new(),
     }
 }
 

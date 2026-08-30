@@ -37,8 +37,15 @@ fn not_provisioned_sites(path: &str, body: &str) -> usize {
 }
 
 /// `GateProof` rows in the ledger, counted in source text.
-fn gate_proof_sites(path: &str, body: &str) -> usize {
-    if path != "src/gate_proof/mod.rs" {
+///
+/// Keyed to the DECLARATION, not to a path — for the reason `gate_label_sites`
+/// below already gives, and which this function did not heed. It read
+/// `path != "src/gate_proof/mod.rs"`, so splitting the table into
+/// `gate_proof/ledger.rs` to satisfy the oversized-file ratchet took the count
+/// to zero while the compiled table was unchanged. Its sibling documents that
+/// exact bite; the two sat four lines apart and only one was keyed correctly.
+fn gate_proof_sites(_path: &str, body: &str) -> usize {
+    if !body.contains("pub const GATE_PROOFS:") {
         return 0;
     }
     body.matches("    GateProof {").count()

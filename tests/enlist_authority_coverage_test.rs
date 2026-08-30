@@ -546,6 +546,16 @@ async fn report_from_the_corpus(
             verification_gate,
             review_verdict,
             &shape_outcome,
+            // The three gates whose guards had no caller until now. Run for
+            // real against this fixture's tree, like every other gate here:
+            // handing them a hand-built report would make this an assertion
+            // about the fixture rather than about the wiring.
+            &anvil::cloud_native_guard::CloudNativeGuard::new()
+                .evaluate_cloud_native(dir, d)
+                .expect("the vendor-neutrality guard reads this diff"),
+            &anvil::stack_whitelist_guard::StackWhitelistGuard::new()
+                .evaluate_stack_whitelist(dir, d, false)
+                .expect("the stack-whitelist guard reads this diff"),
         )
         .expect("the corpus produces a report for a change it can read")
 }

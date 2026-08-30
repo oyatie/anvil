@@ -148,10 +148,25 @@ pub const STAGES: &[Stage] = &[
 /// Four became three when `gate_proof` gained `publish/scorecard.rs`. It knew
 /// which gates have been seeded with their own defect and which have only
 /// been green, and no pull request was ever told; the qualifier on the blocked
-/// scorecard is the caller. The three that remain -- `cloud_native_guard`,
-/// `stack_whitelist_guard`, `dual_track_build_guard` -- publish no verdict on
-/// any pull request, which is the same defect in the same shape.
-pub const STAGES_WITHOUT_A_CALLER: usize = 3;
+/// scorecard is the caller.
+/// Three became one when `cloud_native_guard` and `stack_whitelist_guard`
+/// entered the corpus. Each already measured its subject and each already had
+/// seeded fixtures; the missing part was a `GateStatus` field, a row in
+/// `GATE_LABELS`, and a call in the certify pipeline. TOTAL_GATES went 72 -> 74
+/// in the same change, because a stage with a caller and no published verdict
+/// is the same defect one step along.
+///
+/// `dual_track_build_guard` is the one that remains, and deliberately. On a
+/// repository with no Buck2 track -- this one -- its only reachable verdict is
+/// `NoBuck2Track`, which maps to `NotMeasured`; a `NotMeasured` gate with no
+/// `ABSENCE_POLICY` row defaults to `Provisioned` and would withhold merge
+/// admission from every pull request, and adding the row would raise the
+/// unprovisionable count that `derived_corpus_ratchets_test` forbids. Wiring a
+/// guard whose only output is absence is the defect `cli::intake_sweep`
+/// declines for `incident_sentry` and `review_memory`, and it is declined here
+/// for the same reason. It wires the day a repository under review has both
+/// tracks.
+pub const STAGES_WITHOUT_A_CALLER: usize = 1;
 
 /// Stages nothing outside their own files invokes.
 ///

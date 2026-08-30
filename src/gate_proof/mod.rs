@@ -53,6 +53,18 @@ pub struct GateProof {
 /// see the note above on what inference produced.
 pub const GATE_PROOFS: &[GateProof] = &[
     GateProof {
+        gate_id: "cloud_native_status",
+        exercises: "CloudNativeGuard",
+        fires_on: "cloud_native_flags_a_proprietary_sdk_in_a_core_layer",
+        spares: "cloud_native_spares_the_same_sdk_in_an_adapter",
+    },
+    GateProof {
+        gate_id: "stack_whitelist_status",
+        exercises: "StackWhitelistGuard",
+        fires_on: "stack_whitelist_flags_a_technology_the_approved_list_does_not_name",
+        spares: "stack_whitelist_spares_the_approved_stack",
+    },
+    GateProof {
         gate_id: "cell_isolation_status",
         exercises: "CellIsolationGuard",
         fires_on: "test_cell_isolation_red_flag_unscoped_query",

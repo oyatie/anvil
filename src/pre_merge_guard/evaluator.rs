@@ -178,6 +178,8 @@ impl PreMergeGuard {
         test_suite_passed: Option<bool>,
         review_verdict: &str,
         shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
+        cloud_native_report: &crate::cloud_native_guard::CloudNativeReport,
+        stack_whitelist_report: &crate::stack_whitelist_guard::StackWhitelistReport,
     ) -> Result<PreMergeCertificationReport> {
         info!(
             "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
@@ -675,6 +677,13 @@ impl PreMergeGuard {
 
         let shape_status = shape_gate_status(shape_outcome);
 
+        // The three guards that had no caller. Each already measured its
+        // subject and each already had seeded fixtures; what was missing was
+        // any pull request ever being told. Each maps its own report to a
+        // status, beside the report rather than here.
+        let cloud_native_status = cloud_native_report.gate_status();
+        let stack_whitelist_status = stack_whitelist_report.gate_status();
+
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
             is_certified_ready: false,
@@ -750,6 +759,8 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
+            cloud_native_status,
+            stack_whitelist_status,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             // This function is the certification run: these seventy-two

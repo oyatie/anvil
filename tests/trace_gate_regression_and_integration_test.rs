@@ -647,6 +647,11 @@ mod stub {
                 &ShapeGateOutcome::NoSpec {
                     reason: STUB.to_string(),
                 },
+                // The three gates whose guards had no caller. Stubs, like every
+                // other report in this fixture: this test is about the trace
+                // gate, not about them.
+                &neutral(),
+                &neutral(),
             )
             .expect("the evaluator must map a set of gate reports without failing")
     }

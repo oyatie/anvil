@@ -62,12 +62,6 @@
       "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
     },
     {
-      "path": "src/stack_whitelist_guard/mod.rs",
-      "stamp": "hyperscaler",
-      "occurrences": 1,
-      "debt_note": "pre-existing display string; renaming is sequenced after the retain/discard determination (plan 36.2)"
-    },
-    {
       "path": "src/webhook/pipelines/review.rs",
       "stamp": "70",
       "occurrences": 2,

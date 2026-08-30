@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,21 +122,28 @@ pub fn extract_json_block(text: &str) -> String {
 }
 
 async fn run_agy(effort: &str, prompt: &str, working_dir: &Path) -> Result<String> {
-    let mut cmd = Command::new("agy");
-    cmd.args([
-        "--print",
-        prompt,
-        "--effort",
-        effort,
-        "--print-timeout",
-        &crate::exec::agy_print_timeout_arg(crate::exec::ExecClass::Model.timeout()),
-        "--dangerously-skip-permissions",
-    ]);
-    cmd.current_dir(working_dir);
-    let output = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Model, "agy evaluation")
+    let budget = crate::exec::ExecClass::Model.timeout();
+    let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
+    crate::exec::turn::agy_turn(&mut cmd, effort, budget);
+    let turn = crate::exec::turn::run(cmd, prompt, budget, "agy evaluation")
         .await
         .context("Failed to run agy")?;
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    // `into_result` and not `turn.response`. A failed or timed-out turn has an
+    // empty response, and the caller's parse-failure arm reads an unparseable
+    // evaluation as "the finding is valid" -- so discarding the status turns a
+    // turn that never ran into a fabricated verdict on every review comment.
+    let response = turn.into_result()?;
+    // An empty answer from a turn that exited zero is still no answer, and the
+    // caller's parse-failure arm reads an unparseable evaluation as "every
+    // finding is valid" -- fabricating a verdict on review comments nothing
+    // judged. Absent evidence must not be mistaken for a measurement (I1).
+    if response.trim().is_empty() {
+        anyhow::bail!(
+            "agy evaluation returned no output, so nothing judged these review \
+             comments; defaulting them to valid would fabricate the verdict"
+        );
+    }
+    Ok(response)
 }
 
 #[cfg(test)]

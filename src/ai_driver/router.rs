@@ -29,69 +29,6 @@ pub async fn run_with_prompt_on_stdin(
     crate::exec::run_bounded_with_stdin(cmd, prompt, limit, what).await
 }
 
-/// Wraps a prompt in one line of agy's NDJSON stream protocol.
-///
-/// agy is the one provider with no plain "read the prompt from stdin"
-/// spelling: `--print` is a flag that TAKES a value, so omitting the value
-/// makes Go's flag parser swallow the next flag as the prompt and treat
-/// everything after it as positional -- which silently drops
-/// `--dangerously-skip-permissions` and makes the run fail on a permission
-/// check. Its stream protocol is the supported stdin channel, verified
-/// against the installed CLI:
-///
-/// ```text
-/// {"event":"user","message":{"content":"..."}}
-/// ```
-fn agy_stream_input(prompt: &str) -> String {
-    let message = serde_json::json!({
-        "event": "user",
-        "message": { "content": prompt },
-    });
-    format!("{message}\n")
-}
-
-/// Pulls the final response out of agy's NDJSON event stream.
-///
-/// `--input-format stream-json` requires `--output-format stream-json`, so the
-/// answer arrives as a `result` event rather than as plain stdout.
-///
-/// A stream with no `result` event, or one whose result is not `SUCCESS`, is an
-/// error -- never an empty successful review. An empty string here would reach
-/// `reviewer::parse_review_response` as unparseable output, and absent evidence
-/// must not be mistaken for a measurement (invariant I1).
-fn agy_stream_response(stdout: &str) -> Result<String> {
-    let mut failure: Option<String> = None;
-
-    for line in stdout.lines() {
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
-            continue;
-        };
-        let Some(result) = event.get("result") else {
-            continue;
-        };
-
-        if result.get("status").and_then(|s| s.as_str()) == Some("SUCCESS") {
-            return Ok(result
-                .get("response")
-                .and_then(|r| r.as_str())
-                .unwrap_or_default()
-                .to_string());
-        }
-        failure = Some(
-            result
-                .get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("no error was reported")
-                .to_string(),
-        );
-    }
-
-    match failure {
-        Some(error) => bail!("agy reported a failed turn: {}", error),
-        None => bail!("agy emitted no result event, so no response was obtained"),
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SubscriptionExecutor {
     account_pool: Arc<AccountPoolManager>,
@@ -162,14 +99,10 @@ impl SubscriptionExecutor {
             .account_pool
             .lease_account(ModelProvider::AnthropicClaudeCode)
             .await;
-        let mut cmd = Command::new("claude");
-        // `-p` with no positional argument: the prompt arrives on STDIN.
-        cmd.arg("-p");
-        cmd.args(["--model", model_name]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
+        // The lease is read before the spawn, because a leased credential is
+        // part of the posture rather than something added to a command that
+        // already exists.
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
@@ -178,11 +111,12 @@ impl SubscriptionExecutor {
                     acc.account_id, model_name, config.reasoning_effort
                 );
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("CLAUDE_CONFIG_DIR", dir);
+                    posture = posture.with_credential("CLAUDE_CONFIG_DIR", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("CLAUDE_CODE_OAUTH_TOKEN", tok);
-                    cmd.env("ANTHROPIC_AUTH_TOKEN", tok);
+                    posture = posture
+                        .with_credential("CLAUDE_CODE_OAUTH_TOKEN", tok)
+                        .with_credential("ANTHROPIC_AUTH_TOKEN", tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -190,7 +124,7 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    cmd.env("ANTHROPIC_API_KEY", key);
+                    posture = posture.with_credential("ANTHROPIC_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
@@ -202,6 +136,11 @@ impl SubscriptionExecutor {
                 "claude-default".to_string()
             }
         };
+
+        let mut cmd = crate::exec::agent("claude", &posture);
+        // `-p` with no positional argument: the prompt arrives on STDIN.
+        cmd.arg("-p");
+        cmd.args(["--model", model_name]);
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -278,14 +217,7 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::OpenAiCodex)
             .await;
 
-        let mut cmd = Command::new("codex");
-        // `-` is codex's explicit "read the prompt from STDIN" argument.
-        cmd.args(["exec", "-"]);
-        cmd.args(["--model", model_name]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
@@ -294,11 +226,12 @@ impl SubscriptionExecutor {
                     acc.account_id, model_name, config.reasoning_effort
                 );
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("CODEX_HOME", dir);
+                    posture = posture.with_credential("CODEX_HOME", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("OPENAI_AUTH_TOKEN", tok);
-                    cmd.env("CODEX_AUTH_TOKEN", tok);
+                    posture = posture
+                        .with_credential("OPENAI_AUTH_TOKEN", tok)
+                        .with_credential("CODEX_AUTH_TOKEN", tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -306,12 +239,17 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    cmd.env("OPENAI_API_KEY", key);
+                    posture = posture.with_credential("OPENAI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
             Err(_) => "codex-default".to_string(),
         };
+
+        let mut cmd = crate::exec::agent("codex", &posture);
+        // `-` is codex's explicit "read the prompt from STDIN" argument.
+        cmd.args(["exec", "-"]);
+        cmd.args(["--model", model_name]);
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -370,30 +308,27 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::CursorAgent)
             .await;
 
-        let mut cmd = Command::new("cursor");
-        // No positional prompt: it is written to STDIN below.
-        cmd.args(["agent", "--print"]);
-        if !model.is_empty() && model != "default" {
-            cmd.args(["--model", model]);
-        }
-
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("CURSOR_CONFIG_DIR", dir);
+                    posture = posture.with_credential("CURSOR_CONFIG_DIR", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("CURSOR_AUTH_TOKEN", tok);
+                    posture = posture.with_credential("CURSOR_AUTH_TOKEN", tok);
                 }
                 acc.account_id.clone()
             }
             Err(_) => "cursor-default".to_string(),
         };
 
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        let mut cmd = crate::exec::agent("cursor", &posture);
+        // No positional prompt: it is written to STDIN below.
+        cmd.args(["agent", "--print"]);
+        if !model.is_empty() && model != "default" {
+            cmd.args(["--model", model]);
+        }
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -442,23 +377,17 @@ impl SubscriptionExecutor {
             .lease_account(ModelProvider::XAiGrok)
             .await;
 
-        let mut cmd = Command::new("grok");
-        // grok takes its single-turn prompt as a positional argument or from a
-        // file. `/dev/stdin` is the file that IS the pipe, so the prompt still
-        // travels on STDIN and argv stays a fixed dozen bytes. Verified against
-        // the installed CLI. (The previous `--prompt <text>` was not a flag
-        // this CLI has at all.)
-        cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
-
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("GROK_CONFIG_DIR", dir);
+                    posture = posture.with_credential("GROK_CONFIG_DIR", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("GROK_AUTH_TOKEN", tok);
-                    cmd.env("XAI_API_KEY", tok);
+                    posture = posture
+                        .with_credential("GROK_AUTH_TOKEN", tok)
+                        .with_credential("XAI_API_KEY", tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -466,16 +395,19 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    cmd.env("XAI_API_KEY", key);
+                    posture = posture.with_credential("XAI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
             Err(_) => "grok-default".to_string(),
         };
 
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        let mut cmd = crate::exec::agent("grok", &posture);
+        // grok takes its single-turn prompt as a positional argument or from a
+        // file. `/dev/stdin` is the file that IS the pipe, so the prompt still
+        // travels on STDIN and argv stays a fixed dozen bytes. Verified against
+        // the installed CLI; `--prompt <text>` is not a flag this CLI has.
+        cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -526,37 +458,20 @@ impl SubscriptionExecutor {
             .await;
 
         let turn_limit = std::time::Duration::from_secs(config.print_timeout_secs);
-        let mut cmd = Command::new("agy");
-        // `--print ""` keeps the flag parser happy while the real prompt
-        // arrives on STDIN as a stream-json message; see `agy_stream_input`.
-        cmd.args([
-            "--print",
-            "",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--effort",
-            &config.reasoning_effort,
-            "--print-timeout",
-            &crate::exec::agy_print_timeout_arg(turn_limit),
-            "--dangerously-skip-permissions",
-        ]);
 
-        if !model.is_empty() && model != "default" {
-            cmd.args(["--model", model]);
-        }
-
+        let mut posture = crate::exec::Posture::in_workspace(working_dir);
         let account_id = match &leased {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
-                    cmd.env("ANTIGRAVITY_CONFIG_DIR", dir);
-                    cmd.env("GEMINI_CLI_CONFIG_DIR", dir);
+                    posture = posture
+                        .with_credential("ANTIGRAVITY_CONFIG_DIR", dir)
+                        .with_credential("GEMINI_CLI_CONFIG_DIR", dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    cmd.env("ANTIGRAVITY_AUTH_TOKEN", tok);
-                    cmd.env("GEMINI_API_KEY", tok);
+                    posture = posture
+                        .with_credential("ANTIGRAVITY_AUTH_TOKEN", tok)
+                        .with_credential("GEMINI_API_KEY", tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -564,48 +479,35 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    cmd.env("GEMINI_API_KEY", key);
+                    posture = posture.with_credential("GEMINI_API_KEY", key);
                 }
                 acc.account_id.clone()
             }
             Err(_) => "agy-default".to_string(),
         };
 
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        let mut cmd = crate::exec::agent("agy", &posture);
+        crate::exec::turn::agy_turn(&mut cmd, &config.reasoning_effort, turn_limit);
+
+        if !model.is_empty() && model != "default" {
+            cmd.args(["--model", model]);
+        }
 
         // print_timeout_secs was set in 23 places and read nowhere; it now
         // actually bounds the call (invariant I5).
-        let output = run_with_prompt_on_stdin(
-            cmd,
-            &agy_stream_input(prompt),
-            turn_limit,
-            "agy subscription CLI",
-        )
-        .await?;
+        let turn = crate::exec::turn::run(cmd, prompt, turn_limit, "agy subscription CLI").await?;
 
-        let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if !output.status.success() {
-            error!(
-                "agy subscription process returned status: {}",
-                output.status
-            );
-            warn!("agy stderr: {}", stderr_str);
+        if !turn.status.success() {
+            error!("agy subscription process returned status: {}", turn.status);
+            warn!("agy stderr: {}", turn.stderr);
         }
 
-        // A non-zero exit fails the call outright. This previously fell through
-        // whenever any stdout had been produced, so a stream truncated by
-        // `Error: timeout waiting for response` was handed to the parser below
-        // and became a review verdict -- a judgement assembled from however much
-        // of the model's answer happened to arrive.
-        let stdout_str =
-            crate::exec::interpret_agy_outcome(output.status.success(), &stdout_str, &stderr_str)?;
-
-        let response = agy_stream_response(&stdout_str)
-            .map_err(|e| anyhow::anyhow!("{}; agy stderr: {}", e, stderr_str.trim()))?;
+        // A non-zero exit fails the call outright rather than falling through
+        // on whatever stdout arrived: a stream truncated by
+        // `Error: timeout waiting for response` would otherwise be handed to
+        // the parser below and become a review verdict -- a judgement assembled
+        // from however much of the model's answer happened to arrive.
+        let response = turn.into_result()?;
 
         // Record token usage in pool
         let tokens = ((prompt.len() + response.len()) as f64 / 3.8).ceil() as usize;

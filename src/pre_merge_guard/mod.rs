@@ -3,9 +3,11 @@
 
 pub mod admission;
 pub mod evaluator;
+pub mod gate_labels;
 pub mod matrix;
 pub mod report;
 pub mod scanner;
+pub mod status;
 
 pub use admission::{Absence, absence_blocks, absence_of};
 pub use evaluator::PreMergeGuard;

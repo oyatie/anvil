@@ -353,6 +353,8 @@ async fn main() -> Result<()> {
         // operator who set DATA_DIR would otherwise touch a PAUSE file nothing
         // reads.
         pause: Arc::new(anvil::pause::Pause::in_dir(config.data_dir.clone())),
+        cloud_native_guard: Arc::new(anvil::cloud_native_guard::CloudNativeGuard::new()),
+        stack_whitelist_guard: Arc::new(anvil::stack_whitelist_guard::StackWhitelistGuard::new()),
     };
 
     let res = handle_cli(app_state).await;

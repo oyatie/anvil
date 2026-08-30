@@ -6,7 +6,7 @@
 //! measurement. That was the right fix for the original defect -- absence of a
 //! finding read as absence of a problem -- and it went one step too far.
 //!
-//! Run against this repository's own pull requests, 34 of 72 gates report
+//! Run against this repository's own pull requests, many gates report
 //! `NotMeasured`, so no pull request has ever been admissible. A gate that can
 //! never pass does not make merges safer; it makes the queue unreachable, and
 //! an unreachable queue is drained by hand, which is how the certification

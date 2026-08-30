@@ -531,6 +531,28 @@ fn ledger_verdict(component: &str) -> Option<Verdict> {
 /// the repository and lands in someone else's pull request, which makes it the
 /// part that must be checked mechanically rather than the part that can be left
 /// to taste.
+/// The exemption is narrow, and this is where that is measured.
+#[test]
+fn a_type_name_is_exempt_and_a_prose_stamp_is_not() {
+    // Names a thing.
+    assert!(is_identifier_shaped("CloudNativeGuard"));
+    assert!(is_identifier_shaped("DualTrackBuildGuard"));
+    assert!(is_identifier_shaped("hyperscaler_consensus_guard"));
+    // Asserts a thing.
+    assert!(!is_identifier_shaped("Cloud-Native"));
+    assert!(!is_identifier_shaped("Hyperscalers"));
+    assert!(!is_identifier_shaped("cloud"));
+    // And the whole rule, on the two shapes that matter:
+    assert!(stamp_occurs_only_as_an_identifier(
+        "CloudNativeGuard",
+        "cloud native"
+    ));
+    assert!(!stamp_occurs_only_as_an_identifier(
+        "Cloud-Native violations found",
+        "cloud native"
+    ));
+}
+
 #[test]
 fn no_pr_visible_display_string_carries_an_aspiration_stamp() {
     let offenders: Vec<BrandViolation> = scan_production()
@@ -604,7 +626,31 @@ fn is_identifier_shaped(token: &str) -> bool {
             || IDENTIFIER_EXTRAS.contains(&c)
     });
     let has_separator = token.chars().any(|c| IDENTIFIER_SEPARATORS.contains(&c));
-    all_machine && has_separator
+    (all_machine && has_separator) || is_a_rust_type_name(token)
+}
+
+/// A bare `UpperCamelCase` word: `CloudNativeGuard`, `DualTrackBuildGuard`.
+///
+/// The separator rule above covers only half of Rust's own naming convention.
+/// Values are `snake_case` and types are `UpperCamelCase`, and both NAME a
+/// thing rather than assert one -- which is the distinction the exemption is
+/// for. Without this, `gate_proof`'s `exercises: "CloudNativeGuard"` reads as a
+/// vendor stamp, and that field must be the guard's type name: it is what stops
+/// a proof citation being satisfied by any test with a plausible title.
+///
+/// Deliberately narrow. One token, no whitespace, at least one internal capital,
+/// and no punctuation. `Cloud-Native violations` and `Hyperscalers Approved`
+/// are two words and stay flagged; `CloudNative` alone would pass, which is the
+/// same evasion the doc comment above already admits is possible and visible in
+/// review.
+fn is_a_rust_type_name(token: &str) -> bool {
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_uppercase()
+        && token.chars().all(|c| c.is_ascii_alphanumeric())
+        && token.chars().skip(1).any(|c| c.is_ascii_uppercase())
 }
 
 // ---------------------------------------------------------------------------

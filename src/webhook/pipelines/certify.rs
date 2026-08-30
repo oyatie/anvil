@@ -579,6 +579,17 @@ pub async fn certify_pull_request(
             .await;
     }
 
+    // 70..72. The three guards that had no caller: each measured its subject
+    // and no pull request was ever told.
+    let cloud_native_report = state
+        .cloud_native_guard
+        .evaluate_cloud_native(repo_dir, diff_ctx)?;
+    let stack_whitelist_report = state.stack_whitelist_guard.evaluate_stack_whitelist(
+        repo_dir, diff_ctx,
+        // `true`: authorship is not measured here. See the guard's docs.
+        true,
+    )?;
+
     let cert_report = state.pre_merge_guard.evaluate_pre_merge_gates(
         diff_ctx,
         &doc_report,
@@ -648,6 +659,8 @@ pub async fn certify_pull_request(
         test_suite_passed,
         review_verdict,
         &shape_outcome,
+        &cloud_native_report,
+        &stack_whitelist_report,
     )?;
 
     Ok(cert_report)

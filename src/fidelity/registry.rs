@@ -132,7 +132,7 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               enumerates no finding at all (publish/scorecard.rs::render), so on a pull request \
               carrying no other finding the warning row is still not printed and the row \
               \"End-to-end span instrumentation across async tasks\" \
-              (pre_merge_guard/matrix.rs::GATE_LABELS) is counted in the total without a word. Making a \
+              (pre_merge_guard/gate_labels.rs::GATE_LABELS) is counted in the total without a word. Making a \
               warning visible on a certified scorecard is a change to that renderer, which every \
               gate shares.",
         blocked_on: None,
@@ -347,6 +347,34 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               does not apply and the gate says so. generate_and_write_docs still writes only when a \
               file does not exist (doc_guard::generate_and_write_docs); it does not rewrite existing \
               documents, and a named file it leaves unchanged is not reported as updated.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "cloud_native_status",
+        aspiration: "Keep core layers free of proprietary cloud SDKs and hardcoded cloud endpoints.",
+        reference: "hexagonal architecture; vendor-neutral core",
+        fidelity: Fidelity::Heuristic,
+        gap: "Substring matching over added lines for five SDK crate prefixes and a fixed endpoint \
+              pattern list, with the layer decided by `/core/` or `-domain/` appearing in the path. It \
+              sees neither the crate graph nor whether an import is reached, so a vendor dependency \
+              introduced transitively, or through a re-export, or in a core module whose path does not \
+              say `core`, is invisible. Scope is added lines, so a vendor SDK already in the tree is \
+              never examined.",
+        blocked_on: None,
+    },
+    GateFidelity {
+        gate_id: "stack_whitelist_status",
+        aspiration: "Refuse a technology the approved stack does not name.",
+        reference: "ADR-0700..ADR-0718 approved stack manifest",
+        fidelity: Fidelity::Heuristic,
+        gap: "Six banned crate prefixes matched as substrings of added lines. A seventh unapproved \
+              technology is not refused because it is not on the list, and the list is written here \
+              rather than derived from the ADRs it cites, so an ADR that changes its mandate does not \
+              change this gate. Two of the guard's three rules -- apex-ADR immutability and \
+              unauthorized dependency expansion -- fire only when the author is known to be an agent, \
+              which this pipeline does not establish; it passes `is_human_author: true` so those two \
+              are INERT rather than asserting authorship nobody measured, and they stay inert until \
+              the pipeline measures it.",
         blocked_on: None,
     },
     GateFidelity {

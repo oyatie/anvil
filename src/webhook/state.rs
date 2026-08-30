@@ -182,4 +182,6 @@ pub struct AppState {
     pub fleet_observer: Arc<crate::fleet_observer::FleetObserver>,
     /// The control that stops Anvil without stopping the process.
     pub pause: Arc<crate::pause::Pause>,
+    pub cloud_native_guard: Arc<crate::cloud_native_guard::CloudNativeGuard>,
+    pub stack_whitelist_guard: Arc<crate::stack_whitelist_guard::StackWhitelistGuard>,
 }

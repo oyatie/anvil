@@ -2603,6 +2603,8 @@ struct NeutralGuardReports {
     bench: anvil::criterion_bench_ratchet::BenchmarkReport,
     attestation: anvil::attestation_guard::AttestationReport,
     shape: anvil::shape::facade::gate::ShapeGateOutcome,
+    cloud_native: anvil::cloud_native_guard::CloudNativeReport,
+    stack_whitelist: anvil::stack_whitelist_guard::StackWhitelistReport,
 }
 
 /// The summary string carried by every neutral report that has one.
@@ -3000,6 +3002,16 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         shape: anvil::shape::facade::gate::ShapeGateOutcome::NoSpec { reason: n() },
+        cloud_native: anvil::cloud_native_guard::CloudNativeReport {
+            is_compliant: true,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        stack_whitelist: anvil::stack_whitelist_guard::StackWhitelistReport {
+            is_compliant: true,
+            violations: Vec::new(),
+            summary: n(),
+        },
     }
 }
 
@@ -3100,6 +3112,8 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
             Some(true),
             "APPROVE",
             &r.shape,
+            &r.cloud_native,
+            &r.stack_whitelist,
         )
         .expect("the evaluator is arithmetic over the reports it is handed")
 }

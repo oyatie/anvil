@@ -137,3 +137,55 @@ fn runner_economics_spares_a_standard_runner_on_the_same_trigger() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// bench_status — CriterionBenchRatchet
+// ---------------------------------------------------------------------------
+//
+// The rule has a subject only in a hot-path file — one whose name carries
+// `bench`, `hotpath`, `proto`, `serialize`, `hash` or `crypto`. Both fixtures
+// keep that name, so the green half passes the rule rather than its
+// precondition.
+
+#[test]
+fn bench_fires_on_a_clone_marked_hot_path() {
+    let dir = scratch("bench-red");
+    let diff = concat!(
+        "diff --git a/src/serialize.rs b/src/serialize.rs\n",
+        "--- a/src/serialize.rs\n",
+        "+++ b/src/serialize.rs\n",
+        "@@ -0,0 +1,1 @@\n",
+        "+    let owned = buf.clone(); // hotpath\n",
+    );
+    let report = anvil::criterion_bench_ratchet::CriterionBenchRatchet::new()
+        .evaluate_benchmarks(&dir, &ctx(diff, vec!["src/serialize.rs"]))
+        .expect("the ratchet runs");
+    assert!(
+        !report.is_within_budget,
+        "a clone the author marked as hot-path was added and the ratchet did \
+         not see it"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn bench_spares_a_borrow_in_the_same_hot_path_file() {
+    let dir = scratch("bench-green");
+    let diff = concat!(
+        "diff --git a/src/serialize.rs b/src/serialize.rs\n",
+        "--- a/src/serialize.rs\n",
+        "+++ b/src/serialize.rs\n",
+        "@@ -0,0 +1,1 @@\n",
+        "+    let borrowed = &buf; // hotpath\n",
+    );
+    let report = anvil::criterion_bench_ratchet::CriterionBenchRatchet::new()
+        .evaluate_benchmarks(&dir, &ctx(diff, vec!["src/serialize.rs"]))
+        .expect("the ratchet runs");
+    assert!(
+        report.is_within_budget,
+        "borrowing instead of cloning is the remedy; flagging it would refuse \
+         the fix along with the defect: {}",
+        report.summary
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -44,7 +44,6 @@ pub mod deadlock_analyzer;
 pub mod debt_shrink_guard;
 pub mod doc_archival_sweeper;
 pub mod doc_guard;
-pub mod dual_track_build_guard;
 pub mod early_exit_cascade;
 pub mod ephemeral_sandbox;
 pub mod ephemeral_secrets;

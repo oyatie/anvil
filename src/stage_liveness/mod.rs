@@ -115,12 +115,6 @@ pub const STAGES: &[Stage] = &[
         owns: "stack_whitelist_guard",
         loses: "the gate publishes no verdict on any pull request",
     },
-    Stage {
-        stage: "dual_track_build_guard",
-        invocation: "dual_track_build_guard::",
-        owns: "dual_track_build_guard",
-        loses: "the gate publishes no verdict on any pull request",
-    },
 ];
 
 /// Stages with no production caller today.
@@ -166,7 +160,7 @@ pub const STAGES: &[Stage] = &[
 /// declines for `incident_sentry` and `review_memory`, and it is declined here
 /// for the same reason. It wires the day a repository under review has both
 /// tracks.
-pub const STAGES_WITHOUT_A_CALLER: usize = 1;
+pub const STAGES_WITHOUT_A_CALLER: usize = 0;
 
 /// Stages nothing outside their own files invokes.
 ///

@@ -3305,6 +3305,26 @@ fn assert_the_unresolved_thread_refusal_holds_where_it_lives() {
         unresolved_review_gate(&unresolved)
     );
 
+    // And the evaluator still reaches it. Extracting the conversion made it
+    // reachable by a test; it did not make the pipeline use it. Without this,
+    // inlining `if report.is_clean { Passed } else { Failed }` back into
+    // `evaluate_pre_merge_gates` and inverting it leaves all three links green
+    // while the gate passes on an unresolved thread -- the test would be
+    // exercising a function the product no longer calls.
+    let evaluator = anvil::source_scan::code_only(
+        &std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/pre_merge_guard/evaluator.rs"),
+        )
+        .expect("the evaluator exists"),
+    );
+    assert!(
+        evaluator.matches("unresolved_review_gate(").count() >= 2,
+        "`evaluate_pre_merge_gates` does not call `unresolved_review_gate`, so \
+         the conversion this test exercises is not the one the pipeline uses. \
+         Two occurrences are expected: the definition and the call."
+    );
+
     // The other direction, so the gate is not simply always `Failed` -- which
     // would satisfy the assertion above and refuse every pull request.
     let clean = UnresolvedReviewReport::from_threads(Vec::new());

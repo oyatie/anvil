@@ -41,14 +41,9 @@ pub async fn execute_pr_review(
         .as_ref()
         .map(|s| s.last_reviewed_head_sha.as_str());
 
-    if !force
-        && let Some(last_sha) = prev_sha
-        && last_sha == head_sha
-    {
-        info!(
-            "PR {}#{} HEAD {} was already reviewed. Skipping.",
-            repo, pr_number, head_sha
-        );
+    let admission = super::admit::admit(force, state_entry.as_ref(), head_sha);
+    info!("{repo}#{pr_number} at {head_sha}: {}", admission.reason());
+    if admission.is_skip() {
         return Ok(());
     }
 
@@ -430,6 +425,7 @@ pub async fn execute_pr_review(
     }
 
     record::certification(state, repo, pr_number, head_sha, &cert_report, enlisted).await;
+    record::completion(state, repo, pr_number, head_sha).await;
 
     Ok(())
 }

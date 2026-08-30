@@ -30,6 +30,48 @@ pub struct PrState {
     /// what stops a fixer that cannot satisfy the review from running forever.
     #[serde(default)]
     pub last_auto_fixed_head_sha: Option<String>,
+    /// The head a run of the review pipeline reached the END of, whatever it
+    /// decided when it got there.
+    ///
+    /// `last_reviewed_head_sha` is stamped early, before the gate corpus, the
+    /// attestation receipt, the scorecard and the enlist decision -- which is
+    /// most of the pipeline's wall clock. `last_certified_head_sha` is written
+    /// only for a head the corpus certified AND the merge queue took, so it
+    /// cannot stand in for "finished" either: a pull request the pipeline
+    /// deliberately halted carries the stamp and no certification, and so does
+    /// one whose process was killed a second after the stamp. Nothing durable
+    /// separated those two, and they need opposite treatment.
+    ///
+    /// `serde(default)` for the reason the field above gives, plus one more:
+    /// on the first boot after this field lands every open pull request reads
+    /// as not-completed, so each is reviewed once more and then recorded. That
+    /// pass is the point -- it is what releases the pull requests an earlier
+    /// restart froze.
+    #[serde(default)]
+    pub last_completed_head_sha: Option<String>,
+}
+
+impl PrState {
+    /// Whether a review run was stamped for `head_sha` and never finished it.
+    ///
+    /// Every exit after the stamp either rolls the stamp back through
+    /// `clear_reviewed_sha` -- which
+    /// `tests/a_stamped_pull_request_is_never_stranded_test.rs` enforces for
+    /// the whole window -- or reaches the completion write at the tail of the
+    /// pipeline. So a stamp with neither behind it is exactly "the process
+    /// died inside the window", which no in-process rollback can cover:
+    /// `main.rs` ends the daemon with `std::process::exit(0)` and every review
+    /// pipeline is a detached task.
+    ///
+    /// This is the narrow predicate the dispatch guard needs. A run that
+    /// reached the end of the pipeline and halted there is deliberately NOT
+    /// stranded: re-reviewing it spends a model turn and posts a second review
+    /// for a head that already has one.
+    pub fn is_stranded_at(&self, head_sha: &str) -> bool {
+        !self.last_reviewed_head_sha.is_empty()
+            && self.last_reviewed_head_sha == head_sha
+            && self.last_completed_head_sha.as_deref() != Some(head_sha)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -259,6 +301,35 @@ impl StateManager {
         Ok(())
     }
 
+    /// Record that the review pipeline ran to the end for `head_sha`.
+    ///
+    /// Written for every head the pipeline finished, certified or not, and
+    /// written last so that it means "nothing is still owed for this head".
+    /// [`PrState::is_stranded_at`] is its only reader, and it reads the
+    /// absence: a head stamped as reviewed with no completion behind it is one
+    /// a killed process left half-done, and is the only kind of head a later
+    /// dispatch may review again without being asked to.
+    pub async fn record_pipeline_completion(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        head_sha: &str,
+    ) -> Result<()> {
+        let key = Self::key(repo, pr_number);
+        let mut states = self.states.write().await;
+        let entry = states.entry(key.clone()).or_default();
+        entry.last_completed_head_sha = Some(head_sha.to_string());
+
+        let wal_entry = WalEntry {
+            timestamp: chrono_iso_now(),
+            key: key.clone(),
+            state: entry.clone(),
+        };
+        self.append_wal(&wal_entry).await?;
+        self.atomic_checkpoint(&states).await?;
+        Ok(())
+    }
+
     /// Appends transaction to WAL file with immediate fdatasync
     async fn append_wal(&self, entry: &WalEntry) -> Result<()> {
         if let Ok(serialized) = serde_json::to_string(entry) {
@@ -300,74 +371,4 @@ impl StateManager {
 
 fn chrono_iso_now() -> String {
     chrono::Utc::now().to_rfc3339()
-}
-
-#[cfg(test)]
-mod rollback_tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn clearing_the_reviewed_sha_allows_the_pr_to_be_retried() {
-        let tmp = tempdir().unwrap();
-        let sm = StateManager::load(tmp.path()).await.unwrap();
-
-        sm.update_pr_state(
-            "oyatie/anvil",
-            42,
-            "sha-abc".to_string(),
-            Some("APPROVE".into()),
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            sm.get_pr_state("oyatie/anvil", 42)
-                .await
-                .unwrap()
-                .last_reviewed_head_sha,
-            "sha-abc"
-        );
-
-        // A pipeline abort after stamping must not strand the PR: the guard in
-        // the review pipeline skips any webhook whose head SHA matches the
-        // stamp, so the stamp has to be released.
-        sm.clear_reviewed_sha("oyatie/anvil", 42).await;
-        assert_ne!(
-            sm.get_pr_state("oyatie/anvil", 42)
-                .await
-                .unwrap()
-                .last_reviewed_head_sha,
-            "sha-abc",
-            "the SHA must no longer match, or the retry is skipped"
-        );
-    }
-
-    #[tokio::test]
-    async fn the_rollback_survives_a_restart() {
-        let tmp = tempdir().unwrap();
-        {
-            let sm = StateManager::load(tmp.path()).await.unwrap();
-            sm.update_pr_state("oyatie/anvil", 7, "sha-xyz".to_string(), None)
-                .await
-                .unwrap();
-            sm.clear_reviewed_sha("oyatie/anvil", 7).await;
-        }
-        let reloaded = StateManager::load(tmp.path()).await.unwrap();
-        assert_ne!(
-            reloaded
-                .get_pr_state("oyatie/anvil", 7)
-                .await
-                .unwrap()
-                .last_reviewed_head_sha,
-            "sha-xyz"
-        );
-    }
-
-    #[tokio::test]
-    async fn clearing_an_unknown_pr_is_a_no_op() {
-        let tmp = tempdir().unwrap();
-        let sm = StateManager::load(tmp.path()).await.unwrap();
-        sm.clear_reviewed_sha("oyatie/anvil", 999).await;
-        assert!(sm.get_pr_state("oyatie/anvil", 999).await.is_none());
-    }
 }

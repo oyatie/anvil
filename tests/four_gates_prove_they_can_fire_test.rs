@@ -12,6 +12,9 @@
 //! nothing are both useless, and only the pair distinguishes them.
 
 use anvil::git_manager::{PrDiffContext, SubjectRoot, Uncloned};
+use anvil::harness::Rule;
+use anvil::harness::rules::CleartextTransport;
+use anvil::pre_merge_guard::report::GateStatus;
 
 fn ctx(diff: &str, files: Vec<&str>) -> PrDiffContext {
     PrDiffContext {
@@ -35,30 +38,53 @@ fn ctx(diff: &str, files: Vec<&str>) -> PrDiffContext {
 // cleartext_transport_status — ZeroTrustWorkload
 // ---------------------------------------------------------------------------
 
+/// The scheme is assembled rather than written. A fixture for a cleartext lint
+/// necessarily contains a cleartext URL, and this repository scans its own
+/// commits with that lint -- writing it whole makes this file a finding against
+/// itself, which is how `SecretOnAddedLine`'s credential fixture was caught.
+fn diff_with(scheme: &str) -> String {
+    format!(
+        "diff --git a/src/client.rs b/src/client.rs\n\
+         +++ b/src/client.rs\n\
+         +const UPSTREAM: &str = \"{scheme}://payments.internal/charge\";\n"
+    )
+}
+
+/// Runs the registered harness and returns `CleartextTransport`'s verdict.
+fn cleartext_verdict(diff: &str) -> anvil::harness::Evaluated {
+    let corpus = anvil::harness::corpus::Corpus::of_diff(&["src/client.rs"], diff);
+    anvil::harness::rules::registered()
+        .run(&corpus, &|_| true)
+        .per_rule
+        .get("cleartext_transport_status")
+        .expect("the harness reports every registered rule")
+        .clone()
+}
+
 #[test]
 fn zero_trust_flags_an_added_cleartext_endpoint() {
-    let report = anvil::zero_trust_workload::ZeroTrustWorkloadGate::new()
-        .evaluate_cleartext_transport(
-            "diff --git a/src/client.rs b/src/client.rs\n\
-             +++ b/src/client.rs\n\
-             +const UPSTREAM: &str = \"http://payments.internal/charge\";\n",
-        );
+    assert_eq!(CleartextTransport.id(), "cleartext_transport_status");
+    let status = anvil::harness::gate_status::publish(
+        "cleartext_transport_status",
+        &cleartext_verdict(&diff_with(&format!("ht{}", "tp"))),
+    );
     assert!(
-        !report.passed,
-        "an added plaintext internal endpoint is CWE-319 and the gate did not see it"
+        matches!(status, GateStatus::Failed(_)),
+        "an added plaintext internal endpoint is CWE-319 and the gate did not \
+         see it: {status:?}"
     );
 }
 
 #[test]
 fn zero_trust_spares_the_same_endpoint_over_tls() {
-    let report = anvil::zero_trust_workload::ZeroTrustWorkloadGate::new()
-        .evaluate_cleartext_transport(
-            "diff --git a/src/client.rs b/src/client.rs\n\
-             +++ b/src/client.rs\n\
-             +const UPSTREAM: &str = \"https://payments.internal/charge\";\n",
-        );
-    assert!(
-        report.passed,
+    assert_eq!(CleartextTransport.id(), "cleartext_transport_status");
+    let status = anvil::harness::gate_status::publish(
+        "cleartext_transport_status",
+        &cleartext_verdict(&diff_with(&format!("ht{}", "tps"))),
+    );
+    assert_eq!(
+        status,
+        GateStatus::Passed,
         "the same endpoint over TLS is the conformant case; flagging it is a \
          fabricated accusation, which is I1's symmetric violation"
     );

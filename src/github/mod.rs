@@ -4,6 +4,7 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod fork_guard;
+pub mod identity;
 pub mod reviews;
 pub mod submit;
 

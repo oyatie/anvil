@@ -43,6 +43,29 @@ pub struct GateFailureRecord {
     pub timestamp: DateTime<Utc>,
 }
 
+/// What one sweep found outstanding for one repository.
+///
+/// The backlog as a number, so the LEARN -> INTAKE arc has a value a ratchet
+/// can be pinned to. Depth alone would be the wrong one: a queue that grows
+/// because the audits got better is not the same as one that grows because
+/// nothing is being fixed, and `unclassified_share` is what tells them apart --
+/// an item nobody has decided a remedy for is work that has not been
+/// understood, not work that is merely pending.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkQueueRecord {
+    pub repo: String,
+    /// Outstanding items after de-duplication by derived identity.
+    pub depth: usize,
+    /// Items whose remedy nobody has classified, as a share of the whole.
+    pub unclassified_share: f64,
+    /// Classes appearing more than once. Each is a rule that should exist.
+    pub recurring: std::collections::BTreeMap<String, usize>,
+    /// Which producer raised how much, so a queue that is one producer's
+    /// output does not read as a fleet-wide backlog.
+    pub by_source: std::collections::BTreeMap<String, usize>,
+    pub recorded_at: DateTime<Utc>,
+}
+
 /// One shape measurement of one repository at one revision, as measured —
 /// counts derived from findings, never a stored verdict (I2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +88,8 @@ pub struct TelemetryStoreData {
     pub gate_failures: Vec<GateFailureRecord>,
     #[serde(default)]
     pub shape_measurements: Vec<ShapeMeasurementRecord>,
+    #[serde(default)]
+    pub work_queues: Vec<WorkQueueRecord>,
 }
 
 #[derive(Clone)]
@@ -119,6 +144,36 @@ impl TelemetryStore {
             }
         }
         let _ = self.persist_to_disk().await;
+    }
+
+    pub async fn record_work_queue(&self, rec: WorkQueueRecord) {
+        {
+            let mut d = self.data.write().await;
+            d.work_queues.push(rec);
+            // Same bound and the same reason as the shape journal: a trend,
+            // not an archive.
+            if d.work_queues.len() > 10_000 {
+                let excess = d.work_queues.len() - 10_000;
+                d.work_queues.drain(0..excess);
+            }
+        }
+        let _ = self.persist_to_disk().await;
+    }
+
+    /// The latest work queue per repository.
+    pub async fn latest_work_queues(&self) -> HashMap<String, WorkQueueRecord> {
+        let d = self.data.read().await;
+        let mut out: HashMap<String, WorkQueueRecord> = HashMap::new();
+        for rec in &d.work_queues {
+            out.entry(rec.repo.clone())
+                .and_modify(|cur| {
+                    if rec.recorded_at > cur.recorded_at {
+                        *cur = rec.clone();
+                    }
+                })
+                .or_insert_with(|| rec.clone());
+        }
+        out
     }
 
     /// The latest measurement per repository.

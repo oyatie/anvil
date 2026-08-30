@@ -6,9 +6,21 @@
 //! cycle whose every edge is individually legal and which therefore no
 //! per-edge rule can see.
 //!
+//! It also raises what the audits find into `intake::Queue`, because a finding
+//! printed and not queued is a finding that will be found again. Same reason
+//! the planning lives here: `intake` is a leaf that must not import its
+//! producers, so only a composition root may know them.
+//!
 //! Report-only (I25): blocks nobody, mutates nothing in any repository.
 
 use tracing::info;
+
+/// How long a corpus file may go untouched before the audit calls it dormant.
+///
+/// The sweep's own number rather than the CLI's default, because the sweep is
+/// unattended: a threshold tuned for a human asking once is not the threshold
+/// for something that asks every hour.
+const CORPUS_STALE_DAYS: u64 = 90;
 
 /// Start the hourly sweep over every watched repository.
 pub fn spawn(state: &crate::webhook::AppState) {
@@ -48,6 +60,54 @@ pub fn spawn(state: &crate::webhook::AppState) {
                     }
                     Err(e) => tracing::warn!("[Shape Sweep] {repo} noticed: {e}"),
                 }
+
+                // The backlog, raised from the audits that already ran.
+                //
+                // The corpus audit needs a checkout. `ensure_repo_cloned` is
+                // idempotent and the shape sweep above has already paid for it,
+                // so this is a lookup rather than a second clone. When it
+                // cannot be had, the corpus producer is ABSENT from the record
+                // rather than reported as having found nothing.
+                let corpus = match deps.git_mgr.ensure_repo_cloned(repo).await {
+                    Ok(dir) => match crate::corpus_auditor::CorpusAuditor::audit_repository(
+                        &dir,
+                        CORPUS_STALE_DAYS,
+                    ) {
+                        Ok(report) => Some(report),
+                        Err(e) => {
+                            tracing::warn!("[Intake] {repo}: corpus audit did not run: {e}");
+                            None
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("[Intake] {repo}: no checkout to audit: {e}");
+                        None
+                    }
+                };
+
+                let raised = crate::cli::intake_sweep::raise_for_repo(repo, corpus.as_ref());
+                let triage = crate::intake::triage::triage(&raised.queue);
+                let recurring: std::collections::BTreeMap<String, usize> = triage
+                    .recurring_classes()
+                    .into_iter()
+                    .map(|(c, n)| (c.to_string(), n))
+                    .collect();
+                info!(
+                    "[Intake] {repo}: {} outstanding ({:.0}% unclassified) from {:?}",
+                    raised.queue.len(),
+                    triage.unclassified_share() * 100.0,
+                    raised.by_producer
+                );
+                deps.telemetry
+                    .record_work_queue(crate::telemetry_store::WorkQueueRecord {
+                        repo: repo.clone(),
+                        depth: raised.queue.len(),
+                        unclassified_share: triage.unclassified_share(),
+                        recurring,
+                        by_source: raised.by_source(),
+                        recorded_at: chrono::Utc::now(),
+                    })
+                    .await;
             }
         }
     });

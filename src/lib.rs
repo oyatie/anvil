@@ -118,7 +118,6 @@ pub mod telemetry_store;
 pub mod toolchain;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;
-pub mod upgrade_train;
 pub mod vex_scanner;
 pub mod wasm_sandbox;
 pub mod watchdog;

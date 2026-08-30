@@ -1464,7 +1464,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         evidence: "130 lines, PURE. DependencyUpgradeCandidate + TrainOrchestrator. oyatie owns dependency \
                   currency as three mature gates: dep-freshness (1484, hermetic gate over a committed \
                   freshness mirror with snapshot_date as the as-of clock), dependency-automation (1812), \
-                  rust-toolchain-bump-proposer (2027).",
+                  rust-toolchain-bump-proposer (2027). DELETED: gate NotProvisioned, and its only callers fabricated their input.",
     },
     MigrationEntry {
         component: "vex_scanner",

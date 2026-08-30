@@ -436,7 +436,6 @@ pub async fn certify_pull_request(
     // 61. ProactiveUpgradeTrain: Proactive Dependency & Security Upgrade Train Gate
     // No dependency manifest or advisory feed is read; `breaking == 0` is
     // trivially true of the empty slice that was passed here.
-    let upgrade_train_report = state.upgrade_train.evaluate_without_dependency_source();
 
     // 62. ChaosMutationGuard: Mutation Adequacy of the Changed Lines
     let mutation_report = state
@@ -651,7 +650,6 @@ pub async fn certify_pull_request(
         &zero_trust_report,
         &carbon_report,
         &replay_report,
-        &upgrade_train_report,
         &mutation_report,
         &feature_flag_report,
         &bench_report,

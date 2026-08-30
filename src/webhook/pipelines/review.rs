@@ -76,9 +76,18 @@ pub async fn execute_pr_review(
         "Submitting AI Code Review to GitHub for {}#{}...",
         repo, pr_number
     );
+    // The diff the review was formed from is the diff its comments are anchored
+    // in. Submitting without it drops every finding to the body and posts no
+    // inline comment at all, which is what this pipeline did.
     state
         .github_client
-        .submit_pr_review(repo, pr_number, head_sha, &review_resp)
+        .submit_pr_review_with_diff(
+            repo,
+            pr_number,
+            head_sha,
+            &review_resp,
+            &diff_ctx.diff_content,
+        )
         .await?;
 
     state

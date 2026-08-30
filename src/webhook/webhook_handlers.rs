@@ -335,12 +335,13 @@ pub async fn webhook_handler(
             .map(|u| u.login.clone())
             .unwrap_or_else(|| "reviewer".to_string());
 
-        if author.contains("bot") || author.contains("antigravity") {
+        // See `github::identity::answerable`.
+        if !crate::github::identity::answerable(&author).await {
             return (
                 StatusCode::OK,
                 Json(ApiResponse {
                     success: true,
-                    message: "Ignored comment from bot".to_string(),
+                    message: "Ignored: not a comment Anvil answers".to_string(),
                 }),
             );
         }

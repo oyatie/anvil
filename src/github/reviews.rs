@@ -47,16 +47,15 @@ struct ReviewCommentPayload {
     body: String,
 }
 
-/// Submits a review whose inline comments have NOT been checked against a diff.
+/// Submits a review with no diff to anchor comments in.
 ///
-/// BLOCKED: the three call sites that reach this function live outside this
-/// lane's file (`src/github/mod.rs`, and through it `src/merge_enlister.rs` and
-/// `src/webhook/pipelines/review.rs`), and none of them threads
-/// `PrDiffContext::diff_content` through yet. Without diff text nothing is
-/// provably addressable, so no inline comment can be anchored: the empty diff
-/// makes that explicit rather than letting an un-threaded caller bypass
-/// validation silently (I22 -- a bypass by omission is not a mechanism).
-/// Findings are preserved in the review body, and the drop log names each one.
+/// The empty diff is not a placeholder: it is the correct argument for a review
+/// that carries no inline comments, which is what `merge_enlister`'s approving
+/// review is. `GitHubClient::submit_pr_review` refuses to reach this with a
+/// non-empty comment list, so an un-threaded caller cannot bypass validation by
+/// omission (I22 -- a bypass by omission is not a mechanism). The path that
+/// does have findings is `submit_pr_review_with_diff`, threaded from
+/// `PrDiffContext::diff_content`.
 pub async fn submit_pr_review_impl(
     repo: &str,
     pr_number: u64,

@@ -14,9 +14,7 @@
 //! are what stop the split being a bypass.
 
 use anvil::pre_merge_guard::GateStatus;
-use anvil::pre_merge_guard::admission::{
-    ABSENCE_POLICY, Absence, NOT_PROVISIONED_COUNT, absence_blocks, absence_of,
-};
+use anvil::pre_merge_guard::admission::{ABSENCE_POLICY, Absence, absence_blocks, absence_of};
 use anvil::pre_merge_guard::report::PreMergeCertificationReport;
 use std::collections::BTreeSet;
 
@@ -94,23 +92,6 @@ fn no_gate_is_listed_twice() {
             "{id} is listed twice; one row wins silently"
         );
     }
-}
-
-#[test]
-fn the_not_provisioned_count_is_exact_and_must_fall() {
-    // A table that only grows switches the corpus off one gate at a time.
-    // Exact, so standing up a capability removes its row in the same change --
-    // the same reason the diff-parsing ratchet is exact rather than a ceiling.
-    let n = ABSENCE_POLICY
-        .iter()
-        .filter(|(_, a)| matches!(a, Absence::NotProvisioned { .. }))
-        .count();
-    assert_eq!(
-        n, NOT_PROVISIONED_COUNT,
-        "{n} gate(s) are declared unprovisionable; NOT_PROVISIONED_COUNT records \
-         {NOT_PROVISIONED_COUNT}. If a capability was stood up, remove its row and \
-         lower the constant here in the same change."
-    );
 }
 
 #[test]

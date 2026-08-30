@@ -6,6 +6,11 @@
 
 use anvil::gate_proof::{GATE_PROOFS, is_proven, proof_qualifier, unproven_among};
 
+/// The repository-wide figure the qualifier is handed. Supplied by the caller
+/// rather than reached for -- `gate_proof` is `Migrating` and the corpus lives
+/// in a `Superseded` module -- so these fixtures state it.
+const OWING: usize = 23;
+
 /// A gate id the registry really carries, so the tests are not self-referential.
 fn a_proven_gate() -> &'static str {
     GATE_PROOFS
@@ -18,7 +23,7 @@ fn a_proven_gate() -> &'static str {
 fn a_report_whose_passing_gates_are_all_proven_says_nothing() {
     let proven = a_proven_gate();
     assert!(
-        proof_qualifier(&[proven]).is_none(),
+        proof_qualifier(&[proven], OWING).is_none(),
         "a line with nothing to qualify must not print; one that always prints \
          stops being read"
     );
@@ -26,12 +31,12 @@ fn a_report_whose_passing_gates_are_all_proven_says_nothing() {
 
 #[test]
 fn no_passing_gates_at_all_is_silence_not_a_zero() {
-    assert!(proof_qualifier(&[]).is_none());
+    assert!(proof_qualifier(&[], OWING).is_none());
 }
 
 #[test]
 fn an_unproven_passing_gate_is_named() {
-    let line = proof_qualifier(&["gate_that_owes_a_proof"]).expect("must qualify");
+    let line = proof_qualifier(&["gate_that_owes_a_proof"], OWING).expect("must qualify");
     assert!(
         line.contains("gate_that_owes_a_proof"),
         "the gate must be named, not merely counted -- a count cannot be acted \
@@ -42,7 +47,7 @@ fn an_unproven_passing_gate_is_named() {
 #[test]
 fn a_proven_gate_is_not_named_alongside_an_unproven_one() {
     let proven = a_proven_gate();
-    let line = proof_qualifier(&[proven, "gate_that_owes_a_proof"]).expect("must qualify");
+    let line = proof_qualifier(&[proven, "gate_that_owes_a_proof"], OWING).expect("must qualify");
     assert!(
         !line.contains(proven),
         "naming a gate that HAS demonstrated it can fire is a false accusation, \
@@ -69,7 +74,7 @@ fn is_proven_agrees_with_the_registry() {
 
 #[test]
 fn the_published_line_carries_no_source_indentation() {
-    let line = proof_qualifier(&["gate_that_owes_a_proof"]).expect("must qualify");
+    let line = proof_qualifier(&["gate_that_owes_a_proof"], OWING).expect("must qualify");
     assert!(
         !line.contains("  "),
         "a wrapped literal without escaped continuations carries its own \

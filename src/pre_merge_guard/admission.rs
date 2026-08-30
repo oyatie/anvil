@@ -45,7 +45,10 @@
 //!    or a subject set rather than a shrug.
 //! 3. **A `NotProvisioned` gate that ever passes is a stale declaration** and
 //!    fails a test: it measured something after all.
-//! 4. **The count ratchets down.** `NOT_PROVISIONED_COUNT` is exact, so
+//! 4. **The count ratchets down.** How many gates are unprovisionable is not
+//!    written down: it is counted from the table and bounded one-way against
+//!    this change's own merge-base, by
+//!    `tests/derived_corpus_ratchets_test.rs`. The bound is exact, so
 //!    standing up a capability forces the row out in the same change.
 
 /// Why a gate may be without a measurement.
@@ -284,11 +287,6 @@ pub const ABSENCE_POLICY: &[(&str, Absence)] = &[
 
 /// How many rows currently say the deployment cannot measure.
 ///
-/// EXACT, and it must fall. Standing up a capability removes its row in the
-/// same change, and a table that only ever grows is a way of switching the
-/// corpus off one gate at a time.
-pub const NOT_PROVISIONED_COUNT: usize = 26;
-
 /// Why this gate's absence is what it is. `Provisioned` unless argued otherwise.
 pub fn absence_of(gate_id: &str) -> Absence {
     ABSENCE_POLICY

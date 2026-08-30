@@ -133,10 +133,6 @@ pub enum Commands {
         apply: bool,
     },
     /// Run Proactive Dependency Upgrade Train on a repository
-    TrainRun {
-        #[arg(short, long, help = "Repository (e.g. oyatie/oyatie)")]
-        repo: String,
-    },
     /// Run Flaky-Test Quarantine 100x stress-run rehabilitation
     FlakeRehab {
         #[arg(short, long, help = "Repository (e.g. oyatie/oyatie)")]

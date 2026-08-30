@@ -24,7 +24,6 @@ use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::schema_evolution::SchemaEvolutionRatchet;
 use anvil::trace_context_guard::TraceContextGuard;
 use anvil::unresolved_review_guard::{ThreadScanner, UnresolvedReviewThread};
-use anvil::upgrade_train::{DependencyUpgradeCandidate, ProactiveUpgradeTrain};
 use anvil::wasm_sandbox::WasmPolicySandbox;
 use anvil::zero_trust_workload::ZeroTrustWorkloadGate;
 use std::path::PathBuf;
@@ -567,41 +566,6 @@ fn test_psa_admission_green_enforce_restricted() {
 // =========================================================================
 // 16. Proactive Upgrade Train Guard
 // =========================================================================
-
-#[test]
-fn test_upgrade_train_red_flag_breaking_major_upgrade() {
-    let train = ProactiveUpgradeTrain::new();
-    // RED: Major semver upgrade with breaking changes
-    let candidate = vec![DependencyUpgradeCandidate {
-        package_name: "tokio".to_string(),
-        current_version: "1.38.0".to_string(),
-        target_version: "2.0.0".to_string(),
-        is_major_breaking: true,
-    }];
-    let report = train.evaluate_upgrade_train(&candidate);
-    assert!(
-        !report.passed,
-        "Expected False Green prevention: Breaking major upgrade must be flagged"
-    );
-    assert_eq!(report.breaking_major_upgrades, 1);
-}
-
-#[test]
-fn test_upgrade_train_green_compatible_patch_upgrade() {
-    let train = ProactiveUpgradeTrain::new();
-    // GREEN: Compatible patch release
-    let candidate = vec![DependencyUpgradeCandidate {
-        package_name: "serde".to_string(),
-        current_version: "1.0.200".to_string(),
-        target_version: "1.0.204".to_string(),
-        is_major_breaking: false,
-    }];
-    let report = train.evaluate_upgrade_train(&candidate);
-    assert!(
-        report.passed,
-        "Expected False Red prevention: Compatible semver patch must PASS"
-    );
-}
 
 // =========================================================================
 // 17. Rust Skills Guard (Upstream 390 Rust Rules)

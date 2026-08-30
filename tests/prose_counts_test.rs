@@ -123,16 +123,65 @@ fn the_detector_reads_spelled_out_counts_and_not_ordinary_words() {
     assert_eq!(numeral("hundred"), None);
 }
 
+/// The English for a total under a hundred.
+///
+/// Exists so the fixtures below DERIVE the agreeing and disagreeing spellings
+/// from `TOTAL_GATES` instead of hardcoding them. The comment promising that
+/// was already there; the code said `"the seventy-four gates"`, so removing one
+/// gate from the corpus broke a test about prose drift by drifting.
+fn spell(n: usize) -> String {
+    const ONES: [&str; 20] = [
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+    ];
+    const TENS: [&str; 10] = [
+        "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+    ];
+    if n < 20 {
+        return ONES[n].to_string();
+    }
+    let (t, o) = (n / 10, n % 10);
+    if o == 0 {
+        TENS[t].to_string()
+    } else {
+        format!("{}-{}", TENS[t], ONES[o])
+    }
+}
+
 #[test]
 fn a_spelled_out_total_that_disagrees_is_caught() {
     assert!(remaining_claim("the sixty-gate matrix", TOTAL_GATES).is_some());
     assert!(remaining_claim("all seventy gates run", TOTAL_GATES).is_some());
     assert!(remaining_claim("all 70 gates run", TOTAL_GATES).is_some());
-    // Spelled with the current total, so this fixture follows `TOTAL_GATES`
-    // rather than pinning it: a corpus that grows must not make the
-    // "agrees with the code" case unwritable.
-    assert!(remaining_claim("the seventy-four gates", TOTAL_GATES).is_none());
-    assert!(remaining_claim("the seventy-five gates", TOTAL_GATES).is_some());
+    // Derived from `TOTAL_GATES`, so a corpus that grows or shrinks does not
+    // make the "agrees with the code" case unwritable — which is what the
+    // hardcoded spelling did the first time a gate was removed.
+    assert!(remaining_claim(&format!("the {} gates", spell(TOTAL_GATES)), TOTAL_GATES).is_none());
+    assert!(
+        remaining_claim(
+            &format!("the {} gates", spell(TOTAL_GATES + 1)),
+            TOTAL_GATES
+        )
+        .is_some()
+    );
     assert!(remaining_claim("the pre-merge gates", TOTAL_GATES).is_none());
 }
 
@@ -141,8 +190,11 @@ fn a_subset_count_is_refused_even_when_its_total_is_right() {
     // This is the sentence that rotted. It contains a CORRECT total, so a
     // detector that only validates totals reads it as clean -- which is exactly
     // what happened for however long "thirty-seven" stood.
-    let sentence = "That exemption covers thirty-seven of the seventy-four gates.";
-    let why = remaining_claim(sentence, TOTAL_GATES).expect("a subset count must be refused");
+    let sentence = format!(
+        "That exemption covers thirty-seven of the {} gates.",
+        spell(TOTAL_GATES)
+    );
+    let why = remaining_claim(&sentence, TOTAL_GATES).expect("a subset count must be refused");
     assert!(why.contains("subset"), "{why}");
 
     // Correct arithmetic does not rescue it: no total can verify a subset, so

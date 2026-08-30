@@ -248,20 +248,6 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 }
             }
         }
-        Commands::TrainRun { repo } => {
-            info!("Running Proactive Upgrade Train for {}", repo);
-            let candidates = vec![crate::upgrade_train::DependencyUpgradeCandidate {
-                package_name: "tokio".to_string(),
-                current_version: "1.38.0".to_string(),
-                target_version: "1.38.1".to_string(),
-                is_major_breaking: false,
-            }];
-            let rep = state.upgrade_train.evaluate_upgrade_train(&candidates);
-            println!(
-                "\n🚂 ProactiveUpgradeTrain Result: {}\nPending: {} | Breaking: {}\n",
-                rep.summary, rep.pending_upgrades_available, rep.breaking_major_upgrades
-            );
-        }
         Commands::FlakeRehab { repo } => {
             info!("Running Flaky-Test Quarantine Rehabilitation for {}", repo);
             let rep = state

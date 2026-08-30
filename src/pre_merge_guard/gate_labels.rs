@@ -332,11 +332,6 @@ pub const GATE_LABELS: &[(&str, &str, &str)] = &[
         "Hermetic production trace replayer & offline bug reproduction",
     ),
     (
-        "upgrade_train_status",
-        "🚂 Proactive Dependency Upgrade Train",
-        "Autonomous upstream semver & CVE patch PR scheduling",
-    ),
-    (
         "mutation_status",
         "💥 Mutation Adequacy of the Changed Lines",
         "Runs cargo-mutants over the changed lines; blocks on a mutant the suite fails to kill",

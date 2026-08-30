@@ -83,7 +83,6 @@ use crate::state::StateManager;
 use crate::supply_chain_guard::SupplyChainGuard;
 use crate::trace_context_guard::TraceContextGuard;
 use crate::unresolved_review_guard::UnresolvedReviewGuard;
-use crate::upgrade_train::ProactiveUpgradeTrain;
 use crate::vex_scanner::OpenVexReachabilityScanner;
 use crate::wasm_sandbox::WasmPolicySandbox;
 use crate::zero_day_patcher::ZeroDayAutoPatcher;
@@ -163,7 +162,6 @@ pub struct AppState {
     pub zero_trust_workload: Arc<ZeroTrustWorkloadGate>,
     pub carbon_aware: Arc<CarbonAwareComputeRatchet>,
     pub replay_harness: Arc<DeterministicReplayHarness>,
-    pub upgrade_train: Arc<ProactiveUpgradeTrain>,
     pub chaos_mutation_guard: Arc<ChaosMutationGuard>,
     pub feature_flag_ratchet: Arc<FeatureFlagRatchet>,
     pub criterion_bench_ratchet: Arc<CriterionBenchRatchet>,

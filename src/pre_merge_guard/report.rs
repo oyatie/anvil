@@ -89,7 +89,6 @@ pub struct PreMergeCertificationReport {
     pub cleartext_transport_status: GateStatus,
     pub carbon_compute_status: GateStatus,
     pub replay_harness_status: GateStatus,
-    pub upgrade_train_status: GateStatus,
     pub mutation_status: GateStatus,
     pub feature_flag_status: GateStatus,
     pub bench_status: GateStatus,
@@ -202,7 +201,7 @@ impl GateProvenance {
 /// `all_statuses_matches_the_declared_total` pins this against the real field
 /// count, so the next corpus change fails a test instead of silently making
 /// seven strings lie.
-pub const TOTAL_GATES: usize = 74;
+pub const TOTAL_GATES: usize = 73;
 
 /// Gate outcomes, split four ways.
 ///
@@ -303,7 +302,6 @@ impl PreMergeCertificationReport {
             &self.cleartext_transport_status,
             &self.carbon_compute_status,
             &self.replay_harness_status,
-            &self.upgrade_train_status,
             &self.mutation_status,
             &self.feature_flag_status,
             &self.bench_status,
@@ -391,7 +389,6 @@ impl PreMergeCertificationReport {
             ),
             ("carbon_compute_status", &self.carbon_compute_status),
             ("replay_harness_status", &self.replay_harness_status),
-            ("upgrade_train_status", &self.upgrade_train_status),
             ("mutation_status", &self.mutation_status),
             ("feature_flag_status", &self.feature_flag_status),
             ("bench_status", &self.bench_status),
@@ -711,7 +708,6 @@ impl PreMergeCertificationReport {
             cleartext_transport_status: status_for("cleartext_transport_status"),
             carbon_compute_status: status_for("carbon_compute_status"),
             replay_harness_status: status_for("replay_harness_status"),
-            upgrade_train_status: status_for("upgrade_train_status"),
             mutation_status: status_for("mutation_status"),
             feature_flag_status: status_for("feature_flag_status"),
             bench_status: status_for("bench_status"),
@@ -954,7 +950,6 @@ mod tests {
             cleartext_transport_status: GateStatus::Passed,
             carbon_compute_status: GateStatus::Passed,
             replay_harness_status: GateStatus::Passed,
-            upgrade_train_status: GateStatus::Passed,
             mutation_status: GateStatus::Passed,
             feature_flag_status: GateStatus::Passed,
             bench_status: GateStatus::Passed,

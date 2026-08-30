@@ -8,8 +8,8 @@ use crate::change_delivery::facade::plan::{
     manifests_from_tree, owners_from_tree, plan_from_report,
 };
 use crate::change_delivery::ports::{
-    GateResult, LandingPolicy, LocalGate, PurityViolation, RewriteEngine, Shard, VcsPort,
-    select_independent, shard_plan,
+    GateResult, LandingPolicy, LocalGate, PurityViolation, RewriteEngine, Shard, VcsPort, sequence,
+    shard_plan,
 };
 use crate::shape::facade::GitTreeAtRev;
 use crate::shape::facade::TreeSource;
@@ -74,8 +74,21 @@ pub async fn deliver_dry_run(
         tracing::warn!("{p}");
     }
     let shards = shard_plan(&plan, &owners, &manifests, &policy);
-    let mut selected = select_independent(&shards, &[], &policy);
+    // The first wave may open now; the rest are reported, not dropped.
+    // `truncate` bounds this run, not the plan.
+    let sequenced = sequence(&shards, &[], &policy);
+    let mut selected = sequenced.waves.first().cloned().unwrap_or_default();
     selected.truncate(req.max);
+    if sequenced.waves.len() > 1 || !sequenced.held.is_empty() || !sequenced.stuck.is_empty() {
+        tracing::info!(
+            rounds = sequenced.waves.len(),
+            placed = sequenced.placed(),
+            held = sequenced.held.len(),
+            stuck = sequenced.stuck.len(),
+            opening_now = selected.len(),
+            "shape delivery is sequenced across rounds"
+        );
+    }
 
     let vcs = GitLaneVcs::new(req.repo_dir.join(".anvil-lanes"));
     let rewrite = MechanicalRewrite;

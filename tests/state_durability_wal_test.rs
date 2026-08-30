@@ -79,6 +79,7 @@ async fn test_state_manager_wal_crash_recovery_replay() {
             review_count: 5,
             last_review_verdict: Some("APPROVED".to_string()),
             last_certified_head_sha: Some("uncheckpointed-sha-999".to_string()),
+            last_completed_head_sha: Some("uncheckpointed-sha-999".to_string()),
             is_enlisted_in_merge_queue: true,
         },
     };
@@ -171,4 +172,73 @@ async fn the_reviewed_sha_rollback_reaches_the_write_ahead_log() {
          land leaves this pull request stamped at a head nothing will review \
          again. The log holds:\n{wal}"
     );
+}
+
+/// The reviewed-SHA rollback, measured where the pipeline relies on it.
+///
+/// These three sat in a `#[cfg(test)]` module inside `src/state.rs`. They
+/// assert nothing a `tests/` file cannot reach, and that file is over ADR-0719
+/// D-35's budget, so they live beside their siblings here.
+#[tokio::test]
+async fn clearing_the_reviewed_sha_allows_the_pr_to_be_retried() {
+    let tmp = tempdir().unwrap();
+    let sm = StateManager::load(tmp.path()).await.unwrap();
+
+    sm.update_pr_state(
+        "oyatie/anvil",
+        42,
+        "sha-abc".to_string(),
+        Some("APPROVE".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sm.get_pr_state("oyatie/anvil", 42)
+            .await
+            .unwrap()
+            .last_reviewed_head_sha,
+        "sha-abc"
+    );
+
+    // A pipeline abort after stamping must not strand the PR: the guard in
+    // the review pipeline skips any webhook whose head SHA matches the
+    // stamp, so the stamp has to be released.
+    sm.clear_reviewed_sha("oyatie/anvil", 42).await;
+    assert_ne!(
+        sm.get_pr_state("oyatie/anvil", 42)
+            .await
+            .unwrap()
+            .last_reviewed_head_sha,
+        "sha-abc",
+        "the SHA must no longer match, or the retry is skipped"
+    );
+}
+
+#[tokio::test]
+async fn the_rollback_survives_a_restart() {
+    let tmp = tempdir().unwrap();
+    {
+        let sm = StateManager::load(tmp.path()).await.unwrap();
+        sm.update_pr_state("oyatie/anvil", 7, "sha-xyz".to_string(), None)
+            .await
+            .unwrap();
+        sm.clear_reviewed_sha("oyatie/anvil", 7).await;
+    }
+    let reloaded = StateManager::load(tmp.path()).await.unwrap();
+    assert_ne!(
+        reloaded
+            .get_pr_state("oyatie/anvil", 7)
+            .await
+            .unwrap()
+            .last_reviewed_head_sha,
+        "sha-xyz"
+    );
+}
+
+#[tokio::test]
+async fn clearing_an_unknown_pr_is_a_no_op() {
+    let tmp = tempdir().unwrap();
+    let sm = StateManager::load(tmp.path()).await.unwrap();
+    sm.clear_reviewed_sha("oyatie/anvil", 999).await;
+    assert!(sm.get_pr_state("oyatie/anvil", 999).await.is_none());
 }

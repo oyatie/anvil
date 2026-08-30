@@ -28,6 +28,22 @@ pub struct OutageRecoveryReport {
     pub status: String,
 }
 
+/// Whether the sweep hands this pull request to the review pipeline.
+///
+/// Deliberately wide: a head with no certification recorded against it may be
+/// one nothing has ever looked at, one a run finished and halted, or one a
+/// restart stranded mid-certification. The sweep cannot tell those apart and
+/// does not try -- it dispatches all three, and
+/// `webhook::pipelines::admit::admit` decides under the per-PR lock which of
+/// them is actually reviewed. Narrowing here instead would put the decision
+/// where the concurrent case cannot be seen.
+pub fn needs_certification(prior: Option<&crate::state::PrState>, head_sha: &str) -> bool {
+    match prior {
+        Some(st) => st.last_certified_head_sha.as_deref() != Some(head_sha),
+        None => true,
+    }
+}
+
 #[derive(Clone)]
 pub struct OutageRecoveryReconciler {
     github_client: Arc<GitHubClient>,
@@ -71,14 +87,8 @@ impl OutageRecoveryReconciler {
                             continue;
                         }
 
-                        // Inspect persistent state to detect uncertified or stale PRs
                         let state_opt = self.state_mgr.get_pr_state(repo, pr.number).await;
-                        let needs_cert = match state_opt {
-                            Some(st) => st.last_certified_head_sha.as_deref() != Some(&pr.head_sha),
-                            None => true,
-                        };
-
-                        if needs_cert {
+                        if needs_certification(state_opt.as_ref(), &pr.head_sha) {
                             info!(
                                 "⚡ [Outage Recovery] Detected uncertified PR {}#{} (head_sha: {}). Queuing for certification...",
                                 repo, pr.number, pr.head_sha

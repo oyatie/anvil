@@ -71,3 +71,31 @@ pub async fn certification(
         );
     }
 }
+
+/// Record that the pipeline reached the end for this head.
+///
+/// Unconditional where [`certification`] is conditional, and written after it:
+/// this says only that nothing is still owed for `head_sha`, which is true of a
+/// halted run and a certified one alike. `PrState::is_stranded_at` reads its
+/// absence, so a head that reaches here is never recovered again, and a head
+/// whose process died before here always is.
+///
+/// The two writes are separate calls in `execute_pr_review` rather than one,
+/// because they answer different questions and a later reader of either must
+/// not have to know the other's condition. Ordered certification-first so that
+/// a death between them leaves a pull request that is enlisted and reads as
+/// uncertified-but-unfinished, which the next sweep resolves; the reverse order
+/// leaves one that reads as finished with no record of the enlistment.
+pub async fn completion(state: &AppState, repo: &str, pr_number: u64, head_sha: &str) {
+    if let Err(e) = state
+        .state_mgr
+        .record_pipeline_completion(repo, pr_number, head_sha)
+        .await
+    {
+        warn!(
+            "Could not persist the pipeline-completion record for {}#{}: {}. This head will be \
+             re-reviewed as stranded on the next dispatch.",
+            repo, pr_number, e
+        );
+    }
+}

@@ -354,6 +354,9 @@ pub async fn execute_pr_review(
     };
     let phase = crate::webhook::next_phase::next_phase(&situation);
 
+    crate::merge_enlister::disarm::unless_enlisting(&state.merge_enlister, &phase, repo, pr_number)
+        .await;
+
     let mut enlisted = false;
     match phase {
         crate::webhook::next_phase::NextPhase::Enlist => {

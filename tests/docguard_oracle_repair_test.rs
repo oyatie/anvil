@@ -2594,7 +2594,6 @@ struct NeutralGuardReports {
     wasm: anvil::wasm_sandbox::WasmSandboxReport,
     consistency: anvil::consistency_guard::ConsistencyReport,
     flake_quarantine: anvil::flake_quarantine::FlakeQuarantineReport,
-    zero_trust: anvil::zero_trust_workload::ZeroTrustWorkloadReport,
     carbon: anvil::carbon_aware::CarbonComputeReport,
     replay: anvil::replay_harness::ReplayHarnessReport,
     mutation: anvil::chaos_mutation_guard::MutationAdequacyReport,
@@ -2946,12 +2945,6 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             rehabilitated_tests_restored: 0,
             summary: n(),
         },
-        zero_trust: anvil::zero_trust_workload::ZeroTrustWorkloadReport {
-            passed: true,
-            cleartext_transport_findings: 0,
-            violations: Vec::new(),
-            summary: n(),
-        },
         carbon: anvil::carbon_aware::CarbonComputeReport {
             status: GateStatus::Passed,
             passed: true,
@@ -3093,7 +3086,6 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
             &r.wasm,
             &r.consistency,
             &r.flake_quarantine,
-            &r.zero_trust,
             &r.carbon,
             &r.replay,
             &r.mutation,

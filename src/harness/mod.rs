@@ -47,8 +47,10 @@ use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
 pub mod apply;
+pub mod cleartext_scan;
 pub mod corpus;
 pub mod evidence;
+pub mod gate_status;
 pub mod judgement;
 pub mod requires;
 pub mod rules;

@@ -123,7 +123,6 @@ pub mod wasm_sandbox;
 pub mod watchdog;
 pub mod webhook;
 pub mod zero_day_patcher;
-pub mod zero_trust_workload;
 
 // Compatibility aliases
 pub use automated_canary as auto_canary_analysis;

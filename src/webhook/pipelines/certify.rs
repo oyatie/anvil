@@ -418,11 +418,6 @@ pub async fn certify_pull_request(
         .flake_quarantine
         .evaluate_quarantine_lifecycle(&diff_ctx.changed_files);
 
-    // 58. ZeroTrustWorkloadGate: Zero-Trust SPIFFE/SPIRE Workload Identity & mTLS Gate
-    let zero_trust_report = state
-        .zero_trust_workload
-        .evaluate_cleartext_transport(&diff_ctx.diff_content);
-
     // 59. CarbonAwareComputeRatchet: GreenOps Carbon-Aware Compute Efficiency Ratchet
     // Nothing meters CPU time or grid intensity; the two literals passed here
     // were compared against each other and published as joules.
@@ -647,7 +642,6 @@ pub async fn certify_pull_request(
         &wasm_report,
         &consistency_report,
         &flake_quarantine_report,
-        &zero_trust_report,
         &carbon_report,
         &replay_report,
         &mutation_report,

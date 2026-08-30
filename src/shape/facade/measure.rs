@@ -3,6 +3,7 @@
 //! unit registry, read dependency edges, and run the engine.
 
 use super::cli::SPEC_PATH;
+use crate::git_manager::SubjectRoot;
 use crate::shape::adapters::{
     BuckLabelDeps, CargoManifestDeps, GitTreeAtRev, RustUseDeps, TsImportDeps,
 };
@@ -15,7 +16,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub struct MeasureRequest {
-    pub repo_dir: PathBuf,
+    pub repo_dir: SubjectRoot,
     pub rev: String,
     /// Label for the report (e.g. `oyatie/oyatie`).
     pub repo: String,

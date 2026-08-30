@@ -146,7 +146,10 @@ fn recent_changes() -> Vec<(String, PrDiffContext)> {
                 previous_head_sha: None,
                 diff_content,
                 changed_files,
-                repo_working_dir: repo_root(),
+                repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+                    repo_root(),
+                    anvil::git_manager::Uncloned::TestFixture,
+                ),
             };
             (sha, ctx)
         })

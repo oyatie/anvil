@@ -453,7 +453,10 @@ fn diff_ctx(repo: &str, repo_dir: &Path, changed: &[&str]) -> PrDiffContext {
         // `diff_ctx.repo_working_dir` would then rewrite gate counts in, and
         // delete exemption sentences from, the live README.md, docs/doctrine.md,
         // openapi/openapi.yaml and docs/adr/*.md of the repository under test.
-        repo_working_dir: repo_dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            repo_dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     }
 }
 

@@ -335,7 +335,10 @@ fn diff_of(files: &[(&str, &str)]) -> PrDiffContext {
         head_sha: "bbbbbbb".to_string(),
         diff_content,
         changed_files: files.iter().map(|(p, _)| p.to_string()).collect(),
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }

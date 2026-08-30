@@ -696,7 +696,10 @@ mod tests {
             base_sha: "base".to_string(),
             head_sha: "head".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp/anvil-cov"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp/anvil-cov"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: diff.to_string(),
             changed_files: changed.iter().map(|s| s.to_string()).collect(),
             is_incremental: false,

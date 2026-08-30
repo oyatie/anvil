@@ -30,7 +30,10 @@ pub(super) async fn dispatch(action: ShapeAction) -> Result<()> {
                     .unwrap_or_else(|| repo_dir.display().to_string())
             });
             let req = crate::shape::facade::measure::MeasureRequest {
-                repo_dir,
+                repo_dir: crate::git_manager::SubjectRoot::asserted(
+                    repo_dir,
+                    crate::git_manager::Uncloned::OperatorSupplied,
+                ),
                 rev,
                 repo: label,
                 spec_override,
@@ -116,7 +119,10 @@ pub(super) async fn dispatch(action: ShapeAction) -> Result<()> {
             plan_out,
         } => {
             let req = crate::shape::facade::measure::MeasureRequest {
-                repo_dir: repo_dir.clone(),
+                repo_dir: crate::git_manager::SubjectRoot::asserted(
+                    repo_dir.clone(),
+                    crate::git_manager::Uncloned::OperatorSupplied,
+                ),
                 rev,
                 repo: repo_dir
                     .canonicalize()

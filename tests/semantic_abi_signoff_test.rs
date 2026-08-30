@@ -32,7 +32,12 @@ fn breaking_diff() -> PrDiffContext {
              +pub fn sweep_repo(dir: &str, rev: &str) -> Swept {}\n"
             .to_string(),
         changed_files: vec!["src/shape/facade/sweep.rs".to_string()],
-        repo_working_dir: std::path::PathBuf::new(),
+        // The diff carries the whole subject here: this fixture is a patch
+        // with no tree behind it, so the root names nothing on purpose.
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::new(),
+            anvil::git_manager::Uncloned::NoTreeBehindThisDiff,
+        ),
     }
 }
 

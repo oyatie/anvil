@@ -104,7 +104,12 @@ impl Corpus {
             previous_head_sha: None,
             diff_content: diff.to_string(),
             changed_files: paths.iter().map(|p| p.to_string()).collect(),
-            repo_working_dir: std::path::PathBuf::new(),
+            // A patch with no tree behind it. Named, so a rule reaching for a file
+            // through this corpus is refused rather than silently reading anvil's.
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::new(),
+                crate::git_manager::Uncloned::NoTreeBehindThisDiff,
+            ),
         })
     }
 

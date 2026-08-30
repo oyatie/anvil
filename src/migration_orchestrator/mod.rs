@@ -133,7 +133,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ ALTER TABLE records ADD COLUMN tenant_id UUID;".to_string(),
             changed_files: vec!["migrations/0010_add_tenant.sql".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

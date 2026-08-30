@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use super::subject::SubjectRoot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrDiffContext {
@@ -11,7 +11,7 @@ pub struct PrDiffContext {
     pub previous_head_sha: Option<String>,
     pub diff_content: String,
     pub changed_files: Vec<String>,
-    pub repo_working_dir: PathBuf,
+    pub repo_working_dir: SubjectRoot,
 }
 
 /// One file's portion of a unified diff, split by what the change does.

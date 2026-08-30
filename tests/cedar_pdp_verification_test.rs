@@ -68,7 +68,10 @@ fn a_diff_touching(work_dir: &std::path::Path, changed: &[&str]) -> PrDiffContex
         head_sha: "b".to_string(),
         is_incremental: false,
         previous_head_sha: None,
-        repo_working_dir: work_dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            work_dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         changed_files: files(changed),
         diff_content: String::new(),
     }

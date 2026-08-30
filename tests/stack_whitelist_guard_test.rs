@@ -14,7 +14,10 @@ fn test_stack_whitelist_guard_catches_unapproved_mongodb_and_actix() {
         head_sha: "bbb".to_string(),
         diff_content: "+ use mongodb::Client;\n+ use actix_web::App;".to_string(),
         changed_files: vec!["crates/api/src/lib.rs".to_string()],
-        repo_working_dir: std::path::PathBuf::from("/tmp"),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("/tmp"),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };
@@ -40,7 +43,10 @@ fn test_apex_adr_immutability_lock_allows_human_blocks_agent() {
         head_sha: "bbb".to_string(),
         diff_content: "+ Modified apex doctrine".to_string(),
         changed_files: vec!["docs/decisions/ADR-0709-general-live-apex.md".to_string()],
-        repo_working_dir: std::path::PathBuf::from("/tmp"),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("/tmp"),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };
@@ -84,7 +90,10 @@ fn test_asymmetric_dependency_ratchet_allows_removal_blocks_addition() {
              @@ -5,0 +6,1 @@\n [dependencies]\n+serde_yaml = \"0.9\"\n"
             .to_string(),
         changed_files: vec!["crates/api/Cargo.toml".to_string()],
-        repo_working_dir: std::path::PathBuf::from("/tmp"),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("/tmp"),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };
@@ -111,7 +120,10 @@ fn test_asymmetric_dependency_ratchet_allows_removal_blocks_addition() {
              @@ -5,1 +5,0 @@\n [dependencies]\n-legacy_crate = \"0.1\"\n"
             .to_string(),
         changed_files: vec!["crates/api/Cargo.toml".to_string()],
-        repo_working_dir: std::path::PathBuf::from("/tmp"),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("/tmp"),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };

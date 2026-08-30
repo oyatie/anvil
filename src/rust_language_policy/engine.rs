@@ -1,8 +1,11 @@
-use anyhow::Result;
-use regex::Regex;
-use serde::{Deserialize, Serialize};
+//! The rule table, and what one finding of it looks like.
+//!
+//! The scan that applies these lives in `scan.rs`: the rules are a table and
+//! the scan is a loop, and only the loop changes when a rule's subject changes.
+//! `engine.rs` keeps the table because `fidelity::registry` cites these rule
+//! declarations by line, and a citation is worth what it points at.
 
-use crate::git_manager::PrDiffContext;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustQualityFinding {
@@ -25,7 +28,7 @@ impl RustQualityFinding {
     /// `unsafe-safety-comment` to a fabricated category and a `MEDIUM` severity
     /// used to leave the whole suite green while the gate announced "3 of which
     /// can block" and went on blocking on 4. There is one table now.
-    fn from_rule(
+    pub(super) fn from_rule(
         rule: &RustRule,
         file_path: &str,
         line_snippet: &str,
@@ -86,37 +89,50 @@ impl RustRule {
     }
 }
 
-const ERR_NO_UNWRAP_PROD: RustRule = RustRule {
+pub(super) const ERR_NO_UNWRAP_PROD: RustRule = RustRule {
     id: "err-no-unwrap-prod",
     category: "Error Handling",
     severity: "HIGH",
 };
-const OWN_SLICE_OVER_VEC: RustRule = RustRule {
+pub(super) const OWN_SLICE_OVER_VEC: RustRule = RustRule {
     id: "own-slice-over-vec",
     category: "Ownership & Borrowing",
     severity: "MEDIUM",
 };
-const ASYNC_SPAWN_BLOCKING: RustRule = RustRule {
+/// Whether this text opens an async scope.
+///
+/// `async fn`, `async move {` and a bare `async {` all do. A `.await` does not
+/// open one, but it can only appear inside one, so it is evidence too -- and it
+/// is what a hunk header carries when the header names a line rather than the
+/// signature.
+pub(super) fn declares_async(text: &str) -> bool {
+    text.contains("async fn")
+        || text.contains("async move")
+        || text.contains("async {")
+        || text.contains(".await")
+}
+
+pub(super) const ASYNC_SPAWN_BLOCKING: RustRule = RustRule {
     id: "async-spawn-blocking",
     category: "Async/Await",
     severity: "HIGH",
 };
-const ASYNC_NO_LOCK_AWAIT: RustRule = RustRule {
+pub(super) const ASYNC_NO_LOCK_AWAIT: RustRule = RustRule {
     id: "async-no-lock-await",
     category: "Async/Await",
     severity: "HIGH",
 };
-const MEM_AVOID_FORMAT: RustRule = RustRule {
+pub(super) const MEM_AVOID_FORMAT: RustRule = RustRule {
     id: "mem-avoid-format",
     category: "Memory Optimization",
     severity: "MEDIUM",
 };
-const UNSAFE_SAFETY_COMMENT: RustRule = RustRule {
+pub(super) const UNSAFE_SAFETY_COMMENT: RustRule = RustRule {
     id: "unsafe-safety-comment",
     category: "Unsafe Code",
     severity: "CRITICAL",
 };
-const OWN_BORROW_OVER_CLONE: RustRule = RustRule {
+pub(super) const OWN_BORROW_OVER_CLONE: RustRule = RustRule {
     id: "own-borrow-over-clone",
     category: "Ownership & Borrowing",
     severity: "MEDIUM",
@@ -148,180 +164,4 @@ pub fn categories() -> Vec<String> {
         }
     }
     out
-}
-
-pub struct RustQualityEngine;
-
-impl Default for RustQualityEngine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RustQualityEngine {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Evaluates added diff lines in `.rs` files against every rule in [`RULES`].
-    pub fn scan_diff(&self, diff_ctx: &PrDiffContext) -> Result<Vec<RustQualityFinding>> {
-        let mut findings = Vec::new();
-
-        let unwrap_re = Regex::new(r#"\.unwrap\(\)"#).unwrap();
-        let ref_string_re =
-            Regex::new(r#"(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z0-9_]+\s*\(.*?\s*:\s*&String"#)
-                .unwrap();
-        let ref_vec_re =
-            Regex::new(r#"(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z0-9_]+\s*\(.*?\s*:\s*&Vec<"#)
-                .unwrap();
-        let blocking_in_async_re = Regex::new(r#"(?i)std::fs::read|std::thread::sleep"#).unwrap();
-        let format_literal_re = Regex::new(r#"format!\(\s*"[^"{}]*"\s*\)"#).unwrap();
-        let unsafe_block_re = Regex::new(r#"\bunsafe\s*\{"#).unwrap();
-        let sync_mutex_in_async_re = Regex::new(r#"(?i)std::sync::Mutex::lock"#).unwrap();
-        let clone_on_copy_re = Regex::new(r#"(?i)\.(?:clone\(\))\s*;.*//\s*primitive"#).unwrap();
-
-        // `None` until the diff names a file, rather than seeding it with the
-        // first changed file.
-        //
-        // The seed made every line before the first `+++ b/` header a finding
-        // against `changed_files[0]` -- a real file in the pull request, which
-        // is what made it credible. Measured on the old code, a diff whose only
-        // line was `+let v = maybe.unwrap();` produced:
-        //
-        //     rust_policy idiomatic=false findings=["src/innocent.rs"]
-        //
-        // A reviewer opens src/innocent.rs, finds no `.unwrap()`, and has
-        // nothing to tell them the gate picked that name off a list.
-        let mut current_file: Option<String> = None;
-        let mut is_test_file = false;
-        let mut prev_line = String::new();
-
-        for line in diff_ctx.diff_content.lines() {
-            if let Some(stripped) = line.strip_prefix("+++ b/") {
-                let path = stripped.trim().to_string();
-                // `path.contains("test")` spared `src/latest_state.rs` and
-                // `src/attestation_guard.rs` while charging every production
-                // file that merely says the word. Cargo's layout is the rule.
-                is_test_file = crate::source_scan::paths::is_test_source(&path)
-                    || path.contains("/benches/")
-                    || path.ends_with("_bench.rs")
-                    || path.contains("/mocks/")
-                    || path.ends_with("_mock.rs");
-                current_file = Some(path);
-                prev_line.clear();
-                continue;
-            }
-
-            // No header yet: this hunk belongs to no file the diff has named,
-            // and a finding that cannot name its file is not one to report.
-            let Some(current_file) = current_file.as_deref() else {
-                continue;
-            };
-
-            if !current_file.ends_with(".rs") {
-                continue;
-            }
-
-            if line.starts_with('+') && !line.starts_with("+++") {
-                let code_line = &line[1..].trim();
-
-                // 1. [err-no-unwrap-prod] - Avoid .unwrap() or empty .expect("") in production code
-                let has_unwrap = unwrap_re.is_match(code_line);
-                let has_empty_expect =
-                    code_line.contains(".expect(\"\")") || code_line.contains(".expect(\"TODO\")");
-                if !is_test_file
-                    && (has_unwrap || has_empty_expect)
-                    && !code_line.contains("// test")
-                    && !code_line.contains("#[cfg(test)]")
-                {
-                    findings.push(RustQualityFinding::from_rule(
-                        &ERR_NO_UNWRAP_PROD,
-                        current_file,
-                        code_line,
-                        "Use of `.unwrap()` or empty `.expect(\"\")` in production code can cause unrecoverable panics.",
-                        "Use the `?` operator, `.context()`, or handle the error explicitly with `match`/`if let`.",
-                    ));
-                }
-
-                // 2. [own-slice-over-vec] - Accept &str instead of &String, &[T] instead of &Vec<T>
-                if ref_string_re.is_match(code_line) {
-                    findings.push(RustQualityFinding::from_rule(
-                        &OWN_SLICE_OVER_VEC,
-                        current_file,
-                        code_line,
-                        "Accepting `&String` forces heap allocations for string slices.",
-                        "Change parameter type from `&String` to `&str`.",
-                    ));
-                }
-                if ref_vec_re.is_match(code_line) {
-                    findings.push(RustQualityFinding::from_rule(
-                        &OWN_SLICE_OVER_VEC,
-                        current_file,
-                        code_line,
-                        "Accepting `&Vec<T>` prevents callers from passing array slices or small collections.",
-                        "Change parameter type from `&Vec<T>` to `&[T]`.",
-                    ));
-                }
-
-                // 3. [async-spawn-blocking] - Blocking calls inside async executor
-                if blocking_in_async_re.is_match(code_line) && !is_test_file {
-                    findings.push(RustQualityFinding::from_rule(
-                        &ASYNC_SPAWN_BLOCKING,
-                        current_file,
-                        code_line,
-                        "Synchronous blocking I/O or `std::thread::sleep` inside async code starves the Tokio worker threads.",
-                        "Use `tokio::fs`, `tokio::time::sleep`, or offload blocking calls to `tokio::task::spawn_blocking`.",
-                    ));
-                }
-
-                // 4. [async-no-lock-await] - Synchronous mutex lock inside async code
-                if sync_mutex_in_async_re.is_match(code_line) && !is_test_file {
-                    findings.push(RustQualityFinding::from_rule(
-                        &ASYNC_NO_LOCK_AWAIT,
-                        current_file,
-                        code_line,
-                        "Using `std::sync::Mutex` in async contexts can cause deadlocks if held across `.await` points.",
-                        "Use `tokio::sync::Mutex` or narrow the lock scope to a synchronous block.",
-                    ));
-                }
-
-                // 5. [mem-avoid-format] - Avoid format!() on constant strings
-                if format_literal_re.is_match(code_line) {
-                    findings.push(RustQualityFinding::from_rule(
-                        &MEM_AVOID_FORMAT,
-                        current_file,
-                        code_line,
-                        "Calling `format!(\"literal\")` without placeholders causes an unnecessary heap allocation.",
-                        "Use `.to_string()`, `String::from(\"...\")`, or string literals directly.",
-                    ));
-                }
-
-                // 6. [unsafe-safety-comment] - SAFETY: comment required for all unsafe blocks
-                if unsafe_block_re.is_match(code_line) && !prev_line.contains("SAFETY:") {
-                    findings.push(RustQualityFinding::from_rule(
-                        &UNSAFE_SAFETY_COMMENT,
-                        current_file,
-                        code_line,
-                        "Unsafe block missing mandatory `// SAFETY:` explanation justifying memory invariants.",
-                        "Document memory layout, pointer validity, and alignment guarantees in a preceding `// SAFETY:` comment.",
-                    ));
-                }
-
-                // 7. [own-borrow-over-clone] - Unnecessary clone on primitive
-                if clone_on_copy_re.is_match(code_line) {
-                    findings.push(RustQualityFinding::from_rule(
-                        &OWN_BORROW_OVER_CLONE,
-                        current_file,
-                        code_line,
-                        "Redundant `.clone()` on value that implements `Copy` or can be borrowed.",
-                        "Remove `.clone()` call or pass by reference.",
-                    ));
-                }
-
-                prev_line = code_line.to_string();
-            }
-        }
-
-        Ok(findings)
-    }
 }

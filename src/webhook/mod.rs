@@ -1,5 +1,6 @@
 pub mod admin_auth;
 pub mod forwarder_supervisor;
+pub mod hmac;
 pub mod manual_handlers;
 pub mod next_phase;
 pub mod pipelines;

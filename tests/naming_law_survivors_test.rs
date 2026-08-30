@@ -79,7 +79,6 @@ const SUPERSEDED_OFF_LIMITS: &[&str] = &[
     "predictive_test_selector",
     "cross_service_impact",
     "supply_chain_guard",
-    "upgrade_train",
     "corpus_auditor",
     "zero_trust_workload",
     "account_pool",

@@ -86,7 +86,6 @@ use anvil::state::StateManager;
 use anvil::supply_chain_guard::SupplyChainGuard;
 use anvil::trace_context_guard::TraceContextGuard;
 use anvil::unresolved_review_guard::UnresolvedReviewGuard;
-use anvil::upgrade_train::ProactiveUpgradeTrain;
 use anvil::vex_scanner::OpenVexReachabilityScanner;
 use anvil::wasm_sandbox::WasmPolicySandbox;
 use anvil::webhook::AppState;
@@ -229,7 +228,6 @@ async fn main() -> Result<()> {
     let zero_trust_workload = Arc::new(ZeroTrustWorkloadGate::new());
     let carbon_aware = Arc::new(CarbonAwareComputeRatchet::new());
     let replay_harness = Arc::new(DeterministicReplayHarness::new());
-    let upgrade_train = Arc::new(ProactiveUpgradeTrain::new());
     let chaos_mutation_guard = Arc::new(ChaosMutationGuard::new());
     let feature_flag_ratchet = Arc::new(FeatureFlagRatchet::new());
     let criterion_bench_ratchet = Arc::new(CriterionBenchRatchet::new());
@@ -332,7 +330,6 @@ async fn main() -> Result<()> {
         zero_trust_workload: zero_trust_workload.clone(),
         carbon_aware: carbon_aware.clone(),
         replay_harness: replay_harness.clone(),
-        upgrade_train: upgrade_train.clone(),
         chaos_mutation_guard: chaos_mutation_guard.clone(),
         feature_flag_ratchet: feature_flag_ratchet.clone(),
         criterion_bench_ratchet: criterion_bench_ratchet.clone(),

@@ -458,16 +458,6 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
         blocked_on: Some("a production trace recorder, which does not exist yet"),
     },
     GateFidelity {
-        gate_id: "upgrade_train_status",
-        aspiration: "Schedule autonomous semver and CVE upgrade PRs from the dependency graph.",
-        reference: "Dependabot; Renovate",
-        fidelity: Fidelity::Aspirational,
-        gap: "The review pipeline supplied no candidates, and the verdict `let passed = breaking == 0;` \
-              is trivially true of an empty list, so the train was certified without being read. \
-              Now reports NotMeasured (upgrade_train/mod.rs::evaluate_upgrade_train).",
-        blocked_on: Some("a dependency manifest reader and an advisory feed"),
-    },
-    GateFidelity {
         gate_id: "consistency_status",
         aspiration: "Verify multi-region write ordering via vector clocks and CRDT convergence.",
         reference: "Lamport clocks; Shapiro CRDTs",

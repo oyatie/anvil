@@ -64,7 +64,6 @@ use crate::stacked_diffs::StackedDiffsReport;
 use crate::supply_chain_guard::SupplyChainReport;
 use crate::trace_context_guard::TraceContextReport;
 use crate::unresolved_review_guard::UnresolvedReviewReport;
-use crate::upgrade_train::UpgradeTrainReport;
 use crate::vex_scanner::OpenVexReport;
 use crate::wasm_sandbox::WasmSandboxReport;
 use crate::zero_day_patcher::ZeroDayReport;
@@ -167,7 +166,6 @@ impl PreMergeGuard {
         zero_trust_report: &ZeroTrustWorkloadReport,
         carbon_report: &CarbonComputeReport,
         replay_report: &ReplayHarnessReport,
-        upgrade_train_report: &UpgradeTrainReport,
         mutation_report: &MutationAdequacyReport,
         feature_flag_report: &FeatureFlagReport,
         bench_report: &BenchmarkReport,
@@ -577,7 +575,6 @@ impl PreMergeGuard {
         let replay_harness_status = replay_report.status.clone();
 
         // 60. Proactive Dependency Upgrade Train
-        let upgrade_train_status = upgrade_train_report.status.clone();
 
         // 61. Mutation Adequacy of the Changed Lines
         //
@@ -750,7 +747,6 @@ impl PreMergeGuard {
             cleartext_transport_status,
             carbon_compute_status,
             replay_harness_status,
-            upgrade_train_status,
             mutation_status,
             feature_flag_status,
             bench_status,

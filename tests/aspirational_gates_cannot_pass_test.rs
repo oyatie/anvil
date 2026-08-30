@@ -10,7 +10,7 @@
 //! seven of the eighteen `Aspirational` gates published `Passed` on every pull
 //! request the corpus certified — `deadlock_status`, `openvex_status`,
 //! `cosign_status`, `auto_rollback_status`, `carbon_compute_status`,
-//! `replay_harness_status` and `upgrade_train_status`.
+//! `replay_harness_status`.
 //!
 //! WHY PROMPTING WOULD NOT PREVENT THIS
 //! ------------------------------------

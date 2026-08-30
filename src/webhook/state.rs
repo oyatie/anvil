@@ -86,7 +86,6 @@ use crate::unresolved_review_guard::UnresolvedReviewGuard;
 use crate::vex_scanner::OpenVexReachabilityScanner;
 use crate::wasm_sandbox::WasmPolicySandbox;
 use crate::zero_day_patcher::ZeroDayAutoPatcher;
-use crate::zero_trust_workload::ZeroTrustWorkloadGate;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -159,7 +158,6 @@ pub struct AppState {
     pub wasm_sandbox: Arc<WasmPolicySandbox>,
     pub consistency_guard: Arc<ActiveActiveConsistencyGuard>,
     pub flake_quarantine: Arc<FlakeQuarantineLifecycle>,
-    pub zero_trust_workload: Arc<ZeroTrustWorkloadGate>,
     pub carbon_aware: Arc<CarbonAwareComputeRatchet>,
     pub replay_harness: Arc<DeterministicReplayHarness>,
     pub chaos_mutation_guard: Arc<ChaosMutationGuard>,

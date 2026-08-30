@@ -54,7 +54,6 @@
 //! shape and no cleartext URL.
 
 use anvil::pre_merge_guard::{GateStatus, PreMergeScanner};
-use anvil::zero_trust_workload::ZeroTrustWorkloadGate;
 use std::process::Command;
 
 // ---------------------------------------------------------------------------
@@ -110,9 +109,16 @@ fn secret_finding(line: &str) -> Option<String> {
 }
 
 fn cleartext_findings(diff: &str) -> usize {
-    ZeroTrustWorkloadGate::new()
-        .evaluate_cleartext_transport(diff)
-        .cleartext_transport_findings
+    cleartext_violations(diff).len()
+}
+/// The lint the retired `ZeroTrustWorkloadGate` wrapped, called directly.
+///
+/// The gate is gone: `zero_trust_workload` is `Superseded` in
+/// `migration::registry` against oyatie's SPIFFE implementation, and the
+/// CWE-319 text lint that shared its module moved into the harness. The
+/// judgement these tests exercise is unchanged.
+fn cleartext_violations(diff: &str) -> Vec<String> {
+    anvil::harness::cleartext_scan::IdentityAuditor::new().audit_cleartext_transport(diff)
 }
 
 // ---------------------------------------------------------------------------
@@ -574,7 +580,6 @@ fn recent_commit_diffs(n: usize) -> Vec<(String, String)> {
 /// had live false positives in this tree; the counts are in the pull request.
 #[test]
 fn neither_gate_fires_on_this_repositorys_own_history() {
-    let gate = ZeroTrustWorkloadGate::new();
     let mut findings: Vec<String> = Vec::new();
 
     for (sha, diff) in recent_commit_diffs(20) {
@@ -601,7 +606,7 @@ fn neither_gate_fires_on_this_repositorys_own_history() {
                 ));
             }
         }
-        for v in gate.evaluate_cleartext_transport(&diff).violations {
+        for v in cleartext_violations(&diff) {
             findings.push(format!("{} cleartext: {v}", &sha[..8]));
         }
     }

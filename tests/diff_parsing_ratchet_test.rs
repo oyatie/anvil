@@ -73,7 +73,14 @@ const ALLOWED: &[(&str, &str)] = &[
          attributes no finding, so it has no path to get wrong",
     ),
     (
-        "harness/rules.rs::fixture",
+        "harness/rules/cleartext_transport.rs::fixture",
+        "CONSTRUCTS a diff, for the reason the entry below gives. Every \
+         converted gate adds one of these, so the allowlist grows by a rule's \
+         fixture rather than by a parser -- which is the distinction this \
+         ratchet is drawn on",
+    ),
+    (
+        "harness/rules/secret_on_added_line.rs::fixture",
         "CONSTRUCTS a diff, it does not read one: `Rule::fixture` builds the \
          seeded defect and its conformant twin, and a fixture that spells a \
          `+++ b/` header contains the literal without parsing anything. This is \

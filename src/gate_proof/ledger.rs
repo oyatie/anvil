@@ -133,7 +133,7 @@ pub const GATE_PROOFS: &[GateProof] = &[
     },
     GateProof {
         gate_id: "cleartext_transport_status",
-        exercises: "ZeroTrustWorkloadGate",
+        exercises: "CleartextTransport",
         fires_on: "zero_trust_flags_an_added_cleartext_endpoint",
         spares: "zero_trust_spares_the_same_endpoint_over_tls",
     },

@@ -40,6 +40,7 @@ use crate::flake_quarantine::FlakeQuarantineReport;
 use crate::formal_verification::FormalVerificationReport;
 use crate::ghost_migration_harness::GhostMigrationReport;
 use crate::git_manager::PrDiffContext;
+
 use crate::gitops_drift_reconciler::GitOpsDriftReport;
 use crate::gitops_promotion::GitOpsPromotionReport;
 use crate::hermetic_build::HermeticBuildReport;
@@ -69,7 +70,6 @@ use crate::unresolved_review_guard::UnresolvedReviewReport;
 use crate::vex_scanner::OpenVexReport;
 use crate::wasm_sandbox::WasmSandboxReport;
 use crate::zero_day_patcher::ZeroDayReport;
-use crate::zero_trust_workload::ZeroTrustWorkloadReport;
 
 pub struct PreMergeGuard;
 
@@ -165,7 +165,6 @@ impl PreMergeGuard {
         wasm_report: &WasmSandboxReport,
         consistency_report: &ConsistencyReport,
         flake_quarantine_report: &FlakeQuarantineReport,
-        zero_trust_report: &ZeroTrustWorkloadReport,
         carbon_report: &CarbonComputeReport,
         replay_report: &ReplayHarnessReport,
         mutation_report: &MutationAdequacyReport,
@@ -564,11 +563,7 @@ impl PreMergeGuard {
         let flake_quarantine_status = flake_quarantine_report.status.clone();
 
         // 57. Zero-Trust SPIFFE Workload Identity
-        let cleartext_transport_status = if zero_trust_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(zero_trust_report.summary.clone())
-        };
+        let cleartext_transport_status = super::harness_gates::cleartext_transport(diff_ctx);
 
         // 58. GreenOps Carbon-Aware Compute
         let carbon_compute_status = carbon_report.status.clone();

@@ -80,7 +80,6 @@ const SUPERSEDED_OFF_LIMITS: &[&str] = &[
     "cross_service_impact",
     "supply_chain_guard",
     "corpus_auditor",
-    "zero_trust_workload",
     "account_pool",
     "cli",
 ];

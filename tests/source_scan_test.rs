@@ -129,7 +129,7 @@ fn code_only_is_not_re_spelled_a_ninth_time() {
                     // Rust scanner was tried and reverted: the URL guard went
                     // with it and a cleartext-endpoint test found zero where it
                     // expects one. Rule of Three applies to the same LOGIC.
-                    let different_language = p.ends_with("zero_trust_workload/identity_auditor.rs");
+                    let different_language = p.ends_with("harness/cleartext_scan.rs");
                     if defines && !delegates && !different_language {
                         found.push(p.display().to_string());
                     }

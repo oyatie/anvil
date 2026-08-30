@@ -9,7 +9,7 @@
 //! raised, and the sweep must consult them each pass — a queue built once at
 //! start-up is a snapshot, not a backlog.
 
-use anvil::cli::intake_sweep::raise_for_repo;
+use anvil::cli::intake_sweep::{AuditInputs, raise_for_repo};
 
 /// A corpus report with one unauthorised SSOT claim, which is a real finding
 /// the auditor raises.
@@ -33,7 +33,7 @@ fn an_empty_corpus_report() -> anvil::corpus_auditor::CorpusAuditReport {
 
 #[test]
 fn the_postmortem_ledger_reaches_the_queue() {
-    let raised = raise_for_repo("oyatie/anvil", None);
+    let raised = raise_for_repo("oyatie/anvil", &AuditInputs::default());
     assert!(
         raised.by_producer.contains_key("postmortem"),
         "the postmortem producer must run every sweep: {:?}",
@@ -51,13 +51,19 @@ fn the_postmortem_ledger_reaches_the_queue() {
 /// "we looked and found nothing".
 #[test]
 fn a_corpus_audit_that_could_not_run_is_absent_not_zero() {
-    let could_not_look = raise_for_repo("oyatie/anvil", None);
+    let could_not_look = raise_for_repo("oyatie/anvil", &AuditInputs::default());
     assert!(
         !could_not_look.by_producer.contains_key("corpus_auditor"),
         "an audit that did not run must be absent from the record, not a zero"
     );
 
-    let looked_and_found_nothing = raise_for_repo("oyatie/anvil", Some(&an_empty_corpus_report()));
+    let looked_and_found_nothing = raise_for_repo(
+        "oyatie/anvil",
+        &AuditInputs {
+            corpus: Some(&an_empty_corpus_report()),
+            ..Default::default()
+        },
+    );
     assert_eq!(
         looked_and_found_nothing.by_producer.get("corpus_auditor"),
         Some(&0),
@@ -67,8 +73,20 @@ fn a_corpus_audit_that_could_not_run_is_absent_not_zero() {
 
 #[test]
 fn a_corpus_finding_is_raised_as_work() {
-    let empty = raise_for_repo("oyatie/anvil", Some(&an_empty_corpus_report()));
-    let found = raise_for_repo("oyatie/anvil", Some(&a_corpus_finding()));
+    let empty = raise_for_repo(
+        "oyatie/anvil",
+        &AuditInputs {
+            corpus: Some(&an_empty_corpus_report()),
+            ..Default::default()
+        },
+    );
+    let found = raise_for_repo(
+        "oyatie/anvil",
+        &AuditInputs {
+            corpus: Some(&a_corpus_finding()),
+            ..Default::default()
+        },
+    );
     assert_eq!(
         found.by_producer.get("corpus_auditor"),
         Some(&1),
@@ -87,7 +105,13 @@ fn a_corpus_finding_is_raised_as_work() {
 /// re-certify every open pull request on every pass.
 #[test]
 fn raising_the_same_finding_twice_yields_one_item() {
-    let once = raise_for_repo("oyatie/anvil", Some(&a_corpus_finding()));
+    let once = raise_for_repo(
+        "oyatie/anvil",
+        &AuditInputs {
+            corpus: Some(&a_corpus_finding()),
+            ..Default::default()
+        },
+    );
     let twice = {
         let mut q = anvil::intake::Queue::new();
         let report = a_corpus_finding();

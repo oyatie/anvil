@@ -68,9 +68,16 @@ pub fn spawn(state: &crate::webhook::AppState) {
                 // so this is a lookup rather than a second clone. When it
                 // cannot be had, the corpus producer is ABSENT from the record
                 // rather than reported as having found nothing.
-                let corpus = match deps.git_mgr.ensure_repo_cloned(repo).await {
-                    Ok(dir) => match crate::corpus_auditor::CorpusAuditor::audit_repository(
-                        &dir,
+                let clone_dir = match deps.git_mgr.ensure_repo_cloned(repo).await {
+                    Ok(dir) => Some(dir),
+                    Err(e) => {
+                        tracing::warn!("[Intake] {repo}: no checkout to audit: {e}");
+                        None
+                    }
+                };
+                let corpus = clone_dir.as_ref().and_then(|dir| {
+                    match crate::corpus_auditor::CorpusAuditor::audit_repository(
+                        dir,
                         CORPUS_STALE_DAYS,
                     ) {
                         Ok(report) => Some(report),
@@ -78,14 +85,16 @@ pub fn spawn(state: &crate::webhook::AppState) {
                             tracing::warn!("[Intake] {repo}: corpus audit did not run: {e}");
                             None
                         }
-                    },
-                    Err(e) => {
-                        tracing::warn!("[Intake] {repo}: no checkout to audit: {e}");
-                        None
                     }
-                };
+                });
 
-                let raised = crate::cli::intake_sweep::raise_for_repo(repo, corpus.as_ref());
+                // The tracker audit is absent, not empty: `SweepDeps` holds no
+                // forge client, so nobody looked.
+                let inputs = crate::cli::intake_sweep::AuditInputs {
+                    corpus: corpus.as_ref(),
+                    issues: None,
+                };
+                let raised = crate::cli::intake_sweep::raise_for_repo(repo, &inputs);
                 let triage = crate::intake::triage::triage(&raised.queue);
                 let recurring: std::collections::BTreeMap<String, usize> = triage
                     .recurring_classes()

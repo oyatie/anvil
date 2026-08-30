@@ -11,7 +11,7 @@
 //! producers, so only a composition root may know all of them at once. The
 //! hourly sweep is that root for repository-level work.
 //!
-//! # Four producers, not six, and the two absences are the point
+//! # Two producers here, and the other four each for a stated reason
 //!
 //! `incident_sentry::work_items` cannot return a non-empty vec: its
 //! `live_golden_signals` returns `None` unconditionally, so the report is
@@ -21,8 +21,29 @@
 //! nothing — the exact defect `fidelity` exists to name, committed on the
 //! intake side instead of the gate side.
 //!
+//! `gitops_drift_reconciler` is not a sweep producer at all. Its
+//! `work_items` hangs off `GitOpsDriftReport`, which only
+//! `evaluate_gitops_drift(repo_dir, diff_ctx)` produces — it needs a pull
+//! request. Its home is the certification pipeline, which holds one; the hourly
+//! sweep never will.
+//!
+//! `issue_auditor::work_items` is repo-scoped and belongs here, and cannot be
+//! reached yet: it needs the tracker, and `SweepDeps` carries a git manager, a
+//! telemetry store and a data directory but no forge client. `AuditInputs`
+//! carries the slot so the gap is a `None` a reader can see rather than a
+//! producer nobody remembers.
+//!
 //! They are named here rather than silently skipped, so the gap is visible to a
-//! reader and so wiring them later is one line each once they measure anything.
+//! reader and so wiring each is one line once its input can be reached.
+//!
+//! # Absent is not empty, per producer
+//!
+//! Each input arrives as an `Option`, and `None` means the producer could not
+//! run: an unreadable checkout, a forge call that failed. It is recorded as the
+//! producer being ABSENT rather than as it having found nothing. A sweep that
+//! could not reach the forge and one that reached it and found a clean tracker
+//! must not print the same backlog depth, because the number is read as a
+//! statement about the repository and only one of them is.
 
 use std::collections::BTreeMap;
 
@@ -54,15 +75,23 @@ impl Raised {
 /// Raise the postmortem ledger's unbuilt remedies and the corpus audit's
 /// findings for one repository.
 ///
-/// `corpus` is `None` when the audit could not run — an unreadable checkout, a
-/// clone that did not complete. That is recorded as the producer being absent
-/// rather than as it having found nothing, because "we did not look" and "we
-/// looked and there was nothing" are the two answers this whole codebase exists
-/// to keep apart.
-pub fn raise_for_repo(
-    repo: &str,
-    corpus: Option<&crate::corpus_auditor::CorpusAuditReport>,
-) -> Raised {
+/// What the audits produced for one repository, each independently absent.
+///
+/// A struct rather than a fourth positional `Option`: the producers are added
+/// to one at a time as they gain a caller, and a call site that reads
+/// `(repo, None, None, Some(x))` says nothing about which producer is which.
+#[derive(Default)]
+pub struct AuditInputs<'a> {
+    pub corpus: Option<&'a crate::corpus_auditor::CorpusAuditReport>,
+    pub issues: Option<&'a [crate::issue_reconciler::issue_auditor::IssueAuditFinding]>,
+}
+
+/// Every field of `inputs` is `None` when that audit could not run — an
+/// unreadable checkout, a forge call that failed. That is recorded as the
+/// producer being absent rather than as it having found nothing, because "we
+/// did not look" and "we looked and there was nothing" are the two answers this
+/// whole codebase exists to keep apart.
+pub fn raise_for_repo(repo: &str, inputs: &AuditInputs<'_>) -> Raised {
     let mut queue = Queue::new();
     let mut by_producer: BTreeMap<&'static str, usize> = BTreeMap::new();
 
@@ -79,8 +108,14 @@ pub fn raise_for_repo(
     };
 
     raise_all("postmortem", crate::postmortem::work_items(repo));
-    if let Some(corpus) = corpus {
+    if let Some(corpus) = inputs.corpus {
         raise_all("corpus_auditor", corpus.work_items(repo));
+    }
+    if let Some(issues) = inputs.issues {
+        raise_all(
+            "issue_auditor",
+            crate::issue_reconciler::issue_auditor::work_items(issues, repo),
+        );
     }
 
     Raised { queue, by_producer }

@@ -10,7 +10,6 @@
 //! The review pipeline re-certifies every head it sees. Until this change, what
 //! it did with an inadmissible one was `warn!`.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 fn repo() -> PathBuf {
@@ -25,34 +24,12 @@ fn repo() -> PathBuf {
 /// oversized-file ratchet is a thing this repository does routinely, and a
 /// check that a split silently blinds is the defect these very tests describe.
 /// It bit this file within an hour of being written.
+///
+/// Delegated rather than spelled here: a copy that walks only the top level of
+/// a directory misses the module whose own split has a split inside it, and a
+/// scan missing part of its subject reports nothing wrong with that part.
 fn production(module: &str) -> String {
-    let base = repo().join(module);
-    let mut paths = Vec::new();
-    let as_file = base.with_extension("rs");
-    if as_file.is_file() {
-        paths.push(as_file);
-    }
-    if base.is_dir() {
-        for e in fs::read_dir(&base).into_iter().flatten().flatten() {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "rs") {
-                paths.push(p);
-            }
-        }
-    }
-    assert!(
-        !paths.is_empty(),
-        "no production source found for `{module}`, so this scan would report \
-         nothing wrong with anything"
-    );
-    paths.sort();
-    paths
-        .iter()
-        .map(|p| {
-            anvil::source_scan::without_test_modules(&fs::read_to_string(p).unwrap_or_default())
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    anvil::source_scan::paths::module_source(module, &repo())
 }
 
 /// The call exists and asks the forge for the right thing.

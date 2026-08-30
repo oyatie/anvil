@@ -40,7 +40,10 @@ fn rust_sources() -> Vec<PathBuf> {
 /// exactly what a single source of truth costs if nobody checks the source.
 #[test]
 fn the_constructor_every_site_defers_to_passes_the_flag() {
-    let src = std::fs::read_to_string("src/exec/turn.rs").expect("the turn constructor exists");
+    let src = anvil::source_scan::paths::module_source(
+        "src/exec/turn",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let at = src.find("pub fn agy_turn(").unwrap_or_else(|| {
         panic!(
             "`agy_turn` is gone. If the constructor moved, this test must \

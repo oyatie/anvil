@@ -46,12 +46,10 @@ fn the_new_build_is_the_source_and_the_running_binary_is_the_target() {
 /// both ends while explaining the defect -- cannot satisfy the scan.
 #[test]
 fn the_swap_command_names_the_new_build_as_the_source() {
-    let src = anvil::source_scan::code_only(
-        &std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/handlers.rs"),
-        )
-        .expect("the cli handlers exist"),
-    );
+    let src = anvil::source_scan::code_only(&anvil::source_scan::paths::module_source(
+        "src/cli/handlers",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    ));
 
     let at = src
         .find("execute_atomic_binary_swap(")

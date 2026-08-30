@@ -62,7 +62,10 @@ fn one_value_yields_every_deadline_for_a_supervised_turn() {
 fn the_doc_parity_probe_takes_all_three_deadlines_from_that_one_value() {
     // Source-level, because the defect was numbers in separate places that
     // could not disagree within any single value a unit test could inspect.
-    let src = std::fs::read_to_string("src/doc_guard/mod.rs").expect("doc_guard source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/doc_guard",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code = anvil::source_scan::without_commentary(&src);
 
     assert!(

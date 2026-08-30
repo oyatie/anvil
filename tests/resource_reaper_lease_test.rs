@@ -442,8 +442,10 @@ async fn reclaim_removes_a_worktree_whose_directory_still_exists() {
 /// of it. Prompting will not keep that flag out of the code; this will.
 #[test]
 fn force_is_never_passed_to_git_worktree_remove() {
-    let src = std::fs::read_to_string("src/self_governance/resource_reaper.rs")
-        .expect("resource_reaper.rs must exist");
+    let src = anvil::source_scan::paths::module_source(
+        "src/self_governance/resource_reaper",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     // Comments explain why --force is banned; they must not trip the ban.
     let code: String = src

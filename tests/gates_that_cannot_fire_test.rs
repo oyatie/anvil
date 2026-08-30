@@ -138,14 +138,13 @@ fn ctx(diff: &str, changed: &[&str]) -> PrDiffContext {
 /// impossible, which is the opposite of what these checks are for. String
 /// literals are kept: a published sentence is code, and it is where a
 /// fabricated claim would live.
-fn production_source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-    let production = match s.find("#[cfg(test)]") {
-        Some(i) => &s[..i],
-        None => &s[..],
-    };
-    production
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
         .lines()
         .map(code_only)
         .collect::<Vec<_>>()
@@ -1016,7 +1015,7 @@ fn chaos_source_declares_no_fault_it_cannot_inject_and_no_recovery_it_did_not_ti
 /// they could not find. The evaluator is where it was written.
 #[test]
 fn no_gate_blocks_a_merge_by_naming_a_sandbox_that_does_not_exist() {
-    let src = production_source("src/pre_merge_guard/evaluator.rs");
+    let src = production_source("src/pre_merge_guard/evaluator");
     assert!(
         !src.contains("preview sandbox"),
         "the chaos gate blocked with \"provoked unhandled panic/outage in preview \
@@ -1034,7 +1033,7 @@ fn no_gate_blocks_a_merge_by_naming_a_sandbox_that_does_not_exist() {
 /// from a boolean, which collapses `NotMeasured` into `Passed`.
 #[test]
 fn the_evaluator_reads_these_three_verdicts_instead_of_rebuilding_them() {
-    let code: String = production_source("src/pre_merge_guard/evaluator.rs")
+    let code: String = production_source("src/pre_merge_guard/evaluator")
         .lines()
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
@@ -1068,7 +1067,7 @@ fn the_evaluator_reads_these_three_verdicts_instead_of_rebuilding_them() {
 /// coat: the argument is a literal that is empty on every pull request forever.
 #[test]
 fn the_pipeline_reads_commit_subjects_rather_than_passing_an_empty_slice() {
-    let src = production_source("src/webhook/pipelines/certify.rs");
+    let src = production_source("src/webhook/pipelines/certify");
     let flat: String = src.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
@@ -1090,7 +1089,7 @@ fn the_pipeline_reads_commit_subjects_rather_than_passing_an_empty_slice() {
 /// database leader failed over anywhere in `src/chaos_injector`.
 #[test]
 fn the_matrix_claims_no_capability_these_three_gates_do_not_have() {
-    let src = production_source("src/pre_merge_guard/matrix.rs");
+    let src = production_source("src/pre_merge_guard/matrix");
     let offenders: Vec<&str> = [
         "AST linting",
         "Synthetic packet loss, DNS jitter & DB failover certification",

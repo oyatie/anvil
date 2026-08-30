@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, bail};
 use std::sync::Arc;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::github::GitHubClient;
@@ -242,7 +241,7 @@ impl MergeEnlister {
         // token's permission level, and neither was verified for this change.
         // The flag narrows the certify-to-enable race; it does not make a moved
         // head unmergeable.
-        let mut cmd = Command::new("gh");
+        let mut cmd = crate::exec::gh();
         cmd.args([
             "pr",
             "merge",
@@ -295,7 +294,7 @@ impl MergeEnlister {
             err
         );
 
-        let mut retry_cmd = Command::new("gh");
+        let mut retry_cmd = crate::exec::gh();
         retry_cmd.args([
             "pr",
             "merge",
@@ -382,7 +381,7 @@ impl MergeEnlister {
         );
 
         // Step 1: Check GitHub Review Decision using structured JSON parsing
-        let mut check_cmd = Command::new("gh");
+        let mut check_cmd = crate::exec::gh();
         check_cmd.args([
             "pr",
             "view",
@@ -549,7 +548,7 @@ impl MergeEnlister {
                 current_body.to_string()
             };
 
-            let mut edit_cmd = Command::new("gh");
+            let mut edit_cmd = crate::exec::gh();
             edit_cmd.args([
                 "pr",
                 "edit",

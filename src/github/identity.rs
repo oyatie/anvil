@@ -16,7 +16,6 @@
 //! to somebody else's branch rather than a refusal that is merely missed.
 
 use crate::exec::{ExecClass, run_bounded};
-use tokio::process::Command;
 
 /// The login, or `None` if it could not be established.
 ///
@@ -28,7 +27,7 @@ pub async fn authenticated_login() -> Option<String> {
     if let Some(cached) = LOGIN.get() {
         return cached.clone();
     }
-    let mut cmd = Command::new("gh");
+    let mut cmd = crate::exec::gh();
     cmd.args(["api", "user", "--jq", ".login"]);
     let answer = match run_bounded(cmd, ExecClass::Api, "gh api user").await {
         Ok(out) if out.status.success() => {

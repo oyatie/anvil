@@ -1,4 +1,30 @@
 //! The diff scan: added lines in `.rs` files, against the rule table.
+//!
+//! # What the scan withholds, and why
+//!
+//! **The file a finding names.** `current_file` is `None` until the diff names
+//! one, rather than being seeded with `changed_files[0]`. The seed made every
+//! line before the first `+++ b/` header a finding against a real file in the
+//! pull request, which is what made it credible: a diff whose only line was
+//! `+let v = maybe.unwrap();` reported `findings=["src/innocent.rs"]`, and a
+//! reviewer opening that file found no `.unwrap()` and nothing to tell them the
+//! name came off a list.
+//!
+//! **Async scope.** Two rules here are named for what they do to an async
+//! executor -- starving Tokio workers, deadlocking across an `.await`. Neither
+//! is true of the same call in a synchronous function, where blocking is simply
+//! how the code works, so firing on every line was a HIGH-severity accusation
+//! against correct code: I1's symmetric violation. The answer is diff-scoped
+//! because the evidence is: `@@` headers carry the enclosing item and added
+//! lines can declare their own, and when neither says async the rules withhold
+//! rather than guess. Any `fn`, nested or not, closes the scope -- a
+//! synchronous function declared inside an async one is still synchronous.
+//!
+//! **The sync-mutex pattern.** `.lock().unwrap()` is the std spelling and only
+//! the std spelling: `std::sync::Mutex::lock` returns a `LockResult` that must
+//! be unwrapped, while `tokio::sync::Mutex::lock` returns a future that must be
+//! awaited. Keying on the literal path `std::sync::Mutex::lock`, which is not
+//! how anyone calls it, meant the rule could hardly fire.
 
 use anyhow::Result;
 use regex::Regex;
@@ -35,45 +61,16 @@ impl RustQualityEngine {
             Regex::new(r#"(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z0-9_]+\s*\(.*?\s*:\s*&Vec<"#)
                 .unwrap();
         let blocking_in_async_re = Regex::new(r#"(?i)std::fs::read|std::thread::sleep"#).unwrap();
-        // `.lock().unwrap()` is the std spelling and only the std spelling:
-        // `std::sync::Mutex::lock` returns a `LockResult` that must be
-        // unwrapped, while `tokio::sync::Mutex::lock` returns a future that
-        // must be awaited. The previous pattern was the literal path
-        // `std::sync::Mutex::lock`, which is not how anyone calls it, so the
-        // rule could hardly fire at all.
         let format_literal_re = Regex::new(r#"format!\(\s*"[^"{}]*"\s*\)"#).unwrap();
         let unsafe_block_re = Regex::new(r#"\bunsafe\s*\{"#).unwrap();
         let sync_mutex_in_async_re = Regex::new(r#"\.lock\(\)\s*\.(?:unwrap|expect)\("#).unwrap();
         let clone_on_copy_re = Regex::new(r#"(?i)\.(?:clone\(\))\s*;.*//\s*primitive"#).unwrap();
 
-        // `None` until the diff names a file, rather than seeding it with the
-        // first changed file.
-        //
-        // The seed made every line before the first `+++ b/` header a finding
-        // against `changed_files[0]` -- a real file in the pull request, which
-        // is what made it credible. Measured on the old code, a diff whose only
-        // line was `+let v = maybe.unwrap();` produced:
-        //
-        //     rust_policy idiomatic=false findings=["src/innocent.rs"]
-        //
-        // A reviewer opens src/innocent.rs, finds no `.unwrap()`, and has
-        // nothing to tell them the gate picked that name off a list.
+        // `None` until the diff names a file. See the module docs.
         let mut current_file: Option<String> = None;
         let mut is_test_file = false;
         let mut prev_line = String::new();
-        // Whether the line being read sits inside an async function or block.
-        //
-        // Two rules here are named for what they do to an async executor --
-        // starving Tokio workers, deadlocking across an `.await`. Neither is
-        // true of the same call in a synchronous function, where blocking is
-        // simply how the code works. Firing on every line was a HIGH-severity
-        // accusation against correct code, which is the symmetric violation of
-        // I1: a gate must not report what it did not measure, in either
-        // direction.
-        //
-        // Diff-scoped, so the answer is diff-scoped: `@@` headers carry the
-        // enclosing item, and added lines can declare their own. When neither
-        // says async, the rules withhold rather than guess.
+        // Whether this line sits inside an async item. See the module docs.
         let mut in_async = false;
 
         for line in diff_ctx.diff_content.lines() {
@@ -112,11 +109,7 @@ impl RustQualityEngine {
                 continue;
             }
 
-            // Context and added lines both move the enclosing item, because a
-            // hunk may open on one function and reach another. Any `fn`,
-            // nested or not, closes the async scope: a synchronous function
-            // declared inside an async one is still a synchronous function,
-            // and blocking in it is how it works.
+            // Context and added lines both move the enclosing item.
             let body = line.strip_prefix(['+', ' ']).unwrap_or(line);
             if declares_async(body) {
                 in_async = true;

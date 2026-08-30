@@ -163,12 +163,6 @@ pub const ABSENCE_POLICY: &[(&str, Absence)] = &[
         },
     ),
     (
-        "upgrade_train_status",
-        Absence::NotProvisioned {
-            capability: "a dependency manifest and advisory feed to audit upgrades against",
-        },
-    ),
-    (
         "cosign_status",
         Absence::NotProvisioned {
             capability: "a Sigstore signing backend (Fulcio, Rekor)",

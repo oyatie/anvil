@@ -687,7 +687,6 @@ fn boundary_worst_case_body_fits_a_github_comment_and_beats_the_table() {
         cleartext_transport_status,
         carbon_compute_status,
         replay_harness_status,
-        upgrade_train_status,
         mutation_status,
         feature_flag_status,
         bench_status,
@@ -706,9 +705,14 @@ fn boundary_worst_case_body_fits_a_github_comment_and_beats_the_table() {
         published.len(),
         GITHUB_COMMENT_LIMIT
     );
+    // Derived from the report, not written down: the literal `68` assumed a
+    // corpus of seventy-four, so removing one gate broke a test about the
+    // scorecard reporting every failing gate — by disagreeing with the corpus,
+    // which is the defect the scorecard itself exists to prevent.
+    let failing = r.gate_counts().failed;
     assert!(
-        published.contains("68 finding(s)"),
-        "every failing gate must be reported:\n{}",
+        published.contains(&format!("{failing} finding(s)")),
+        "every failing gate must be reported ({failing} expected):\n{}",
         &published[..published.len().min(400)]
     );
     // "beats the table" was in the name but unasserted: even in the worst case,

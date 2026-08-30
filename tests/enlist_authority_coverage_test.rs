@@ -467,8 +467,6 @@ async fn report_from_the_corpus(
         anvil::carbon_aware::CarbonAwareComputeRatchet::new().evaluate_compute_carbon(30.0, 12.0);
     let replay_report =
         anvil::replay_harness::DeterministicReplayHarness::new().evaluate_replay_parity(&[]);
-    let upgrade_train_report =
-        anvil::upgrade_train::ProactiveUpgradeTrain::new().evaluate_upgrade_train(&[]);
 
     // No `.anvil/shape.json` in this tree, which is what the shape gate reports
     // for a tenant that has not adopted a spec.
@@ -538,7 +536,6 @@ async fn report_from_the_corpus(
             &zero_trust_report,
             &carbon_report,
             &replay_report,
-            &upgrade_train_report,
             &mutation_report,
             &feature_flag_report,
             &bench_report,
@@ -1156,7 +1153,7 @@ fn every_gate_is_published_under_its_own_name() {
 /// published `Passed` on this very fixture: `deadlock_status`,
 /// `openvex_status`, `cosign_status`, `auto_rollback_status`,
 /// `carbon_compute_status`, `replay_harness_status` and
-/// `upgrade_train_status`.
+/// .
 ///
 /// `aspirational_gates_cannot_pass_test.rs` pins every branch of the rule
 /// against hand-built reports. This is the one that runs the real corpus over a

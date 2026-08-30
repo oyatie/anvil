@@ -481,7 +481,6 @@ mod stub {
     use anvil::stacked_diffs::StackedDiffsReport;
     use anvil::supply_chain_guard::SupplyChainReport;
     use anvil::unresolved_review_guard::UnresolvedReviewReport;
-    use anvil::upgrade_train::UpgradeTrainReport;
     use anvil::vex_scanner::OpenVexReport;
     use anvil::wasm_sandbox::WasmSandboxReport;
     use anvil::zero_day_patcher::ZeroDayReport;
@@ -567,13 +566,6 @@ mod stub {
             divergence_detected: false,
             summary: STUB.to_string(),
         };
-        let upgrade = UpgradeTrainReport {
-            status: GateStatus::Passed,
-            passed: true,
-            pending_upgrades_available: 0,
-            breaking_major_upgrades: 0,
-            summary: STUB.to_string(),
-        };
 
         PreMergeGuard::new()
             .evaluate_pre_merge_gates(
@@ -637,7 +629,6 @@ mod stub {
                 &zero_trust,
                 &carbon,
                 &replay,
-                &upgrade,
                 &neutral::<MutationAdequacyReport>(),
                 &neutral::<FeatureFlagReport>(),
                 &neutral::<BenchmarkReport>(),

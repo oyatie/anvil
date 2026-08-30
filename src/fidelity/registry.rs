@@ -679,17 +679,16 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
               has no distinct signal for an empty run. The build is a separate invocation because \
               cargo exits 101 for a compile error and libtest exits 101 for a failing test: a tree \
               that did not build ran no test, so it is `Errored` and not an accusation \
-              (queue_healer.rs::run_cargo_test_gate). The child environment is scrubbed of `CARGO_TARGET_DIR` and \
-              `CARGO_BUILD_TARGET_DIR` (queue_healer.rs::run_cargo_test_gate), because a target directory shared \
-              between two ephemeral worktrees of one repository collapses the two steps back into \
-              one and restores exactly the behaviour above; a cargo config file inside the \
+              (queue_healer.rs::run_cargo_test_gate). The child environment is CLEARED and rebuilt from `BUILD_INHERITED` \
+              (exec/build_env.rs::BUILD_INHERITED), so neither a shared cargo target directory nor \
+              the daemon's webhook secret can reach a contributor's tests; a cargo config file inside the \
               tenant tree can still redirect the target directory and is not defended against. Two further \
               ceilings. The `ExecClass::Build` bound of 1800s was sized for a type-check and now \
               has to cover a build and a run, and `heal_ejected_pr` calls `run_local_test_gate` twice \
               (queue_healer.rs::heal_in_worktree), so one heal can spend an hour before reporting that it \
-              measured nothing. And the run executes every `#[test]` in a contributor's branch inside \
-              the daemon's own process environment, which holds `GITHUB_WEBHOOK_SECRET` \
-              (config.rs::from_env) -- a type-check never ran that code. The cost is a cold build per \
+              measured nothing. And the run executes every `#[test]` in a contributor's branch, which a \
+              type-check never did; what it may read is bounded by the allowlist above and by \
+              nothing else, because this is not a sandbox. The cost is a cold build per \
               pull request, in an ephemeral worktree with no shared target directory.",
         blocked_on: None,
     },

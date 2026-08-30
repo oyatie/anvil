@@ -1,3 +1,39 @@
+//! The approved stack, the apex ADR lock, and the dependency ratchet.
+//!
+//! # Why rule 2 reads `code_only`
+//!
+//! A bare substring search over every `+` line made this gate refuse the change
+//! that WIRED it, twice.
+//!
+//! First on a test fixture: the change adds `"+use mongodb::Client;\n"` to
+//! `tests/stack_whitelist_guard_test.rs` — the line that proves the gate catches
+//! MongoDB — and the scan read the fixture as an adoption.
+//!
+//! Then, after a first fix that stripped only double-quoted spans, on the fix's
+//! own comment: `named, not used. Neither can hide a real use redis::…`.
+//! Backticks are not quotes and `mod.rs` is not a test source, so the sentence
+//! explaining the exclusion was itself read as an adoption of Redis.
+//!
+//! That was the fourth hand-rolled "is this code" scan in this tree to be beaten
+//! by prose, which is why this one is not hand-rolled: `source_scan::code_only`
+//! blanks line comments, block comments and string literals in one place that is
+//! tested once.
+//!
+//! Both exclusions are the rule's subject rather than exemptions from it. A gate
+//! about production code adopting an unapproved dependency has no subject in a
+//! test fixture, and a crate named in a comment or a string is named, not used.
+//! Neither hides a real `use redis::…`, which is code in a file that ships.
+//!
+//! # Why rule 3 walks one file at a time
+//!
+//! The `[dependencies]` section flag is raised by that header and lowered by
+//! the next line starting `[`. Nothing in a `diff --git` header starts with
+//! `[`, so scanning the whole diff left the flag raised across every following
+//! file: a change that added one dependency and also touched Rust source
+//! reported each added source line as an unauthorised dependency, attributed to
+//! the Cargo.toml. Scoping the walk to one file's hunks is what makes the flag
+//! mean what its name says.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -61,7 +97,23 @@ impl StackWhitelistGuard {
         ),
     ];
 
-    /// Evaluates PR diffs against the Approved Hyperscaler Stack Manifest and Apex ADR Immutability
+    /// Evaluates PR diffs against the approved stack and the apex ADR lock.
+    ///
+    /// # `is_human_author`
+    ///
+    /// The certification pipeline does not establish authorship, so neither
+    /// value it could pass is a measurement.
+    ///
+    /// `false` asserts agent authorship nobody observed, and two of the three
+    /// rules fire only on that assertion — `APEX_ADR_IMMUTABILITY_BREACH` and
+    /// `UNAUTHORIZED_DEPENDENCY_EXPANSION` — so passing it would refuse every
+    /// pull request that adds a dependency or touches an ADR, on the strength
+    /// of a fact nobody measured. A fabricated accusation is I1's symmetric
+    /// violation and the more expensive direction to be wrong in.
+    ///
+    /// `true` leaves those two rules inert until authorship is measured, which
+    /// this gate's fidelity entry records as its gap. The approved-stack rule,
+    /// which does not depend on authorship, still runs.
     pub fn evaluate_stack_whitelist(
         &self,
         _repo_dir: &Path,
@@ -92,30 +144,7 @@ impl StackWhitelistGuard {
             }
         }
 
-        // 2. Unapproved Stack / Dependency Hallucination Scanner
-        //
-        // Over `source_scan::code_only`, per file, skipping test sources.
-        //
-        // A bare substring search over every `+` line made this gate refuse the
-        // change that WIRED it, twice. First on a test fixture -- the branch
-        // adds `"+use mongodb::Client;\n"` to `tests/stack_whitelist_guard_test.rs`,
-        // the line that proves the gate catches MongoDB. Then, after a first
-        // fix that stripped only double-quoted spans, on the fix's own comment:
-        //
-        //     // named, not used. Neither can hide a real `use redis::…`
-        //
-        // Backticks are not quotes and `mod.rs` is not a test source, so the
-        // sentence explaining the exclusion was itself read as an adoption of
-        // Redis. That is the fourth hand-rolled "is this code" scan in this
-        // tree to be beaten by prose, which is why this one is not hand-rolled:
-        // `code_only` blanks line comments, block comments and string literals
-        // in one place that is tested once.
-        //
-        // Both exclusions are the rule's subject rather than exemptions from
-        // it. A gate about production code adopting an unapproved dependency
-        // has no subject in a test fixture, and a crate named in a comment or
-        // a string is named, not used. Neither hides a real `use redis::…`,
-        // which is code in a file that ships.
+        // 2. Unapproved stack scanner. See the module docs.
         let files = crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content);
         if files.is_empty() && !diff_ctx.diff_content.trim().is_empty() {
             // A diff with no `diff --git` headers. Nothing can be attributed to
@@ -149,7 +178,7 @@ impl StackWhitelistGuard {
                 // `code_only` preserves line count and offsets, so its output
                 // lines up with the post-image line for line.
                 let after = fd.after_change();
-                let code = crate::source_scan::code_only(&after);
+                let code = crate::source_scan::code_only(after);
                 let added: Vec<&str> = fd.added().lines().collect();
                 for (code_line, raw_line) in code.lines().zip(after.lines()) {
                     if !added.contains(&raw_line) {
@@ -173,16 +202,7 @@ impl StackWhitelistGuard {
 
         // 3. Asymmetric Dependency Ratchet: Agents can remove/retire dependencies, but cannot add new ones without ADR
         if !is_human_author {
-            // Per FILE, not per changed-file-path over the whole diff. The
-            // section flag is raised by a `[dependencies]` header and lowered
-            // by the next line starting `[`; nothing in a `diff --git` header
-            // starts with `[`, so scanning the whole diff left the flag raised
-            // across every following file. A change that added one dependency
-            // and also touched Rust source reported each added source line as
-            // an unauthorised dependency, attributed to the Cargo.toml.
-            //
-            // Scoping the walk to one file's hunks is what makes the flag mean
-            // what its name says.
+            // Per file. See the module docs for why.
             for fd in crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content) {
                 if !fd.path.ends_with("Cargo.toml") {
                     continue;
@@ -250,46 +270,4 @@ impl StackWhitelistGuard {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_catches_hallucinated_redis_and_apex_adr_mutation() {
-        let guard = StackWhitelistGuard::new();
-        let diff_ctx = PrDiffContext {
-            repo: "oyatie/oyatie".to_string(),
-            pr_number: 999,
-            base_branch: "dev".to_string(),
-            base_sha: "aaa".to_string(),
-            head_sha: "bbb".to_string(),
-            diff_content: "+ use redis::Client;".to_string(),
-            changed_files: vec![
-                "docs/decisions/ADR-0701-monorepo-capability-live-apex.md".to_string(),
-                "crates/cache/src/lib.rs".to_string(),
-            ],
-            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
-                std::path::PathBuf::from("/tmp"),
-                crate::git_manager::Uncloned::TestFixture,
-            ),
-            is_incremental: false,
-            previous_head_sha: None,
-        };
-
-        let report = guard
-            .evaluate_stack_whitelist(Path::new("/tmp"), &diff_ctx, false)
-            .unwrap();
-        assert!(!report.is_compliant);
-        assert!(
-            report
-                .violations
-                .iter()
-                .any(|v| v.category == "APEX_ADR_IMMUTABILITY_BREACH")
-        );
-        assert!(
-            report
-                .violations
-                .iter()
-                .any(|v| v.category == "UNAPPROVED_STACK_TECHNOLOGY")
-        );
-    }
-}
+mod tests;

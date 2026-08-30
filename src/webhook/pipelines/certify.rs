@@ -586,19 +586,7 @@ pub async fn certify_pull_request(
         .evaluate_cloud_native(repo_dir, diff_ctx)?;
     let stack_whitelist_report = state.stack_whitelist_guard.evaluate_stack_whitelist(
         repo_dir, diff_ctx,
-        // Authorship is NOT established in this pipeline, so neither value is a
-        // measurement. `false` asserts agent authorship nothing observed, and
-        // two of this guard's three rules fire only on that assertion --
-        // `APEX_ADR_IMMUTABILITY_BREACH` and
-        // `UNAUTHORIZED_DEPENDENCY_EXPANSION` -- so passing it would refuse
-        // every pull request that adds a dependency or touches an ADR, on the
-        // strength of a fact nobody measured. A fabricated accusation is the
-        // symmetric violation of I1 and the more expensive direction to be
-        // wrong in.
-        //
-        // `true` leaves those two rules inert until authorship is measured,
-        // which this gate's fidelity entry records as its gap. The
-        // approved-stack rule, which does not depend on authorship, still runs.
+        // `true`: authorship is not measured here. See the guard's docs.
         true,
     )?;
 

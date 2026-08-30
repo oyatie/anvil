@@ -20,12 +20,10 @@ fn the_gap_report_no_longer_hardcodes_an_empty_drift_list() {
     // Code only. The doc comment on the replacement quotes the old literal to
     // say what it replaced, and a scan that reads prose as code would flag the
     // explanation for describing the defect it fixed.
-    let src = anvil::source_scan::without_commentary(
-        &std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fidelity/mod.rs"),
-        )
-        .expect("the fidelity module exists"),
-    );
+    let src = anvil::source_scan::without_commentary(&anvil::source_scan::paths::module_source(
+        "src/fidelity",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    ));
     assert!(
         !src.contains("drift: Vec::new()"),
         "`gap_report` builds its drift list from a literal, so every scorecard \

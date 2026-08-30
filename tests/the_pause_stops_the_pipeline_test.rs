@@ -147,10 +147,10 @@ fn a_pause_that_cannot_be_read_is_a_pause() {
 /// before.
 #[test]
 fn every_autonomous_webhook_door_reads_the_pause() {
-    let raw = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webhook/webhook_handlers.rs"),
-    )
-    .expect("the webhook handlers exist");
+    let raw = anvil::source_scan::paths::module_source(
+        "src/webhook/webhook_handlers",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let src = anvil::source_scan::code_only(&raw);
 
     let doors: Vec<usize> = src.match_indices("tokio::spawn(").map(|(i, _)| i).collect();
@@ -235,10 +235,10 @@ fn spawn_body(src: &str, at: usize) -> Option<&str> {
 /// one is wired.
 #[test]
 fn the_daemon_points_the_pause_at_its_configured_data_directory() {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
-    )
-    .expect("the daemon's composition root exists");
+    let src = anvil::source_scan::paths::module_source(
+        "src/main",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     let at = src.find("Pause::in_dir(").unwrap_or_else(|| {
         panic!(
@@ -260,10 +260,10 @@ fn the_daemon_points_the_pause_at_its_configured_data_directory() {
 /// asserted too — keyed to the call rather than to a line.
 #[test]
 fn the_review_pipeline_reads_the_pause_before_it_enlists() {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webhook/pipelines/review.rs"),
-    )
-    .expect("the review pipeline exists");
+    let src = anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     // Keyed to the field, not to a method name: `holds` and `engaged` are two
     // spellings of one consultation, and a scan tied to either reports the
@@ -308,10 +308,10 @@ fn the_review_pipeline_reads_the_pause_before_it_enlists() {
 /// The healer builds its own worktree, which is why it is not in this set.
 #[test]
 fn the_doors_that_share_the_clone_serialise_on_the_pull_request() {
-    let raw = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webhook/webhook_handlers.rs"),
-    )
-    .expect("the webhook handlers exist");
+    let raw = anvil::source_scan::paths::module_source(
+        "src/webhook/webhook_handlers",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let src = anvil::source_scan::code_only(&raw);
 
     let at = src

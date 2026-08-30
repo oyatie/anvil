@@ -131,7 +131,10 @@ fn restart_delay_is_jittered() {
 
 #[test]
 fn the_spawn_site_does_not_treat_a_running_child_that_died_as_success() {
-    let src = std::fs::read_to_string("src/cli/server.rs").expect("server.rs");
+    let src = anvil::source_scan::paths::module_source(
+        "src/cli/server",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code: String = src
         .lines()
         .filter(|l| !l.trim_start().starts_with("//"))

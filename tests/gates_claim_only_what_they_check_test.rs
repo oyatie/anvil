@@ -576,15 +576,65 @@ fn the_evaluation_date_comes_from_the_clock() {
 
 /// The mechanism, not the value. A literal re-valued to next Tuesday defeats
 /// any fixed-needle check while leaving the engine exactly as frozen, so what
-/// is forbidden is a date literal in the guard at all.
+/// is forbidden is a date literal anywhere the guard decides from.
+///
+/// The evaluation path is two modules, named as two modules: the root and the
+/// engine that walks the rules. `upstream_sync` is deliberately not among them
+/// -- it carries the codified rule pack, where a statute's enactment date is a
+/// fact about the statute rather than a clock the engine reads. Widening this
+/// to the whole directory would accuse that data, and a gate that accuses
+/// correct code gets weakened by the first author it blocks.
+///
+/// Commentary is stripped with `without_commentary` rather than by dropping
+/// lines that open with a slash, which leaves a trailing comment on a code line
+/// in the text and lets prose answer -- or trip -- a scan about code.
 #[test]
 fn no_date_literal_survives_in_the_compliance_guards_evaluation_path() {
-    let src = fs::read_to_string("src/compliance_guard/mod.rs").expect("mod.rs must exist");
-    let code_only: String = src
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // The EVALUATION path, which is narrower than the module.
+    //
+    // `registry` and `upstream_sync` carry statutes' own enacted and effective
+    // dates, which are properties of the law rather than a clock this guard
+    // reads. Scanning them would accuse the data of being the defect. The
+    // defect is a date the guard COMPARES AGAINST, and it lives where the
+    // comparing happens.
+    const EVALUATES: &[&str] = &["src/compliance_guard/mod", "src/compliance_guard/engine"];
+    const CARRIES_STATUTE_DATES: &[&str] = &["registry", "upstream_sync"];
+
+    // Naming two files is a scope, and a scope goes stale. If the module gains
+    // a file that is neither scanned nor excused, the evaluation may have moved
+    // into it and this scan would report a clean guard it never read -- so the
+    // new file has to be classified here before this passes again.
+    let held: Vec<String> = std::fs::read_dir(manifest.join("src/compliance_guard"))
+        .expect("the guard is a directory")
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension()? == "rs").then(|| p.file_stem()?.to_str().map(str::to_string))?
+        })
+        .collect();
+    let unclassified: Vec<&String> = held
+        .iter()
+        .filter(|f| {
+            !CARRIES_STATUTE_DATES.contains(&f.as_str())
+                && !EVALUATES.iter().any(|m| m.ends_with(f.as_str()))
+        })
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "`src/compliance_guard` holds {unclassified:?}, which this scan neither \
+         reads nor excuses. Add it to EVALUATES if the guard decides there, or \
+         to CARRIES_STATUTE_DATES if it holds a statute's own dates -- an \
+         unclassified file is one the evaluation may have moved into."
+    );
+
+    let src = EVALUATES
+        .iter()
+        .map(|m| anvil::source_scan::paths::module_source(m, manifest))
         .collect::<Vec<_>>()
         .join("\n");
+    let code_only = anvil::source_scan::without_commentary(&src);
     let re = regex::Regex::new(r#""(19|20)\d\d-\d\d-\d\d"#).expect("valid");
     assert!(
         !re.is_match(&code_only),
@@ -1145,14 +1195,10 @@ diff --git a/src/schema.rs b/src/schema.rs
 /// downstream.
 #[test]
 fn the_gate_names_no_consumer_it_did_not_derive() {
-    let src_dir = Path::new("src/cross_service_impact");
-    let mut all = String::new();
-    for entry in fs::read_dir(src_dir).expect("the module exists") {
-        let p = entry.expect("entry").path();
-        if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            all.push_str(&fs::read_to_string(&p).expect("read"));
-        }
-    }
+    let all = anvil::source_scan::paths::module_source(
+        "src/cross_service_impact",
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code_only: String = all
         .lines()
         .filter(|l| !l.trim_start().starts_with("//"))

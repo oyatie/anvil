@@ -577,14 +577,14 @@ fn the_zero_day_gate_abstains_on_a_diff_that_would_previously_have_passed() {
 /// inside a test module is not a call in the gate.
 #[test]
 fn the_gate_asks_the_advisory_database_rather_than_answering_from_itself() {
-    let src = production_source("src/supply_chain_guard.rs");
+    let src = production_source("src/supply_chain_guard");
     assert!(
         src.contains("OsvAdvisoryStream::query_batch(&packages).await"),
         "the audit no longer queries the advisory database, so its verdict is \
          whatever the code substituted for the query"
     );
 
-    let transport = production_source("src/supply_chain_guard/osv_stream.rs");
+    let transport = production_source("src/supply_chain_guard/osv_stream");
     assert!(
         transport.contains("post_json(CURL, OSV_BATCH_URL, &payload, OSV_BUDGET).await"),
         "the query no longer goes through the bounded executor with a budget"
@@ -608,11 +608,11 @@ fn the_gate_asks_the_advisory_database_rather_than_answering_from_itself() {
     );
 }
 
-fn production_source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-    match s.find("#[cfg(test)]") {
-        Some(i) => s[..i].to_string(),
-        None => s,
-    }
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
 }

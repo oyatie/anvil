@@ -2575,7 +2575,7 @@ fn no_path_drops_a_merge_queue_refusal_on_the_floor() {
 fn the_enlist_api_does_not_answer_success_for_an_enlistment_it_has_not_performed() {
     const HANDLER: &str = "fn manual_enlist_handler(";
     const ENLIST: &str = "enlist_into_merge_queue(";
-    let source = production_source("src/webhook/manual_handlers.rs");
+    let source = production_source("src/webhook/manual_handlers");
 
     let Some(body) = find_fn(&source, HANDLER) else {
         // Dropping the endpoint is an honest way to close this half of #17 —
@@ -3125,7 +3125,7 @@ fn nothing_anvil_publishes_is_written_by_a_function_that_holds_no_report() {
     // own. See `assert_the_merge_queue_path_still_fails_closed`.
     assert_the_merge_queue_path_still_fails_closed();
 
-    let source = production_source("src/merge_enlister.rs");
+    let source = production_source("src/merge_enlister");
     for publisher in &PUBLISHERS {
         assert_publication_is_derived(&source, publisher);
     }
@@ -3323,13 +3323,10 @@ fn assert_the_unresolved_thread_refusal_holds_where_it_lives() {
     // `evaluate_pre_merge_gates` and inverting it leaves all three links green
     // while the gate passes on an unresolved thread -- the test would be
     // exercising a function the product no longer calls.
-    let evaluator = anvil::source_scan::code_only(
-        &std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("src/pre_merge_guard/evaluator.rs"),
-        )
-        .expect("the evaluator exists"),
-    );
+    let evaluator = anvil::source_scan::code_only(&anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    ));
     assert!(
         evaluator.contains("unresolved_review_gate("),
         "`evaluate_pre_merge_gates` does not call `unresolved_review_gate`, so \
@@ -3341,12 +3338,10 @@ fn assert_the_unresolved_thread_refusal_holds_where_it_lives() {
     // ratchet broke a check about wiring that was still perfectly wired. That
     // is the same path-keyed defect `gate_proof_sites` carried, in a test
     // written to close a different one.
-    let gates = anvil::source_scan::code_only(
-        &std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pre_merge_guard/gates.rs"),
-        )
-        .expect("the gate conversions live somewhere"),
-    );
+    let gates = anvil::source_scan::code_only(&anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/gates",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    ));
     assert!(
         gates.contains("pub fn unresolved_review_gate"),
         "the conversion the pipeline calls is not defined where this test can \

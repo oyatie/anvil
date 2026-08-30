@@ -57,8 +57,10 @@ fn nothing_closes_a_github_issue_autonomously() {
 
 #[test]
 fn a_published_claim_about_ci_is_not_made_without_querying_ci() {
-    let auditor = fs::read_to_string("src/issue_reconciler/issue_auditor.rs")
-        .expect("issue_auditor.rs must exist");
+    let auditor = anvil::source_scan::paths::module_source(
+        "src/issue_reconciler/issue_auditor",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code = code_only(&auditor);
 
     if code.contains("Trunk CI is green") {

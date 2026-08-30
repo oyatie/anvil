@@ -116,13 +116,13 @@ fn clean_diff(working_dir: &Path) -> PrDiffContext {
 /// Fixture constants inside a test module are legitimate -- they are inputs a
 /// test supplies, which is exactly what a real data source will supply later.
 /// A constant in the production half is the defect.
-fn production_source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-    match s.find("#[cfg(test)]") {
-        Some(i) => s[..i].to_string(),
-        None => s,
-    }
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 /// Every `.rs` file under a gate's module directory, as (repo-relative path,
@@ -1651,7 +1651,7 @@ fn test_the_certification_pipeline_supplies_no_topology_metrics_or_rollout_state
     // the gate abstains and names the entry point it is NOT allowed to use, so a
     // scan over raw text would be satisfied by the prose and tripped by it in
     // turn.
-    let src: String = production_source("src/webhook/pipelines/certify.rs")
+    let src: String = production_source("src/webhook/pipelines/certify")
         .lines()
         .map(code_only)
         .collect::<Vec<_>>()

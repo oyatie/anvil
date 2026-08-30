@@ -125,7 +125,10 @@ fn the_reason_set_stays_closed() {
     // One variant today. A second is a design decision, not a refactor: it
     // means a second kind of rule legitimately needs the removed side, and the
     // burden is to say which and why.
-    let src = fs::read_to_string("src/git_manager/diff_context.rs").expect("source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/git_manager/diff_context",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let block = src
         .split("pub enum BothSides {")
         .nth(1)

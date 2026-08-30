@@ -339,10 +339,10 @@ fn every_aspirational_gate_is_declared_unprovisionable() {
 /// source, so forgetting fails a test.
 #[test]
 fn withholding_carries_across_every_field_that_is_not_a_gate_status() {
-    let src = std::fs::read_to_string(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/pre_merge_guard/report.rs"),
-    )
-    .expect("report source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/report",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     let struct_body = src
         .split_once("pub struct PreMergeCertificationReport {")
@@ -449,10 +449,10 @@ fn withholding_does_not_strip_the_certification_mark_or_the_rendered_matrix() {
 /// most is not "the rule is right" but "the rule runs".
 #[test]
 fn fidelitys_pass_rule_has_a_production_consumer() {
-    let src = std::fs::read_to_string(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/pre_merge_guard/report.rs"),
-    )
-    .expect("report source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/report",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     // Code, not prose. The rule was documented in three places while nothing
     // called it, so a doc comment naming the method is precisely the evidence
     // this test must not accept.
@@ -473,11 +473,10 @@ fn fidelitys_pass_rule_has_a_production_consumer() {
 /// withheld pass applied afterwards would be invisible to both.
 #[test]
 fn the_certification_run_withholds_before_it_seals() {
-    let src = std::fs::read_to_string(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src/pre_merge_guard/evaluator.rs"),
-    )
-    .expect("evaluator source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     let withhold = src
         .find("withhold_aspirational_passes()")

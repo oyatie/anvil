@@ -30,6 +30,18 @@ pub const GATE_PROOFS: &[GateProof] = &[
         spares: "review_verdict_spares_an_approval",
     },
     GateProof {
+        gate_id: "compile_profile_status",
+        exercises: "CompileTimeProfiler",
+        fires_on: "compile_profile_fires_on_a_build_script_with_no_rerun_trigger",
+        spares: "compile_profile_spares_a_build_script_that_declares_its_trigger",
+    },
+    GateProof {
+        gate_id: "runner_economics_status",
+        exercises: "CiRunnerEconomicsOptimizer",
+        fires_on: "runner_economics_fires_on_a_costly_runner_for_every_pull_request",
+        spares: "runner_economics_spares_a_standard_runner_on_the_same_trigger",
+    },
+    GateProof {
         gate_id: "shape_status",
         exercises: "shape_gate_status",
         fires_on: "shape_fires_on_a_regression_against_a_blocking_rule",

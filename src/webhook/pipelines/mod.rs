@@ -1,5 +1,6 @@
 //! Asynchronous Webhook Pipelines: Review, Fix, and Certify
 
+pub mod admit;
 pub mod certify;
 pub mod fix;
 pub mod local_verification;

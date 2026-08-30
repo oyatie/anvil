@@ -21,9 +21,15 @@
 //! it; a reviewer moving fallible work out of this function is moving it out
 //! of this guard.
 //!
-//! What `clear_reviewed_sha` itself does is measured next to it, by
-//! `state::tests::clearing_the_reviewed_sha_allows_the_pr_to_be_retried`; this
-//! file only asserts that the pipeline reaches it.
+//! What `clear_reviewed_sha` itself does is measured by
+//! `state_durability_wal_test::clearing_the_reviewed_sha_allows_the_pr_to_be_retried`;
+//! this file only asserts that the pipeline reaches it.
+//!
+//! The other half of the same invariant -- that an exit which does NOT roll the
+//! stamp back is an exit that reached the end of the pipeline and recorded so
+//! -- is measured by `the_boot_sweep_recovers_only_a_stranded_pull_request_test`.
+//! Together they say: after the stamp, either the stamp is released or the
+//! completion is written, and nothing survives in between.
 
 use anvil::source_scan::code_only;
 

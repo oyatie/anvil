@@ -437,12 +437,21 @@ pub const AUDITED_GATES: &[GateFidelity] = &[
                      build edges — and refuse any regression past a baseline frozen at the merge-base.",
         reference: "oyatie ADR-0562 placement rule and ci/facade/baseline-ratchet; Google Rosie/Tricorder \
                     ratchets; ArchUnit FreezingArchRule",
-        fidelity: Fidelity::Partial,
-        gap: "Placement, skeleton, root and naming rules are measured from the tree at the PR head with \
-              seeded-defect fixtures. Dependency rules read Cargo path dependencies, Buck2 labels and \
-              `use crate::` paths; TypeScript imports are declared unavailable, so a spec naming \
-              ts-workspace gets NotMeasured for those rules. The adapter-naming rule is not implemented. \
-              Contention metrics are not yet collected.",
+        fidelity: Fidelity::Measured,
+        gap: "Every rule the aspiration names is measured from the tree at the PR head, each with a \
+              seeded-defect fixture and a conformant twin. Dependency edges are read for all four \
+              declarable profiles: Cargo path dependencies, Buck2 labels, module paths, and \
+              TypeScript specifiers, where a bare import resolves through the name a workspace \
+              manifest declares and a relative one through `target_dir` \
+              (shape/adapters/ts_import_deps.rs::target_dir). Adapter naming is the tenant's own \
+              `naming.adapter_name` template checked against the ports its unit declares, with the \
+              rename that closes it (shape/core/adapter_naming.rs::adapter_naming_findings); a unit \
+              with no ports crate is reported unmeasured, never accused. A blocking rule the engine \
+              could not evaluate withholds through `unmeasured_reason` \
+              (pre_merge_guard/shape_gate.rs::shape_gate_status): it found nothing only because it \
+              never ran. Two things it does not do, neither of them claimed above: contention \
+              metrics are not collected, and a TypeScript path alias no manifest claims reads as an \
+              external package rather than an edge.",
         blocked_on: None,
     },
     GateFidelity {

@@ -448,18 +448,16 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                     .join("target/release/anvil")
             });
             let current_exe = std::env::current_exe()?;
-            info!(
-                "🔄 Initiating Zero-Downtime Blue/Green Self-Replacement: {:?} -> {:?}",
-                green_binary, current_exe
-            );
+
+            let swap = crate::recovery::BlueGreenSupervisor::plan(green_binary, current_exe);
             crate::recovery::BlueGreenSupervisor::execute_atomic_binary_swap(
-                &current_exe,
-                &green_binary,
+                &swap.green,
+                &swap.installed,
             )
             .await?;
             println!(
-                "🎉 Blue/Green Self-Replacement Successful!\n  - Swapped Target: {:?}\n  - Source Green Binary: {:?}\n  - Status: Atomic Binary Replacement Complete (Zero Downtime)",
-                current_exe, green_binary
+                "🎉 Blue/Green Self-Replacement Successful!\n  - Installed over: {:?}\n  - From new build: {:?}",
+                swap.installed, swap.green
             );
         }
         Commands::Recover { repo } => {

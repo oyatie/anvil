@@ -160,7 +160,7 @@ pub fn stale_forwarder_hook_ids(hooks_json: &[u8]) -> Vec<u64> {
 /// consecutive respawn failures. Called before each (re)spawn; the forwarder
 /// about to start recreates its own hook immediately.
 pub async fn remove_stale_forwarder_hooks(repo: &str) -> Result<usize, String> {
-    let mut list = tokio::process::Command::new("gh");
+    let mut list = crate::exec::gh();
     list.args(["api", &format!("repos/{repo}/hooks")]);
     let out = crate::exec::run_bounded(
         list,
@@ -178,7 +178,7 @@ pub async fn remove_stale_forwarder_hooks(repo: &str) -> Result<usize, String> {
     let ids = stale_forwarder_hook_ids(&out.stdout);
     let mut removed = 0usize;
     for id in ids {
-        let mut del = tokio::process::Command::new("gh");
+        let mut del = crate::exec::gh();
         del.args(["api", "-X", "DELETE", &format!("repos/{repo}/hooks/{id}")]);
         let out = crate::exec::run_bounded(
             del,

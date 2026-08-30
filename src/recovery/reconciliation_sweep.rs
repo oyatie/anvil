@@ -146,7 +146,7 @@ impl OutageRecoveryReconciler {
 
     /// Fetches all open PRs using GitHub CLI
     async fn fetch_open_prs(&self, repo: &str) -> Result<Vec<OpenPrSummary>> {
-        let mut list_cmd = tokio::process::Command::new("gh");
+        let mut list_cmd = crate::exec::gh();
         list_cmd.args([
             "pr",
             "list",

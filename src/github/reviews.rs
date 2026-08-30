@@ -18,7 +18,6 @@
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::HashMap;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::exec::{ExecClass, run_bounded};
@@ -112,7 +111,7 @@ pub async fn submit_pr_review_with_diff(
     }
     let body_path = body_file.path().to_string_lossy().into_owned();
 
-    let mut cmd = Command::new("gh");
+    let mut cmd = crate::exec::gh();
     cmd.args(["api", "--method", "POST", &endpoint, "--input", &body_path]);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -147,7 +146,7 @@ async fn submit_fallback_review(
     let full_body = build_fallback_body(review, validation, head_sha);
 
     let endpoint = format!("repos/{}/issues/{}/comments", repo, pr_number);
-    let mut cmd = Command::new("gh");
+    let mut cmd = crate::exec::gh();
     cmd.args([
         "api",
         "--method",

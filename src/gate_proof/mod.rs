@@ -53,6 +53,42 @@ pub struct GateProof {
 /// see the note above on what inference produced.
 pub const GATE_PROOFS: &[GateProof] = &[
     GateProof {
+        gate_id: "unresolved_review_status",
+        exercises: "UnresolvedReviewReport",
+        fires_on: "unresolved_review_fires_on_a_thread_github_reports_open",
+        spares: "unresolved_review_spares_a_pull_request_with_no_open_threads",
+    },
+    GateProof {
+        gate_id: "idempotency_status",
+        exercises: "IdempotencyGuard",
+        fires_on: "idempotency_flags_an_added_mutating_route_with_no_key",
+        spares: "idempotency_spares_the_same_route_where_the_file_handles_the_key",
+    },
+    GateProof {
+        gate_id: "psa_status",
+        exercises: "PsaAdmissionGuard",
+        fires_on: "psa_flags_a_namespace_without_an_enforce_label",
+        spares: "psa_spares_a_namespace_that_enforces_restricted",
+    },
+    GateProof {
+        gate_id: "cleartext_transport_status",
+        exercises: "ZeroTrustWorkloadGate",
+        fires_on: "zero_trust_flags_an_added_cleartext_endpoint",
+        spares: "zero_trust_spares_the_same_endpoint_over_tls",
+    },
+    GateProof {
+        gate_id: "brand_absence_status",
+        exercises: "BrandAbsenceGate",
+        fires_on: "brand_absence_flags_an_aspirational_stamp_in_source",
+        spares: "brand_absence_spares_source_that_claims_nothing",
+    },
+    GateProof {
+        gate_id: "semantic_abi_status",
+        exercises: "SemanticAbiRatchet",
+        fires_on: "semantic_abi_flags_a_changed_public_signature",
+        spares: "semantic_abi_spares_a_body_change_behind_the_same_signature",
+    },
+    GateProof {
         gate_id: "cloud_native_status",
         exercises: "CloudNativeGuard",
         fires_on: "cloud_native_flags_a_proprietary_sdk_in_a_core_layer",

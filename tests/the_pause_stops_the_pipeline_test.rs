@@ -299,3 +299,33 @@ fn the_review_pipeline_reads_the_pause_before_it_enlists() {
         between.lines().take(12).collect::<Vec<_>>().join("\n")
     );
 }
+
+/// Every door that works in the shared clone takes the per-PR lock.
+///
+/// `execute_pr_review` acquires it; the fixer door reached
+/// `fixer::resolve_and_fix` directly and did not, so a fixer commit could be
+/// built from a tree a concurrent review was moving under it, and then pushed.
+/// The healer builds its own worktree, which is why it is not in this set.
+#[test]
+fn the_doors_that_share_the_clone_serialise_on_the_pull_request() {
+    let raw = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/webhook/webhook_handlers.rs"),
+    )
+    .expect("the webhook handlers exist");
+    let src = anvil::source_scan::code_only(&raw);
+
+    let at = src
+        .find("resolve_and_fix(")
+        .expect("the fixer door still exists; if it moved, this test must follow it");
+    let opened = src[..at]
+        .rfind("tokio::spawn(")
+        .expect("the fixer still runs detached");
+
+    assert!(
+        src[opened..at].contains("acquire_pr_lock("),
+        "the fixer door does not take the per-PR lock the review pipeline \
+         takes, and both work in the one shared clone. A fixer commit can then \
+         be built from a tree a concurrent review is moving, and pushed to the \
+         contributor's branch."
+    );
+}

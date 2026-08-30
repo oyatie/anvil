@@ -1441,9 +1441,8 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         confidence: Confidence::Unresolved,
         oyatie_counterpart: "not established from this repository",
         counterpart_loc: 0,
-        evidence: "The port is 'is this fleet, or this repository, held?'; the two filenames are one \
-                  adapter behind it. Unresolved, not Probable: no oyatie counterpart was inspected, \
-                  so absence would be inferred from anvil's own catalog.",
+        evidence: "The port is 'is this fleet, or this repository, held?'. Unresolved: no oyatie \
+                  counterpart was inspected, so absence would be inferred from anvil's own catalog.",
     },
     MigrationEntry {
         component: "unresolved_review_guard",

@@ -23,7 +23,6 @@ pub fn anvil_hubs() -> BTreeSet<String> {
         "README.md",
         "CHANGELOG.md",
         "docs/doctrine.md",
-        ".github/workflows/ci.yml",
     ]
     .into_iter()
     .map(str::to_string)
@@ -47,8 +46,21 @@ pub fn is_open_test_crate(path: &str) -> bool {
     rest.ends_with(".rs") && !rest.contains('/')
 }
 
+/// Whether one path serialises.
+///
+/// The named set, plus every workflow file -- as a directory rather than as a
+/// list. The set named `.github/workflows/ci.yml`, which this repository does
+/// not have, so the rule meant to serialise CI changes serialised nothing:
+/// `presubmit.yml`, which produces the required `fast-checks` status every
+/// merge waits on, and `build-and-test.yml`, which produces `fmt`, could both
+/// be edited by two changes at once. A closed list of paths goes stale in
+/// silence; a directory does not.
+pub fn is_hub(path: &str, hubs: &BTreeSet<String>) -> bool {
+    hubs.contains(path) || path.starts_with(".github/workflows/")
+}
+
 pub fn hits_hub(write: &BTreeSet<String>, hubs: &BTreeSet<String>) -> bool {
-    write.iter().any(|p| hubs.contains(p))
+    write.iter().any(|p| is_hub(p, hubs))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

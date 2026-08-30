@@ -303,6 +303,26 @@ fn output_carrying_no_status_code_is_an_error() {
 // The transport -- every way the subprocess itself can fail
 // ---------------------------------------------------------------------------
 
+/// A budget these fixtures are not measuring.
+///
+/// They are about the transport's answer: a 200 returned verbatim, a non-zero
+/// exit reported, a missing status trailer refused. The deadline is incidental,
+/// and at five seconds it was not incidental enough -- under a full-suite run
+/// the machine took longer than that to spawn a two-line shell script, and both
+/// fixtures failed with
+///
+///     curl OSV querybatch timed out after 5s
+///
+/// which is the transport reporting a timeout correctly and the fixture
+/// measuring the load average. Observed twice, and never reproducible in
+/// isolation, which is what a wall-clock dependency looks like from the outside.
+///
+/// The deadline itself is pinned by
+/// `a_request_that_outlives_its_budget_is_killed_and_reported`, which builds a
+/// `sleep` that genuinely outlives its budget. Nothing here is weakened by
+/// giving these four room.
+const NOT_A_DEADLINE_TEST: Duration = Duration::from_secs(120);
+
 /// A program that answers exactly like curl -- body, newline, status trailer --
 /// and exits with `code`. The only way to exercise the transport's success path
 /// and its exit-code handling without making a network request.
@@ -330,7 +350,7 @@ async fn a_two_hundred_response_is_returned_verbatim() {
         &program,
         osv_stream::OSV_BATCH_URL,
         "{}",
-        Duration::from_secs(5),
+        NOT_A_DEADLINE_TEST,
     )
     .await
     .expect("a 200 with a body is an answer");
@@ -355,7 +375,7 @@ async fn a_nonzero_exit_is_an_error_even_when_the_body_looks_like_an_answer() {
         &program,
         osv_stream::OSV_BATCH_URL,
         "{}",
-        Duration::from_secs(5),
+        NOT_A_DEADLINE_TEST,
     )
     .await
     .expect_err("a transfer that died is not an advisory-free result");
@@ -371,7 +391,7 @@ async fn a_missing_curl_is_an_error_the_gate_can_report() {
         "anvil-there-is-no-such-binary",
         osv_stream::OSV_BATCH_URL,
         "{}",
-        Duration::from_secs(5),
+        NOT_A_DEADLINE_TEST,
     )
     .await
     .expect_err("a program that does not exist cannot answer");
@@ -386,7 +406,7 @@ async fn a_nonzero_exit_is_an_error_the_gate_can_report() {
         "false",
         osv_stream::OSV_BATCH_URL,
         "{}",
-        Duration::from_secs(5),
+        NOT_A_DEADLINE_TEST,
     )
     .await
     .expect_err("a non-zero exit is not a clean audit");

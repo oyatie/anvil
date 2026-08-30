@@ -1436,6 +1436,15 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   middleware.",
     },
     MigrationEntry {
+        component: "pause",
+        verdict: Verdict::Rewired,
+        confidence: Confidence::Unresolved,
+        oyatie_counterpart: "not established from this repository",
+        counterpart_loc: 0,
+        evidence: "The port is 'is this fleet, or this repository, held?'. Unresolved: no oyatie \
+                  counterpart was inspected, so absence would be inferred from anvil's own catalog.",
+    },
+    MigrationEntry {
         component: "unresolved_review_guard",
         verdict: Verdict::Rewired,
         confidence: Confidence::Probable,

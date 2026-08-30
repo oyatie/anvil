@@ -83,6 +83,7 @@ pub mod migration;
 pub mod migration_orchestrator;
 pub mod modularization_guard;
 pub mod monorepo_guard;
+pub mod pause;
 pub mod plan;
 pub mod postmortem;
 pub mod pr_self_healer;

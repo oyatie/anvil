@@ -165,14 +165,33 @@ impl StateManager {
     /// retry rather than the whole review.
     pub async fn clear_reviewed_sha(&self, repo: &str, pr_number: u64) {
         let key = Self::key(repo, pr_number);
-        let states = {
+        let (states, cleared) = {
             let mut states = self.states.write().await;
             match states.get_mut(&key) {
                 Some(entry) => entry.last_reviewed_head_sha.clear(),
                 None => return,
             }
-            states.clone()
+            let cleared = states.get(&key).cloned();
+            (states.clone(), cleared)
         };
+        // The log before the checkpoint, as `update_pr_state` does: the
+        // checkpoint is a whole-file rewrite, the log is append-only, and a
+        // crash between them is recovered from the log.
+        if let Some(entry) = cleared {
+            let wal = WalEntry {
+                timestamp: chrono_iso_now(),
+                key: key.clone(),
+                state: entry,
+            };
+            if let Err(e) = self.append_wal(&wal).await {
+                tracing::warn!(
+                    "Could not log the reviewed-SHA rollback for {}#{}: {}",
+                    repo,
+                    pr_number,
+                    e
+                );
+            }
+        }
         // Best-effort durability: if the checkpoint fails the in-memory clear
         // still allows a retry within this process lifetime.
         if let Err(e) = self.atomic_checkpoint(&states).await {

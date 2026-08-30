@@ -349,6 +349,10 @@ async fn main() -> Result<()> {
         broadcaster,
         telemetry_store,
         fleet_observer,
+        // The CONFIGURED data directory, not a hardcoded relative "data": an
+        // operator who set DATA_DIR would otherwise touch a PAUSE file nothing
+        // reads.
+        pause: Arc::new(anvil::pause::Pause::in_dir(config.data_dir.clone())),
     };
 
     let res = handle_cli(app_state).await;

@@ -5,44 +5,14 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use sha2::Sha256;
-use subtle::ConstantTimeEq;
 use tracing::{error, info, warn};
 
+use super::hmac::verify_github_hmac;
 use super::pipelines::execute_pr_review;
 use super::{ApiResponse, AppState};
 use crate::fixer::ReviewFeedbackItem;
 use crate::queue_healer::QueueHealer;
-
-/// Verifies GitHub X-Hub-Signature-256 HMAC in constant time to prevent timing attacks
-pub fn verify_github_hmac(secret: &str, raw_bytes: &[u8], signature_header: Option<&str>) -> bool {
-    let signature = match signature_header {
-        Some(sig) => sig,
-        None => return false,
-    };
-
-    let expected_hex = match signature.strip_prefix("sha256=") {
-        Some(hex) => hex,
-        None => signature,
-    };
-
-    let expected_bytes = match hex::decode(expected_hex) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-
-    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-
-    mac.update(raw_bytes);
-    let result = mac.finalize().into_bytes();
-
-    result.as_slice().ct_eq(&expected_bytes).into()
-}
 
 #[derive(Deserialize, Debug)]
 pub struct GitHubWebhookPayload {
@@ -320,6 +290,10 @@ pub async fn webhook_handler(
             let base_sha = pr.base.sha.clone();
 
             tokio::spawn(async move {
+                // Also read inside; a delegated read moves when the callee does.
+                if state_clone.pause.holds(&repo_clone, pr_number, "reviewing") {
+                    return;
+                }
                 if let Err(e) = execute_pr_review(
                     &state_clone,
                     &repo_clone,
@@ -397,6 +371,16 @@ pub async fn webhook_handler(
         };
 
         tokio::spawn(async move {
+            // Clones, model turn, pushes to the contributor. See `pause`.
+            if state_clone.pause.holds(&repo_clone, pr_number, "fixing") {
+                return;
+            }
+            // The review pipeline's per-PR lock; both work in one clone.
+            let lock = state_clone
+                .state_mgr
+                .acquire_pr_lock(&repo_clone, pr_number)
+                .await;
+            let _guard = lock.lock().await;
             let _ = state_clone
                 .fixer
                 .resolve_and_fix(
@@ -439,6 +423,10 @@ pub async fn webhook_handler(
             let wf_name = wf.name.unwrap_or_else(|| "CI Workflow".to_string());
 
             tokio::spawn(async move {
+                // Model turn, then a public issue. PR 0: a workflow run.
+                if state_clone.pause.holds(&repo_clone, 0, "triaging CI") {
+                    return;
+                }
                 if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
                     let _ = state_clone
                         .ci_triager
@@ -481,6 +469,10 @@ pub async fn webhook_handler(
         // would be logged nowhere at all -- the one enlist door where the
         // refusal would have become *less* observable than before.
         tokio::spawn(async move {
+            // Pushes a heal commit and enlists directly. See `pause`.
+            if state_clone.pause.holds(&repo_clone, pr_number, "healing") {
+                return;
+            }
             match state_clone
                 .queue_healer
                 .heal_ejected_pr(&state_clone, &repo_clone, pr_number)
@@ -513,57 +505,4 @@ pub async fn webhook_handler(
             message: format!("Ignored event: {}/{}", event_type, action),
         }),
     )
-}
-
-#[cfg(test)]
-mod hmac_tests {
-    use super::*;
-    use hmac::Mac;
-
-    fn sign(secret: &str, body: &[u8]) -> String {
-        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(body);
-        format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
-    }
-
-    #[test]
-    fn accepts_a_correctly_signed_body() {
-        let body = br#"{"action":"opened"}"#;
-        assert!(verify_github_hmac(
-            "s3cr3t",
-            body,
-            Some(&sign("s3cr3t", body))
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_secret_missing_header_and_tampered_body() {
-        let body = br#"{"action":"opened"}"#;
-        let sig = sign("s3cr3t", body);
-        assert!(!verify_github_hmac("other", body, Some(&sig)));
-        assert!(!verify_github_hmac("s3cr3t", body, None));
-        assert!(!verify_github_hmac(
-            "s3cr3t",
-            br#"{"action":"closed"}"#,
-            Some(&sig)
-        ));
-        assert!(!verify_github_hmac("s3cr3t", body, Some("sha256=zzzz")));
-        assert!(!verify_github_hmac("s3cr3t", body, Some("")));
-    }
-
-    /// The rotation window: a delivery signed with the OLD secret must still
-    /// verify while GITHUB_WEBHOOK_SECRET_PREVIOUS is set, and must stop
-    /// verifying once it is cleared. This is what makes rotation lossless.
-    #[test]
-    fn rotation_window_accepts_old_signatures_then_stops() {
-        let body = br#"{"action":"synchronize"}"#;
-        let old_sig = sign("old-secret", body);
-
-        // New secret alone does not accept an old-signed delivery.
-        assert!(!verify_github_hmac("new-secret", body, Some(&old_sig)));
-        // The previous secret does -- this is the fallback the handler consults.
-        assert!(verify_github_hmac("old-secret", body, Some(&old_sig)));
-        // After the window closes, the old signature is refused.
-        assert!(!verify_github_hmac("unrelated", body, Some(&old_sig)));
-    }
 }

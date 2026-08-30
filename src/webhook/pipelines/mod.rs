@@ -2,6 +2,7 @@
 
 pub mod certify;
 pub mod fix;
+mod record;
 pub mod review;
 
 pub use certify::execute_pr_certify;

@@ -6,9 +6,11 @@ use tracing::{info, warn};
 
 pub mod diff_context;
 pub mod hook_liveness;
+pub mod subject;
 pub mod worktree;
 
 pub use diff_context::PrDiffContext;
+pub use subject::{SubjectRoot, Uncloned};
 pub use worktree::EphemeralWorktree;
 
 /// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes
@@ -81,7 +83,7 @@ impl GitManager {
     }
 
     /// Ensures the primary repository clone is present locally and up to date
-    pub async fn ensure_repo_cloned(&self, repo: &str) -> Result<PathBuf> {
+    pub async fn ensure_repo_cloned(&self, repo: &str) -> Result<SubjectRoot> {
         let repo_dir = self.get_repo_dir(repo);
 
         if !self.repos_base_dir.exists() {
@@ -126,7 +128,7 @@ impl GitManager {
 
         let _ = Self::install_repo_hooks(&repo_dir).await;
 
-        Ok(repo_dir)
+        Ok(SubjectRoot::cloned(repo_dir))
     }
 
     /// Native hooks live in `$(git rev-parse --git-common-dir)/hooks`.

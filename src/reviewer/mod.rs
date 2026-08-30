@@ -315,7 +315,10 @@ mod tests {
             base_sha: "base".to_string(),
             head_sha: "head".to_string(),
             previous_head_sha: None,
-            repo_working_dir: PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: "d".repeat(MAX_DIFF_CHARS * 4),
             changed_files: vec!["src/lib.rs".to_string()],
             is_incremental: false,

@@ -17,7 +17,10 @@ fn test_dual_track_detects_unreconciled_cargo_change() {
         head_sha: "bbb".to_string(),
         diff_content: "+ tokio = \"1.38\"".to_string(),
         changed_files: vec!["crates/core/Cargo.toml".to_string()],
-        repo_working_dir: dir.path().to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            dir.path().to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };

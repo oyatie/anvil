@@ -61,7 +61,10 @@ fn diff_ctx(changed: &[String]) -> anvil::git_manager::PrDiffContext {
         head_sha: "b".to_string(),
         diff_content: String::new(),
         changed_files: changed.to_vec(),
-        repo_working_dir: std::path::PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }

@@ -239,7 +239,7 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(std::path::PathBuf::from("/tmp"), crate::git_manager::Uncloned::TestFixture),
             diff_content: "+++ b/migrations/001_add_idx.sql\n+ CREATE INDEX CONCURRENTLY idx_users_tenant ON users(tenant_id);".to_string(),
             changed_files: vec!["migrations/001_add_idx.sql".to_string()],
             is_incremental: false,
@@ -263,7 +263,10 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content:
                 "+++ b/migrations/002_bad_idx.sql\n+ CREATE INDEX idx_users_email ON users(email);"
                     .to_string(),

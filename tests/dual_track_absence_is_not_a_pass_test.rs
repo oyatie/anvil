@@ -24,7 +24,10 @@ fn ctx(dir: &Path, changed: &[&str]) -> PrDiffContext {
         head_sha: "bbb".to_string(),
         diff_content: String::new(),
         changed_files: changed.iter().map(|s| s.to_string()).collect(),
-        repo_working_dir: dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }

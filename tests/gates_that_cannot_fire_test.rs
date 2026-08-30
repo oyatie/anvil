@@ -115,7 +115,10 @@ fn ctx(diff: &str, changed: &[&str]) -> PrDiffContext {
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
         previous_head_sha: None,
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: diff.to_string(),
         changed_files: changed.iter().map(|s| s.to_string()).collect(),
         is_incremental: false,
@@ -451,7 +454,7 @@ fn feature_flag_source_carries_no_invented_flag_vocabulary() {
     const INVENTED: &[&str] = &["@deprecated_flag", "@stale_flag", "EXPIRATION:", "202[0-5]"];
 
     let mut offenders = Vec::new();
-    for (rel, src) in module_sources("src/feature_flag_ratchet.rs") {
+    for (rel, src) in module_sources("src/feature_flag_ratchet") {
         for (n, line) in src.lines().enumerate() {
             for token in INVENTED {
                 if line.contains(token) {

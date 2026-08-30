@@ -180,7 +180,10 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: "+++ b/benches/parse_bench.rs\n+ let buf = Vec::with_capacity(1024);"
                 .to_string(),
             changed_files: vec!["benches/parse_bench.rs".to_string()],
@@ -205,7 +208,10 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: "+++ b/src/crypto/token.rs\n+ let data = payload.clone(); // hotpath"
                 .to_string(),
             changed_files: vec!["src/crypto/token.rs".to_string()],

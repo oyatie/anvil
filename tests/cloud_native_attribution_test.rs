@@ -46,7 +46,10 @@ diff --git a/billing/adapters/src/s3.rs b/billing/adapters/src/s3.rs
             "billing/core/src/invoice.rs".to_string(),
             "billing/adapters/src/s3.rs".to_string(),
         ],
-        repo_working_dir: std::path::PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }

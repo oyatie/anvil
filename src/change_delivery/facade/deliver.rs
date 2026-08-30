@@ -55,7 +55,10 @@ pub async fn deliver_dry_run(
         .await
         .map_err(|e| anyhow!("{e}"))?;
     let report = measure_repo(&MeasureRequest {
-        repo_dir: req.repo_dir.clone(),
+        repo_dir: crate::git_manager::SubjectRoot::asserted(
+            req.repo_dir.clone(),
+            crate::git_manager::Uncloned::OperatorSupplied,
+        ),
         rev: sha.clone(),
         repo: req.repo.clone(),
         spec_override: req.spec_override.clone(),

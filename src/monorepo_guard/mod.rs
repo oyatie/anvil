@@ -215,7 +215,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ use crate::types::Model;".to_string(),
             changed_files: vec!["crates/core/src/lib.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };
@@ -238,7 +241,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: r#"+ let config_path = "/Users/developer/app.json";"#.to_string(),
             changed_files: vec!["crates/core/src/lib.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

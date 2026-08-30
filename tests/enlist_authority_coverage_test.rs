@@ -203,7 +203,10 @@ fn a_change(work_dir: &Path) -> PrDiffContext {
         base_sha: "1111111111111111111111111111111111111111".to_string(),
         head_sha: A_PULL_REQUEST.2.to_string(),
         previous_head_sha: None,
-        repo_working_dir: work_dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            work_dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: SMALL_DIFF.to_string(),
         changed_files: vec!["src/greeting.rs".to_string()],
         is_incremental: false,

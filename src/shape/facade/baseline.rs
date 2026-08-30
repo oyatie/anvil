@@ -60,7 +60,10 @@ pub async fn seed_from_commit(
         );
     }
     let req = MeasureRequest {
-        repo_dir: repo_dir.to_path_buf(),
+        repo_dir: crate::git_manager::SubjectRoot::asserted(
+            repo_dir.to_path_buf(),
+            crate::git_manager::Uncloned::OperatorSupplied,
+        ),
         rev: rev.to_string(),
         repo: repo_dir
             .file_name()
@@ -157,7 +160,10 @@ pub async fn judge(
     spec_override: Option<&Path>,
 ) -> Result<Judgement> {
     let req = MeasureRequest {
-        repo_dir: repo_dir.to_path_buf(),
+        repo_dir: crate::git_manager::SubjectRoot::asserted(
+            repo_dir.to_path_buf(),
+            crate::git_manager::Uncloned::OperatorSupplied,
+        ),
         rev: head.to_string(),
         repo: repo_dir
             .file_name()

@@ -42,7 +42,10 @@ fn ctx(diff: &str) -> PrDiffContext {
         previous_head_sha: None,
         diff_content: diff.to_string(),
         changed_files: vec![],
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     }
 }
 

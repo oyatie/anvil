@@ -42,7 +42,10 @@ diff --git a/src/lib.rs b/src/lib.rs
         head_sha: "bbb".to_string(),
         diff_content: diff.to_string(),
         changed_files: vec!["Cargo.toml".to_string(), "src/lib.rs".to_string()],
-        repo_working_dir: std::path::PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }

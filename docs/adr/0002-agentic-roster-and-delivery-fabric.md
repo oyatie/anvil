@@ -68,11 +68,11 @@ Roster names are the live report fields minus the `_status` suffix, so every `To
 ### Prove
 10. Test infrastructure. Job: harnesses, selection, flake lifecycle. Artifact: measured coverage / mutation / replay, not "a test exists." Today: coverage, test_suite, predictive_test, mutation, shuffle, flake_quarantine, kani, formal_verification, replay_harness, bench, microbench.
 11. Quality sign-off. Job: go/no-go against Product's done-when plus `is_admissible`. Artifact: certification that names what was unmeasured. Today: unresolved_review, review_verdict + `is_certified_ready` / `is_admissible`.
-12. Security. Job: threat, supply chain, IAM, policy. Artifact: cedar / attest / VEX that actually ran. Today: cedar, wasm_sandbox, supply_chain, security_scan, ephemeral_secret, psa, zero_day, openvex, cosign, attestation, zero_trust_workload.
+12. Security. Job: threat, supply chain, IAM, policy. Artifact: cedar / attest / VEX that actually ran. Today: cedar, wasm_sandbox, supply_chain, security_scan, ephemeral_secret, psa, zero_day, openvex, cosign, attestation, cleartext_transport.
 13. Legal. Job: it-legal fabric, not counsel. Artifact: status map, field catalog, processor registry, retention / destruction, consent ledger. Today: compliance. It scans added diff lines against five live regex rules — a sixth carries no pattern and can never fire — and filters them by a hardcoded evaluation date. It has no NotMeasured path, and the five-entry jurisdiction list it assembles, naming some seventeen regimes, is read by nothing. That is not representation until it measures the catalog. First corpus: Korean IT law (`jclab-joseph/it-legal` / `legalize-kr`). Jurisdiction-pluggable later. Does not file registrations, does not decide "are we a PG," does not invent 고시 detail.
 
 ### Ship
-14. Release. Job: rings, rollback, trains. Artifact: a rollout that can reverse. Today: canary, automated_canary, progressive_ring, auto_rollback, upgrade_train, ghost_migration, migration_orch.
+14. Release. Job: rings, rollback, trains. Artifact: a rollout that can reverse. Today: canary, automated_canary, progressive_ring, auto_rollback, ghost_migration, migration_orch.
 15. GitOps. Job: desired state is source. Artifact: digest pin + no drift. Today: gitops_promo, gitops_drift.
 
 ### Run

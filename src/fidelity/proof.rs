@@ -22,13 +22,19 @@ use super::{Fidelity, GateFidelity};
 /// sentence said "fifty-one" while the table held fifty-four.
 ///
 /// The ratio rises when code closes a named gap, not when a test is written.
-/// `shape_status` has eleven seeded-defect fixtures and a wired production path
-/// and is still `Partial`, because its own gap records an unimplemented naming
-/// rule.
-pub const FAILURE_PROOFS: &[(&str, &str)] = &[(
-    "unresolved_review_status",
-    "an_unresolved_thread_is_reported",
-)];
+/// A gate with seeded-defect fixtures and a wired production path stays
+/// `Partial` for as long as its own gap records an unimplemented rule; the row
+/// below is added when the rule exists and the fixture shows it firing.
+pub const FAILURE_PROOFS: &[(&str, &str)] = &[
+    (
+        "unresolved_review_status",
+        "an_unresolved_thread_is_reported",
+    ),
+    (
+        "shape_status",
+        "adapter_naming_fires_on_an_adapter_that_names_no_port_of_its_unit",
+    ),
+];
 
 /// The smallest number of `Measured` gates this tree is allowed to have.
 ///
@@ -37,7 +43,7 @@ pub const FAILURE_PROOFS: &[(&str, &str)] = &[(
 /// measure something does not stop having been shown it. Lowering this number
 /// is how a regression would be made to look like a passing build, so it is the
 /// line a review should stop at.
-pub const MEASURED_GATES_FLOOR: usize = 1;
+pub const MEASURED_GATES_FLOOR: usize = 2;
 
 /// Gate ids declaring `Measured` with no named proof that they can fail.
 ///

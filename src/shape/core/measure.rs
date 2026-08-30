@@ -2,6 +2,7 @@
 //! assembles the report. Rules this build cannot evaluate are listed as
 //! not measured with the reason — they are never counted as clean (I1).
 
+use super::adapter_naming;
 use super::dependency::{DepGraph, dependency_findings, port_findings};
 use super::naming::naming_findings;
 use super::report::{RuleId, ShapeReport, SpecSource};
@@ -86,11 +87,10 @@ pub fn measure(
             ));
         }
     }
-    if declared("adapter_not_port_plus_technology") {
-        not_measured.push((
-            RuleId::new("adapter_not_port_plus_technology"),
-            "adapter naming check is not available in this build".to_string(),
-        ));
+    if declared(adapter_naming::RULE) {
+        let (f, nm) = adapter_naming::adapter_naming_findings(spec, tree, &units);
+        findings.extend(f);
+        not_measured.extend(nm);
     }
 
     findings.sort_by(|a, b| (&a.rule, &a.key).cmp(&(&b.rule, &b.key)));

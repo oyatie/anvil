@@ -8,8 +8,8 @@
 
 use super::baseline::{Judgement, judge};
 use crate::ratchet::facade::Mode;
-use crate::shape::ports::{ShapeDistance, SpecSource};
-use std::collections::BTreeMap;
+use crate::shape::ports::{ShapeDistance, ShapeReport, SpecSource};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// What the gate measured, for telemetry and the fleet view.
@@ -23,6 +23,23 @@ pub struct ShapeMeasurement {
     pub blocking_regressions: usize,
     pub advisory_regressions: usize,
     pub fixed: usize,
+    /// Rules the tenant declared in a blocking mode that the measurement could
+    /// not evaluate, each with the reason, as `rule: why`.
+    ///
+    /// A rule that was not measured contributes no keys, so it can regress
+    /// nothing and the ratchet has nothing to refuse. Publishing that as a
+    /// pass would let absent evidence read as conformance (I1), so the gate
+    /// withholds instead — and it withholds only for rules the tenant asked to
+    /// be blocked on, because an advisory rule that could not run refuses
+    /// nothing either way.
+    pub blocking_unmeasured: Vec<String>,
+}
+
+impl ShapeMeasurement {
+    /// Why this measurement is not one, when a blocking rule did not run.
+    pub fn unmeasured_reason(&self) -> Option<String> {
+        (!self.blocking_unmeasured.is_empty()).then(|| self.blocking_unmeasured.join("; "))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,12 +61,30 @@ pub enum ShapeGateOutcome {
     },
 }
 
+/// The blocking rules `report` could not evaluate, as `rule: why`.
+///
+/// Joined against the rule set the head spec declares, never against the
+/// verdict: a rule that was not measured produced no findings and may have no
+/// baseline entry either, so the verdict is exactly where it would be missing.
+pub fn blocking_unmeasured(report: &ShapeReport, blocking_rules: &BTreeSet<String>) -> Vec<String> {
+    report
+        .not_measured
+        .iter()
+        .filter(|(rule, _)| blocking_rules.contains(&rule.0))
+        .map(|(rule, why)| format!("{rule}: {why}"))
+        .collect()
+}
+
 fn measurement_of(j: &Judgement) -> ShapeMeasurement {
-    let (report, verdict) = match j {
-        Judgement::Bootstrap { report, .. } => (report, None),
+    let empty = BTreeSet::new();
+    let (report, verdict, blocking_rules) = match j {
+        Judgement::Bootstrap { report, .. } => (report, None, &empty),
         Judgement::Judged {
-            report, verdict, ..
-        } => (report, Some(verdict)),
+            report,
+            verdict,
+            blocking_rules,
+            ..
+        } => (report, Some(verdict), blocking_rules),
     };
     let mut per_rule: BTreeMap<String, usize> = BTreeMap::new();
     for f in &report.findings {
@@ -67,6 +102,7 @@ fn measurement_of(j: &Judgement) -> ShapeMeasurement {
             })
         })
         .unwrap_or((0, 0, 0));
+    let blocking_unmeasured = blocking_unmeasured(report, blocking_rules);
     ShapeMeasurement {
         repo: report.repo.clone(),
         rev: report.rev.clone(),
@@ -80,6 +116,7 @@ fn measurement_of(j: &Judgement) -> ShapeMeasurement {
         blocking_regressions: blocking,
         advisory_regressions: advisory,
         fixed,
+        blocking_unmeasured,
     }
 }
 

@@ -9,6 +9,7 @@ pub mod harness_gates;
 pub mod matrix;
 pub mod report;
 pub mod scanner;
+pub mod shape_gate;
 pub mod status;
 
 pub use admission::{Absence, absence_blocks, absence_of};

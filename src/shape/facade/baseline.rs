@@ -148,6 +148,15 @@ pub enum Judgement {
         merge_base: String,
         report: ShapeReport,
         verdict: RatchetVerdict,
+        /// Rules the HEAD spec declares in a blocking mode.
+        ///
+        /// Carried separately because `verdict.per_rule` cannot answer it.
+        /// `compare` keys that map on the baseline's rules union the rules that
+        /// produced findings, and a rule the engine could not evaluate produces
+        /// neither. A tenant adopting a blocking rule the same change makes
+        /// unmeasurable would therefore have it silently absent from the
+        /// verdict, and absent evidence would read as a pass (I1).
+        blocking_rules: BTreeSet<String>,
     },
 }
 
@@ -208,6 +217,11 @@ pub async fn judge(
                 merge_base: rev,
                 report,
                 verdict,
+                blocking_rules: modes
+                    .iter()
+                    .filter(|(_, (m, _))| *m == Mode::BlockOnNew)
+                    .map(|(r, _)| r.clone())
+                    .collect(),
             })
         }
     }
@@ -225,6 +239,7 @@ pub fn render_judgement(j: &Judgement) -> String {
             merge_base,
             report,
             verdict,
+            ..
         } => {
             let mut out = format!(
                 "ratchet: {} @ {} vs baseline at merge-base {} — {}\n",

@@ -41,6 +41,8 @@
   "rules": {
     "unit_missing_face": { "mode": "advisory-until-infra" },
     "satellite_alias_used": { "mode": "advisory-until-infra" },
+    "face_edge_denied": { "mode": "baseline-block-on-new" },
+    "cross_unit_non_facade": { "mode": "baseline-block-on-new" },
     "file_misplaced": { "mode": "advisory-until-infra" },
     "root_file_unallowlisted": { "mode": "advisory-until-infra" }
   }

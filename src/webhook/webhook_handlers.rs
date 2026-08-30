@@ -5,93 +5,14 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use serde::Deserialize;
 use tracing::{error, info, warn};
 
 use super::hmac::verify_github_hmac;
+use super::payload::{GitHubWebhookPayload, WebhookUser};
 use super::pipelines::execute_pr_review;
 use super::{ApiResponse, AppState};
 use crate::fixer::ReviewFeedbackItem;
 use crate::queue_healer::QueueHealer;
-
-#[derive(Deserialize, Debug)]
-pub struct GitHubWebhookPayload {
-    pub action: Option<String>,
-    pub number: Option<u64>,
-    pub pull_request: Option<WebhookPullRequest>,
-    pub repository: Option<WebhookRepository>,
-    pub comment: Option<WebhookComment>,
-    pub review: Option<WebhookReview>,
-    pub workflow_run: Option<WebhookWorkflowRun>,
-    pub merge_group: Option<WebhookMergeGroup>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookPullRequest {
-    pub number: u64,
-    pub title: String,
-    pub body: Option<String>,
-    pub head: WebhookCommitRef,
-    pub base: WebhookCommitRef,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookCommitRef {
-    pub sha: String,
-    #[serde(rename = "ref")]
-    pub branch_ref: String,
-    /// Present on pull_request payloads. Comparing head.repo to base.repo is the
-    /// payload-side equivalent of `isCrossRepository`: it identifies a fork PR,
-    /// whose head branch name must never be used as a push target against the
-    /// base repository. See github::fork_guard.
-    #[serde(default)]
-    pub repo: Option<WebhookRepository>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookComment {
-    pub id: u64,
-    pub path: Option<String>,
-    pub line: Option<u64>,
-    pub body: String,
-    pub user: Option<WebhookUser>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookReview {
-    pub id: u64,
-    pub body: Option<String>,
-    pub state: Option<String>,
-    pub user: Option<WebhookUser>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookWorkflowRun {
-    pub id: u64,
-    pub name: Option<String>,
-    pub head_branch: Option<String>,
-    pub head_sha: Option<String>,
-    pub conclusion: Option<String>,
-    pub status: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookMergeGroup {
-    pub head_ref: String,
-    pub head_sha: String,
-    pub base_ref: String,
-    pub base_sha: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookUser {
-    pub login: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookRepository {
-    pub full_name: String,
-}
 
 pub async fn webhook_handler(
     State(state): State<AppState>,
@@ -329,22 +250,25 @@ pub async fn webhook_handler(
         && action == "created"
         && let (Some(pr), Some(comment)) = (&payload.pull_request, &payload.comment)
     {
-        let author = comment
-            .user
-            .as_ref()
-            .map(|u| u.login.clone())
-            .unwrap_or_else(|| "reviewer".to_string());
-
-        // See `github::identity::answerable`.
-        if !crate::github::identity::answerable(&author).await {
-            return (
-                StatusCode::OK,
-                Json(ApiResponse {
-                    success: true,
-                    message: "Ignored: not a comment Anvil answers".to_string(),
-                }),
-            );
-        }
+        // The author is read out of the actor the guard passed, not named
+        // before it: a comment carrying no user is not answerable, and a
+        // stand-in login would make it look like one. See `github::identity`.
+        let actor = comment.user.as_ref().map(WebhookUser::actor);
+        let author = match (
+            crate::github::identity::answerable(actor.as_ref()).await,
+            actor,
+        ) {
+            (true, Some(actor)) => actor.login,
+            _ => {
+                return (
+                    StatusCode::OK,
+                    Json(ApiResponse {
+                        success: true,
+                        message: "Ignored: not a comment Anvil answers".to_string(),
+                    }),
+                );
+            }
+        };
 
         let feedback_item = ReviewFeedbackItem {
             comment_id: Some(comment.id),

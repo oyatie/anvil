@@ -22,7 +22,10 @@ fn diff(body: &str) -> PrDiffContext {
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
         previous_head_sha: None,
-        repo_working_dir: std::path::PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: body.to_string(),
         changed_files: vec!["src/service.rs".to_string()],
         is_incremental: false,

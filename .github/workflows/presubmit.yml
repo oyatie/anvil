@@ -107,13 +107,28 @@ jobs:
             echo false > at-trunk.txt
           fi
 
+          # The labels on this pull request, for the audited override. A
+          # read that fails is a hard exit like every other read here: an
+          # empty label file would read as "no override", which is the
+          # safe direction, but it would also read as "the override was
+          # asked for and ignored" and leave nobody able to tell which.
+          gh pr view "${PR}" --repo "${GITHUB_REPOSITORY}" \
+            --json labels --jq '.labels[].name' > labels.txt
+
       - name: Admit or refuse this path-set
+        env:
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # `--this-pr` is this hop's place in the queue. Overlap is
+          # measured only against lower numbers, so an overlapping pair
+          # orders itself instead of refusing both ways.
           cargo run --bin occupancy --locked -- \
             --this this.txt \
             --in-flight in-flight.txt \
-            --merge-base-is-trunk "$(cat at-trunk.txt)"
+            --merge-base-is-trunk "$(cat at-trunk.txt)" \
+            --this-pr "${PR}" \
+            --labels labels.txt
 
   build-and-test:
     uses: ./.github/workflows/build-and-test.yml

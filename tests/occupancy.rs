@@ -13,7 +13,7 @@
 //! `docs/doctrine.md`, which are hubs.
 
 use anvil::change_delivery::core::shard::{
-    SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, is_open_test_crate, occupy_move,
+    SpawnKind, SpawnRefused, admit_spawn, anvil_hubs, is_hub, is_open_test_crate, occupy_move,
     path_sets_disjoint,
 };
 use std::collections::BTreeSet;
@@ -213,4 +213,54 @@ fn n_worktrees_on_open_test_paths_merge() {
         assert!(st.success(), "lane-{i} conflicted");
         assert!(root.join(format!("tests/nparallel_lane_{i}.rs")).is_file());
     }
+}
+
+/// A hub that names a path this repository does not have is a rule about
+/// nothing.
+///
+/// The set named `.github/workflows/ci.yml`. There is no such file: the
+/// workflows are `presubmit.yml` (which produces the required `fast-checks`
+/// status), `build-and-test.yml` (`fmt`), and six others. So the one entry
+/// meant to serialise changes to the checks every merge waits on serialised
+/// nothing at all, and two pull requests editing the same workflow were both
+/// admitted as `Parallel`.
+#[test]
+fn every_named_hub_is_a_path_this_repository_has() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let missing: Vec<String> = anvil_hubs()
+        .into_iter()
+        .filter(|h| !root.join(h).exists())
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the hub set names {} path(s) that do not exist: {}.\n\
+         A hub is a serialisation rule, and a rule about a file nobody has is \
+         one nobody trips. If the file was renamed, follow it; if it is gone, \
+         remove the row.",
+        missing.len(),
+        missing.join(", ")
+    );
+}
+
+/// And the workflows serialise as a directory, so the next one added is a hub
+/// without anybody remembering to say so.
+#[test]
+fn a_workflow_is_a_hub_whatever_it_is_called() {
+    let hubs = anvil_hubs();
+    for w in [
+        ".github/workflows/presubmit.yml",
+        ".github/workflows/build-and-test.yml",
+        ".github/workflows/a-workflow-added-next-year.yml",
+    ] {
+        assert!(
+            is_hub(w, &hubs),
+            "{w} does not serialise. Two changes editing the checks a merge \
+             waits on can then be in flight at once."
+        );
+    }
+    assert!(
+        !is_hub("src/pause/mod.rs", &hubs),
+        "an ordinary source file must stay parallel; a rule that serialises \
+         everything is the deadlock this module exists to remove"
+    );
 }

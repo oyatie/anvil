@@ -6,6 +6,7 @@
 //! rather than by each rule remembering to check.
 
 use super::Requires;
+use super::evidence::{BuildGraph, Fetched, ToolRun};
 use crate::git_manager::diff_context::PrDiffContext;
 use std::collections::BTreeMap;
 
@@ -59,12 +60,27 @@ pub struct Corpus {
     /// never supplied. Collapsing the two is the defect this harness exists to
     /// make unspellable.
     pub commit_subjects: Option<Vec<String>>,
-    /// Whether a resolved build graph was supplied.
-    pub build_graph: bool,
-    /// Whether a toolchain (cargo, clippy, buck2) is available to invoke.
-    pub toolchain: bool,
-    /// Whether remote state may be reached.
-    pub network: bool,
+    /// The resolved dependency edges, when they were resolved.
+    ///
+    /// Evidence, not permission. The three rungs below `History` each carried a
+    /// `bool` saying a rule *may* resolve a graph, invoke a toolchain or reach
+    /// the network -- which left the rule to do that work inside `examine`, and
+    /// left it nowhere to report that the work failed. See
+    /// [`super::evidence`] for what that cost.
+    pub build_graph: Option<BuildGraph>,
+    /// What each toolchain invocation produced, keyed by the tool.
+    ///
+    /// A map for the same reason `contents` is one: a rule asks for the tool it
+    /// understands, and a corpus carrying clippy but not buck2 is a fact the
+    /// rule needing buck2 must be able to see.
+    pub tool_runs: BTreeMap<String, ToolRun>,
+    /// What each remote query returned, keyed by the query.
+    ///
+    /// A query that failed is absent. There is no entry carrying an error,
+    /// because a rule handed one would have to decide whether an error counts
+    /// as a finding, and that decision is exactly what `Withheld` exists to
+    /// take away from it.
+    pub fetched: BTreeMap<String, Fetched>,
 }
 
 impl Corpus {
@@ -118,13 +134,26 @@ impl Corpus {
         self
     }
 
-    pub fn with_toolchain(mut self) -> Self {
-        self.toolchain = true;
+    pub fn with_build_graph(mut self, graph: BuildGraph) -> Self {
+        self.build_graph = Some(graph);
         self
     }
 
-    pub fn with_network(mut self) -> Self {
-        self.network = true;
+    /// Records what a toolchain invocation produced.
+    ///
+    /// Takes the output rather than running the tool: the caller owns the
+    /// timeout, the environment bound and the spawn failure, and a rule that
+    /// could spawn would have to own them too, in a function that can only
+    /// return findings.
+    pub fn with_tool_run(mut self, run: ToolRun) -> Self {
+        self.tool_runs.insert(run.tool.clone(), run);
+        self
+    }
+
+    /// Records what a remote query returned. A query that failed is not
+    /// recorded, so the rule needing it is withheld rather than run on nothing.
+    pub fn with_fetched(mut self, fetched: Fetched) -> Self {
+        self.fetched.insert(fetched.source.clone(), fetched);
         self
     }
 
@@ -150,9 +179,9 @@ impl Corpus {
             Requires::Changeset => self.changeset.is_some(),
             Requires::Manifests => !self.manifests.is_empty(),
             Requires::History => self.commit_subjects.is_some(),
-            Requires::BuildGraph => self.build_graph,
-            Requires::Toolchain => self.toolchain,
-            Requires::Network => self.network,
+            Requires::BuildGraph => self.build_graph.is_some(),
+            Requires::Toolchain => !self.tool_runs.is_empty(),
+            Requires::Network => !self.fetched.is_empty(),
         }
     }
 }

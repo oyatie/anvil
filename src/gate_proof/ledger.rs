@@ -12,6 +12,12 @@ use super::GateProof;
 /// see the note above on what inference produced.
 pub const GATE_PROOFS: &[GateProof] = &[
     GateProof {
+        gate_id: "migration_boundary_status",
+        exercises: "live_tree_violations",
+        fires_on: "migration_boundary_fires_when_migrating_code_depends_on_superseded_code",
+        spares: "migration_boundary_spares_the_same_tree_without_the_edge",
+    },
+    GateProof {
         gate_id: "test_suite_status",
         exercises: "PreMergeGuard",
         fires_on: "test_suite_fires_when_the_suite_reported_failures",

@@ -1,3 +1,6 @@
+pub mod disarm;
+pub use disarm::Disarmed;
+
 use anyhow::{Context, Result, bail};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -225,22 +228,9 @@ impl MergeEnlister {
         // landing between the check above and this request is rejected rather
         // than armed on a report that never saw it.
         //
-        // What it does NOT do, stated rather than implied: GitHub validates
-        // `--match-head-commit` at the moment auto-merge is enabled, and the
-        // merge itself happens later, whenever the required checks go green. A
-        // contributor with write access who pushes after that point moves the
-        // head, and GitHub does not disable auto-merge for it -- so the commit
-        // that eventually merges can be one no report ever measured. Nothing in
-        // this crate calls `gh pr merge --disable-auto`, and the review
-        // pipeline's response to a later, inadmissible head is a `warn!`.
-        //
-        // That window is accepted here, knowingly, and not closed by this flag.
-        // Closing it needs a disarm path -- re-running the corpus for the new
-        // head and calling `--disable-auto` when it does not certify -- which
-        // depends on GitHub's documented auto-merge-disable conditions for the
-        // token's permission level, and neither was verified for this change.
-        // The flag narrows the certify-to-enable race; it does not make a moved
-        // head unmergeable.
+        // The flag narrows the certify-to-enable race; it does not make a
+        // moved head unmergeable. `disarm::unless_enlisting` is the other
+        // half.
         let mut cmd = crate::exec::gh();
         cmd.args([
             "pr",

@@ -353,14 +353,22 @@ mod tests {
         assert!(drift.is_empty());
     }
 
+    /// The corpus size comes from the report, not from a literal here.
+    ///
+    /// A literal partitions whatever number is written down, which need not be
+    /// the corpus. The two halves must add up to `TOTAL_GATES`, and the
+    /// unaudited half must be empty -- which is what a gate added without a
+    /// registry entry trips, rather than inheriting an opinion nobody formed.
     #[test]
     fn the_report_admits_how_much_is_unaudited() {
-        let r = gap_report(68);
+        let total = crate::pre_merge_guard::report::TOTAL_GATES;
+        let r = gap_report(total);
         assert_eq!(r.audited, registry::AUDITED_GATES.len());
-        assert_eq!(r.audited + r.unaudited, 68);
-        assert!(
-            r.unaudited > 0,
-            "the audit is not yet complete and must say so"
+        assert_eq!(r.audited + r.unaudited, total);
+        assert_eq!(
+            r.unaudited, 0,
+            "a gate on the report has no registry entry; the registry must read \
+             it rather than inherit an opinion about it"
         );
         // Monotone, and audited against the floor rather than against a
         // number written here: an equality against a literal turns every gate

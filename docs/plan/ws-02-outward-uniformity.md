@@ -32,7 +32,7 @@ primitives. "Review loop results, not code."
 
 | ID | Milestone | Exit criterion | Owner |
 |---|---|---|---|
-| H1-13 | Self-application first (**inward obligation**; the labeled exception above): anvil's own shape spec enforcing, zero self-exemptions (same engine, same entrypoints as tenants — doctrine §5's "a rule Anvil would enforce on oyatie and not on itself does not compile") | `.anvil/shape.json` has no `advisory-until-infra`; seeded violation red | Architecture |
+| H1-13 | Self-application first (**inward obligation**; the labeled exception above): anvil's own shape spec enforcing, zero self-exemptions (same engine, same entrypoints as tenants — doctrine §5: "a rule Anvil would enforce on oyatie and not on itself is a rule that does not compile") | `.anvil/shape.json` has no `advisory-until-infra`; seeded violation red | Architecture |
 | H1-13b | Report-only conformance on oyatie + console using their proposal specs (`tests/fixtures/shape/`) | weekly report artifact per repo; findings become upstream tickets (WS-01 duty for oyatie; console analog) | Docs |
 | H2-4 | Codemod capability lands (contract above); **first real LSC** on one managed repo: mechanical majority by transform, tail by agents, ratchet flipped | `LscReport` shows ≥80% mechanical; ratchet red on seeded reintroduction; recipe before/after tests in CI | Implementation |
 | H2-4b | Shape-migration LSC catalog: dump-root dissolution, satellite placement, face moves — each a reusable recipe with parity tests | catalog entries each carry a fixture repo that goes red→green | Implementation |

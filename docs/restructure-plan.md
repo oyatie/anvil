@@ -2,6 +2,23 @@
 
 Rewritten 2026-08-24 against `origin/dev` @ `769a7de`.
 
+> **Status note, 2026-08-31 (added when this file was first committed, after external review of
+> PR #197; the body below is the 2026-08-24 record and is deliberately not rewritten):**
+>
+> - **Census superseded.** The numbers below were true at `769a7de`: 109 modules, 52,534 src
+>   lines. At `6128284` the roadmap re-measures 115 modules / 68,978 lines
+>   (`docs/plan/anvil-roadmap.md` §1.1). The kernel table's derived figures (+30/+29 levers, 86
+>   dependency-free modules) are `769a7de`-era and must be re-derived before Phase A executes —
+>   ws-01 carries that as part of H1-8a's entry.
+> - **D5 erratum.** "Toolchain converges on 1.98.0" must not be executed as written: setting
+>   `rust-version = "1.98.0"` equal to the channel trips `Drift::Conflated`
+>   (`src/toolchain/mod.rs:202`) and fails `tests/toolchain_msrv_test.rs` — channel and MSRV are
+>   two promises in opposite directions, and equality is the exact conflation the in-tree check
+>   forbids (root `CLAUDE.md`; the check postdates this document). The channel converges on
+>   1.98.0 (done); the MSRV decision is re-taken separately via the decision registry.
+> - **Pilot path renamed.** `~/Developer/rust-agent-lab` no longer exists; the pilot is
+>   `~/Developer/intelligence` (no `BRIEF.md` — its shape is described in ws-01).
+
 An earlier revision of this document was measured against a feature branch
 rather than `dev`. Its census, its kernel table, its toolchain table, and its
 claim that no ports layer exists were all wrong. Nothing here is carried over

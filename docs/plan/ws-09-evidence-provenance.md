@@ -7,9 +7,11 @@ working tree, which is never checked out at the certified head — the dependenc
 base branch, added policy files are silently skipped (#151). A build of a different commit is not
 this pull request's evidence.
 
-The boundary types exist (`SubjectRoot` built only by cloning; `TrunkRev` by proving ancestry;
-worktree-at-head verified by `rev-parse`, per ADR-0002 loop step 1). This workstream finishes the
-half that is still a convention: **a gate can still ignore the subject and read
+`SubjectRoot` exists and is landed (built only by cloning; worktree-at-head verified by
+`rev-parse`, per ADR-0002 loop step 1). `TrunkRev` does **not** exist yet — `git grep TrunkRev
+6128284 -- src/ tests/` finds nothing; it is designed prose in `ARCHITECTURE.md` §0 only
+(external review caught this file claiming it existed) — so building it is in H1-4a's scope, not
+assumed. This workstream finishes the half that is still a convention: **a gate can still ignore the subject and read
 `CARGO_MANIFEST_DIR` directly** (ARCHITECTURE.md: "the compile-time refusal arrives when scanner
 signatures take `&SubjectRoot`").
 

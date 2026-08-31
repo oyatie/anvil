@@ -42,6 +42,25 @@ shape report plus WS-14's ADR-INDEX watch, from H2-10 via the full conformance e
 discrepancies auto-open tickets. **Owner:** Architecture files; Human ticket queue tracks upstream
 acceptance (anvil cannot close oyatie's findings for it).
 
+**Filed 2026-08-31** (each re-verified at oyatie dev `1119e99` before filing):
+- [oyatie#2339](https://github.com/oyatie/oyatie/issues/2339) — registry gone from `governance/`
+  with no disposition; live home appears to be `intelligence/core/capability-registry-{app,domain}`.
+- [oyatie#2340](https://github.com/oyatie/oyatie/issues/2340) — `intelligence/` cap-root
+  `contracts/` vs ADR-0719 D-8 (the only root carrying it at that rev).
+- [oyatie#2341](https://github.com/oyatie/oyatie/issues/2341) — 8/24 roots diverge from the
+  majority face grammar; filed as a classification request, not a violation (faces are
+  unclassified migration input under ADR-0701, so no live predicate exists to violate — that gap
+  is the finding).
+- [anvil#198](https://github.com/oyatie/anvil/issues/198) — anvil-side tracking: ADR-0006's dead
+  citation, designated as the seed for WS-14's pointer-liveness check.
+
+Not filed, with reasons: the 119-file markdown inventory and `branch-protection.yaml` drift are
+already self-recorded in oyatie's own files (AGENTS.md's "frozen migration inventory"; the yaml's
+own header) — re-filing self-recorded state duplicates a surface; the weekly watch raises them only
+if their self-record disappears. `intelligence/` cap-root `k8s/` was **not** included in #2340:
+only `contracts/` is verifiably named by the D-8 restatement read this session; claiming more than
+the measurement would be the exact defect this plan schedules out.
+
 ## Ratchets
 
 - Shape gate on self: `unit_missing_face` and `cross_unit_non_facade` leave `advisory-until-infra`

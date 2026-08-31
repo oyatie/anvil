@@ -18,7 +18,8 @@ mechanizes.
 - **Test run:** input `SuiteRequest { subject_root, target_set }`; output `SuiteReport { counts
   {passed, failed, skipped}, duration, flake_events, evidence_path }` — counts always stated, per
   restructure-plan verification discipline ("a pure import rewrite that changes a test count has
-  changed behaviour"). Runner is `cargo nextest` (doctrine; serial `cargo test` is not the suite).
+  changed behaviour"). Runner is `cargo nextest` (`.config/nextest.toml` is the in-tree SSOT for the CI profile; root
+`CLAUDE.md` carries the law — serial `cargo test` is not the suite).
 
 ## Milestones
 

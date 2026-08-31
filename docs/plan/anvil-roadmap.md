@@ -39,17 +39,18 @@ Anvil's mission, restated as the two obligations this plan never conflates:
 | Fact | Value | Command |
 |---|---|---|
 | Open PRs | **2** (#196, #195), both base `dev` | `gh pr list --state open --json number,baseRefName` |
-| Open issues | **11** (§3 maps every one to a workstream) | `gh issue list --state open` |
+| Open issues | **11** at measurement (§3 maps every one); +1 the same day — #198, filed by this plan's own WS-01 duty, mapped to WS-14 | `gh issue list --state open` |
 | CI on dev, last 40 runs | postsubmit **12/12 success**, CodeQL 13/13, nightly 1/1, toolchain-weekly 1/1, **promotion-open-next 0/13** | `gh run list --branch dev --limit 40 --json name,conclusion` |
 | Promotion failure cause | `403: GitHub Actions is not permitted to create or approve pull requests` (no `PROMOTION_PAT`); a `promote(staging): 211 commits` PR can never open | `gh run view 33363340079 --log-failed` |
 | main vs dev | main is **300 behind and 45 ahead** of dev — diverged both directions, not merely stale | `git rev-list --count origin/main..origin/dev` / reverse |
 | Rulesets | dev: merge queue (ALLGREEN, ≤5, MERGE) + required `fast-checks` (strict), **`required_approving_review_count: 0`**; staging/canary/production: require `promotion-predecessor`; main: 1 human approval | `gh api repos/oyatie/anvil/rulesets/{21064279,21064983,21230025}` |
-| Branch sprawl | **315 local / 166 origin / 78 `pr/*`** branches; **50** worktrees | `git branch \| wc -l`; `git branch -r \| grep -c origin/`; `git worktree list \| wc -l` |
+| Branch sprawl | **315 local / 167 origin / 78 `pr/*`** branches; **50** worktrees (167 includes this plan's own branch, pushed the same day) | `git branch \| wc -l`; `git branch -r --format='%(refname:short)' \| grep -c '^origin/'`; `git branch -r --format='%(refname:short)' \| grep -c '^pr/'`; `git worktree list \| wc -l` |
 
 Two consequences worth stating plainly:
 
-- **The bottom rung of the autonomy ladder is not mechanically enforced.** Doctrine says a human
-  reviews before merge; the dev ruleset requires **zero** approving reviews, and ADR-0002 records that
+- **The bottom rung of the autonomy ladder is not mechanically enforced.** ADR-0002's manager
+  clause ("do not merge or approve") and ADR-0003's standing boundaries say a human reviews before
+  merge; the dev ruleset requires **zero** approving reviews, and ADR-0002 records that
   `MergeEnlister` submits an APPROVE and arms auto-merge — while authenticated as `jason931225`
   (issue #171). Today "Jason reviews first" is a convention wearing Jason's own credential, not a
   policy. The ladder (WS-06) starts by making today's rung real, then climbs.
@@ -62,8 +63,11 @@ Two consequences worth stating plainly:
 Three denominators appear below; they reconcile as: **73** = `TOTAL_GATES` at dev head
 (`src/pre_merge_guard/report.rs:204`); **72** = the corpus size when `postmortem-0001` and
 `ARCHITECTURE.md` were written (the corpus drifts as gates land — that drift is itself why H1-3
-scripts the census); **64** = the distinct `*Report` parameters
-`PreMergeCertificationEvaluator::evaluate` took when issue #59 classified them.
+scripts the census); **64** = the distinct `*Report` parameters the gate evaluator takes — verified at `6128284` as
+`PreMergeGuard::evaluate_pre_merge_gates` (`src/pre_merge_guard/evaluator.rs:110`); issue #59's
+body names a symbol that never existed in-tree (`git log --all -S PreMergeCertificationEvaluator`
+finds only this plan), a carried-citation defect caught by external review — the count survived
+verification, the symbol did not.
 
 - **59 of 64 evaluated gates decide by inspecting the diff string in-process; 5 invoke real
   tooling** — issue #59's census, dated 2026-08-30, method documented in the issue
@@ -71,11 +75,17 @@ scripts the census); **64** = the distinct `*Report` parameters
   session** — H1-3 exists precisely to make this census scripted, CI-run, and ratcheted so it can
   never be a stale quotation again. No build runs, no test executes, in the overwhelming majority
   of the certification matrix.
-- **No pull request has ever been admissible**: `is_admissible()` requires an empty unmeasured set
-  and the SLO gate reports `NotMeasured` in the default configuration (issue #19, with code
-  citations); 34 of 72 gates needed an absence-exemption policy to be admissible at all
-  (`postmortem-0001` RC-2, in-tree artifact); `honesty_ratio` is defined at
-  `src/fidelity/mod.rs:145` (`grep -rn 'honesty_ratio' src/`) and reported ≈0.02 by the postmortem.
+- **Admission's absence exemption is live policy, not a fixed defect list**: at `6128284` the
+  door is `admission_refusal()`, and `is_admissible()` no longer requires an empty unmeasured set —
+  its own doc says "this is not the admission decision" and it now applies the same
+  `ABSENCE_POLICY` three-way absence split (`src/pre_merge_guard/report.rs:538`,
+  `src/pre_merge_guard/admission.rs:79` — read this session; issue #19's premise predates this
+  change and is partially overtaken). The standing finding: `ABSENCE_POLICY` still exists and
+  classifies `slo_status` and friends `NotProvisioned` so their absence never blocks — that policy
+  is the shape of RC-2's missing distinction, and M4 deletes it rather than curating it. 34 of 72
+  gates needed absence exemptions when `postmortem-0001` was written (in-tree artifact);
+  `honesty_ratio` is defined at `src/fidelity/mod.rs:145` (`grep -rn 'honesty_ratio' src/`) and
+  reported ≈0.02 by the postmortem.
 - **5 rules** are registered in the new typed rule engine (`grep -c 'Box::new'
   src/harness/rules/mod.rs`) against the ~72-gate hand-wired corpus — the M2 drain has barely
   begun.
@@ -94,11 +104,11 @@ upstream (WS-01 carries the duty; none is a template to copy):
 | Measurement | Value | Command |
 |---|---|---|
 | Capability roots | 24 top-level roots + `app/` | `git -C ~/Developer/oyatie ls-tree origin/dev` |
-| Face grammar | majority `{core, ports, adapters, facade}` + `cedar/iac/observability` satellites; **8 roots break it** (`bus`, `cell`, `policy`, `packs`, `build`, `marketplace`, `gateway`, `flags` lack required faces) | per-root `git ls-tree origin/dev:<root>` |
+| Face grammar | ADR-0719 D-8's closed-children table mandates the same four faces for every cap and app ("this shape does not change"); strict census pinned at `1119e99` over the 21 capability roots (excluding `app/`, `packs/` (install authority, D-24), `build/` (meta root), `docs/`, `templates/`, `third-party/`): **9 carry the full quartet** (billing compute data iac iam k8s pipeline secrets tenancy), **12 lack ≥1 face** (audit −facade; bus −ports,facade; cell −adapters,facade; compliance −adapters,facade; flags −ports,adapters,facade; gateway −ports,facade; intelligence −ports; marketplace −ports,adapters,facade; network −facade; observability −ports,facade; policy −ports,facade; storage −facade). An earlier revision of this row said "8 roots break it" — wrong denominator and wrong set, caught by external review and corrected upstream on oyatie#2341 | per-root `git ls-tree --name-only 1119e99:<root>`, quartet membership tested per face |
 | Live layout law | ADR-0700 apex series; **ADR-0701 (faces/layout) is Superseded — "frozen transitional migration input"**; the closed directory set lives in ADR-0719 D-8 | `docs/decisions/ADR-0701…` |
-| D-8 violations | `intelligence/` carries cap-root `contracts/` and `k8s/`; D-8 says "no cap-root `contracts/`" | `git ls-tree origin/dev:intelligence` |
+| D-8 violations | `intelligence/` carries cap-root `contracts/` and `k8s/`; ADR-0719 D-8's closed-children table (read this session, `docs/decisions/ADR-0719…` §D-8) admits exactly `core/ ports/ adapters/ facade/ cedar/ observability/ iac/` + `OWNERS`/`BUCK` — both `contracts/` and `k8s/` sit outside it (`contracts/` also named in ADR-0701's restatement; `k8s/` measured against the table itself, added to oyatie#2340 by comment) | `git ls-tree --name-only 1119e99:intelligence`; D-8 table |
 | Markdown predicate | AGENTS.md: tracked markdown only at root; **119** non-root `.md` outside `docs/` remain as "frozen migration inventory" | `git ls-tree -r origin/dev --name-only \| grep '\.md$' \| grep -vE '^(README\|AGENTS\|CLAUDE\|LICENSE)\.md$' \| grep -v '^docs/' \| wc -l` |
-| Dead pointer | `governance/capability-registry.json` **does not exist** on oyatie dev, yet Anvil's ADR-0006 cites it as oyatie's shape-as-data | `git ls-tree origin/dev:governance` (empty) |
+| Dead pointer | `governance/capability-registry.json` **does not exist** on oyatie dev, yet Anvil's ADR-0006 cites it as oyatie's shape-as-data; D-8 confirms "`governance/` is gone (D-17)" | `git cat-file -t origin/dev:governance` (fatal — path absent) |
 | Protection drift | oyatie's own `.github/branch-protection.yaml` opens by declaring live GitHub protection does not match it | file header |
 | CI law | ADR-0700: single required admission context `presubmit`; binding verification is Rust/Buck2 gate apps; GHA is a transitional adapter | ADR-0700 §Decision |
 
@@ -143,7 +153,7 @@ or identity that H1 has not made honest.
 | H1-7 | **Instrument discipline**: scanner rules 1–3 meta-guard over `tests/`; path-keyed-read drain begins (WS-12; #179) | meta-guard red on a seeded raw-text scan; path-keyed read count ratcheted strictly downward from **342** (re-measured 2026-08-31, `grep -rn 'src/[a-z_]*\.rs"' tests/*.rs \| wc -l`; #179 measured 332 one day earlier — the class is still being written) | Test infrastructure |
 | H1-8 | **Restructure Phase A+B**: kernel extraction (4 hub PRs), workspace split, serialization points removed (WS-01) | `src/lib.rs` no longer the single declaration point (per-capability `mod` decls); `[workspace]` in root manifest; suite green with counts before/after each PR | Architecture |
 | H1-9 | **Ladder rung 0 made real**: dev ruleset requires 1 human approval; approve/auto-merge under machine identity only after human review recorded (WS-06) | `gh api repos/oyatie/anvil/rulesets/21064279` shows `required_approving_review_count ≥ 1`; decision registry row per merge | Human ticket queue |
-| H1-10 | **Decision registry + cockpit ticket MVP** (WS-07): every human-authority decision is a ticket with an evidence packet; #19 is decided through it as the pilot | registry append-only file exists; a tier/decision change without a ticket reference fails a test; #19 closed via a registry row | Human ticket queue |
+| H1-10 | **Decision registry + cockpit ticket MVP** (WS-07): every human-authority decision is a ticket with an evidence packet; #19 is decided through it as the pilot | registry append-only file exists; a tier/decision change without a ticket reference fails a test; #19 closed via a registry row | Architecture (build, per WS-07); Human ticket queue (decisions through it) |
 | H1-11 | **Promotion fabric unbroken** (WS-13): promotion PRs open under App token | last 5 `promotion-open-next` runs on dev conclude `success` (`gh run list`) | Builder tools |
 | H1-12 | **Merge-train rehearsal** as a required check (postmortem RC-5; WS-05) | seeded cross-PR type-conflict pair: rehearsal red while both PRs green in isolation | Test infrastructure |
 | H1-13 | **Shape enforcement on self**: the two `advisory-until-infra` self-exemptions retired after Phase B (WS-02 inward half) | `.anvil/shape.json` has zero `advisory-until-infra` rules; shape gate red on a seeded dump-root | Architecture |
@@ -218,6 +228,7 @@ machine-readable I/O contracts** (each ws file specifies its contract).
 
 Issue map (no finding left unscheduled): #15→WS-04 · #19→WS-08+WS-07 · #52→WS-05+WS-12 · #53→WS-08 (timers on fabricated input) + WS-05 (the flake-lifecycle half, H1-14) ·
 #59→WS-08 · #149→WS-09 · #151→WS-09 · #171→WS-11 · #179→WS-12 · #191→WS-05 · #192→WS-10.
+#198→WS-14 (its pointer-liveness seed; filed by this plan's WS-01 duty) ·
 oyatie-side findings (§1.4) → WS-01 upstream-ticket duty. Doctrine/ruleset gap → WS-06. Promotion
 red, main divergence, sprawl → WS-13. ADR drift → WS-14.
 
@@ -250,7 +261,7 @@ applied — a silently no-op'd seed makes a broken check look sound).
 | Model change regresses the harness | eval-suite score drops past threshold on a model/prompt bump (WS-16) | block the bump; pin previous model; freeze tier promotions until green |
 | Merge queue starves at agent PR volume | queue p95 wait > 60 min for 7 consecutive days | activate scope-aware lanes / speculative batching (research: WS-05/03); cap fleet concurrency |
 | Ratchet erosion | a baseline file changes without a signoff row in the same diff | merge-blocking refusal + cockpit ticket; postmortem row |
-| oyatie layout law moves | oyatie `docs/decisions/ADR-INDEX.md` or ADR-07xx set changes (watched weekly by WS-14 conformance run) | reconcile anvil shape spec within one sprint; file upstream finding if the change contradicts D-8 |
+| oyatie layout law moves | oyatie `docs/ADR-INDEX.md` (the canonical index — `docs/decisions/` holds only a redirect stub `INDEX.md`; the previously named `docs/decisions/ADR-INDEX.md` does not exist, caught by external review) or the `docs/decisions/` ADR-07xx set changes (watched weekly by WS-14) | reconcile anvil shape spec within one sprint; file upstream finding if the change contradicts D-8 |
 | Identity migration stalls | `promotion-open-next` still red 30 days after H1-11 date, or daemon still authenticates as `jason931225` at H1-6 date | escalate ticket; **block all tier promotions** (identity is a prerequisite for every rung) |
 | Review verdicts socially engineered | injection/SEVRA-style corpus failure, or a verdict cites no executed evidence | demote review verdict to advisory until reseeded; incident row in registry |
 | Standing red normalizes | any required or scheduled workflow red > 7 days on dev | auto-ticket with owner; weekly report counts standing reds (target 0) |
@@ -286,6 +297,7 @@ applied — a silently no-op'd seed makes a broken check look sound).
 | 2026-08-31 | **Adversarial review iteration 1** (fresh-context reviewer): 5 violations, 7 advisories. V1 `&SubjectRoot` scanner-signature milestone scheduled H2 in WS-12 vs H1 in WS-09 while §1.3 claimed it front-loaded → front-loaded as shared H1-7d in both. V2 contradictory measured claims on `promotion-predecessor` requiredness → re-checked ruleset 21064983: it IS required; WS-13 corrected, the workflow's stale "advisory" PR-body prose reclassified as a doc-drift instance for WS-14. V3 roadmap H3-2 skipped rung R2.5 → exit criterion rebound to R2.5, WS-06 ladder declared normative. V4 §1.3/ws-08/ws-12 numbers without commands → re-measured what is cheap (path-keyed reads 332→**342**, registered rules 4→**5**, `honesty_ratio` definition site cited) and marked day-old in-repo census numbers (#59, RC-2) as carried-not-re-executed with H1-3 as the permanent fix. V5 ws-07 H3 exit not machine-checkable → decidable predicate with pinned thresholds. Advisories A1–A5, A7 applied (WS-15/16 labeled research-gap H2 starts; R0 keyed; parameters pinned with defaults; #53 map reconciled; denominators 73/72/64 reconciled; upstream-duty owner named); A6 resolved by a milestone-ID addressing convention in §2 | Process loop, iteration 1 |
 | 2026-08-31 | **Adversarial review iteration 2** (fresh reviewer, no knowledge of iteration 1): 4 violations, 6 advisories — all cross-file consistency. V1 stale 332 baseline in roadmap §2/§3 vs 342 in WS-12 → 342 everywhere with the command. V2 WS-02 declared "outward only" while owning the inward H1-13 self-application milestone → the inward exception is now labeled in WS-02's header as a doctrine-§5 precondition, not a conflation. V3 automated merged-branch deletion at H1 contradicted WS-06's destructive-highest-tier law → H1-11d rewritten report-and-ticket (deletions only on ratified registry ticket until R4; GitHub's delete-on-merge is a human-flipped setting). V4 H3-3 owner Security vs Human ticket queue → split: Security owns the mechanism, every policy adoption is ratified via ticket. Advisories applied: sprawl commands inline in WS-13; the weekly oyatie ADR-INDEX watch named as WS-14's H1 mechanism behind the §5 tripwire; WS-05 H3 drill pinned (quarterly, seeded high-risk PR, 100%-logged selections); honesty_ratio pinned at ≈0.02 with source in both places; R1 activation given milestone WS06-H1b; research.md citation-window claim independently re-verified by the reviewer | Process loop, iteration 2 |
 | 2026-08-31 | **Adversarial review iteration 3** (final under the 3-iteration cap): 2 violations, 6 advisories. V1 two stale "332" strings survived iteration 2's fix inside WS-12 itself (§class description, §Non-goals) → corrected to the 342 baseline with attribution to #179's 2026-08-30 figure. V2 the "68 entries" drift claim in WS-14 carried no artifact → pinned to `tests/brand_absence_gate_test.rs:29` with the grep. Advisories applied: §1.4 markdown command spelled out in full; WS-01 upstream-duty denominator scoped to discrepancy rows; H3-3 owner cell carries the mechanism/adoption split; R4 gets a 180-day R3 window default pin; WS-10 template-provenance wording research-anchored; H2 non-goal parenthetical aligned to R4. **Cap status, flagged per the process rule:** the cap is reached with the two iteration-3 violations *fixed in place after the review* — the fixes are single-string substitutions verifiable by `grep -rn '332\|68 entries' docs/plan/` (expected: only attributed historical mentions) but have not themselves been re-reviewed by a fourth fresh-context pass | Process loop, iteration 3 — cap reached |
+| 2026-08-31 | **External review (dispatched `/code-review` agent, multi-finder + adversarial verification): 15 confirmed findings, all addressed this revision.** The five that matter most, each an instance of a class this plan itself polices: (1) ws-13's branch ratchet cited `git branch -r \| grep -c '^origin/'`, which always returns 0 (bare `git branch -r` indents lines) — instrument replaced with the `--format` form, baseline re-pinned 167, and the ratchet now requires its own seeded proof; (2) ws-12's 342 "path-keyed reads" are path *literals* — one real `read_to_string("src/` site remains and `tests/path_keyed_source_read_ratchet_test.rs` already bans the class at baseline — milestone re-scoped to proving the existing ratchet, the literal census demoted to a signal (#179's headline number was a proxy; this plan trusted it); (3) §1.4's "8 roots break the face grammar" was the wrong set and denominator — strict census pinned at `1119e99`: 9/21 full quartet, 12/21 partial, D-8's closed-children table identified as the live predicate, correction posted to oyatie#2341; (4) §1.3 described `is_admissible()`'s retired empty-unmeasured mechanism as current — rewritten against `report.rs:538`/`admission.rs:79` as read at `6128284`; (5) ws-14's inward watch named `docs/decisions/ADR-INDEX.md`, which does not exist (canonical: `docs/ADR-INDEX.md`) — a dead pointer inside the pointer-liveness milestone, now that check's second seed. Also fixed: restructure-plan status note (stale census 109→115, D5 channel==MSRV erratum, dead pilot path → `~/Developer/intelligence`); ws-09's false "TrunkRev exists" (designed only, `git grep` = 0 in src); §1.3's citation of a never-existed symbol (real: `PreMergeGuard::evaluate_pre_merge_gates`, `evaluator.rs:110`); `intelligence/` `k8s/` claim now measured against D-8's table (comment added to oyatie#2340); ws-01 duty text reconciled with its own filing record; CLAUDE.md↔ADR-0002 merge-authority contradiction bridged (enlister behavior named as documented defect #171, not authorization); research.md ~700-crate erratum (measured: 471 manifests at `1119e99`); "doctrine" attributions split between `docs/doctrine.md` §-cites and `CLAUDE.md`/ADR-0002 law; #198 added to §3's issue map; `(empty)`→fatal annotation; H1-10 owner aligned; axum de-listed from the security-relevant pair. Not adopted: none — every finding verified before fixing (two reviewer numbers were themselves off by the same-day drift they flagged: origin count 167 not 166/168 under the fixed instrument; one `read_to_string("src/` site, not zero) | External review of PR #197 |
 | 2026-08-31 | **WS-01 upstream duty executed** (first standing duty activated post-draft): oyatie discrepancies re-verified at oyatie dev `1119e99`, then filed — [oyatie#2339](https://github.com/oyatie/oyatie/issues/2339) (registry disposition), [oyatie#2340](https://github.com/oyatie/oyatie/issues/2340) (cap-root `contracts/` vs D-8), [oyatie#2341](https://github.com/oyatie/oyatie/issues/2341) (face-grammar classification request), [anvil#198](https://github.com/oyatie/anvil/issues/198) (ADR-0006 dead citation; WS-14 seed). URLs recorded in ws-01; two §1.4 rows deliberately not filed (self-recorded in oyatie's own files — reasons in ws-01) | WS-01 duty |
 
 ## 8. Research backlog (from the completeness critic, scheduled not silently absorbed)

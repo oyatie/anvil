@@ -3,8 +3,10 @@
 **End-state (hard constraint, not regressed):** sandbox policy, allow/deny (including destructive
 actions), and merge decisions are ultimately made by agents under **deterministic pre-action
 authorization** — policy evaluated before the tool call, deny-by-default, destructive actions always
-tiered highest. Today's doctrine ("green is not merge authority; Jason reviews first") is the bottom
-rung, not the ceiling. Rungs are keyed to **blast radius and reversibility** (ADR-0003's three
+tiered highest. Today's law ("green is not merge authority; Jason reviews first" — root
+`CLAUDE.md`, grounded in ADR-0002's manager clause and ADR-0003's standing boundaries; not in
+`docs/doctrine.md`, whose numbered sections this plan cites separately) is the bottom rung, not
+the ceiling. Rungs are keyed to **blast radius and reversibility** (ADR-0003's three
 questions: detection, reversibility, verification), promotion is **earned with evidence and ratified
 by Jason via ticket** (interview A-3), and no rung is skipped.
 

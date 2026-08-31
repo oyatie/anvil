@@ -1052,6 +1052,13 @@ These are recorded so the roadmap can schedule them, not silently claim coverage
 
 ## Limitations
 
+- **Erratum (2026-08-31, from external review):** the topic contexts handed to the research agents
+  described oyatie as a "~700-crate" monorepo; that figure was prompt-supplied, not measured, and
+  it echoes through several findings above. Measured at oyatie dev `1119e99`:
+  `git ls-tree -r --name-only origin/dev | grep -c 'Cargo.toml$'` → **471** first-party manifests
+  (reindeer-vendored third-party targets are additional). Scale-sensitive implications (cache
+  sizing, LSC sharding) should be read against ~471, not ~700.
+
 - Vendor engineering blogs report their own numbers; findings flag these as vendor-reported where the
   researching agent noticed. Treat quantitative claims from vendors as directional.
 - Recency was enforced by verified page dates; an agent can still misread a date. The window check is

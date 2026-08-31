@@ -1,3 +1,4 @@
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -359,10 +360,7 @@ Output strictly valid JSON matching this schema:
 
 Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `missing_doc_summary: null`, `doc_files_to_update: []`.
 
-## Git Diff:
-```diff
 {diff_content}
-```
 "#####,
             repo = repo,
             pr_number = diff_ctx.pr_number,
@@ -373,7 +371,8 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                 pr_body
             },
             changed_files = changed_files_preview,
-            diff_content = diff_content_bounded
+            // Superseded in `migration::registry`: a repair, not new depth.
+            diff_content = Untrusted::new(UntrustedLabel::GitDiff, &diff_content_bounded,).render()
         );
 
         let target = format!("{}#{}", repo, diff_ctx.pr_number);

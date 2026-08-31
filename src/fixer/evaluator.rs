@@ -1,3 +1,4 @@
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -42,13 +43,17 @@ pub async fn evaluate_feedback_items(
 
     prompt.push_str("## Review Feedback Items:\n");
     for (i, item) in feedback_items.iter().enumerate() {
+        // The comment body and its author are written by whoever commented,
+        // and this prompt decides which comments the fixer acts on.
         prompt.push_str(&format!(
-            "### Item [{}]\n- **Author**: {}\n- **File**: {}\n- **Line**: {}\n- **Comment**:\n{}\n\n",
+            "### Item [{}]\n- **File**: {}\n- **Line**: {}\n{}\n{}\n\n",
             i,
-            item.author,
             item.file_path.as_deref().unwrap_or("General PR"),
-            item.line.map(|l| l.to_string()).unwrap_or_else(|| "N/A".to_string()),
-            item.body
+            item.line
+                .map(|l| l.to_string())
+                .unwrap_or_else(|| "N/A".to_string()),
+            Untrusted::new(UntrustedLabel::PrTitle, &item.author,).render(),
+            Untrusted::new(UntrustedLabel::ReviewComment, &item.body,).render()
         ));
     }
 

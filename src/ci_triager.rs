@@ -1,3 +1,4 @@
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -126,10 +127,7 @@ impl CiTriager {
 - **Workflow Run ID**: #{run_id}
 - **Commit SHA**: {commit_sha}
 
-## Failed Step Logs:
-```text
 {logs}
-```
 
 ## Instructions:
 1. Identify the exact error: compilation error, panicking test assertion, timing/flake hazard, network timeout, or infrastructure crash.
@@ -153,7 +151,9 @@ Output strictly valid JSON matching this schema:
             workflow_name = workflow_name,
             run_id = run_id,
             commit_sha = commit_sha,
-            logs = logs
+            // Contributor-controlled despite looking like machine output: a
+            // test the pull request adds prints whatever it likes.
+            logs = Untrusted::new(UntrustedLabel::CiLogs, logs,).render()
         );
 
         let output = self.run_agy_prompt(&prompt, working_dir).await?;

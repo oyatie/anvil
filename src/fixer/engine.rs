@@ -1,3 +1,4 @@
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use tokio::process::Command;
@@ -165,9 +166,13 @@ impl FixEngine {
         .await?;
         let diff_str = String::from_utf8_lossy(&diff_out.stdout);
 
+        // The diff is the contributor's, and this prompt drives a turn with
+        // write access to the tree. See `reviewer::untrusted`.
         let prompt = format!(
-            "The previous code edits caused build or test failures. Inspect the repository, check the current diff, diagnose the root cause, and fix the errors so that the test suite passes cleanly.\n\nCurrent diff:\n```diff\n{}\n```",
-            diff_str
+            "The previous code edits caused build or test failures. Inspect the \
+             repository, check the current diff, diagnose the root cause, and fix \
+             the errors so that the test suite passes cleanly.\n\n{}",
+            Untrusted::new(UntrustedLabel::WorkingDiff, &diff_str,).render()
         );
 
         let _ = self.run_agy_prompt(&prompt, repo_dir).await?;

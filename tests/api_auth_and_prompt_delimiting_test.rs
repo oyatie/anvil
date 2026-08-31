@@ -1027,13 +1027,37 @@ fn test_prompt_false_green_the_assembly_cannot_emit_an_unclassified_segment() {
         );
     }
 
-    // And every channel the type knows about is actually wired in, so adding a
-    // variant without rendering it fails here rather than shipping unfenced.
+    // And every channel the type knows about is rendered by SOME prompt
+    // builder, so adding a variant without wiring it fails here rather than
+    // shipping unfenced.
+    //
+    // Not `build_prompt` alone. `Untrusted` began as the reviewer's and is now
+    // the repository's: the fixer's working diff and review comments, and the
+    // triager's logs, are channels into other prompts. Asserting they appear
+    // here would force every future channel through the review prompt whether
+    // it belongs there or not.
+    let everywhere: String = [
+        "src/reviewer",
+        "src/fixer",
+        "src/ci_triager",
+        "src/doc_guard",
+    ]
+    .iter()
+    .map(|m| {
+        anvil::source_scan::paths::module_source(
+            m,
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
     for label in UntrustedLabel::ALL {
         let variant = format!("{label:?}");
         assert!(
-            body.contains(&variant),
-            "UntrustedLabel::{variant} exists but build_prompt never renders it"
+            everywhere.contains(&format!("UntrustedLabel::{variant}")),
+            "UntrustedLabel::{variant} exists and no prompt builder renders it, \
+             so the channel is declared and unused -- or wired somewhere this \
+             scan does not read"
         );
     }
 }

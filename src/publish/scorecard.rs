@@ -92,20 +92,37 @@ fn gate_name(gate_id: &str) -> String {
 }
 
 /// One finding, rendered on a single line plus optional detail lines.
+///
+/// Carries no fidelity note. The registry records nearly the whole corpus below
+/// `Measured`, so a note per finding is one identical sentence on almost every
+/// line -- kilobytes of it in the worst case, which is enough to push the terse
+/// rendering past the size of the table it exists to replace, and enough to
+/// bury the findings a reader can act on. `understatement_note` says it once.
 fn finding_line(gate_id: &str, kind: &str, detail: &str) -> String {
     let mut s = format!("- **{}** — {}: {}", gate_name(gate_id), kind, detail.trim());
     if let Some(fix) = remediation_for(gate_id) {
         s.push_str(&format!("\n  - fix: {}", fix));
     }
-    if let Some(f) = fidelity_for(gate_id)
-        && f < Fidelity::Measured
-    {
-        s.push_str(&format!(
-            "\n  - note: this gate is {} fidelity and does not fully measure what its name implies",
-            f.label().to_lowercase()
-        ));
-    }
     s
+}
+
+/// Whether the registry records this gate as measuring less than its name says.
+fn understates_itself(gate_id: &str) -> bool {
+    fidelity_for(gate_id).is_some_and(|f| f < Fidelity::Measured)
+}
+
+/// The one line that says which of the findings above come from gates that do
+/// not measure what they are named for. Empty when none of them do.
+fn understatement_note(gates: &[String]) -> String {
+    if gates.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n⚠️ {} of the finding(s) above come from gates that do not fully measure what \
+         their names imply: {}. See `src/fidelity/registry.rs` for what each one checks.\n",
+        gates.len(),
+        gates.join(", ")
+    )
 }
 
 /// The passing gates the fidelity registry records as `Heuristic` or `Partial`.
@@ -166,6 +183,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
     // hiding it entirely is how a corpus quietly stops measuring anything.
     let mut findings: Vec<String> = Vec::new();
     let mut declared_absent: Vec<String> = Vec::new();
+    let mut understated_findings: Vec<String> = Vec::new();
     for (gate_id, status) in report.named_statuses() {
         let line = match status {
             GateStatus::Failed(r) => Some(finding_line(gate_id, "failed", r)),
@@ -191,6 +209,9 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         };
         if let Some(l) = line {
             findings.push(l);
+            if understates_itself(gate_id) {
+                understated_findings.push(gate_name(gate_id));
+            }
         }
     }
 
@@ -260,10 +281,11 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
             ));
             s.push_str(&findings.join("\n"));
             s.push('\n');
+            s.push_str(&understatement_note(&understated_findings));
         }
-        // A passing gate produces no finding line, so it never carried the
-        // fidelity note that `finding_line` attaches. That put the disclosure
-        // only on the failure path -- and the green path is the one moment a
+        // A passing gate produces no finding line, so `understatement_note`
+        // says nothing about it. Without the line below the disclosure would
+        // reach only the failure path -- and the green path is the one moment a
         // reader decides whether to trust the score. What is behind the number
         // is load-bearing precisely when the number is good.
         let understated = low_fidelity_passing_gates(report);
@@ -313,6 +335,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         ));
         s.push_str(&findings.join("\n"));
         s.push('\n');
+        s.push_str(&understatement_note(&understated_findings));
 
         // The prevention ledger, where a reader is already acting.
         //
@@ -401,8 +424,15 @@ mod tests {
 
     #[test]
     fn low_fidelity_gates_are_flagged_so_a_verdict_is_not_overtrusted() {
-        let l = finding_line("coverage_status", "failed", "x");
-        assert!(l.contains("aspirational fidelity"));
+        // Both halves: a gate the registry records below `Measured` reaches
+        // the disclosure, and one recorded as `Measured` does not -- a note
+        // naming every gate discloses nothing.
+        assert!(understates_itself("coverage_status"));
+        assert!(!understates_itself("shape_status"));
+        let note = understatement_note(&[gate_name("coverage_status")]);
+        assert!(note.contains("do not fully measure"), "{note}");
+        assert!(note.contains("coverage"), "{note}");
+        assert!(understatement_note(&[]).is_empty());
     }
 
     #[test]

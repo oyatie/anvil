@@ -250,13 +250,8 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
         }
         Commands::FlakeRehab { repo } => {
             info!("Running Flaky-Test Quarantine Rehabilitation for {}", repo);
-            let rep = state
-                .flake_quarantine
-                .evaluate_quarantine_lifecycle(&["tests::flaky_test".to_string()]);
-            println!(
-                "\n🧪 FlakeQuarantine Result: {}\nQuarantined: {} | Rehabilitated: {}\n",
-                rep.summary, rep.quarantined_tests_isolated, rep.rehabilitated_tests_restored
-            );
+            let report = state.flake_quarantine.rehabilitation_report();
+            println!("\n🧪 FlakeQuarantine: {report}\n");
         }
         Commands::Reap => {
             info!("Reaping stale preview environments and orphaned worktrees...");

@@ -28,16 +28,17 @@ For this run only, you may:
 - run read-only text tools: `grep rg wc sort uniq cut tr paste bc diff head tail cat ls find echo
   printf sed`;
 - run `gh` **reads**: `pr view|list|checks`, `issue view|list`, `run view|list`, `api` with GET;
-- launch the §6 reviewer as a subagent with **read-and-report only** — it does not inherit write
+- launch the §7 reviewer as a subagent with **read-and-report only** — it does not inherit write
   access.
 
 **Refused, including by omission.** If a task appears to need something not granted above, that is
 a stop under §8 — not a judgement call.
 
-- **No form of any granted tool that writes, deletes, or executes.** This is the rule; the examples
-  are not the rule: `sed -i`, `rg --replace`, `perl -i`, `find -delete`, `find -exec|-execdir|-ok`,
-  `sort -o`, `tee`, redirection onto any tracked path. If you are unsure whether a form writes,
-  it is refused.
+- **Any form of a text tool that writes, deletes, or executes.** The grant above is for reading;
+  the rule is the class, and these are only examples of it: `sed -i`, `rg --replace`, `perl -i`,
+  `find -delete`, `find -exec|-execdir|-ok`, `sort -o`, `tee`, redirection onto a tracked path. If
+  you are unsure whether a *text-tool* form writes, it is refused. This does not narrow the cargo,
+  git and rustfmt grants above, which are enumerated and say plainly which of them write.
 - **`cargo run`** — the binary's default subcommand is `Serve`
   (`src/cli/handlers.rs:14`, `cli.command.unwrap_or(Commands::Serve)`), so a bare `cargo run` boots
   the production webhook daemon against live pull requests.
@@ -87,6 +88,7 @@ bare `H1-<n>` id, so a bare number usually does not identify one:
 ```
 grep -chE '^\| *H1-[0-9]+ *\|' docs/plan/ws-*.md | paste -sd+ - | bc     # 8
 grep -chE '^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|' docs/plan/ws-*.md | paste -sd+ - | bc   # 43
+grep -rnE '^\| *H1 *\|' docs/plan/ws-*.md        # the 7 bare-H1 rows, listed
 ```
 
 ## 3. Preconditions — verify, then stop if any fails
@@ -96,12 +98,18 @@ git fetch origin --prune
 git cat-file -e origin/dev:docs/plan/anvil-roadmap.md
 git status --porcelain --untracked-files=no                  # must be empty
 git status --porcelain --untracked-files=all -- <each IN-SCOPE PATH>   # must be empty
-git ls-files --error-unmatch <each IN-SCOPE PATH>            # each must resolve, or the path is a typo
 ```
 
 The tracked-only form is deliberate: a bare `git status --porcelain` is never empty here
-(`.claude/`, `devtree/`), so gating on it would halt every run. That is not laxity — the second and
-third commands close the gap for the paths you may actually write.
+(`.claude/`, `devtree/`), so gating on it would halt every run. The path-scoped line closes the gap
+for the paths you may actually write.
+
+**Do not gate on `git ls-files --error-unmatch`.** It exits 1 for any path not already in the
+index, which includes every file your milestone is about to create — `H1-8b`'s criterion is
+literally "one file per gate under `fidelity/gates/`", a directory that does not exist yet. Instead
+**state, for each in-scope path, whether it is tracked today or is one you will create**, and check
+that against the criterion. A typo and a deliberate new file look identical to git; they do not look
+identical to you reading the criterion.
 
 Branch from `origin/dev`, not `main` (diverged legacy). State the base SHA; it is the pin for every
 measurement you report.
@@ -112,8 +120,9 @@ Read at the point of use. Do not summarise into working memory and then work fro
 
 1. **The `ws-*.md` file whose table row carries your milestone id** — normative for exit criterion,
    owner, evidence, ratchet, non-goals. Ownership is the **id cell**, not a prose mention.
-   One id can be owned twice (`H1-7d` is in `ws-09` and `ws-12`): satisfy **both**, or stop and say
-   which you cannot.
+   One id can be owned twice: satisfy **both**, or stop and say which you cannot. Run
+   `grep -rnE '^\| *<your id> *\|' docs/plan/ws-*.md` for your own id before assuming it is not —
+   `H1-7d` returns `ws-09` and `ws-12`.
 2. `docs/plan/anvil-roadmap.md` — §2's tables are an *index*; where it disagrees with a `ws-*` row,
    the `ws-*` row wins and the roadmap is the defect. §1 measured state, §6 ledger, §7 decision log.
 3. `docs/restructure-plan.md` — Decisions D1–D5 and the only stated sequence. **Read its
@@ -123,8 +132,9 @@ Read at the point of use. Do not summarise into working memory and then work fro
 **Never restate, paraphrase, renumber or tidy an exit criterion, owner, ratchet or non-goal.**
 Quote verbatim or cite by id.
 
-**Ordering.** The plan declares no per-milestone dependency field (`grep -ic 'depends-on'
-docs/plan/ws-*.md` → no output, exit 1). The only stated sequence is `docs/restructure-plan.md`
+**Ordering.** The plan declares no per-milestone dependency field
+(`git grep -ic 'depends-on' -- 'docs/plan/ws-*.md'` → no output, exit 1; plain `grep -ic` instead
+prints a `:0` line per file, which is why the `git` form is the one quoted). The only stated sequence is `docs/restructure-plan.md`
 §Sequence, covering Phase A ↔ `H1-8a` and Phase B ↔ `H1-8c`; `H1-8b` is the serialization fix that
 Sequence names as Phase C's blocker, and Phase C has no `H1-8` twin. If your milestone is in that
 sequence, confirm its predecessors landed. Otherwise state "no ordering is declared" and proceed.
@@ -164,8 +174,17 @@ sequence, confirm its predecessors landed. Otherwise state "no ordering is decla
    cargo nextest run --all-targets --locked --profile ci -E 'not binary(subscription_driver_live_test)'
    ```
 
-   The filter is load-bearing and **must be proven once per run**: list with and without it and show
-   the difference is exactly the live tests. `tests/subscription_driver_live_test.rs` gates them
+   The filter is load-bearing and **must be proven once per run**, by showing the difference is
+   exactly the live tests:
+
+   ```
+   cargo nextest list --all-targets --locked -E 'binary(subscription_driver_live_test)'
+   ```
+
+   That names exactly what the filter removes. If it lists anything that is not a `test_live_*`,
+   or lists nothing at all, stop — an exclusion that excludes nothing is not a proof. Counting
+   listed lines instead does not work: the output carries a header line per binary, so the two
+   counts differ by more than the tests. `tests/subscription_driver_live_test.rs` gates them
    only on `agy` being installed, so an unfiltered run makes **billable model API calls** and its
    result depends on the network. Exclude by *binary*, not by a name pattern — nextest matches
    `test()` against `module::name`, so `^`-anchored name filters miss a test inside a `mod`.
@@ -187,8 +206,10 @@ the green. **A summary of what a command showed is not evidence. Paste the outpu
 - `cargo nextest run --all-targets --locked --profile ci -E 'not binary(subscription_driver_live_test)'`
   → 0 failed, count stated against the §6.5 baseline, any change explained
 - `git diff --name-only origin/dev...HEAD` → every path within `IN-SCOPE PATHS`
-- `git status --porcelain --untracked-files=all` → nothing outside `.claude/`, `devtree/`, `target/`
-  (an uncommitted new file the suite compiled is the failure this catches)
+- `git status --porcelain --untracked-files=all -- <each IN-SCOPE PATH>` → empty, and
+  `git status --porcelain --untracked-files=no` → empty (an uncommitted file the suite compiled is
+  the failure these catch; scoped rather than whole-tree, because a whole-tree form is falsified by
+  untracked paths that are none of your business — the same reason §3 scopes its own)
 - the seeded-defect proof for every new check
 
 The first two commands are CI's verbatim (`.github/workflows/build-and-test.yml:28,58`). The third
@@ -238,7 +259,8 @@ reviewer found. Then stop and report with the failure evidence.
 
 1. Base SHA, branch, milestone id.
 2. `git diff --stat`.
-3. The DONE conjunction copied verbatim, each line pass/fail with its command and output.
+3. The DONE conjunction copied verbatim, each line pass/fail with its command and output, and the
+   before/after `git rev-parse HEAD` pair proving §7's ordering.
 4. Seeded-defect proofs (patch, applied-assertion, red, green).
 5. Sibling census with its search and output, and what makes the next instance unwritable.
 6. Each reviewer round: launch invocation, raw verdict, your disposition of every finding.

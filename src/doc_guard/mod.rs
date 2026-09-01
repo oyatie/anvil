@@ -323,12 +323,11 @@ impl DocGuard {
             diff_ctx.changed_files.join("\n- ")
         };
 
-        let diff_content_bounded = if diff_ctx.diff_content.chars().count() > 50_000 {
-            let truncated: String = diff_ctx.diff_content.chars().take(50_000).collect();
-            format!("{truncated}\n\n[... remaining diff truncated for doc evaluation ...]")
-        } else {
-            diff_ctx.diff_content.clone()
-        };
+        // No pre-truncation: `Untrusted<GitDiff>` is the single truncation point.
+        // Cutting first put the harness's own truncation marker INSIDE the fence
+        // the model is told to distrust, and made `measured` describe the slice
+        // rather than the diff (invariant I2).
+        let diff_content_bounded = diff_ctx.diff_content.clone();
 
         let prompt = format!(
             r#####"You are Oyatie's Principal Documentation Architect. Evaluate whether this Pull Request on `{repo}` has sufficient documentation parity or if documentation must be updated.

@@ -1041,6 +1041,10 @@ fn test_prompt_false_green_the_assembly_cannot_emit_an_unclassified_segment() {
         "src/fixer",
         "src/ci_triager",
         "src/doc_guard",
+        // The queue healer reaches a model too, and holds write access while it
+        // does. Absent from this list, PrHeadRef and MergeConflict read as
+        // declared-and-unused; the scan says so rather than passing quietly.
+        "src/queue_healer",
     ]
     .iter()
     .map(|m| {

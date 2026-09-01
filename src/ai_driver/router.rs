@@ -2,10 +2,11 @@ use anyhow::{Result, bail};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use super::provider::{ModelExecutionConfig, ModelProvider};
+use crate::exec::AgentCommand;
+use crate::model_prompt::ModelPrompt;
 use crate::self_governance::account_pool::AccountPoolManager;
 
 /// Delivers a prompt to a provider CLI over STDIN instead of argv.
@@ -21,12 +22,12 @@ use crate::self_governance::account_pool::AccountPoolManager;
 /// `kill_on_drop` (invariant I5). Nothing in this module spawns a child or
 /// times one out on its own.
 pub async fn run_with_prompt_on_stdin(
-    cmd: Command,
-    prompt: &str,
+    cmd: AgentCommand,
+    prompt: &ModelPrompt,
     limit: Duration,
     what: &str,
 ) -> Result<std::process::Output> {
-    crate::exec::run_bounded_with_stdin(cmd, prompt, limit, what).await
+    crate::exec::run_bounded_with_model_prompt(cmd, prompt, limit, what).await
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +55,7 @@ impl SubscriptionExecutor {
     /// Executes prompt using the user's logged-in CLI subscription with multi-account pooling and failover
     pub async fn execute_prompt(
         &self,
-        prompt: &str,
+        prompt: &ModelPrompt,
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
@@ -88,7 +89,7 @@ impl SubscriptionExecutor {
     /// Invokes Anthropic Claude Code subscription CLI with multi-account pool leasing and failover
     pub async fn run_claude_subscription(
         &self,
-        prompt: &str,
+        prompt: &ModelPrompt,
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
@@ -137,10 +138,7 @@ impl SubscriptionExecutor {
             }
         };
 
-        let mut cmd = crate::exec::agent("claude", &posture);
-        // `-p` with no positional argument: the prompt arrives on STDIN.
-        cmd.arg("-p");
-        cmd.args(["--model", model_name]);
+        let cmd = crate::exec::claude_agent(&posture, model_name)?;
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -207,7 +205,7 @@ impl SubscriptionExecutor {
     /// Invokes OpenAI Codex / ChatGPT subscription CLI with multi-account pool leasing and failover
     pub async fn run_openai_subscription(
         &self,
-        prompt: &str,
+        prompt: &ModelPrompt,
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
@@ -246,10 +244,7 @@ impl SubscriptionExecutor {
             Err(_) => "codex-default".to_string(),
         };
 
-        let mut cmd = crate::exec::agent("codex", &posture);
-        // `-` is codex's explicit "read the prompt from STDIN" argument.
-        cmd.args(["exec", "-"]);
-        cmd.args(["--model", model_name]);
+        let cmd = crate::exec::codex_agent(&posture, model_name)?;
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -299,7 +294,7 @@ impl SubscriptionExecutor {
     /// Invokes Cursor Agent subscription CLI
     pub async fn run_cursor_agent_subscription(
         &self,
-        prompt: &str,
+        prompt: &ModelPrompt,
         working_dir: &Path,
         model: &str,
     ) -> Result<String> {
@@ -323,12 +318,8 @@ impl SubscriptionExecutor {
             Err(_) => "cursor-default".to_string(),
         };
 
-        let mut cmd = crate::exec::agent("cursor", &posture);
-        // No positional prompt: it is written to STDIN below.
-        cmd.args(["agent", "--print"]);
-        if !model.is_empty() && model != "default" {
-            cmd.args(["--model", model]);
-        }
+        let selected_model = (!model.is_empty() && model != "default").then_some(model);
+        let cmd = crate::exec::cursor_agent(&posture, selected_model)?;
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -366,7 +357,7 @@ impl SubscriptionExecutor {
     /// Invokes xAI Grok subscription CLI
     pub async fn run_grok_subscription(
         &self,
-        prompt: &str,
+        prompt: &ModelPrompt,
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
@@ -402,12 +393,7 @@ impl SubscriptionExecutor {
             Err(_) => "grok-default".to_string(),
         };
 
-        let mut cmd = crate::exec::agent("grok", &posture);
-        // grok takes its single-turn prompt as a positional argument or from a
-        // file. `/dev/stdin` is the file that IS the pipe, so the prompt still
-        // travels on STDIN and argv stays a fixed dozen bytes. Verified against
-        // the installed CLI; `--prompt <text>` is not a flag this CLI has.
-        cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
+        let cmd = crate::exec::grok_agent(&posture, model)?;
 
         match run_with_prompt_on_stdin(
             cmd,
@@ -446,7 +432,7 @@ impl SubscriptionExecutor {
     /// Invokes Antigravity subscription CLI (`agy` with Gemini 3.7 Flash - high reasoning effort)
     pub async fn run_agy_subscription(
         &self,
-        prompt: &str,
+        prompt: &ModelPrompt,
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
@@ -486,12 +472,13 @@ impl SubscriptionExecutor {
             Err(_) => "agy-default".to_string(),
         };
 
-        let mut cmd = crate::exec::agent("agy", &posture);
-        crate::exec::turn::agy_turn(&mut cmd, &config.reasoning_effort, turn_limit);
-
-        if !model.is_empty() && model != "default" {
-            cmd.args(["--model", model]);
-        }
+        let selected_model = (!model.is_empty() && model != "default").then_some(model);
+        let cmd = crate::exec::agy_agent(
+            &posture,
+            &config.reasoning_effort,
+            turn_limit,
+            selected_model,
+        )?;
 
         // print_timeout_secs was set in 23 places and read nowhere; it now
         // actually bounds the call (invariant I5).
@@ -523,7 +510,7 @@ impl SubscriptionExecutor {
     /// Evaluates prompt using Multi-Model Ensemble across Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash subscriptions
     async fn run_ensemble_subscription(
         &self,
-        prompt: &str,
+        prompt: &ModelPrompt,
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {

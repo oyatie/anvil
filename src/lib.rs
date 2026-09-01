@@ -80,6 +80,7 @@ pub mod metrics;
 pub mod microbenchmark_ratchet;
 pub mod migration;
 pub mod migration_orchestrator;
+pub mod model_prompt;
 pub mod modularization_guard;
 pub mod monorepo_guard;
 pub mod pause;

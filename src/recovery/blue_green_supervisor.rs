@@ -100,15 +100,8 @@ impl BlueGreenSupervisor {
             new_binary_path, args
         );
 
-        let mut cmd = tokio::process::Command::new(new_binary_path);
-        cmd.args(args);
-
-        #[cfg(unix)]
-        {
-            cmd.process_group(0); // Detach process group so child survives parent exit
-        }
-
-        let mut child = cmd.spawn().context("Failed to spawn Green process")?;
+        let mut child = crate::exec::spawn_replacement_binary(new_binary_path, args)
+            .context("Failed to spawn Green process")?;
 
         let mut is_ready = false;
         let start = std::time::Instant::now();

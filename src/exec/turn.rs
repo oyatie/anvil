@@ -11,35 +11,16 @@
 //! `Error: empty prompt` -- measured against the installed CLI. The one input
 //! mode that reads stdin is `--input-format stream-json`, which requires
 //! `--output-format stream-json`, so the answer arrives as a `result` event
-//! rather than as plain stdout. [`agy_turn`] builds that argv and [`run`]
+//! rather than as plain stdout. [`crate::exec::agy_agent`] builds that argv and [`run`]
 //! delivers the prompt and unwraps the stream, so a call site sees the same
 //! `String` it saw before.
 
 use anyhow::{Result, bail};
 use std::process::ExitStatus;
 use std::time::Duration;
-use tokio::process::Command;
 
-/// Wraps a prompt in one line of agy's NDJSON stream protocol.
-///
-/// agy is the one provider with no plain "read the prompt from stdin"
-/// spelling: `--print` is a flag that TAKES a value, so omitting the value
-/// makes Go's flag parser swallow the next flag as the prompt and treat
-/// everything after it as positional -- which silently drops
-/// `--dangerously-skip-permissions` and makes the run fail on a permission
-/// check. Its stream protocol is the supported stdin channel, verified
-/// against the installed CLI:
-///
-/// ```text
-/// {"event":"user","message":{"content":"..."}}
-/// ```
-pub fn agy_stream_input(prompt: &str) -> String {
-    let message = serde_json::json!({
-        "event": "user",
-        "message": { "content": prompt },
-    });
-    format!("{message}\n")
-}
+use crate::exec::AgentCommand;
+use crate::model_prompt::ModelPrompt;
 
 /// Pulls the final response out of agy's NDJSON event stream.
 ///
@@ -83,28 +64,6 @@ pub fn agy_stream_response(stdout: &str) -> Result<String> {
     }
 }
 
-/// The argv for a turn whose prompt arrives on STDIN.
-///
-/// `--print ""` keeps the flag parser happy; the real prompt is the stream-json
-/// message [`run`] writes. Every deadline for the turn comes from `budget`:
-/// agy's own `--print-timeout` sits a margin inside it, so the tool ends the
-/// turn itself, with a message, rather than being dropped silently.
-pub fn agy_turn(cmd: &mut Command, effort: &str, budget: Duration) {
-    cmd.args([
-        "--print",
-        "",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--effort",
-        effort,
-        "--print-timeout",
-        &super::agy_print_timeout_arg(budget),
-        "--dangerously-skip-permissions",
-    ]);
-}
-
 /// What one turn produced.
 ///
 /// Carries the status and stderr as well as the response, because a caller that
@@ -130,9 +89,13 @@ impl Turn {
 /// The stream is unwrapped only for a turn that succeeded: a non-zero exit is
 /// reported with agy's own stderr rather than with whatever half of the stream
 /// arrived before it died.
-pub async fn run(cmd: Command, prompt: &str, budget: Duration, what: &str) -> Result<Turn> {
-    let output =
-        super::run_bounded_with_stdin(cmd, &agy_stream_input(prompt), budget, what).await?;
+pub async fn run(
+    cmd: AgentCommand,
+    prompt: &ModelPrompt,
+    budget: Duration,
+    what: &str,
+) -> Result<Turn> {
+    let output = super::agent::deliver(cmd, prompt, budget, what).await?;
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let response = if output.status.success() {
         agy_stream_response(&String::from_utf8_lossy(&output.stdout))
@@ -150,18 +113,6 @@ pub async fn run(cmd: Command, prompt: &str, budget: Duration, what: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_prompt_is_one_ndjson_line_and_never_argv() {
-        let line = agy_stream_input("a prompt with \"quotes\" and a\nnewline");
-        assert_eq!(line.lines().count(), 1, "one message, one line: {line}");
-        let v: serde_json::Value = serde_json::from_str(line.trim()).expect("valid NDJSON");
-        assert_eq!(v["event"], "user");
-        assert_eq!(
-            v["message"]["content"],
-            "a prompt with \"quotes\" and a\nnewline"
-        );
-    }
 
     #[test]
     fn a_successful_result_event_yields_the_response() {
@@ -188,8 +139,13 @@ mod tests {
     /// The argv must carry no prompt: that is the whole point of this module.
     #[test]
     fn the_argv_carries_an_empty_print_and_the_stream_formats() {
-        let mut cmd = Command::new("agy");
-        agy_turn(&mut cmd, "low", Duration::from_secs(600));
+        let cmd = crate::exec::agy_agent(
+            &crate::exec::Posture::in_workspace(std::env::temp_dir()),
+            "low",
+            Duration::from_secs(600),
+            None,
+        )
+        .expect("valid fixed options");
         let args: Vec<String> = cmd
             .as_std()
             .get_args()

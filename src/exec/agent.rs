@@ -37,6 +37,112 @@ use super::inherited::INHERITED;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+/// A provider CLI command that cannot be handed to a raw subprocess runner.
+/// It can leave this wrapper only through an `exec` transport that also
+/// requires a `ModelPrompt`.
+///
+/// ```compile_fail
+/// let cmd = anvil::exec::agy_agent(
+///     &anvil::exec::Posture::in_workspace(std::path::Path::new(".")),
+///     "high",
+///     std::time::Duration::from_secs(600),
+///     None,
+/// );
+/// let _ = anvil::exec::run_bounded(
+///     cmd.unwrap(),
+///     anvil::exec::ExecClass::Model,
+///     "unchecked model turn",
+/// );
+/// ```
+///
+/// Provider argv is sealed too. Contributor text cannot be smuggled into a
+/// provider option after construction:
+///
+/// ```compile_fail
+/// let review_body = "--model\nattacker-selected";
+/// let mut cmd = anvil::exec::claude_agent(
+///     &anvil::exec::Posture::in_workspace(std::path::Path::new(".")),
+///     "claude-3-7-sonnet",
+/// ).unwrap();
+/// cmd.arg(review_body);
+/// ```
+///
+/// The raw STDIN runner is not an alternate public model transport:
+///
+/// ```compile_fail
+/// let cmd = tokio::process::Command::new("agy");
+/// let _ = anvil::exec::run_bounded_with_stdin(
+///     cmd,
+///     "unchecked review body",
+///     std::time::Duration::from_secs(30),
+///     "raw model turn",
+/// );
+/// ```
+pub struct AgentCommand {
+    command: Command,
+    framing: Framing,
+}
+
+/// A provider presence probe with a complete, finite argv. Unlike a model
+/// turn, it carries no prompt and never enters a raw non-model runner.
+struct ProviderProbeCommand(Command);
+
+/// How the selected provider accepts a prompt on STDIN.
+///
+/// This is deliberately finite and private. A provider cannot choose an
+/// arbitrary formatter at a call site, and the formatter never receives raw
+/// contributor text except inside the sealed transport below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    Plain,
+    AgyStreamJson,
+}
+
+impl AgentCommand {
+    fn args<I, S>(&mut self, args: I) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        self.command.args(args);
+        self
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn as_std(&self) -> &std::process::Command {
+        self.command.as_std()
+    }
+}
+
+mod provider;
+mod transport;
+pub(super) use provider::is_provider_program;
+pub use provider::{agy_agent, claude_agent, codex_agent, cursor_agent, grok_agent};
+pub(crate) use transport::ModelPromptPermit;
+
+/// Typed facade over the private transport. No raw command, prompt bytes,
+/// formatter, or permit crosses this module boundary.
+pub(super) async fn deliver(
+    command: AgentCommand,
+    prompt: &crate::model_prompt::ModelPrompt,
+    limit: std::time::Duration,
+    what: &str,
+) -> anyhow::Result<std::process::Output> {
+    transport::deliver(command, prompt, limit, what).await
+}
+
+/// Checks the one provider readiness condition used by the CLI environment
+/// report. No raw `Command` or provider argv leaves the finite provider seam.
+pub(crate) async fn probe_agy_help() -> anyhow::Result<std::process::Output> {
+    transport::probe(
+        provider::agy_help_probe(),
+        crate::exec::ExecClass::Quick.timeout(),
+        "agy --help",
+    )
+    .await
+}
+
 /// Where a model turn runs, and what it carries.
 ///
 /// No `Default`, and no constructor that omits the workspace: a new spawn site
@@ -117,17 +223,14 @@ impl Posture {
     }
 }
 
-/// Builds the spawn for a model turn.
-///
-/// Every model turn in the tree is constructed here, so the environment
-/// decision cannot be forgotten at a seventh site -- and
-/// `tests/model_spawns_go_through_one_seam_test.rs` refuses one that is.
-pub fn agent(tool: &str, posture: &Posture) -> Command {
-    agent_in(tool, posture, std::env::vars())
+/// Applies the model-turn posture to a command chosen by the finite provider
+/// seam in the private `exec::agent::provider` child module.
+fn command(tool: &str, posture: &Posture, framing: Framing) -> AgentCommand {
+    command_in(tool, posture, framing, std::env::vars())
 }
 
-/// [`agent`], against a stated environment. See [`Posture::apply_from`].
-pub fn agent_in<I>(tool: &str, posture: &Posture, environment: I) -> Command
+/// [`command`], against a stated environment. Used by posture unit tests.
+fn command_in<I>(tool: &str, posture: &Posture, framing: Framing, environment: I) -> AgentCommand
 where
     I: IntoIterator<Item = (String, String)>,
 {
@@ -135,130 +238,11 @@ where
     posture.apply_from(&mut cmd, environment);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    cmd
+    AgentCommand {
+        command: cmd,
+        framing,
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A daemon environment, as the webhook process actually carries it.
-    fn daemon_environment() -> Vec<(String, String)> {
-        vec![
-            (
-                "PATH".to_string(),
-                std::env::var("PATH").unwrap_or_default(),
-            ),
-            (
-                "GITHUB_WEBHOOK_SECRET".to_string(),
-                "anvil-test-secret-2f9c".to_string(),
-            ),
-            (
-                "GITHUB_TOKEN".to_string(),
-                "ghp_anvil_test_token".to_string(),
-            ),
-            (
-                "SSH_AUTH_SOCK".to_string(),
-                "/tmp/anvil-test-agent.sock".to_string(),
-            ),
-        ]
-    }
-
-    /// The whole point, exercised end to end against an environment that holds
-    /// the secrets: none of them reaches the child.
-    #[tokio::test]
-    async fn a_daemon_secret_does_not_reach_a_model_turn() {
-        let posture = Posture::in_workspace(std::env::temp_dir());
-        let cmd = agent_in("env", &posture, daemon_environment());
-        let out = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Quick, "env")
-            .await
-            .expect("env runs");
-        let seen = String::from_utf8_lossy(&out.stdout).to_string();
-
-        // Names, never values. A failure message that prints the child's
-        // environment to prove a secret was in it has put the secret in the
-        // build log, which is the defect in a second place.
-        assert!(
-            seen.contains("GH_CONFIG_DIR="),
-            "a `gh` run from inside a turn must not find Anvil's own host \
-             configuration"
-        );
-
-        let leaked: Vec<&str> = seen
-            .lines()
-            .filter(|line| {
-                [
-                    "anvil-test-secret-2f9c",
-                    "ghp_anvil_test_token",
-                    "agent.sock",
-                ]
-                .iter()
-                .any(|s| line.contains(s))
-            })
-            .filter_map(|line| line.split('=').next())
-            .collect();
-        assert!(
-            leaked.is_empty(),
-            "these variables reached a model turn: {leaked:?}"
-        );
-
-        // The env is a SUBSET of what was named, which is the assertion that
-        // exercises `env_clear`. Checking only that three fixture literals were
-        // filtered tests the allowlist and nothing else: those literals arrive
-        // through the synthetic environment, the allowlist alone keeps them
-        // out, and `env_clear` touches only the REAL parent environment, which
-        // does not contain them. Deleting `env_clear` left this whole module
-        // green -- measured, by deleting it.
-        let allowed: std::collections::BTreeSet<&str> =
-            INHERITED.iter().copied().chain(["GH_CONFIG_DIR"]).collect();
-        let unexpected: Vec<&str> = seen
-            .lines()
-            .filter_map(|l| l.split('=').next())
-            .filter(|n| !n.is_empty() && !allowed.contains(n))
-            .collect();
-        assert!(
-            unexpected.is_empty(),
-            "the turn was handed variables nobody named: {unexpected:?}. The \
-             daemon's environment reaches a model turn unless it is cleared \
-             first, so this is what `env_clear` is for."
-        );
-
-        // And the turn is still able to run: PATH is on the list, so the tool
-        // can find its own helpers. A posture that starves the turn is not
-        // isolation, it is breakage.
-        let names: Vec<&str> = seen.lines().filter_map(|l| l.split('=').next()).collect();
-        assert!(
-            names.contains(&"PATH"),
-            "PATH must survive; the turn was given {names:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_leased_credential_reaches_the_turn_it_was_leased_for() {
-        let posture = Posture::in_workspace(std::env::temp_dir())
-            .with_credential("GEMINI_API_KEY", "leased-for-this-turn");
-        let cmd = agent("env", &posture);
-        let out = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Quick, "env")
-            .await
-            .expect("env runs");
-        assert!(
-            String::from_utf8_lossy(&out.stdout).contains("leased-for-this-turn"),
-            "a credential the caller supplied must reach the turn"
-        );
-    }
-
-    #[tokio::test]
-    async fn the_turn_runs_in_the_workspace_it_was_given() {
-        let dir = std::env::temp_dir().join("anvil-posture-cwd");
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        let cmd = agent("pwd", &Posture::in_workspace(&dir));
-        let out = crate::exec::run_bounded(cmd, crate::exec::ExecClass::Quick, "pwd")
-            .await
-            .expect("pwd runs");
-        let seen = String::from_utf8_lossy(&out.stdout);
-        assert!(
-            seen.trim().ends_with("anvil-posture-cwd"),
-            "the turn ran in {seen:?}, not in the workspace it was given"
-        );
-    }
-}
+mod tests;

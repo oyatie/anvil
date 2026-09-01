@@ -109,11 +109,26 @@ fn finite_legitimate_multicall_and_versioned_aliases_are_admitted() {
     }
 }
 
+#[cfg(unix)]
 #[test]
-fn windows_npm_shim_is_the_only_admitted_command_script_alias() {
+fn unix_multicall_aliases_require_arg0_restoration() {
+    assert!(canonical_name_is_admitted("cargo", "rustup"));
+    assert!(canonical_name_is_admitted("npm", "npm-cli.js"));
+    assert!(!canonical_name_is_admitted("npm", "npm.cmd"));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_npm_shim_is_the_only_admitted_launcher_alias() {
     assert!(canonical_name_is_admitted("npm", "npm.cmd"));
+    assert!(!canonical_name_is_admitted("cargo", "rustup"));
+    assert!(!canonical_name_is_admitted("npm", "npm-cli.js"));
     assert!(!canonical_name_is_admitted("git", "git.cmd"));
     assert!(!canonical_name_is_admitted("git", "cmd"));
+}
+
+#[test]
+fn versioned_python_alias_policy_is_finite() {
     assert!(!canonical_name_is_admitted("python3", "python3.latest"));
     assert!(!canonical_name_is_admitted("python3", "python3.14."));
 }

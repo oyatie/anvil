@@ -28,8 +28,15 @@ const NON_MODEL_PROGRAMS: &[&str] = &[
     "cargo", "cedar", "curl", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
 ];
 const CANONICAL_PROGRAM_ALIASES: &[(&str, &str)] = &[
+    // These launchers require Unix `arg0` restoration to retain their
+    // requested multicall semantics after binding the canonical executable.
+    #[cfg(unix)]
     ("cargo", "rustup"),
+    #[cfg(unix)]
     ("npm", "npm-cli.js"),
+    // Rust's Windows process launcher supports command shims, while rebinding
+    // a cargo/rustup or npm/JS alias cannot preserve its requested semantics.
+    #[cfg(windows)]
     ("npm", "npm.cmd"),
 ];
 const CLEARED_ENV_MARKER: &str = "ANVIL_INTERNAL_NON_MODEL_ENV_CLEARED";

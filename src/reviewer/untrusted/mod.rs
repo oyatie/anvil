@@ -53,7 +53,7 @@ pub const MAX_WORKING_DIFF_CHARS: usize = 60_000;
 pub const MAX_CI_LOG_CHARS: usize = 20_000;
 
 pub mod label;
-pub use label::UntrustedLabel;
+pub use label::{Retain, UntrustedLabel};
 
 /// One contributor-authored segment of a review prompt.
 ///
@@ -91,6 +91,7 @@ impl<'a> Untrusted<'a> {
             self.content.len(),
             self.label.max_chars(),
             self.label.described(),
+            self.label.retain(),
         );
         let mut out = String::new();
         out.push_str(self.label.heading());
@@ -180,6 +181,7 @@ fn cap_declaring(
     measured: usize,
     max: usize,
     what: &str,
+    retain: Retain,
 ) -> (String, Option<String>) {
     let embedded = content.len();
     if embedded <= max {
@@ -191,15 +193,32 @@ fn cap_declaring(
     } else {
         format!(" ({embedded} bytes once the fence markers it quotes are defused)")
     };
+    let kept = match retain {
+        Retain::Leading => "Only the leading portion is shown below",
+        Retain::Trailing => "Only the trailing portion is shown below",
+    };
     let notice = format!(
         "[TRUNCATED: the {what} is {measured} bytes{grown}, over the {max}-byte prompt cap. \
-         Only the leading portion is shown below; the remainder was NOT provided and has \
+         {kept}; the remainder was NOT provided and has \
          NOT been reviewed. Do not report on what you were not shown.]\n"
     );
 
-    let mut end = max.saturating_sub(notice.len()).min(embedded);
-    while end > 0 && !content.is_char_boundary(end) {
-        end -= 1;
-    }
-    (content[..end].to_string(), Some(notice))
+    let budget = max.saturating_sub(notice.len()).min(embedded);
+    let slice = match retain {
+        Retain::Leading => {
+            let mut end = budget;
+            while end > 0 && !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            &content[..end]
+        }
+        Retain::Trailing => {
+            let mut start = embedded - budget;
+            while start < embedded && !content.is_char_boundary(start) {
+                start += 1;
+            }
+            &content[start..]
+        }
+    };
+    (slice.to_string(), Some(notice))
 }

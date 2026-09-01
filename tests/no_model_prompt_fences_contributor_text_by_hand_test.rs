@@ -1,3 +1,29 @@
+//! ADVISORY, NOT A RATCHET. What this scan measures is narrower than its name.
+//!
+//! Proven holes, each demonstrated by seeding the shape against a compiled
+//! replica. Until they are closed this file is a backstop for one spelling of
+//! one defect, and a green result here is not evidence that contributor text is
+//! fenced:
+//!
+//! 1. It flags a fence only when the span between two ``` markers contains `{`,
+//!    so a fence built with `push_str` is invisible -- which is how
+//!    `fixer/evaluator.rs`, the module this was written for, builds its prompt.
+//! 2. A module with no ``` at all is reported clean by iterating it and finding
+//!    nothing. `src/queue_healer` had two raw contributor interpolations and
+//!    zero backticks, so this scan called it green by absence (#199).
+//! 3. `match_indices("```").chunks(2)` pairs positionally across the
+//!    concatenation of a module's files, so one unpaired marker desynchronises
+//!    every later pair and the check fails open.
+//! 4. `preceding.contains("Regex::new(")` is an unconditional 60-char skip over
+//!    raw source, so a comment near a fence disables the check for it.
+//! 5. `the_list_of_prompt_builders_is_every_module_that_spawns_one` discovers
+//!    modules by `exec::agent(`, but `src/reviewer` reaches a model through
+//!    `ai_driver` -- so the module `Untrusted` exists for is never scanned.
+//!
+//! The replacement is a type on the prompt-assembly API, so contributor text
+//! is unspellable in a prompt without passing the seam rather than searched for
+//! afterwards. Scheduled as H1-5 in `docs/plan/ws-10-untrusted-input.md`.
+
 //! Contributor text reaches a model through `Untrusted`, or it does not reach
 //! one at all.
 //!

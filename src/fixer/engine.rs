@@ -28,10 +28,18 @@ impl FixEngine {
 
         for (item, eval) in valid_items {
             prompt.push_str(&format!(
-                "- **File**: {}\n  **Finding**: {}\n  **Proposed Fix**: {}\n\n",
-                item.file_path.as_deref().unwrap_or("N/A"),
-                item.body,
-                eval.proposed_fix.as_deref().unwrap_or("Fix as required")
+                "{}{}{}\n",
+                Untrusted::new(
+                    UntrustedLabel::ReviewedPath,
+                    item.file_path.as_deref().unwrap_or("N/A"),
+                )
+                .render(),
+                Untrusted::new(
+                    UntrustedLabel::ProposedFix,
+                    eval.proposed_fix.as_deref().unwrap_or("Fix as required"),
+                )
+                .render(),
+                Untrusted::new(UntrustedLabel::ReviewComment, &item.body).render()
             ));
         }
 

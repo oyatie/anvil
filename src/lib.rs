@@ -8,6 +8,7 @@
 // that reports one afterwards. `forbid` rather than `deny`: an inner
 // `allow` cannot reopen it. oyatie carries the same line in three crates.
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 pub mod adr_drift_ratchet;
 pub mod ai_driver;
 pub mod api_contract_guard;

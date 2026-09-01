@@ -9,6 +9,10 @@ use tracing::warn;
 use super::{NonModelCommand, SyncNonModelCommand};
 use crate::exec::ExecClass;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "checked non-model transport owns this execution"
+)]
 pub(super) async fn run_for(
     NonModelCommand(mut command): NonModelCommand,
     limit: Duration,
@@ -44,6 +48,10 @@ pub(super) async fn run_for(
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "checked non-model transport owns this execution"
+)]
 pub(super) async fn run_status(
     NonModelCommand(mut command): NonModelCommand,
     what: &str,
@@ -55,6 +63,10 @@ pub(super) async fn run_status(
         .map_err(|error| anyhow::anyhow!("{} failed to run: {}", what, error))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "checked non-model transport owns this execution"
+)]
 pub(super) async fn run_with_stdin(
     NonModelCommand(mut command): NonModelCommand,
     stdin_payload: &str,
@@ -101,6 +113,10 @@ pub(super) async fn run_with_stdin(
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "checked synchronous non-model transport owns this execution"
+)]
 pub(super) fn run_sync_bounded(
     SyncNonModelCommand(mut command): SyncNonModelCommand,
     limit: Duration,

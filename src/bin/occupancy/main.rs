@@ -33,6 +33,8 @@
 //!   forge that did not answer into "no overlap" — the exact false green
 //!   this check exists to prevent.
 
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+
 use anvil::change_delivery::facade::occupancy::{Hop, SpawnRefused, admit_in_queue, anvil_hubs};
 use anvil::pre_merge_guard::report::GateStatus;
 

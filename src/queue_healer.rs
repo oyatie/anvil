@@ -1,3 +1,4 @@
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result, bail};
 use regex::Regex;
 use std::path::Path;
@@ -276,8 +277,7 @@ impl QueueHealer {
 **Context:**
 - **Repository**: {repo}
 - **Base Branch**: {base_branch}
-- **PR Head Branch**: {head_ref}
-- **Merge Conflict Status**: {conflict_status}
+{head_ref}{conflict_status}
 
 **Task:**
 1. Inspect the workspace, resolve any git merge conflict markers (`<<<<<<<`), and fix any broken type definitions or API calls caused by upstream trunk changes.
@@ -287,11 +287,11 @@ impl QueueHealer {
             pr_number = pr_number,
             repo = repo,
             base_branch = base_branch,
-            head_ref = meta.head_ref_name,
+            head_ref = Untrusted::new(UntrustedLabel::PrHeadRef, &meta.head_ref_name).render(),
             conflict_status = if has_merge_conflict {
-                format!("Merge Conflicts Present:\n{}", conflict_details)
+                Untrusted::new(UntrustedLabel::MergeConflict, &conflict_details).render()
             } else {
-                "No textual conflict; Semantic / Test divergence".to_string()
+                "## Merge Conflict Status\nNo textual conflict.\n".to_string()
             }
         );
 

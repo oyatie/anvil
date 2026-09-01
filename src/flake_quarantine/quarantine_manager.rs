@@ -6,6 +6,17 @@ impl QuarantineManager {
         Self
     }
 
+    /// The tests currently held in quarantine, or `None` when no ledger of
+    /// quarantine membership is retained.
+    ///
+    /// Anvil keeps no test-run history and runs no quarantine lane, so nothing
+    /// in this process or on disk records which tests are quarantined. `None`
+    /// is the difference between an empty ledger and no ledger, and it is what
+    /// stops a caller with nothing to rehabilitate from naming a test itself.
+    pub fn retained_quarantine_set(&self) -> Option<Vec<String>> {
+        None
+    }
+
     pub fn process_test_lifecycle(&self, modified_tests: &[String]) -> (usize, usize) {
         let mut quarantined = 0;
         let mut rehabilitated = 0;

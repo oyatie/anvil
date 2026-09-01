@@ -7,6 +7,7 @@
 //! subprocess seams finite.
 
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,8 @@ use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
 const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
+const EXPECTED_PROVIDER_SEAM_TOKEN_SHA256: &str =
+    "ce41a9fb08cf947a889e6589148eb843533f3022b09c7d530124cf810b55b79b";
 const MODEL_TRANSPORT: &str = "src/exec/agent/transport.rs";
 const NON_MODEL_TRANSPORT: &str = "src/exec/non_model.rs";
 const CLIPPY_CONFIG: &str = "clippy.toml";
@@ -72,7 +75,7 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "",
         "import:tokio::process::Command->Command",
     ),
-    ("src/exec/agent.rs", "args", "argv:self.command:args"),
+    ("src/exec/agent.rs", "args", "argv:self.command:args:args"),
     ("src/exec/agent.rs", "args", "raw-field:self.command"),
     ("src/exec/agent.rs", "command", "call:command_in:tool"),
     (
@@ -105,7 +108,7 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/agent/provider.rs",
         "agy_help_probe",
-        "argv:command:arg",
+        "argv:command:arg:str:\"--help\"",
     ),
     (
         "src/exec/agent/provider.rs",
@@ -122,8 +125,16 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "agy_help_probe",
         "construct-probe:ProviderProbeCommand",
     ),
-    ("src/exec/agent/provider.rs", "agy_agent", "argv:cmd:args"),
-    ("src/exec/agent/provider.rs", "agy_agent", "argv:cmd:args"),
+    (
+        "src/exec/agent/provider.rs",
+        "agy_agent",
+        "argv:cmd:args:[str:\"--print\",str:\"\",str:\"--input-format\",str:\"stream-json\",str:\"--output-format\",str:\"stream-json\",str:\"--effort\",effort,str:\"--print-timeout\",&timeout,str:\"--dangerously-skip-permissions\"]",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "agy_agent",
+        "argv:cmd:args:[str:\"--model\",model]",
+    ),
     (
         "src/exec/agent/provider.rs",
         "agy_agent",
@@ -132,14 +143,18 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/agent/provider.rs",
         "claude_agent",
-        "argv:cmd:args",
+        "argv:cmd:args:[str:\"-p\",str:\"--model\",model]",
     ),
     (
         "src/exec/agent/provider.rs",
         "claude_agent",
         "call:super::command:str:\"claude\"",
     ),
-    ("src/exec/agent/provider.rs", "codex_agent", "argv:cmd:args"),
+    (
+        "src/exec/agent/provider.rs",
+        "codex_agent",
+        "argv:cmd:args:[str:\"exec\",str:\"-\",str:\"--model\",model]",
+    ),
     (
         "src/exec/agent/provider.rs",
         "codex_agent",
@@ -148,19 +163,23 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/agent/provider.rs",
         "cursor_agent",
-        "argv:cmd:args",
+        "argv:cmd:args:[str:\"--model\",model]",
     ),
     (
         "src/exec/agent/provider.rs",
         "cursor_agent",
-        "argv:cmd:args",
+        "argv:cmd:args:[str:\"agent\",str:\"--print\"]",
     ),
     (
         "src/exec/agent/provider.rs",
         "cursor_agent",
         "call:super::command:str:\"cursor\"",
     ),
-    ("src/exec/agent/provider.rs", "grok_agent", "argv:cmd:args"),
+    (
+        "src/exec/agent/provider.rs",
+        "grok_agent",
+        "argv:cmd:args:[str:\"--prompt-file\",str:\"/dev/stdin\",str:\"--model\",model]",
+    ),
     (
         "src/exec/agent/provider.rs",
         "grok_agent",
@@ -659,10 +678,10 @@ const EXPECTED_RAW_STDIN_CALLS: &[(&str, &str, &str)] = &[
 const NON_MODEL_PROGRAM_VOCABULARY: &[&str] = &[
     "cargo", "cedar", "curl", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
 ];
-const CANONICAL_NON_MODEL_ALIASES: &[(&str, &str)] = &[
-    ("cargo", "rustup"),
-    ("npm", "npm-cli.js"),
-    ("npm", "npm.cmd"),
+const CANONICAL_NON_MODEL_ALIASES: &[(&str, &str, &str)] = &[
+    ("cargo", "rustup", "unix"),
+    ("npm", "npm-cli.js", "unix"),
+    ("npm", "npm.cmd", "windows"),
 ];
 const APPROVED_PRODUCTION_DEPENDENCIES: &[&str] = &[
     "anyhow",
@@ -1850,6 +1869,51 @@ fn value_label(expression: &syn::Expr) -> String {
     expression_label(expression)
 }
 
+fn normalized_rust_sha256(source: &str) -> String {
+    let tokens = source
+        .parse::<TokenStream>()
+        .expect("parse Rust tokens for a normalized structural digest");
+    hex::encode(Sha256::digest(tokens.to_string().as_bytes()))
+}
+
+fn argv_value_label(expression: &syn::Expr) -> String {
+    match expression {
+        syn::Expr::Array(array) => format!(
+            "[{}]",
+            array
+                .elems
+                .iter()
+                .map(argv_value_label)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        syn::Expr::Tuple(tuple) => format!(
+            "({})",
+            tuple
+                .elems
+                .iter()
+                .map(argv_value_label)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        syn::Expr::Reference(reference) => {
+            format!("&{}", argv_value_label(&reference.expr))
+        }
+        syn::Expr::Group(group) => argv_value_label(&group.expr),
+        syn::Expr::Paren(paren) => argv_value_label(&paren.expr),
+        syn::Expr::Call(call) => format!(
+            "call:{}({})",
+            expression_label(&call.func),
+            call.args
+                .iter()
+                .map(argv_value_label)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        _ => value_label(expression),
+    }
+}
+
 fn approved_reserved_module(item: &syn::ItemMod, source_path: Option<&Path>) -> bool {
     if item.content.is_some() || !item.attrs.is_empty() {
         return false;
@@ -2101,7 +2165,14 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
     }
 
     fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
-        if is_process_method(&expression.method) && self.process_binding(&expression.receiver) {
+        // This inactive-configuration pass is deliberately spelling-based.
+        // Rust type information is unavailable for code removed by cfg, and
+        // partial taint propagation loses Commands through factories,
+        // closures, projections, or assignments. Requiring every shipped
+        // method with an execution name to be one of the exact private seam
+        // sites fails closed; Clippy supplies definition-resolved enforcement
+        // for the active build.
+        if is_process_method(&expression.method) {
             self.record(format!(
                 "method:{}:{}",
                 expression_label(&expression.receiver),
@@ -2316,7 +2387,10 @@ fn string_array_constant(source: &str, name: &str) -> Vec<String> {
         .collect()
 }
 
-fn string_pair_array_constant(source: &str, name: &str) -> Vec<(String, String)> {
+fn configured_string_pair_array_constant(
+    source: &str,
+    name: &str,
+) -> Vec<(String, String, String)> {
     fn array(expression: &syn::Expr) -> Option<&syn::ExprArray> {
         match expression {
             syn::Expr::Array(array) => Some(array),
@@ -2350,10 +2424,30 @@ fn string_pair_array_constant(source: &str, name: &str) -> Vec<(String, String)>
         .elems
         .iter()
         .map(|element| match element {
-            syn::Expr::Tuple(tuple) if tuple.elems.len() == 2 => (
-                literal(&tuple.elems[0], name),
-                literal(&tuple.elems[1], name),
-            ),
+            syn::Expr::Tuple(tuple) if tuple.elems.len() == 2 => {
+                let cfg = tuple
+                    .attrs
+                    .iter()
+                    .filter(|attribute| syn_path_is(attribute.path(), "cfg"))
+                    .map(|attribute| {
+                        attribute
+                            .meta
+                            .require_list()
+                            .unwrap_or_else(|_| panic!("{name} has malformed cfg"))
+                            .tokens
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>();
+                (
+                    literal(&tuple.elems[0], name),
+                    literal(&tuple.elems[1], name),
+                    match cfg.as_slice() {
+                        [] => "<missing>".to_owned(),
+                        [predicate] => predicate.clone(),
+                        _ => cfg.join("|"),
+                    },
+                )
+            }
             _ => panic!("{name} contains a non-literal pair"),
         })
         .collect()
@@ -3224,7 +3318,13 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
             self.record(format!("posture-method:{receiver}:apply_from"));
         }
         if matches!(method.as_str(), "arg" | "args") {
-            self.record(format!("argv:{receiver}:{method}"));
+            let payload = expression
+                .args
+                .iter()
+                .map(argv_value_label)
+                .collect::<Vec<_>>()
+                .join("|");
+            self.record(format!("argv:{receiver}:{method}:{payload}"));
         }
         syn::visit::visit_expr_method_call(self, expression);
     }
@@ -3592,6 +3692,67 @@ fn only_the_finite_provider_seam_constructs_agent_commands() {
         KNOWN_PROVIDERS,
         "the provider executable registry changed without an explicit seam decision"
     );
+    let full_seam = fs::read_to_string(repo().join(PROVIDER_SEAM)).expect("read provider seam");
+    assert_eq!(
+        normalized_rust_sha256(&full_seam),
+        EXPECTED_PROVIDER_SEAM_TOKEN_SHA256,
+        "the finite provider signatures, validation flow, argv order, or tests changed without an explicit seam decision"
+    );
+}
+
+#[test]
+fn provider_argv_census_pins_payload_order_and_dataflow() {
+    let intended = agent_capability_events(
+        r#"
+            fn provider(mut cmd: AgentCommand, model: &str) {
+                cmd.args(["-p", "--model", model]);
+            }
+        "#,
+    );
+    let smuggled = agent_capability_events(
+        r#"
+            fn provider(mut cmd: AgentCommand, model: &str) {
+                cmd.args(["-p", model, "--model"]);
+            }
+        "#,
+    );
+    assert!(
+        intended
+            .iter()
+            .any(|(_, event)| { event == "argv:cmd:args:[str:\"-p\",str:\"--model\",model]" })
+    );
+    assert_ne!(
+        intended, smuggled,
+        "a validated metadata value cannot move into the provider's prompt argv position without changing the exact census"
+    );
+
+    let validated = r#"
+        fn provider(mut cmd: AgentCommand, model: &str) -> Result<AgentCommand> {
+            validate_model_selector(model)?;
+            cmd.args(["-p", "--model", model]);
+            Ok(cmd)
+        }
+    "#;
+    let cfg_shadowed = r#"
+        fn provider(mut cmd: AgentCommand, model: &str) -> Result<AgentCommand> {
+            #[cfg(not(windows))]
+            validate_model_selector(model)?;
+            #[cfg(windows)]
+            let model = attacker_controlled();
+            cmd.args(["-p", "--model", model]);
+            Ok(cmd)
+        }
+    "#;
+    assert_eq!(
+        agent_capability_events(validated),
+        agent_capability_events(cfg_shadowed),
+        "the argv event alone intentionally demonstrates why the complete provider flow is pinned"
+    );
+    assert_ne!(
+        normalized_rust_sha256(validated),
+        normalized_rust_sha256(cfg_shadowed),
+        "cfg-split validation or same-name selector shadowing must change the provider seam fingerprint"
+    );
 }
 
 #[test]
@@ -3860,13 +4021,30 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
         "the executable vocabulary changed without an explicit boundary decision"
     );
     assert_eq!(
-        string_pair_array_constant(&transport, "CANONICAL_PROGRAM_ALIASES"),
+        configured_string_pair_array_constant(&transport, "CANONICAL_PROGRAM_ALIASES"),
         CANONICAL_NON_MODEL_ALIASES
             .iter()
-            .map(|(requested, canonical)| ((*requested).to_owned(), (*canonical).to_owned()))
+            .map(|(requested, canonical, cfg)| {
+                (
+                    (*requested).to_owned(),
+                    (*canonical).to_owned(),
+                    (*cfg).to_owned(),
+                )
+            })
             .collect::<Vec<_>>(),
-        "canonical multicall/shim aliases changed without an explicit boundary decision"
+        "canonical multicall/shim aliases or their platform predicates changed without an explicit boundary decision"
     );
+
+    for unguarded in [
+        r#"const ALIASES: &[(&str, &str)] = &[("cargo", "rustup")];"#,
+        r#"const ALIASES: &[(&str, &str)] = &[#[cfg(windows)] ("cargo", "rustup")];"#,
+    ] {
+        assert_ne!(
+            configured_string_pair_array_constant(unguarded, "ALIASES"),
+            [("cargo".to_owned(), "rustup".to_owned(), "unix".to_owned())],
+            "a missing or wrong platform predicate cannot admit Unix multicall semantics on Windows"
+        );
+    }
 
     let mut clear_calls = Vec::new();
     let mut raw_env_clears = Vec::new();
@@ -4670,7 +4848,7 @@ fn test_only_attributes_prune_entire_ast_subtrees() {
 }
 
 #[test]
-fn domain_methods_named_like_process_methods_are_not_execution_sites() {
+fn inactive_method_census_fails_closed_when_type_provenance_is_unavailable() {
     let source = r#"
         struct Report;
         impl Report { fn status(&self) -> bool { true } }
@@ -4680,9 +4858,58 @@ fn domain_methods_named_like_process_methods_are_not_execution_sites() {
         }
     "#;
     assert!(
-        !contains_process_execution_syntax(source),
-        "definition-unrelated domain methods must remain ordinary production APIs"
+        contains_process_execution_syntax(source),
+        "inactive cfg deliberately treats execution-shaped domain methods as an explicit seam decision"
     );
+
+    for bypass in [
+        r#"
+            #[cfg(windows)]
+            fn bypass() {
+                let make = std::process::Command::new;
+                let mut command = make("agy");
+                let _ = command.spawn();
+            }
+        "#,
+        r#"
+            fn make() -> std::process::Command {
+                std::process::Command::new("agy")
+            }
+            #[cfg(windows)]
+            fn bypass() {
+                let mut command = make();
+                let _ = command.spawn();
+            }
+        "#,
+        r#"
+            #[cfg(windows)]
+            fn bypass() {
+                let make = || std::process::Command::new("agy");
+                let mut command = make();
+                let _ = command.spawn();
+            }
+        "#,
+        r#"
+            #[cfg(windows)]
+            fn bypass() {
+                let mut command = (std::process::Command::new("agy"),).0;
+                let _ = command.spawn();
+            }
+        "#,
+        r#"
+            #[cfg(windows)]
+            fn bypass() {
+                let mut command;
+                command = std::process::Command::new("agy");
+                let _ = command.spawn();
+            }
+        "#,
+    ] {
+        assert!(
+            contains_process_execution_syntax(bypass),
+            "inactive process execution escaped through lost Command provenance: {bypass}"
+        );
+    }
 }
 
 #[test]

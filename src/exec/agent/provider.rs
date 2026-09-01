@@ -149,10 +149,63 @@ mod tests {
     }
 
     #[test]
+    fn every_provider_argv_keeps_prompt_on_stdin_and_metadata_in_its_exact_slot() {
+        let posture = Posture::in_workspace(".");
+        let model = "sentinel-model";
+
+        assert_eq!(
+            args(&claude_agent(&posture, model).expect("valid selector")),
+            ["-p", "--model", model]
+        );
+        assert_eq!(
+            args(&codex_agent(&posture, model).expect("valid selector")),
+            ["exec", "-", "--model", model]
+        );
+        assert_eq!(
+            args(&cursor_agent(&posture, None).expect("optional selector")),
+            ["agent", "--print"]
+        );
+        assert_eq!(
+            args(&cursor_agent(&posture, Some(model)).expect("valid selector")),
+            ["agent", "--print", "--model", model]
+        );
+        assert_eq!(
+            args(&grok_agent(&posture, model).expect("valid selector")),
+            ["--prompt-file", "/dev/stdin", "--model", model]
+        );
+        assert_eq!(
+            args(
+                &agy_agent(&posture, "high", Duration::from_secs(600), Some(model),)
+                    .expect("valid selectors"),
+            ),
+            [
+                "--print",
+                "",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--effort",
+                "high",
+                "--print-timeout",
+                "570s",
+                "--dangerously-skip-permissions",
+                "--model",
+                model,
+            ]
+        );
+    }
+
+    #[test]
     fn dynamic_provider_options_reject_argv_syntax() {
         let posture = Posture::in_workspace(".");
-        assert!(claude_agent(&posture, "--model").is_err());
-        assert!(claude_agent(&posture, "safe\n--prompt=attack").is_err());
+        for invalid in ["--model", "safe\n--prompt=attack"] {
+            assert!(claude_agent(&posture, invalid).is_err());
+            assert!(codex_agent(&posture, invalid).is_err());
+            assert!(cursor_agent(&posture, Some(invalid)).is_err());
+            assert!(grok_agent(&posture, invalid).is_err());
+            assert!(agy_agent(&posture, "high", Duration::from_secs(600), Some(invalid)).is_err());
+        }
         assert!(agy_agent(&posture, "high\n--model", Duration::from_secs(600), None).is_err());
     }
 

@@ -223,24 +223,23 @@ async fn checked_command_rejects_path_fallback_if_the_validated_entry_disappears
 #[cfg(unix)]
 #[tokio::test]
 async fn checked_command_preserves_path_for_admitted_tool_descendants() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::symlink;
 
     let scratch = tempfile::tempdir().expect("scratch directory");
-    let tool_dir = scratch.path().join("tool");
     let descendant_dir = scratch.path().join("descendant");
-    std::fs::create_dir_all(&tool_dir).expect("tool directory");
     std::fs::create_dir_all(&descendant_dir).expect("descendant directory");
-    let tool = tool_dir.join("git");
-    std::fs::write(&tool, "#!/bin/sh\nexec helper\n").expect("tool fixture");
-    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
-        .expect("tool permissions");
-    let helper = descendant_dir.join("helper");
-    std::fs::write(&helper, "#!/bin/sh\necho descendant-ok\n").expect("helper fixture");
-    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755))
-        .expect("helper permissions");
+    let git = resolve_executable(Command::new("git").as_std())
+        .expect("installed git")
+        .canonical;
+    let echo = resolve_executable(Command::new("echo").as_std())
+        .expect("installed echo")
+        .canonical;
+    symlink(echo, descendant_dir.join("git-anvil-descendant"))
+        .expect("descendant executable symlink");
 
-    let path = std::env::join_paths([&tool_dir, &descendant_dir]).expect("fixture PATH");
-    let mut command = Command::new("git");
+    let path = std::env::join_paths([&descendant_dir]).expect("fixture PATH");
+    let mut command = Command::new(git);
+    command.args(["anvil-descendant", "descendant-ok"]);
     command.env("PATH", &path);
     let checked = NonModelCommand::checked(command).expect("safe runnable selected");
     let output = transport::run_for(
@@ -261,30 +260,21 @@ async fn checked_command_preserves_path_for_admitted_tool_descendants() {
 #[cfg(unix)]
 #[tokio::test]
 async fn status_transport_never_hands_the_callers_stdin_to_a_forwarder() {
-    use std::os::unix::fs::PermissionsExt;
-
     let scratch = tempfile::tempdir().expect("scratch directory");
-    let tool = scratch.path().join("git");
-    std::fs::write(
-        &tool,
-        "#!/bin/sh\nif IFS= read -r _line; then exit 17; else exit 0; fi\n",
-    )
-    .expect("status fixture");
-    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
-        .expect("status fixture permissions");
     let input = scratch.path().join("operator-input");
     std::fs::write(&input, "must-not-reach-forwarder\n").expect("operator input fixture");
 
-    let mut command = Command::new(tool);
+    // Wrap the already-installed `grep` directly so this unit test exercises
+    // the transport's stdin normalization rather than admission's rebinding.
+    // `grep` exits 0 if it receives the fixture and 1 on the transport's null
+    // stdin, without creating a new executable that macOS may provenance-scan.
+    let mut command = Command::new("grep");
+    command.args(["-q", "."]);
     command.stdin(std::fs::File::open(input).expect("operator input handle"));
-    let checked = NonModelCommand::checked(command).expect("fixture admitted");
-    let status = transport::run_status(checked, "forwarder stdin isolation")
+    let status = transport::run_status(NonModelCommand(command), "forwarder stdin isolation")
         .await
         .expect("status fixture executes");
-    assert!(
-        status.success(),
-        "forwarder consumed the caller stdin: {status}"
-    );
+    assert_eq!(status.code(), Some(1), "forwarder consumed caller stdin");
 }
 
 #[test]

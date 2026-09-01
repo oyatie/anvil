@@ -374,23 +374,47 @@ Do **not** design the implementation here. Naming the target and the fixed surfa
    network. CI is unaffected because its runners have no `agy` and the tests self-skip.
 
    **The filter is keyed to the binary, not to the test name.** nextest matches `test()` against
-   `module::name`, so the older `-E 'not test(/^test_live_/)'` was anchor-fragile: a live test
-   moved inside a `mod` would present as `some_mod::test_live_x`, fail the `^` anchor, rejoin the
-   run, and spend money. `binary(subscription_driver_live_test)` names the compilation unit and
-   cannot be escaped by nesting.
+   `module::name`, not against the leaf, so the older `-E 'not test(/^test_live_/)'` was
+   anchor-fragile: a live test moved inside a `mod` would present as `some_mod::test_live_x`, fail
+   the `^`, rejoin the run, and spend money. The failure is demonstrable on tests already in the
+   tree — `^` matches nothing that is module-qualified:
+
+   ```
+   $ cargo nextest list --all-targets --locked --profile ci -E 'test(/^test_frontier_/)' | wc -l
+          0
+   $ cargo nextest list --all-targets --locked --profile ci -E 'test(/test_frontier_/)'
+   anvil ai_driver::router::tests::test_frontier_defaults
+   ```
+
+   `binary(subscription_driver_live_test)` names the compilation unit and cannot be escaped by
+   nesting.
 
    **Prove the exclusion once, per invariant 5** — a filter you never watched remove anything is an
-   unverified instrument:
+   unverified instrument. At the pin the filter removes exactly three tests out of 1843:
 
    ```
-   cargo nextest list --all-targets --locked --profile ci > /tmp/all.txt
-   cargo nextest list --all-targets --locked --profile ci \
-       -E 'not binary(subscription_driver_live_test)' > /tmp/filtered.txt
-   diff /tmp/all.txt /tmp/filtered.txt      # must show exactly the test_live_* tests, and nothing else
+   $ cargo nextest list --all-targets --locked --profile ci > /tmp/all.txt; wc -l < /tmp/all.txt
+       1843
+   $ cargo nextest list --all-targets --locked --profile ci \
+       -E 'not binary(subscription_driver_live_test)' > /tmp/kept.txt; wc -l < /tmp/kept.txt
+       1840
+   $ diff /tmp/all.txt /tmp/kept.txt
+   1649,1651d1648
+   < anvil::subscription_driver_live_test test_live_claude_opus5_high
+   < anvil::subscription_driver_live_test test_live_gemini3_7_flash_high
+   < anvil::subscription_driver_live_test test_live_gpt5_6sol_high_with_fallover
    ```
 
-   Paste that diff. If it removes anything that is not a `test_live_*` test, the filter is wrong and
-   that is a stop, not a smaller suite.
+   Paste that diff. Three tests, all `test_live_*`, and nothing else — if yours removes anything
+   that is not a `test_live_*` test, the filter is wrong and that is a stop, not a smaller suite.
+   The cheap form, if a full `--all-targets` enumeration is too slow on your machine, is to
+   enumerate the complement instead: `-E 'binary(subscription_driver_live_test)'` lists the same
+   three and nothing else.
+
+   The two filters agree at the pin — `-E 'not test(/^test_live_/)'` also yields 1840, because
+   today the live tests sit at the top level of their file. That is the whole hazard: the old
+   filter is correct until someone wraps them in a `mod`, and then it is silently, expensively
+   wrong. The binary form does not depend on where they sit.
 
 Do not "write tests first" as a ritual. Write the specific failing check the criterion names,
 seeded against the defect it claims to catch.

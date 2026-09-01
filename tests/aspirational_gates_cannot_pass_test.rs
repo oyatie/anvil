@@ -150,7 +150,12 @@ fn a_gate_the_registry_records_above_aspirational_keeps_its_pass() {
     );
 }
 
-/// The gates the audit has not reached — thirty-seven of seventy-two today.
+/// The gates the audit has not reached — none, as this is written.
+///
+/// The count is deliberately not restated: it was "thirty-seven of seventy-two"
+/// while it was eighteen, and it is zero now. `gap_report().unaudited` is the
+/// one honest home for it, and the assertion below reads that rather than a
+/// number in this sentence.
 ///
 /// They are neither downgraded nor quietly forgiven. Downgrading one would be a
 /// fabricated `NotMeasured` for a gate nobody has read, the symmetric violation
@@ -184,8 +189,10 @@ fn an_unaudited_gate_keeps_its_pass_and_the_size_of_that_exemption_is_published(
          report publishes, or the exemption is silent"
     );
     assert!(
-        gap.unaudited > 0 && gap.summary().contains("not yet audited"),
-        "while any gate is unaudited the published summary has to say so: {}",
+        gap.summary()
+            .contains(&format!("{} not yet audited", gap.unaudited)),
+        "the published summary has to state the size of the exemption, whatever \
+         it currently is: {}",
         gap.summary()
     );
 }
@@ -511,8 +518,16 @@ fn the_registry_lookup_answers_for_audited_gates_and_declines_for_the_rest() {
     );
     assert_eq!(
         fidelity::declared_fidelity("cell_isolation_status"),
+        Some(Fidelity::Heuristic),
+        "cell_isolation was the unaudited example here until its two regexes \
+         were read; the lookup answers for it now"
+    );
+    // The half that still bites, and the only one that can now: a name the
+    // registry has never seen is declined rather than defaulted. Every gate on
+    // the report has a row, so an invented id is the only way to ask.
+    assert_eq!(
+        fidelity::declared_fidelity("no_such_gate"),
         None,
         "a gate nobody has audited must not be given a fidelity by default"
     );
-    assert_eq!(fidelity::declared_fidelity("no_such_gate"), None);
 }

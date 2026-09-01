@@ -9,6 +9,9 @@ const GATE_ID: &str = "flake_quarantine_status";
 const NO_RUN_HISTORY: &str = "no test-run history is retained, so no test can be shown to be \
      non-deterministic and there is no quarantine lane to isolate one into";
 
+const NO_QUARANTINE_LEDGER: &str = "no quarantine ledger is retained, so no test in this \
+     repository is known to be quarantined and there is nothing to rehabilitate";
+
 #[derive(Clone, Debug)]
 pub struct FlakeQuarantineReport {
     pub status: GateStatus,
@@ -34,6 +37,33 @@ impl FlakeQuarantineLifecycle {
         Self {
             manager: QuarantineManager::new(),
         }
+    }
+
+    /// The tests currently held in quarantine, or `None` when no ledger of
+    /// quarantine membership is retained.
+    pub fn retained_quarantine_set(&self) -> Option<Vec<String>> {
+        self.manager.retained_quarantine_set()
+    }
+
+    /// What rehabilitation can say about the set that is actually quarantined.
+    ///
+    /// Three states an operator has to be able to tell apart: no ledger, an
+    /// empty ledger, and members to evaluate. A caller that supplies a test
+    /// name of its own evaluates the lifecycle of a fiction and prints an
+    /// outcome for it, which reads exactly like an outcome for this repository.
+    pub fn rehabilitation_report(&self) -> String {
+        let Some(quarantined) = self.retained_quarantine_set() else {
+            return NO_QUARANTINE_LEDGER.to_string();
+        };
+        if quarantined.is_empty() {
+            return "the quarantine ledger is empty, so there is nothing to rehabilitate"
+                .to_string();
+        }
+        let report = self.evaluate_quarantine_lifecycle(&quarantined);
+        format!(
+            "{}\nQuarantined: {} | Rehabilitated: {}",
+            report.summary, report.quarantined_tests_isolated, report.rehabilitated_tests_restored
+        )
     }
 
     pub fn evaluate_quarantine_lifecycle(

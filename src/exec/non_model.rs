@@ -27,6 +27,12 @@ use super::{ExecClass, agent};
 const NON_MODEL_PROGRAMS: &[&str] = &[
     "cargo", "cedar", "curl", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
 ];
+const CANONICAL_PROGRAM_ALIASES: &[(&str, &str)] = &[
+    ("cargo", "rustup"),
+    ("npm", "npm-cli.js"),
+    ("npm", "npm.cmd"),
+];
+const CLEARED_ENV_MARKER: &str = "ANVIL_INTERNAL_NON_MODEL_ENV_CLEARED";
 
 /// A raw command that has passed the finite non-model admission policy.
 /// Its inner command never leaves this module.
@@ -37,27 +43,37 @@ struct SyncNonModelCommand(std::process::Command);
 
 struct ResolvedExecutable {
     canonical: PathBuf,
-    locked_path: Option<OsString>,
+    requested_name: String,
 }
 
 impl NonModelCommand {
-    fn checked(mut command: Command) -> Result<Self> {
+    fn checked(command: Command) -> Result<Self> {
         let resolved = validate_program(&command)?;
-        if let Some(path) = resolved.locked_path {
-            command.env("PATH", path);
-        }
-        Ok(Self(command))
+        Ok(Self(Command::from(bind_std_program(
+            command.as_std(),
+            &resolved.canonical,
+            &resolved.requested_name,
+        ))))
     }
 }
 
 impl SyncNonModelCommand {
-    fn checked(mut command: std::process::Command) -> Result<Self> {
+    fn checked(command: std::process::Command) -> Result<Self> {
         let resolved = validate_std_program(&command)?;
-        if let Some(path) = resolved.locked_path {
-            command.env("PATH", path);
-        }
-        Ok(Self(command))
+        Ok(Self(bind_std_program(
+            &command,
+            &resolved.canonical,
+            &resolved.requested_name,
+        )))
     }
+}
+
+/// Clears a command environment in a way the canonical-program rebinder can
+/// preserve. The marker is consumed before execution and never reaches the
+/// child.
+pub(super) fn clear_environment(command: &mut Command) {
+    command.env_clear();
+    command.env(CLEARED_ENV_MARKER, "1");
 }
 
 mod transport;
@@ -125,14 +141,90 @@ fn validate_std_program(command: &std::process::Command) -> Result<ResolvedExecu
             "raw subprocess alias resolves to a model provider; use the typed AgentCommand + ModelPrompt transport"
         );
     }
-    Ok(resolved)
+    let canonical_name = executable_name(resolved.canonical.as_os_str())
+        .ok_or_else(|| anyhow::anyhow!("resolved raw subprocess has no valid executable name"))?;
+    if !canonical_name_is_admitted(requested_name, canonical_name) {
+        bail!(
+            "raw subprocess alias {requested_name:?} resolves outside the finite non-model tool seam as {canonical_name:?}"
+        );
+    }
+    Ok(ResolvedExecutable {
+        requested_name: requested_name.to_owned(),
+        ..resolved
+    })
+}
+
+fn canonical_name_is_admitted(requested: &str, canonical: &str) -> bool {
+    if requested == canonical {
+        return true;
+    }
+    CANONICAL_PROGRAM_ALIASES.contains(&(requested, canonical))
+        || requested == "python3"
+            && canonical.strip_prefix("python3.").is_some_and(|version| {
+                !version.is_empty()
+                    && !version.starts_with('.')
+                    && !version.ends_with('.')
+                    && !version.contains("..")
+                    && version
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+            })
+}
+
+fn bind_std_program(
+    command: &std::process::Command,
+    canonical: &Path,
+    requested_name: &str,
+) -> std::process::Command {
+    let args = command
+        .get_args()
+        .map(OsStr::to_os_string)
+        .collect::<Vec<_>>();
+    let environment = command
+        .get_envs()
+        .map(|(name, value)| (name.to_os_string(), value.map(OsStr::to_os_string)))
+        .collect::<Vec<_>>();
+    let environment_cleared = environment.iter().any(|(name, value)| {
+        name == OsStr::new(CLEARED_ENV_MARKER) && value.as_deref() == Some(OsStr::new("1"))
+    });
+
+    let mut bound = std::process::Command::new(canonical);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        bound.arg0(requested_name);
+    }
+    bound.args(args);
+    if let Some(directory) = command.get_current_dir() {
+        bound.current_dir(directory);
+    }
+    if environment_cleared {
+        bound.env_clear();
+    }
+    for (name, value) in environment {
+        if name == OsStr::new(CLEARED_ENV_MARKER) {
+            continue;
+        }
+        if let Some(value) = value {
+            bound.env(name, value);
+        } else {
+            bound.env_remove(name);
+        }
+    }
+    bound
 }
 
 fn executable_name(program: &OsStr) -> Option<&str> {
     Path::new(program)
         .file_name()
         .and_then(OsStr::to_str)
-        .map(|name| name.trim_end_matches(".exe"))
+        .map(|name| {
+            if name.to_ascii_lowercase().ends_with(".exe") {
+                &name[..name.len() - 4]
+            } else {
+                name
+            }
+        })
         .filter(|name| !name.is_empty())
 }
 
@@ -150,7 +242,7 @@ fn resolve_executable(command: &std::process::Command) -> Option<ResolvedExecuta
         };
         return runnable_canonical(&candidate).map(|canonical| ResolvedExecutable {
             canonical,
-            locked_path: None,
+            requested_name: String::new(),
         });
     }
 
@@ -168,33 +260,28 @@ fn resolve_executable(command: &std::process::Command) -> Option<ResolvedExecuta
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(dir)
         };
-        let Some((candidate, canonical)) = runnable_in(&effective_dir, program) else {
+        let Some(canonical) = runnable_in(&effective_dir, program) else {
             continue;
         };
-        let selected_dir = std::fs::canonicalize(candidate.parent()?).ok()?;
-        let locked_path = std::env::join_paths(
-            std::iter::once(selected_dir).chain(std::env::split_paths(&search_path)),
-        )
-        .ok()?;
         return Some(ResolvedExecutable {
             canonical,
-            locked_path: Some(locked_path),
+            requested_name: String::new(),
         });
     }
     None
 }
 
-fn runnable_in(directory: &Path, program: &Path) -> Option<(PathBuf, PathBuf)> {
+fn runnable_in(directory: &Path, program: &Path) -> Option<PathBuf> {
     let candidate = directory.join(program);
     if let Some(canonical) = runnable_canonical(&candidate) {
-        return Some((candidate, canonical));
+        return Some(canonical);
     }
     #[cfg(windows)]
     if program.extension().is_none() {
-        for extension in ["exe", "com", "bat", "cmd"] {
+        for extension in ["exe", "cmd"] {
             let candidate = directory.join(program).with_extension(extension);
             if let Some(canonical) = runnable_canonical(&candidate) {
-                return Some((candidate, canonical));
+                return Some(canonical);
             }
         }
     }

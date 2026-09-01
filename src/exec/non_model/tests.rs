@@ -70,7 +70,114 @@ fn path_resolution_skips_nonexecutables_and_rejects_the_runnable_provider_alias(
 
 #[cfg(unix)]
 #[test]
-fn checked_command_locks_path_to_the_runnable_entry_it_validated() {
+fn allowed_name_symlinked_to_an_unadmitted_launcher_is_rejected() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let scratch = tempfile::tempdir().expect("scratch directory");
+    let launcher = scratch.path().join("env");
+    std::fs::write(&launcher, "fixture").expect("launcher fixture");
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755))
+        .expect("executable launcher fixture");
+    let alias = scratch.path().join("git");
+    symlink(&launcher, &alias).expect("launcher alias");
+
+    let error = rejection(Command::new(alias));
+    assert!(
+        error.contains("outside the finite non-model tool seam"),
+        "{error}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn finite_legitimate_multicall_and_versioned_aliases_are_admitted() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let scratch = tempfile::tempdir().expect("scratch directory");
+    for (requested, canonical) in [
+        ("cargo", "rustup"),
+        ("npm", "npm-cli.js"),
+        ("python3", "python3.14"),
+    ] {
+        let target = scratch.path().join(canonical);
+        std::fs::write(&target, "fixture").expect("canonical fixture");
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+            .expect("executable canonical fixture");
+        let alias = scratch.path().join(requested);
+        symlink(&target, &alias).expect("legitimate alias");
+        NonModelCommand::checked(Command::new(alias)).expect("finite alias is admitted");
+    }
+}
+
+#[test]
+fn windows_npm_shim_is_the_only_admitted_command_script_alias() {
+    assert!(canonical_name_is_admitted("npm", "npm.cmd"));
+    assert!(!canonical_name_is_admitted("git", "git.cmd"));
+    assert!(!canonical_name_is_admitted("git", "cmd"));
+    assert!(!canonical_name_is_admitted("python3", "python3.latest"));
+    assert!(!canonical_name_is_admitted("python3", "python3.14."));
+}
+
+#[tokio::test]
+async fn real_cargo_alias_executes_with_cargo_multicall_semantics() {
+    let mut command = Command::new("cargo");
+    command.arg("--version");
+    let checked = NonModelCommand::checked(command).expect("host cargo is admitted");
+    let output = transport::run_for(
+        checked,
+        Duration::from_secs(10),
+        "cargo alias smoke test",
+        None,
+    )
+    .await
+    .expect("host cargo executes");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("cargo "));
+}
+
+#[tokio::test]
+async fn installed_npm_and_python_aliases_retain_execution_semantics() {
+    for (program, expected) in [("npm", "npm"), ("python3", "Python")] {
+        let mut command = Command::new(program);
+        command.arg("--version");
+        if resolve_executable(command.as_std()).is_none() {
+            continue;
+        }
+        let checked = NonModelCommand::checked(command)
+            .unwrap_or_else(|error| panic!("installed {program} is admitted: {error}"));
+        let output = transport::run_for(
+            checked,
+            Duration::from_secs(30),
+            "installed alias semantics smoke test",
+            None,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("installed {program} executes: {error}"));
+        assert!(output.status.success(), "{program} --version failed");
+        let diagnostic = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if program == "npm" {
+            assert!(
+                diagnostic
+                    .trim()
+                    .starts_with(|character: char| character.is_ascii_digit()),
+                "unexpected npm version: {diagnostic:?}"
+            );
+        } else {
+            assert!(
+                diagnostic.contains(expected),
+                "unexpected {program} version: {diagnostic:?}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn checked_command_rejects_path_fallback_if_the_validated_entry_disappears() {
     use std::os::unix::fs::PermissionsExt;
 
     let scratch = tempfile::tempdir().expect("scratch directory");
@@ -91,17 +198,92 @@ fn checked_command_locks_path_to_the_runnable_entry_it_validated() {
     );
     let NonModelCommand(command) =
         NonModelCommand::checked(command).expect("safe runnable selected");
-    let path = command
-        .as_std()
-        .get_envs()
-        .find_map(|(name, value)| (name == OsStr::new("PATH")).then_some(value).flatten())
-        .expect("checked PATH");
-    let locked_first = std::env::split_paths(path)
-        .next()
-        .expect("first PATH entry");
     assert_eq!(
-        locked_first,
-        std::fs::canonicalize(&second).expect("canonical selected directory")
+        command.as_std().get_program(),
+        std::fs::canonicalize(&selected)
+            .expect("canonical selected executable")
+            .as_os_str()
+    );
+    std::fs::remove_file(&selected).expect("remove validated executable");
+    let fallback = first.join("git");
+    std::fs::write(&fallback, "#!/bin/sh\nexit 0\n").expect("fallback executable");
+    std::fs::set_permissions(&fallback, std::fs::Permissions::from_mode(0o755))
+        .expect("fallback executable permissions");
+    let error = transport::run_for(
+        NonModelCommand(command),
+        Duration::from_secs(10),
+        "removed admitted executable",
+        None,
+    )
+    .await
+    .expect_err("the retained PATH must not select a fallback after admission");
+    assert!(error.to_string().contains("failed to run"), "{error}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn checked_command_preserves_path_for_admitted_tool_descendants() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = tempfile::tempdir().expect("scratch directory");
+    let tool_dir = scratch.path().join("tool");
+    let descendant_dir = scratch.path().join("descendant");
+    std::fs::create_dir_all(&tool_dir).expect("tool directory");
+    std::fs::create_dir_all(&descendant_dir).expect("descendant directory");
+    let tool = tool_dir.join("git");
+    std::fs::write(&tool, "#!/bin/sh\nexec helper\n").expect("tool fixture");
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
+        .expect("tool permissions");
+    let helper = descendant_dir.join("helper");
+    std::fs::write(&helper, "#!/bin/sh\necho descendant-ok\n").expect("helper fixture");
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755))
+        .expect("helper permissions");
+
+    let path = std::env::join_paths([&tool_dir, &descendant_dir]).expect("fixture PATH");
+    let mut command = Command::new("git");
+    command.env("PATH", &path);
+    let checked = NonModelCommand::checked(command).expect("safe runnable selected");
+    let output = transport::run_for(
+        checked,
+        Duration::from_secs(10),
+        "descendant PATH smoke test",
+        None,
+    )
+    .await
+    .expect("admitted tool can find its descendant");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "descendant-ok"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn status_transport_never_hands_the_callers_stdin_to_a_forwarder() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = tempfile::tempdir().expect("scratch directory");
+    let tool = scratch.path().join("git");
+    std::fs::write(
+        &tool,
+        "#!/bin/sh\nif IFS= read -r _line; then exit 17; else exit 0; fi\n",
+    )
+    .expect("status fixture");
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
+        .expect("status fixture permissions");
+    let input = scratch.path().join("operator-input");
+    std::fs::write(&input, "must-not-reach-forwarder\n").expect("operator input fixture");
+
+    let mut command = Command::new(tool);
+    command.stdin(std::fs::File::open(input).expect("operator input handle"));
+    let checked = NonModelCommand::checked(command).expect("fixture admitted");
+    let status = transport::run_status(checked, "forwarder stdin isolation")
+        .await
+        .expect("status fixture executes");
+    assert!(
+        status.success(),
+        "forwarder consumed the caller stdin: {status}"
     );
 }
 

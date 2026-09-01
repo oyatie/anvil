@@ -323,10 +323,7 @@ impl DocGuard {
             diff_ctx.changed_files.join("\n- ")
         };
 
-        // No pre-truncation: `Untrusted<GitDiff>` is the single truncation point.
-        // Cutting first put the harness's own truncation marker INSIDE the fence
-        // the model is told to distrust, and made `measured` describe the slice
-        // rather than the diff (invariant I2).
+        // No pre-truncation: `Untrusted<GitDiff>` is the one truncation point.
         let diff_content_bounded = diff_ctx.diff_content.clone();
 
         let prompt = format!(

@@ -261,7 +261,11 @@ impl QueueHealer {
 
         let has_merge_conflict = !merge_out.status.success();
         let conflict_details = if has_merge_conflict {
-            String::from_utf8_lossy(&merge_out.stderr).to_string()
+            format!(
+                "Merge conflicts present.\n{}{}",
+                String::from_utf8_lossy(&merge_out.stdout),
+                String::from_utf8_lossy(&merge_out.stderr)
+            )
         } else {
             String::new()
         };
@@ -291,7 +295,8 @@ impl QueueHealer {
             conflict_status = if has_merge_conflict {
                 Untrusted::new(UntrustedLabel::MergeConflict, &conflict_details).render()
             } else {
-                "## Merge Conflict Status\nNo textual conflict.\n".to_string()
+                "## Merge Conflict Status\nNo textual conflict; semantic or test divergence.\n"
+                    .to_string()
             }
         );
 

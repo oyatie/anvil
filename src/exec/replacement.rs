@@ -8,6 +8,10 @@
 use anyhow::{Result, bail};
 use std::path::Path;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "validated blue/green replacement transport owns this execution"
+)]
 pub(super) fn spawn(replacement_binary: &Path, args: &[String]) -> Result<tokio::process::Child> {
     if super::agent::is_provider_program(replacement_binary.as_os_str())
         || std::fs::canonicalize(replacement_binary)

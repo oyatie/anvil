@@ -2,6 +2,8 @@
 //!
 //! Entrypoint for `anvil` CLI commands and background lifecycle daemons.
 
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{info, warn};

@@ -47,6 +47,10 @@ pub(super) async fn deliver(
 /// Executes a prompt-free provider probe whose complete argv was selected by
 /// the finite provider seam. This is separate from both model delivery and the
 /// raw non-model runner, so neither boundary needs a provider exception.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "typed provider-probe transport owns this execution"
+)]
 pub(super) async fn probe(
     ProviderProbeCommand(mut command): ProviderProbeCommand,
     limit: Duration,
@@ -79,6 +83,10 @@ fn agy_stream_input(prompt: &str) -> String {
 /// Raw model-STDIN primitive. It is intentionally unreachable outside this
 /// private child module; callers can reach it only after both typed
 /// capabilities have been supplied to [`deliver`].
+#[expect(
+    clippy::disallowed_methods,
+    reason = "typed model transport owns this execution"
+)]
 async fn deliver_with_stdin(
     mut command: Command,
     stdin_payload: &str,

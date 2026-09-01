@@ -72,7 +72,7 @@ impl Reviewer {
         pr_body: &str,
     ) -> Result<ReviewResponse> {
         let custom_rules = self.load_custom_rules().await;
-        let prompt = self.build_prompt(diff_ctx, pr_title, pr_body, &custom_rules);
+        let prompt = self.build_prompt(diff_ctx, pr_title, pr_body, &custom_rules)?;
 
         info!(
             "Running Canonical 16-Lens Adversarial Code Review via {} for PR #{} on {} (diff length: {} chars)",

@@ -9,82 +9,6 @@ pub struct WorkspacePackage {
     pub dependencies: Vec<String>,
 }
 
-/// Blocking counterpart to `crate::exec::run_bounded`, for the one call site
-/// that is synchronous and cannot await.
-///
-/// Kills the child when the limit expires and reports the expiry as an error,
-/// so a hung `cargo metadata` can never be mistaken for a completed one.
-fn run_sync_bounded(
-    cmd: &mut std::process::Command,
-    limit: std::time::Duration,
-    what: &str,
-) -> std::io::Result<std::process::Output> {
-    use std::io::Read;
-
-    let mut child = cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-
-    // The pipes must be drained concurrently with the wait loop. `cargo
-    // metadata` on a real monorepo emits far more than a pipe buffer holds, and
-    // a child blocked writing into a full pipe never exits -- `try_wait` would
-    // then poll until the deadline and kill a process that was only waiting for
-    // us to read. `Command::output`, which this replaced, drains for the same
-    // reason.
-    let mut out_pipe = child.stdout.take();
-    let mut err_pipe = child.stderr.take();
-    let out_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(pipe) = out_pipe.as_mut() {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        buf
-    });
-    let err_reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(pipe) = err_pipe.as_mut() {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    let join = |h: std::thread::JoinHandle<Vec<u8>>| h.join().unwrap_or_default();
-
-    let deadline = std::time::Instant::now() + limit;
-    loop {
-        match child.try_wait()? {
-            Some(status) => {
-                return Ok(std::process::Output {
-                    status,
-                    stdout: join(out_reader),
-                    stderr: join(err_reader),
-                });
-            }
-            None => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    // Killing the child closes both pipes, so the readers end.
-                    let _ = join(out_reader);
-                    let _ = join(err_reader);
-                    tracing::warn!(
-                        "{} exceeded its {}s timeout and was killed",
-                        what,
-                        limit.as_secs()
-                    );
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        format!("{} timed out after {}s", what, limit.as_secs()),
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        }
-    }
-}
-
 pub struct WorkspaceDagSelector;
 
 impl Default for WorkspaceDagSelector {
@@ -111,10 +35,12 @@ impl WorkspaceDagSelector {
         // bound is therefore enforced here by hand, using the same class
         // duration the async twin below gets, and the child is killed rather
         // than left running when it expires.
-        let out = run_sync_bounded(
-            std::process::Command::new("cargo")
-                .current_dir(repo_dir)
-                .args(["metadata", "--format-version", "1", "--no-deps"]),
+        let mut command = std::process::Command::new("cargo");
+        command
+            .current_dir(repo_dir)
+            .args(["metadata", "--format-version", "1", "--no-deps"]);
+        let out = crate::exec::run_sync_bounded(
+            command,
             crate::exec::ExecClass::Build.timeout(),
             "cargo metadata --no-deps (sync)",
         );

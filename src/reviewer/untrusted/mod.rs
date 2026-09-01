@@ -1,9 +1,10 @@
-//! Bounding and neutralising untrusted pull-request text.
+//! Bounding and neutralising untrusted text sent to model turns.
 //!
-//! Title, body, diff and the repository's own rules file are written by whoever
-//! opened the pull request, and all four reach a model prompt. Each reaches it
-//! as an [`Untrusted`] segment: capped with the cap DECLARED rather than
-//! applied silently, and fenced with a marker the content cannot close.
+//! Pull-request fields, diffs, review comments, file and branch names, CI logs,
+//! conflict diagnostics, and model-proposed follow-up actions all originate
+//! outside the harness. Each reaches a prompt as an [`Untrusted`] segment:
+//! capped with the cap declared rather than applied silently, and fenced with a
+//! marker the content cannot close.
 //!
 //! # Why a type rather than a convention
 //!
@@ -52,10 +53,43 @@ pub const MAX_WORKING_DIFF_CHARS: usize = 60_000;
 /// Cap on CI logs quoted into a prompt.
 pub const MAX_CI_LOG_CHARS: usize = 20_000;
 
+/// Cap on a document body supplied to DocGuard.
+pub const MAX_DOC_BODY_CHARS: usize = 40_000;
+
+/// Cap on the diff supplied to DocGuard. DocGuard needs less context than the
+/// full reviewer and can inspect the checkout when the excerpt is incomplete.
+pub const MAX_DOC_DIFF_CHARS: usize = 50_000;
+
+/// Cap for lists of changed filenames.
+pub const MAX_CHANGED_FILES_CHARS: usize = 20_000;
+
+/// Cap for path-like contributor metadata.
+pub const MAX_FILE_PATH_CHARS: usize = 4_096;
+
+/// Cap for names (authors, branches, workflows, and document titles).
+pub const MAX_NAME_CHARS: usize = 2_000;
+
+/// Cap for merge diagnostics supplied to the queue healer.
+pub const MAX_MERGE_CONFLICT_CHARS: usize = 20_000;
+
+/// Cap for a model-proposed fix quoted into a later, write-capable turn.
+pub const MAX_PROPOSED_FIX_CHARS: usize = 12_000;
+
+// The exported `*_CHARS` names predate byte-accurate truncation and remain for
+// API compatibility. Every value above is a byte limit; selection helpers move
+// to UTF-8 boundaries before slicing.
+
 pub mod label;
 pub use label::UntrustedLabel;
 
-/// One contributor-authored segment of a review prompt.
+mod selection;
+pub use selection::fence_untrusted;
+use selection::{
+    Selection, fence_neutralised, neutralise_delimiters, neutralised_leading_excerpt,
+    neutralised_len, neutralised_trailing_excerpt, truncation_notice,
+};
+
+/// One externally influenced segment of a model prompt.
 ///
 /// The only way out of this type is [`Untrusted::render`], which always caps,
 /// declares, neutralises and fences. There is no accessor handing back the text
@@ -75,131 +109,67 @@ impl<'a> Untrusted<'a> {
     /// The segment as it appears in the prompt: heading, any truncation
     /// declaration, then the fenced block.
     ///
-    /// Neutralising happens BEFORE capping, not after. Quoting the marker grows
-    /// the text by about 3.7x in the worst case, so capping first would let a
-    /// 120 KB diff of nothing but the marker word land in the prompt at 440 KB
-    /// and void every bound the caps exist to hold.
+    /// Marker counting happens over the complete source without allocating its
+    /// expanded form. Only the channel-selected original head/tail excerpt is
+    /// then neutralised, and that result is capped again. A marker-stuffed CI
+    /// log can therefore cost time proportional to its input (measurement is
+    /// necessarily a scan) but never an allocation proportional to its quoted
+    /// expansion.
     ///
     /// The truncation notice sits outside the fence deliberately. Inside, it
     /// would be surrounded by text the prompt has just told the model to
     /// disregard as instructions, so the one line that has to be believed would
     /// be the one line marked as data.
     pub fn render(&self) -> String {
-        let neutralised = neutralise_delimiters(self.content);
-        let (capped, notice) = cap_declaring(
-            &neutralised,
-            self.content.len(),
-            self.label.max_chars(),
-            self.label.described(),
-        );
+        let embedded_len = neutralised_len(self.content);
         let mut out = String::new();
         out.push_str(self.label.heading());
         out.push('\n');
-        if let Some(notice) = notice {
-            out.push_str(&notice);
+        if embedded_len <= self.label.max_chars() {
+            // The measured output is already bounded, so materialising it
+            // cannot recreate the pre-cap amplification problem.
+            let neutralised = neutralise_delimiters(self.content);
+            out.push_str(&fence_neutralised(
+                self.label,
+                self.label.label(),
+                &neutralised,
+            ));
+            out.push('\n');
+            return out;
         }
-        out.push_str(&fence_neutralised(self.label, &capped));
+
+        let notice = truncation_notice(
+            self.content.len(),
+            embedded_len,
+            self.label.max_chars(),
+            self.label.described(),
+            self.label.selection(),
+        );
+        out.push_str(&notice);
+        let content_budget = self.label.max_chars().saturating_sub(notice.len());
+        match self.label.selection() {
+            Selection::Leading => {
+                let capped = neutralised_leading_excerpt(self.content, content_budget);
+                out.push_str(&fence_neutralised(self.label, self.label.label(), &capped));
+            }
+            Selection::Trailing => {
+                let capped = neutralised_trailing_excerpt(self.content, content_budget);
+                out.push_str(&fence_neutralised(self.label, self.label.label(), &capped));
+            }
+            Selection::HeadAndTail => {
+                let head_budget = content_budget.div_ceil(2);
+                let tail_budget = content_budget / 2;
+                let head = neutralised_leading_excerpt(self.content, head_budget);
+                let tail = neutralised_trailing_excerpt(self.content, tail_budget);
+                out.push_str(&fence_neutralised(self.label, "WORKING_DIFF_HEAD", &head));
+                out.push('\n');
+                out.push_str(&fence_neutralised(self.label, "WORKING_DIFF_TAIL", &tail));
+            }
+        }
         out.push('\n');
         out
     }
 }
 
-/// Wraps contributor text in explicit delimiters carrying the channel's
-/// standing instruction.
-///
-/// The delimiters cannot be closed from inside: every occurrence of the marker
-/// word in `content` is neutralised first, so the region the harness opened is
-/// the region the harness closes. Neutralising is not deleting -- the author's
-/// text stays in the prompt, visibly quoted, because an injection attempt is a
-/// review finding, not noise.
-///
-/// This is the uncapped primitive. Prompt sites use [`Untrusted::render`],
-/// which also bounds the segment.
-pub fn fence_untrusted(label: UntrustedLabel, content: &str) -> String {
-    fence_neutralised(label, &neutralise_delimiters(content))
-}
-
-/// The fence itself, over content whose markers are already defused.
-///
-/// Separate from [`fence_untrusted`] because [`Untrusted::render`] neutralises
-/// before capping, and [`neutralise_delimiters`] is not idempotent: a second
-/// pass would quote its own quoting and grow the text again.
-fn fence_neutralised(label: UntrustedLabel, neutralised: &str) -> String {
-    let name = label.label();
-    format!(
-        "{}\nBEGIN UNTRUSTED {name}\n{neutralised}\nEND UNTRUSTED {name}",
-        label.standing_instruction()
-    )
-}
-
-/// The marker word the fence is built from. Neutralised wherever it appears in
-/// untrusted content.
-const FENCE_MARKER: &str = "untrusted";
-
-/// What a quoted marker becomes. Chosen to be self-explaining in the prompt:
-/// the model sees that the author wrote the word and that the harness defused
-/// it, rather than seeing a frame it might mistake for the harness's own.
-const FENCE_MARKER_QUOTED: &str = "_QUOTED_BY_THE_PR_AUTHOR";
-
-/// Defuses every occurrence of the fence marker, case-insensitively, so an
-/// author who writes `END UNTRUSTED PR_DESCRIPTION` (in any casing) cannot
-/// terminate the region and continue outside it.
-///
-/// The quote lands between the marker and the label, so no suffix cut of the
-/// result can rejoin them: a truncation can drop characters from the end and
-/// never splice `UNTRUSTED` back onto `GIT_DIFF`.
-fn neutralise_delimiters(content: &str) -> String {
-    // ASCII-lowercase specifically: `to_lowercase` can change a string's byte
-    // length (`İ` -> `i̇`), which would desynchronise the indices below.
-    let lowered = content.to_ascii_lowercase();
-    let mut out = String::with_capacity(content.len());
-    let mut cursor = 0usize;
-    while let Some(rel) = lowered[cursor..].find(FENCE_MARKER) {
-        let at = cursor + rel;
-        let end = at + FENCE_MARKER.len();
-        out.push_str(&content[cursor..end]);
-        out.push_str(FENCE_MARKER_QUOTED);
-        cursor = end;
-    }
-    out.push_str(&content[cursor..]);
-    out
-}
-
-/// Truncates `content` to `max` bytes and, when it did, returns the notice that
-/// says so.
-///
-/// The notice carries the MEASURED original length, never the cap constant: a
-/// declaration quoting the constant tells the reader how much was kept and
-/// nothing about how much was lost (invariant I2). `measured` is the size of
-/// what the author actually wrote; `content` may be longer, because quoting the
-/// fence marker inside it only grows the text, and the notice names both
-/// whenever they differ. The notice counts toward `max`, so the returned pair
-/// always fits the bound the caller asked for.
-fn cap_declaring(
-    content: &str,
-    measured: usize,
-    max: usize,
-    what: &str,
-) -> (String, Option<String>) {
-    let embedded = content.len();
-    if embedded <= max {
-        return (content.to_string(), None);
-    }
-
-    let grown = if embedded == measured {
-        String::new()
-    } else {
-        format!(" ({embedded} bytes once the fence markers it quotes are defused)")
-    };
-    let notice = format!(
-        "[TRUNCATED: the {what} is {measured} bytes{grown}, over the {max}-byte prompt cap. \
-         Only the leading portion is shown below; the remainder was NOT provided and has \
-         NOT been reviewed. Do not report on what you were not shown.]\n"
-    );
-
-    let mut end = max.saturating_sub(notice.len()).min(embedded);
-    while end > 0 && !content.is_char_boundary(end) {
-        end -= 1;
-    }
-    (content[..end].to_string(), Some(notice))
-}
+#[cfg(test)]
+mod tests;

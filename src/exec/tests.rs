@@ -42,11 +42,38 @@ async fn a_hung_command_is_killed_and_reported_as_an_error() {
 
 #[tokio::test]
 async fn a_missing_binary_is_an_error_not_a_silent_pass() {
-    let c = Command::new("anvil-no-such-binary-xyz");
+    let c = Command::new("/anvil-no-such-directory/git");
     let err = run_bounded(c, ExecClass::Quick, "probe")
         .await
         .expect_err("must error");
-    assert!(err.to_string().contains("failed to run"));
+    assert!(
+        err.to_string().contains("could not be resolved"),
+        "unexpected: {err}"
+    );
+}
+
+#[tokio::test]
+async fn raw_runners_reject_variable_and_absolute_provider_programs() {
+    let review_body = "attacker review body --model unsafe";
+    let variable = String::from("agy");
+    let mut argv = Command::new(variable);
+    argv.arg(review_body);
+    let error = run_bounded(argv, ExecClass::Quick, "raw provider argv")
+        .await
+        .expect_err("known provider cannot use a raw runner");
+    assert!(error.to_string().contains("typed AgentCommand"));
+
+    let mut stdin = Command::new("/usr/local/bin/claude");
+    stdin.arg("-p");
+    let error = run_bounded_with_stdin(
+        stdin,
+        review_body,
+        Duration::from_secs(1),
+        "raw provider stdin",
+    )
+    .await
+    .expect_err("absolute provider path cannot use raw stdin");
+    assert!(error.to_string().contains("typed AgentCommand"));
 }
 
 #[test]

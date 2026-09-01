@@ -125,3 +125,20 @@ pub fn rubric_prompt() -> String {
     out.push('\n');
     out
 }
+
+/// Appends the rubric without turning dynamically assembled text into a
+/// generic trusted-string escape hatch. Every prose fragment comes from the
+/// static tables above; only numeric indexes are generated at runtime.
+pub(crate) fn append_to(builder: &mut crate::model_prompt::ModelPromptBuilder) {
+    use crate::model_prompt::HarnessText;
+
+    builder.push_harness(HarnessText::ReviewerRubricHeading);
+    for (i, _) in REVIEW_ASPECTS.iter().enumerate() {
+        builder.push_harness(HarnessText::ReviewerAspect(i));
+    }
+    builder.push_harness(HarnessText::ReviewerRubricLensHeading);
+    for (i, _) in REVIEW_STANCES.iter().enumerate() {
+        builder.push_harness(HarnessText::ReviewerStance(i));
+    }
+    builder.push_harness(HarnessText::ReviewerRubricEnd);
+}

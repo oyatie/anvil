@@ -191,17 +191,130 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "probe",
         "destructure-probe:ProviderProbeCommand",
     ),
+    (
+        "src/exec/agent.rs",
+        "args",
+        "command-method:self.command:args",
+    ),
+    (
+        "src/exec/agent.rs",
+        "apply_from",
+        "command-method:cmd:env_clear",
+    ),
+    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
+    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
+    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
+    (
+        "src/exec/agent.rs",
+        "apply_from",
+        "command-method:cmd:current_dir",
+    ),
+    (
+        "src/exec/agent.rs",
+        "apply",
+        "posture-method:self:apply_from",
+    ),
+    (
+        "src/exec/agent.rs",
+        "command_in",
+        "posture-method:posture:apply_from",
+    ),
+    (
+        "src/exec/agent.rs",
+        "command_in",
+        "command-method:cmd:stdout",
+    ),
+    (
+        "src/exec/agent.rs",
+        "command_in",
+        "command-method:cmd:stderr",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "agy_help_probe",
+        "command-method:command:arg",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "agy_agent",
+        "command-method:cmd:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "agy_agent",
+        "command-method:cmd:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "claude_agent",
+        "command-method:cmd:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "codex_agent",
+        "command-method:cmd:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "cursor_agent",
+        "command-method:cmd:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "cursor_agent",
+        "command-method:cmd:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "grok_agent",
+        "command-method:cmd:args",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "probe",
+        "command-method:command:kill_on_drop",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "probe",
+        "command-method:command:output",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "command-method:command:kill_on_drop",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "command-method:command:stdin",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "command-method:command:stdout",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "command-method:command:stderr",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "command-method:command:spawn",
+    ),
 ];
 const EXPECTED_NONMODEL_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/non_model.rs",
         "checked",
-        "construct-self:NonModelCommand",
+        "construct-self:NonModelCommand:args=<non-path>",
     ),
     (
         "src/exec/non_model.rs",
         "checked",
-        "construct-self:SyncNonModelCommand",
+        "construct-self:SyncNonModelCommand:args=<non-path>",
     ),
     (
         "src/exec/non_model.rs",
@@ -366,6 +479,19 @@ const EXPECTED_SAFE_ASSOCIATED_SPAWNS: &[(&str, &str, &str)] = &[
 ];
 const PROCESS_METHODS: &[&str] = &[".exec()", ".output()", ".spawn()", ".status()"];
 const PROCESS_METHOD_NAMES: &[&str] = &["exec", "output", "spawn", "status"];
+const SENSITIVE_BOUNDARY_IDENTIFIERS: &[&str] = &[
+    "AgentCommand",
+    "ModelPrompt",
+    "ModelPromptPermit",
+    "NonModelCommand",
+    "ProviderProbeCommand",
+    "SyncNonModelCommand",
+    "command_in",
+    "clear_environment",
+    "deliver_with_stdin",
+    "is_provider_program",
+    "run_bounded_with_stdin",
+];
 const DISALLOWED_PROCESS_METHODS: &[&str] = &[
     "std::process::Command::output",
     "std::process::Command::spawn",
@@ -503,13 +629,64 @@ const KNOWN_PROVIDERS: &[&str] = &[
     "gemini",
     "grok",
 ];
-const EXPECTED_RAW_STDIN_REFERENCES: &[(&str, &str)] = &[
-    ("src/cedar_guard.rs", "check_parse"),
-    ("src/ci_triager/publication.rs", "create_issue"),
-    ("src/shape/adapters/git_tree_at_rev.rs", "read_batch"),
+const EXPECTED_RAW_STDIN_CALLS: &[(&str, &str, &str)] = &[
+    (
+        "src/cedar_guard.rs",
+        "",
+        "import:crate::exec::run_bounded_with_stdin->run_bounded_with_stdin",
+    ),
+    (
+        "src/cedar_guard.rs",
+        "check_parse",
+        "call:run_bounded_with_stdin:arg0=cmd",
+    ),
+    (
+        "src/ci_triager/publication.rs",
+        "create_issue",
+        "call:run_bounded_with_stdin:arg0=cmd",
+    ),
+    (
+        "src/shape/adapters/git_tree_at_rev.rs",
+        "",
+        "import:crate::exec::run_bounded_with_stdin->run_bounded_with_stdin",
+    ),
+    (
+        "src/shape/adapters/git_tree_at_rev.rs",
+        "read_batch",
+        "call:run_bounded_with_stdin:arg0=cmd",
+    ),
 ];
 const NON_MODEL_PROGRAM_VOCABULARY: &[&str] = &[
     "cargo", "cedar", "curl", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
+];
+const CANONICAL_NON_MODEL_ALIASES: &[(&str, &str)] = &[
+    ("cargo", "rustup"),
+    ("npm", "npm-cli.js"),
+    ("npm", "npm.cmd"),
+];
+const APPROVED_PRODUCTION_DEPENDENCIES: &[&str] = &[
+    "anyhow",
+    "async-trait",
+    "axum",
+    "chrono",
+    "clap",
+    "dotenvy",
+    "futures",
+    "hex",
+    "hmac",
+    "regex",
+    "serde",
+    "serde_json",
+    "serde_yaml",
+    "sha2",
+    "socket2",
+    "subtle",
+    "tempfile",
+    "tokio",
+    "tokio-stream",
+    "toml",
+    "tracing",
+    "tracing-subscriber",
 ];
 
 /// This is intentionally an associated-function alias through a renamed type,
@@ -763,7 +940,63 @@ fn source_paths_from_metadata(metadata: &serde_json::Value, repository: &Path) -
             .replace('\\', "/");
         target_roots.contains(path) || !is_nonproduction_rust(&relative)
     });
+    for path in &paths {
+        validate_source_path(repository, path);
+    }
     paths
+}
+
+fn validate_source_path(repository: &Path, path: &Path) {
+    let repository_canonical = fs::canonicalize(repository).unwrap_or_else(|error| {
+        panic!(
+            "production Rust census cannot resolve repository {}: {error}",
+            repository.display()
+        )
+    });
+    let path_canonical = fs::canonicalize(path).unwrap_or_else(|error| {
+        panic!(
+            "production Rust census cannot resolve {}: {error}",
+            path.display()
+        )
+    });
+    assert!(
+        path_canonical.starts_with(&repository_canonical),
+        "production Rust source escapes the repository through {}",
+        path.display()
+    );
+    let relative = path.strip_prefix(repository).unwrap_or_else(|_| {
+        panic!(
+            "production Rust source is not lexically below the repository: {}",
+            path.display()
+        )
+    });
+    let mut current = repository.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        let metadata = fs::symlink_metadata(&current).unwrap_or_else(|error| {
+            panic!(
+                "production Rust census cannot inspect {}: {error}",
+                current.display()
+            )
+        });
+        assert!(
+            !metadata.file_type().is_symlink(),
+            "production Rust census refuses symlink component {}",
+            current.display()
+        );
+    }
+    let metadata = fs::symlink_metadata(path).expect("validated source metadata");
+    assert!(
+        metadata.file_type().is_file(),
+        "production Rust census requires a regular source file at {}",
+        path.display()
+    );
+    assert_eq!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("rs"),
+        "production target has a non-canonical Rust extension at {}",
+        path.display()
+    );
 }
 
 fn all_production_source_paths() -> Vec<PathBuf> {
@@ -902,6 +1135,28 @@ fn syn_path_name(path: &syn::Path) -> String {
 }
 
 fn is_test_only(attributes: &[syn::Attribute]) -> bool {
+    fn can_be(meta: &syn::Meta, test: bool, desired: bool) -> bool {
+        match meta {
+            syn::Meta::Path(path) if syn_path_is(path, "test") => test == desired,
+            syn::Meta::Path(_) | syn::Meta::NameValue(_) => true,
+            syn::Meta::List(list) => {
+                let name = syn_path_name(&list.path);
+                let parser = Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
+                let Ok(nested) = parser.parse2(list.tokens.clone()) else {
+                    return true;
+                };
+                match name.as_str() {
+                    "all" if desired => nested.iter().all(|meta| can_be(meta, test, true)),
+                    "all" => nested.iter().any(|meta| can_be(meta, test, false)),
+                    "any" if desired => nested.iter().any(|meta| can_be(meta, test, true)),
+                    "any" => nested.iter().all(|meta| can_be(meta, test, false)),
+                    "not" if nested.len() == 1 => can_be(&nested[0], test, !desired),
+                    _ => true,
+                }
+            }
+        }
+    }
+
     attributes.iter().any(|attribute| {
         syn_path_is(attribute.path(), "test")
             || syn_path_name(attribute.path()) == "tokio::test"
@@ -909,7 +1164,9 @@ fn is_test_only(attributes: &[syn::Attribute]) -> bool {
                 && attribute
                     .meta
                     .require_list()
-                    .is_ok_and(|list| list.tokens.to_string().replace(' ', "") == "test"))
+                    .ok()
+                    .and_then(|list| syn::parse2::<syn::Meta>(list.tokens.clone()).ok())
+                    .is_some_and(|meta| !can_be(&meta, false, true)))
     })
 }
 
@@ -1141,9 +1398,12 @@ fn module_source_escapes_census(
                 return true;
             }
             if let (Some(source_path), Some(scanned_paths)) = (source_path, scanned_paths)
-                && !module_search_bases(source_path, module_stack)
-                    .iter()
-                    .any(|base| scanned_paths.contains(&base.join(path.value())))
+                && !module_candidates_are_closed(
+                    module_search_bases(source_path, module_stack)
+                        .into_iter()
+                        .map(|base| base.join(path.value())),
+                    scanned_paths,
+                )
             {
                 return true;
             }
@@ -1171,17 +1431,38 @@ fn module_source_escapes_census(
         return true;
     }
     if let (Some(source_path), Some(scanned_paths)) = (source_path, scanned_paths) {
-        return !module_search_bases(source_path, module_stack)
-            .iter()
-            .flat_map(|base| {
-                [
-                    base.join(format!("{implicit_module}.rs")),
-                    base.join(&implicit_module).join("mod.rs"),
-                ]
-            })
-            .any(|candidate| scanned_paths.contains(&candidate));
+        return !module_candidates_are_closed(
+            module_search_bases(source_path, module_stack)
+                .into_iter()
+                .flat_map(|base| {
+                    [
+                        base.join(format!("{implicit_module}.rs")),
+                        base.join(&implicit_module).join("mod.rs"),
+                    ]
+                }),
+            scanned_paths,
+        );
     }
     false
+}
+
+fn module_candidates_are_closed(
+    candidates: impl IntoIterator<Item = PathBuf>,
+    scanned_paths: &BTreeSet<PathBuf>,
+) -> bool {
+    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+    let mut found_scanned_candidate = false;
+    for candidate in candidates {
+        match fs::symlink_metadata(&candidate) {
+            Ok(_) if !scanned_paths.contains(&candidate) => return false,
+            Ok(_) => found_scanned_candidate = true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return false,
+        }
+    }
+    found_scanned_candidate
 }
 
 fn module_search_bases(source_path: &Path, module_stack: &[String]) -> Vec<PathBuf> {
@@ -1302,6 +1583,9 @@ fn macro_tokens_execute_process(
             continue;
         };
         let method = normalized_ident(method);
+        if SENSITIVE_BOUNDARY_IDENTIFIERS.contains(&method.as_str()) {
+            return true;
+        }
         // An unknown/local macro can mint a trusted-looking import or type
         // alias in its expansion. Fail closed on those roots both in macro
         // definitions and dependency-macro arguments. The finite data-only
@@ -1376,6 +1660,8 @@ struct ProcessExecutionVisitor<'scan> {
     source_path: Option<&'scan Path>,
     scanned_paths: Option<&'scan BTreeSet<PathBuf>>,
     module_stack: Vec<String>,
+    process_type_names: BTreeSet<String>,
+    process_bindings: BTreeSet<String>,
 }
 
 impl ProcessExecutionVisitor<'_> {
@@ -1407,6 +1693,102 @@ impl ProcessExecutionVisitor<'_> {
             self.record(format!("shadowed-trusted-path-root:{kind}:{binding}"));
         }
     }
+
+    fn seed_process_parameters(&mut self, signature: &syn::Signature) {
+        for input in &signature.inputs {
+            let syn::FnArg::Typed(input) = input else {
+                continue;
+            };
+            let type_name = type_name(&input.ty);
+            if self
+                .process_type_names
+                .contains(type_name.trim_start_matches('&'))
+                || matches!(
+                    type_name.trim_start_matches('&'),
+                    "AgentCommand"
+                        | "NonModelCommand"
+                        | "ProviderProbeCommand"
+                        | "SyncNonModelCommand"
+                )
+            {
+                collect_pattern_identifiers(&input.pat, &mut self.process_bindings);
+            }
+        }
+    }
+
+    fn process_binding(&self, expression: &syn::Expr) -> bool {
+        match expression {
+            syn::Expr::Path(path) if path.path.segments.len() == 1 => self
+                .process_bindings
+                .contains(&normalized_ident(&path.path.segments[0].ident)),
+            syn::Expr::Group(group) => self.process_binding(&group.expr),
+            syn::Expr::Paren(paren) => self.process_binding(&paren.expr),
+            syn::Expr::Reference(reference) => self.process_binding(&reference.expr),
+            syn::Expr::Unary(unary) => self.process_binding(&unary.expr),
+            syn::Expr::Call(call) => expression_path(&call.func).is_some_and(|path| {
+                path.segments.iter().rev().nth(1).is_some_and(|segment| {
+                    self.process_type_names
+                        .contains(&normalized_ident(&segment.ident))
+                }) && path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| normalized_ident(&segment.ident) == "new")
+            }),
+            _ => false,
+        }
+    }
+
+    fn associated_process_method(&self, path: &syn::Path) -> bool {
+        path.segments.iter().rev().nth(1).is_some_and(|segment| {
+            self.process_type_names
+                .contains(&normalized_ident(&segment.ident))
+        })
+    }
+
+    fn qself_process_method(&self, expression: &syn::Expr) -> bool {
+        let syn::Expr::Path(path) = expression else {
+            return false;
+        };
+        path.qself.as_ref().is_some_and(|qself| {
+            self.process_type_names
+                .contains(type_name(&qself.ty).trim_start_matches('&'))
+        })
+    }
+}
+
+fn collect_pattern_identifiers(pattern: &syn::Pat, identifiers: &mut BTreeSet<String>) {
+    match pattern {
+        syn::Pat::Ident(pattern) => {
+            identifiers.insert(normalized_ident(&pattern.ident));
+            if let Some((_, subpattern)) = &pattern.subpat {
+                collect_pattern_identifiers(subpattern, identifiers);
+            }
+        }
+        syn::Pat::Paren(pattern) => collect_pattern_identifiers(&pattern.pat, identifiers),
+        syn::Pat::Reference(pattern) => collect_pattern_identifiers(&pattern.pat, identifiers),
+        syn::Pat::Slice(pattern) => {
+            for element in &pattern.elems {
+                collect_pattern_identifiers(element, identifiers);
+            }
+        }
+        syn::Pat::Struct(pattern) => {
+            for field in &pattern.fields {
+                collect_pattern_identifiers(&field.pat, identifiers);
+            }
+        }
+        syn::Pat::Tuple(pattern) => {
+            for element in &pattern.elems {
+                collect_pattern_identifiers(element, identifiers);
+            }
+        }
+        syn::Pat::TupleStruct(pattern) => {
+            for element in &pattern.elems {
+                collect_pattern_identifiers(element, identifiers);
+            }
+        }
+        syn::Pat::Type(pattern) => collect_pattern_identifiers(&pattern.pat, identifiers),
+        _ => {}
+    }
 }
 
 fn expression_path(expression: &syn::Expr) -> Option<&syn::Path> {
@@ -1414,6 +1796,19 @@ fn expression_path(expression: &syn::Expr) -> Option<&syn::Path> {
         syn::Expr::Path(path) if path.qself.is_none() => Some(&path.path),
         syn::Expr::Group(group) => expression_path(&group.expr),
         syn::Expr::Paren(paren) => expression_path(&paren.expr),
+        syn::Expr::Try(expression) => expression_path(&expression.expr),
+        syn::Expr::Await(expression) => expression_path(&expression.base),
+        _ => None,
+    }
+}
+
+fn called_path(expression: &syn::Expr) -> Option<&syn::Path> {
+    match expression {
+        syn::Expr::Call(call) => expression_path(&call.func),
+        syn::Expr::Await(expression) => called_path(&expression.base),
+        syn::Expr::Group(expression) => called_path(&expression.expr),
+        syn::Expr::Paren(expression) => called_path(&expression.expr),
+        syn::Expr::Try(expression) => called_path(&expression.expr),
         _ => None,
     }
 }
@@ -1513,9 +1908,15 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
     }
 
     fn visit_local(&mut self, local: &'ast syn::Local) {
-        if !is_test_only(&local.attrs) {
-            syn::visit::visit_local(self, local);
+        if is_test_only(&local.attrs) {
+            return;
         }
+        if let Some(initializer) = &local.init
+            && self.process_binding(&initializer.expr)
+        {
+            collect_pattern_identifiers(&local.pat, &mut self.process_bindings);
+        }
+        syn::visit::visit_local(self, local);
     }
 
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
@@ -1561,6 +1962,13 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
 
     fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
         self.reserved_binding(&item.ident, "type");
+        if self
+            .process_type_names
+            .contains(type_name(&item.ty).trim_start_matches('&'))
+        {
+            self.process_type_names
+                .insert(normalized_ident(&item.ident));
+        }
         syn::visit::visit_item_type(self, item);
     }
 
@@ -1604,7 +2012,10 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
         if !is_test_only(&item.attrs) {
             let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+            let previous_bindings = std::mem::take(&mut self.process_bindings);
+            self.seed_process_parameters(&item.sig);
             syn::visit::visit_item_fn(self, item);
+            self.process_bindings = previous_bindings;
             self.owner = previous;
         }
     }
@@ -1612,7 +2023,10 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
         if !is_test_only(&item.attrs) {
             let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+            let previous_bindings = std::mem::take(&mut self.process_bindings);
+            self.seed_process_parameters(&item.sig);
             syn::visit::visit_impl_item_fn(self, item);
+            self.process_bindings = previous_bindings;
             self.owner = previous;
         }
     }
@@ -1643,6 +2057,14 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
             self.record("unapproved-glob-import");
         }
         for (source, binding) in bindings {
+            if matches!(
+                source.as_str(),
+                "std::process::Command"
+                    | "tokio::process::Command"
+                    | "std::os::unix::process::CommandExt"
+            ) {
+                self.process_type_names.insert(binding.clone());
+            }
             let approved_macro_import = APPROVED_SAFE_MACRO_IMPORTS.contains(&source.as_str());
             let approved_attribute_import = APPROVED_ATTRIBUTE_IMPORTS.contains(&source.as_str());
             let approved_derive_import = APPROVED_DERIVE_IMPORTS.contains(&source.as_str());
@@ -1679,7 +2101,7 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
     }
 
     fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
-        if is_process_method(&expression.method) {
+        if is_process_method(&expression.method) && self.process_binding(&expression.receiver) {
             self.record(format!(
                 "method:{}:{}",
                 expression_label(&expression.receiver),
@@ -1697,11 +2119,16 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
         {
             if safe_associated_spawn(path) {
                 self.record_associated_spawn(syn_path_name(path));
-            } else {
+            } else if self.associated_process_method(path)
+                || self.qself_process_method(&expression.func)
+            {
                 self.record(format!(
                     "associated-call:{}",
                     normalized_ident(&method.ident)
                 ));
+            } else {
+                syn::visit::visit_expr_call(self, expression);
+                return;
             }
             for argument in &expression.args {
                 self.visit_expr(argument);
@@ -1719,6 +2146,12 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
             .filter(|segment| is_process_method(&segment.ident));
         if let Some(method) = process_method
             && (expression.qself.is_some() || expression.path.segments.len() > 1)
+            && (safe_associated_spawn(&expression.path)
+                || self.associated_process_method(&expression.path)
+                || expression.qself.as_ref().is_some_and(|qself| {
+                    self.process_type_names
+                        .contains(type_name(&qself.ty).trim_start_matches('&'))
+                }))
         {
             self.record(format!(
                 "associated-reference:{}",
@@ -1780,6 +2213,8 @@ fn process_scan_with_context(
         source_path,
         scanned_paths,
         module_stack: Vec::new(),
+        process_type_names: BTreeSet::from(["Command".to_owned(), "CommandExt".to_owned()]),
+        process_bindings: BTreeSet::new(),
     };
     visitor.visit_file(&file);
     (
@@ -1881,6 +2316,187 @@ fn string_array_constant(source: &str, name: &str) -> Vec<String> {
         .collect()
 }
 
+fn string_pair_array_constant(source: &str, name: &str) -> Vec<(String, String)> {
+    fn array(expression: &syn::Expr) -> Option<&syn::ExprArray> {
+        match expression {
+            syn::Expr::Array(array) => Some(array),
+            syn::Expr::Reference(reference) => array(&reference.expr),
+            syn::Expr::Group(group) => array(&group.expr),
+            syn::Expr::Paren(paren) => array(&paren.expr),
+            _ => None,
+        }
+    }
+    fn literal(expression: &syn::Expr, name: &str) -> String {
+        match expression {
+            syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(value),
+                ..
+            }) => value.value(),
+            _ => panic!("{name} contains a non-literal pair member"),
+        }
+    }
+
+    let file = syn::parse_file(source).expect("parse source containing finite pair vocabulary");
+    let constant = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Const(item) if normalized_ident(&item.ident) == name => Some(item),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing string-pair-array constant {name}"));
+    array(&constant.expr)
+        .unwrap_or_else(|| panic!("{name} is no longer a literal array"))
+        .elems
+        .iter()
+        .map(|element| match element {
+            syn::Expr::Tuple(tuple) if tuple.elems.len() == 2 => (
+                literal(&tuple.elems[0], name),
+                literal(&tuple.elems[1], name),
+            ),
+            _ => panic!("{name} contains a non-literal pair"),
+        })
+        .collect()
+}
+
+fn visibility_name(visibility: &syn::Visibility) -> String {
+    match visibility {
+        syn::Visibility::Inherited => "private".to_owned(),
+        syn::Visibility::Public(_) => "pub".to_owned(),
+        syn::Visibility::Restricted(restricted) => {
+            let path = syn_path_name(&restricted.path);
+            if restricted.in_token.is_some() {
+                format!("pub(in {path})")
+            } else {
+                format!("pub({path})")
+            }
+        }
+    }
+}
+
+fn named_struct<'source>(file: &'source syn::File, name: &str) -> &'source syn::ItemStruct {
+    file.items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if normalized_ident(&item.ident) == name => Some(item),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing expected struct {name}"))
+}
+
+fn named_enum<'source>(file: &'source syn::File, name: &str) -> &'source syn::ItemEnum {
+    file.items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Enum(item) if normalized_ident(&item.ident) == name => Some(item),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing expected enum {name}"))
+}
+
+fn assert_canonical_external_module(file: &syn::File, name: &str, expected_visibility: &str) {
+    let module = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Mod(module) if normalized_ident(&module.ident) == name => Some(module),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing canonical module {name}"));
+    assert!(
+        module.content.is_none(),
+        "{name} must remain an external module"
+    );
+    assert!(
+        module.attrs.is_empty(),
+        "{name} may not redirect its capability census with #[path] or cfg"
+    );
+    assert_eq!(visibility_name(&module.vis), expected_visibility);
+}
+
+fn inherent_method_visibilities(
+    file: &syn::File,
+    type_name_expected: &str,
+) -> Vec<(String, String)> {
+    let mut methods = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Impl(item)
+                if item.trait_.is_none() && type_name(&item.self_ty) == type_name_expected =>
+            {
+                Some(item)
+            }
+            _ => None,
+        })
+        .flat_map(|item| &item.items)
+        .filter_map(|item| match item {
+            syn::ImplItem::Fn(method) => Some((
+                normalized_ident(&method.sig.ident),
+                visibility_name(&method.vis),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    methods.sort();
+    methods
+}
+
+fn has_trait_impl(file: &syn::File, type_name_expected: &str) -> bool {
+    file.items.iter().any(|item| {
+        matches!(item, syn::Item::Impl(item) if item.trait_.is_some() && type_name(&item.self_ty) == type_name_expected)
+    })
+}
+
+fn concrete_type_name(ty: &syn::Type) -> String {
+    match ty {
+        syn::Type::Path(path)
+            if path.qself.is_none()
+                && path
+                    .path
+                    .segments
+                    .iter()
+                    .all(|segment| matches!(segment.arguments, syn::PathArguments::None)) =>
+        {
+            syn_path_name(&path.path)
+        }
+        syn::Type::Reference(reference) if reference.lifetime.is_none() => {
+            let mutability = if reference.mutability.is_some() {
+                "mut "
+            } else {
+                ""
+            };
+            format!("&{mutability}{}", concrete_type_name(&reference.elem))
+        }
+        _ => "<non-concrete>".to_owned(),
+    }
+}
+
+fn assert_concrete_prompt_sink(
+    source: &str,
+    function_name: &str,
+    expected_type: &str,
+    expected_visibility: &str,
+) {
+    let file = syn::parse_file(source).expect("parse typed model-prompt sink");
+    let function = top_level_function(&file, function_name);
+    assert!(
+        function.sig.generics.params.is_empty() && function.sig.generics.where_clause.is_none(),
+        "{function_name} may not shadow ModelPrompt through generics"
+    );
+    assert_eq!(visibility_name(&function.vis), expected_visibility);
+    let prompt = function
+        .sig
+        .inputs
+        .iter()
+        .find_map(|input| match input {
+            syn::FnArg::Typed(input) if pattern_name(&input.pat) == "prompt" => Some(&input.ty),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{function_name} lost its typed prompt parameter"));
+    assert_eq!(concrete_type_name(prompt), expected_type);
+}
+
 fn function_shape(source: &str, name: &str) -> (bool, Vec<(String, String)>) {
     let file = syn::parse_file(source).expect("parse transport source");
     let function = file
@@ -1934,6 +2550,33 @@ impl CommandFlowVisitor {
 }
 
 impl<'ast> Visit<'ast> for CommandFlowVisitor {
+    fn visit_expr(&mut self, expression: &'ast syn::Expr) {
+        if !is_test_only(expression_attributes(expression)) {
+            syn::visit::visit_expr(self, expression);
+        }
+    }
+
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        if !is_test_only(&arm.attrs) {
+            syn::visit::visit_arm(self, arm);
+        }
+    }
+
+    fn visit_stmt(&mut self, statement: &'ast syn::Stmt) {
+        if let syn::Stmt::Macro(statement) = statement
+            && is_test_only(&statement.attrs)
+        {
+            return;
+        }
+        syn::visit::visit_stmt(self, statement);
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if !is_test_only(&local.attrs) {
+            syn::visit::visit_local(self, local);
+        }
+    }
+
     fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
         if normalized_ident(&pattern.ident) == "command" {
             self.record("bind:command");
@@ -2026,16 +2669,126 @@ struct BoundaryEventVisitor {
 }
 
 impl<'ast> Visit<'ast> for BoundaryEventVisitor {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if !is_test_only(item_attributes(item)) {
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+        if !is_test_only(impl_item_attributes(item)) {
+            syn::visit::visit_impl_item(self, item);
+        }
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if !is_test_only(trait_item_attributes(item)) {
+            syn::visit::visit_trait_item(self, item);
+        }
+    }
+
+    fn visit_foreign_item(&mut self, item: &'ast syn::ForeignItem) {
+        if !is_test_only(foreign_item_attributes(item)) {
+            syn::visit::visit_foreign_item(self, item);
+        }
+    }
+
+    fn visit_expr(&mut self, expression: &'ast syn::Expr) {
+        if !is_test_only(expression_attributes(expression)) {
+            syn::visit::visit_expr(self, expression);
+        }
+    }
+
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        if !is_test_only(&arm.attrs) {
+            syn::visit::visit_arm(self, arm);
+        }
+    }
+
+    fn visit_stmt(&mut self, statement: &'ast syn::Stmt) {
+        if let syn::Stmt::Macro(statement) = statement
+            && is_test_only(&statement.attrs)
+        {
+            return;
+        }
+        syn::visit::visit_stmt(self, statement);
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if !is_test_only(&local.attrs) {
+            syn::visit::visit_local(self, local);
+        }
+    }
+
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
-        syn::visit::visit_item_fn(self, item);
-        self.owner = previous;
+        if !is_test_only(&item.attrs) {
+            let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+            syn::visit::visit_item_fn(self, item);
+            self.owner = previous;
+        }
     }
 
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
-        let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
-        syn::visit::visit_impl_item_fn(self, item);
-        self.owner = previous;
+        if !is_test_only(&item.attrs) {
+            let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+            syn::visit::visit_impl_item_fn(self, item);
+            self.owner = previous;
+        }
+    }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        let mut bindings = Vec::new();
+        collect_use_bindings(&item.tree, &mut Vec::new(), &mut bindings, &mut Vec::new());
+        for (source, binding) in bindings {
+            if source.rsplit("::").next().is_some_and(|name| {
+                matches!(
+                    name,
+                    "clear_environment"
+                        | "deliver_with_stdin"
+                        | "is_provider_program"
+                        | "run_bounded_with_stdin"
+                )
+            }) {
+                self.events
+                    .push((self.owner.clone(), format!("import:{source}->{binding}")));
+            }
+        }
+        syn::visit::visit_item_use(self, item);
+    }
+
+    fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
+        if let Some(path) = expression_path(&expression.func)
+            && let Some(segment) = path.segments.last()
+        {
+            let name = normalized_ident(&segment.ident);
+            if matches!(
+                name.as_str(),
+                "clear_environment"
+                    | "deliver_with_stdin"
+                    | "is_provider_program"
+                    | "run_bounded_with_stdin"
+            ) {
+                let argument = expression
+                    .args
+                    .first()
+                    .map(expression_label)
+                    .unwrap_or_else(|| "<missing>".to_owned());
+                let subject = if name == "clear_environment" {
+                    syn_path_name(path)
+                } else {
+                    name
+                };
+                self.events.push((
+                    self.owner.clone(),
+                    format!("call:{subject}:arg0={argument}"),
+                ));
+                for argument in &expression.args {
+                    self.visit_expr(argument);
+                }
+                return;
+            }
+        }
+        syn::visit::visit_expr_call(self, expression);
     }
 
     fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
@@ -2045,7 +2798,8 @@ impl<'ast> Visit<'ast> for BoundaryEventVisitor {
                 name.as_str(),
                 "deliver_with_stdin" | "is_provider_program" | "run_bounded_with_stdin"
             ) {
-                self.events.push((self.owner.clone(), name));
+                self.events
+                    .push((self.owner.clone(), format!("reference:{name}")));
             }
         }
         syn::visit::visit_expr_path(self, expression);
@@ -2067,18 +2821,54 @@ fn boundary_events(source: &str) -> Vec<(String, String)> {
     visitor.events
 }
 
+fn named_method_count(source: &str, expected: &str) -> usize {
+    struct Counter<'name> {
+        expected: &'name str,
+        count: usize,
+    }
+    impl<'ast> Visit<'ast> for Counter<'_> {
+        fn visit_expr(&mut self, expression: &'ast syn::Expr) {
+            if !is_test_only(expression_attributes(expression)) {
+                syn::visit::visit_expr(self, expression);
+            }
+        }
+
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if !is_test_only(item_attributes(item)) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+
+        fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
+            if normalized_ident(&expression.method) == self.expected {
+                self.count += 1;
+            }
+            syn::visit::visit_expr_method_call(self, expression);
+        }
+    }
+
+    let file = syn::parse_file(source).expect("parse named-method census source");
+    let mut counter = Counter { expected, count: 0 };
+    counter.visit_file(&file);
+    counter.count
+}
+
 struct AgentCapabilityVisitor {
     owner: String,
+    implementation: String,
     events: Vec<(String, String)>,
     track_bare_command: bool,
+    command_bindings: BTreeSet<String>,
 }
 
 impl Default for AgentCapabilityVisitor {
     fn default() -> Self {
         Self {
             owner: String::new(),
+            implementation: String::new(),
             events: Vec::new(),
             track_bare_command: true,
+            command_bindings: BTreeSet::new(),
         }
     }
 }
@@ -2086,6 +2876,43 @@ impl Default for AgentCapabilityVisitor {
 impl AgentCapabilityVisitor {
     fn record(&mut self, event: impl Into<String>) {
         self.events.push((self.owner.clone(), event.into()));
+    }
+
+    fn seed_command_parameters(&mut self, signature: &syn::Signature) {
+        for input in &signature.inputs {
+            let syn::FnArg::Typed(input) = input else {
+                continue;
+            };
+            if matches!(
+                type_name(&input.ty).trim_start_matches('&'),
+                "AgentCommand" | "Command" | "ProviderProbeCommand"
+            ) {
+                let binding = pattern_name(&input.pat);
+                if !binding.is_empty() {
+                    self.command_bindings.insert(binding);
+                }
+            }
+        }
+    }
+
+    fn command_binding(&self, expression: &syn::Expr) -> Option<String> {
+        match expression {
+            syn::Expr::Path(path) if path.path.segments.len() == 1 => {
+                let binding = normalized_ident(&path.path.segments[0].ident);
+                self.command_bindings.contains(&binding).then_some(binding)
+            }
+            syn::Expr::Field(field)
+                if expression_label(expression) == "self.command"
+                    && self.implementation == "AgentCommand" =>
+            {
+                Some("self.command".to_owned())
+            }
+            syn::Expr::Group(group) => self.command_binding(&group.expr),
+            syn::Expr::Paren(paren) => self.command_binding(&paren.expr),
+            syn::Expr::Reference(reference) => self.command_binding(&reference.expr),
+            syn::Expr::Unary(unary) => self.command_binding(&unary.expr),
+            _ => None,
+        }
     }
 }
 
@@ -2134,22 +2961,58 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
         }
     }
 
+    fn visit_foreign_item(&mut self, item: &'ast syn::ForeignItem) {
+        if !is_test_only(foreign_item_attributes(item)) {
+            syn::visit::visit_foreign_item(self, item);
+        }
+    }
+
     fn visit_expr(&mut self, expression: &'ast syn::Expr) {
         if !is_test_only(expression_attributes(expression)) {
             syn::visit::visit_expr(self, expression);
         }
     }
 
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        if !is_test_only(&arm.attrs) {
+            syn::visit::visit_arm(self, arm);
+        }
+    }
+
+    fn visit_stmt(&mut self, statement: &'ast syn::Stmt) {
+        if let syn::Stmt::Macro(statement) = statement
+            && is_test_only(&statement.attrs)
+        {
+            return;
+        }
+        syn::visit::visit_stmt(self, statement);
+    }
+
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
         let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+        let previous_bindings = std::mem::take(&mut self.command_bindings);
+        self.seed_command_parameters(&item.sig);
         syn::visit::visit_item_fn(self, item);
+        self.command_bindings = previous_bindings;
         self.owner = previous;
     }
 
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
         let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+        let previous_bindings = std::mem::take(&mut self.command_bindings);
+        self.seed_command_parameters(&item.sig);
         syn::visit::visit_impl_item_fn(self, item);
+        self.command_bindings = previous_bindings;
         self.owner = previous;
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if is_test_only(&item.attrs) {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.implementation, type_name(&item.self_ty));
+        syn::visit::visit_item_impl(self, item);
+        self.implementation = previous;
     }
 
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
@@ -2157,12 +3020,15 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
         collect_use_bindings(&item.tree, &mut Vec::new(), &mut bindings, &mut Vec::new());
         for (source, binding) in bindings {
             let source_subject = source.rsplit("::").next().is_some_and(|name| {
-                matches!(name, "AgentCommand" | "ProviderProbeCommand" | "Command")
+                matches!(
+                    name,
+                    "AgentCommand" | "ProviderProbeCommand" | "Command" | "command" | "command_in"
+                )
             });
             if source_subject
                 || matches!(
                     binding.as_str(),
-                    "AgentCommand" | "ProviderProbeCommand" | "Command"
+                    "AgentCommand" | "ProviderProbeCommand" | "Command" | "command" | "command_in"
                 )
             {
                 self.record(format!("import:{source}->{binding}"));
@@ -2200,6 +3066,18 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
                 }
                 return;
             }
+            if last == "Self"
+                && matches!(
+                    self.implementation.as_str(),
+                    "AgentCommand" | "ProviderProbeCommand"
+                )
+            {
+                self.record(format!("construct-self:{}", self.implementation));
+                for argument in &expression.args {
+                    self.visit_expr(argument);
+                }
+                return;
+            }
             if is_command_constructor(path) {
                 let argument = expression
                     .args
@@ -2220,21 +3098,46 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
         if is_test_only(&local.attrs) {
             return;
         }
-        if let Some(initializer) = &local.init
-            && let syn::Expr::Call(call) = initializer.expr.as_ref()
-            && let Some(path) = expression_path(&call.func)
-            && is_command_constructor(path)
-        {
-            let argument = call
-                .args
-                .first()
-                .map(value_label)
-                .unwrap_or_else(|| "<missing>".to_owned());
-            self.record(format!(
-                "bind-command-new:{}:{}:{argument}",
-                pattern_name(&local.pat),
-                syn_path_name(path)
-            ));
+        if let Some(initializer) = &local.init {
+            let binding = pattern_name(&local.pat);
+            if !binding.is_empty() && self.command_bindings.contains(&binding) {
+                self.record(format!(
+                    "command-shadow:{binding}={}",
+                    value_label(&initializer.expr)
+                ));
+            }
+            if let syn::Expr::Call(call) = initializer.expr.as_ref()
+                && let Some(path) = expression_path(&call.func)
+            {
+                if is_command_constructor(path) {
+                    let argument = call
+                        .args
+                        .first()
+                        .map(value_label)
+                        .unwrap_or_else(|| "<missing>".to_owned());
+                    self.record(format!(
+                        "bind-command-new:{binding}:{}:{argument}",
+                        syn_path_name(path)
+                    ));
+                    if !binding.is_empty() {
+                        self.command_bindings.insert(binding.clone());
+                    }
+                } else if path.segments.last().is_some_and(|segment| {
+                    matches!(
+                        normalized_ident(&segment.ident).as_str(),
+                        "command" | "command_in"
+                    )
+                }) && !binding.is_empty()
+                {
+                    self.command_bindings.insert(binding.clone());
+                }
+            }
+            if let Some(source) = self.command_binding(&initializer.expr)
+                && !binding.is_empty()
+            {
+                self.command_bindings.insert(binding.clone());
+                self.record(format!("command-alias:{binding}={source}"));
+            }
         }
         syn::visit::visit_local(self, local);
     }
@@ -2265,11 +3168,20 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
     }
 
     fn visit_pat_struct(&mut self, pattern: &'ast syn::PatStruct) {
-        if syn_path_name(&pattern.path).ends_with("AgentCommand") {
-            self.record(format!(
-                "destructure-agent:{}",
-                syn_path_name(&pattern.path)
-            ));
+        let path = syn_path_name(&pattern.path);
+        if path.ends_with("AgentCommand")
+            || (path == "Self" && self.implementation == "AgentCommand")
+        {
+            self.record(format!("destructure-agent:{}", path));
+            for field in &pattern.fields {
+                if matches!(&field.member, syn::Member::Named(member) if normalized_ident(member) == "command")
+                {
+                    let binding = pattern_name(&field.pat);
+                    if !binding.is_empty() {
+                        self.command_bindings.insert(binding);
+                    }
+                }
+            }
         }
         syn::visit::visit_pat_struct(self, pattern);
     }
@@ -2280,6 +3192,11 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
                 "destructure-probe:{}",
                 syn_path_name(&pattern.path)
             ));
+            if let Some(binding) = pattern.elems.first().map(pattern_name)
+                && !binding.is_empty()
+            {
+                self.command_bindings.insert(binding);
+            }
         }
         syn::visit::visit_pat_tuple_struct(self, pattern);
     }
@@ -2299,11 +3216,15 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
 
     fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
         let method = normalized_ident(&expression.method);
+        let receiver = expression_label(&expression.receiver);
+        if self.command_binding(&expression.receiver).is_some() {
+            self.record(format!("command-method:{receiver}:{method}"));
+        }
+        if method == "apply_from" {
+            self.record(format!("posture-method:{receiver}:apply_from"));
+        }
         if matches!(method.as_str(), "arg" | "args") {
-            self.record(format!(
-                "argv:{}:{method}",
-                expression_label(&expression.receiver)
-            ));
+            self.record(format!("argv:{receiver}:{method}"));
         }
         syn::visit::visit_expr_method_call(self, expression);
     }
@@ -2318,6 +3239,20 @@ impl<'ast> Visit<'ast> for AgentCapabilityVisitor {
             self.record(format!("mut-ref:{}", expression_label(&expression.expr)));
         }
         syn::visit::visit_expr_reference(self, expression);
+    }
+
+    fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
+        let touches_command = self
+            .command_bindings
+            .iter()
+            .any(|binding| tokens_contain_identifier(invocation.tokens.clone(), binding));
+        let mints_capability = ["AgentCommand", "ProviderProbeCommand"]
+            .iter()
+            .any(|name| tokens_contain_identifier(invocation.tokens.clone(), name));
+        if touches_command || mints_capability {
+            self.record(format!("command-macro:{}", syn_path_name(&invocation.path)));
+        }
+        syn::visit::visit_macro(self, invocation);
     }
 }
 
@@ -2360,11 +3295,40 @@ struct NonModelCapabilityVisitor {
     owner: String,
     implementation: String,
     events: Vec<(String, String)>,
+    command_bindings: BTreeSet<String>,
 }
 
 impl NonModelCapabilityVisitor {
     fn record(&mut self, event: impl Into<String>) {
         self.events.push((self.owner.clone(), event.into()));
+    }
+
+    fn seed_command_parameters(&mut self, signature: &syn::Signature) {
+        for input in &signature.inputs {
+            let syn::FnArg::Typed(input) = input else {
+                continue;
+            };
+            if type_name(&input.ty).trim_start_matches('&') == "Command" {
+                let binding = pattern_name(&input.pat);
+                if !binding.is_empty() {
+                    self.command_bindings.insert(binding);
+                }
+            }
+        }
+    }
+
+    fn command_binding(&self, expression: &syn::Expr) -> Option<String> {
+        match expression {
+            syn::Expr::Path(path) if path.path.segments.len() == 1 => {
+                let binding = normalized_ident(&path.path.segments[0].ident);
+                self.command_bindings.contains(&binding).then_some(binding)
+            }
+            syn::Expr::Group(group) => self.command_binding(&group.expr),
+            syn::Expr::Paren(paren) => self.command_binding(&paren.expr),
+            syn::Expr::Reference(reference) => self.command_binding(&reference.expr),
+            syn::Expr::Unary(unary) => self.command_binding(&unary.expr),
+            _ => None,
+        }
     }
 }
 
@@ -2381,21 +3345,91 @@ impl<'ast> Visit<'ast> for NonModelCapabilityVisitor {
         }
     }
 
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if !is_test_only(trait_item_attributes(item)) {
+            syn::visit::visit_trait_item(self, item);
+        }
+    }
+
+    fn visit_foreign_item(&mut self, item: &'ast syn::ForeignItem) {
+        if !is_test_only(foreign_item_attributes(item)) {
+            syn::visit::visit_foreign_item(self, item);
+        }
+    }
+
     fn visit_expr(&mut self, expression: &'ast syn::Expr) {
         if !is_test_only(expression_attributes(expression)) {
             syn::visit::visit_expr(self, expression);
         }
     }
 
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        if !is_test_only(&arm.attrs) {
+            syn::visit::visit_arm(self, arm);
+        }
+    }
+
+    fn visit_stmt(&mut self, statement: &'ast syn::Stmt) {
+        if let syn::Stmt::Macro(statement) = statement
+            && is_test_only(&statement.attrs)
+        {
+            return;
+        }
+        syn::visit::visit_stmt(self, statement);
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if is_test_only(&local.attrs) {
+            return;
+        }
+        let binding = pattern_name(&local.pat);
+        if let Some(initializer) = &local.init {
+            let checked_conversion = called_path(&initializer.expr).is_some_and(|path| {
+                let mut segments = path.segments.iter().rev();
+                segments
+                    .next()
+                    .is_some_and(|segment| normalized_ident(&segment.ident) == "checked")
+                    && segments.next().is_some_and(|segment| {
+                        is_nonmodel_capability(&normalized_ident(&segment.ident))
+                    })
+            });
+            if !binding.is_empty()
+                && self.command_bindings.contains(&binding)
+                && !checked_conversion
+            {
+                self.record(format!(
+                    "command-shadow:{binding}={}",
+                    value_label(&initializer.expr)
+                ));
+            }
+            if let Some(source) = self.command_binding(&initializer.expr)
+                && !binding.is_empty()
+            {
+                self.command_bindings.insert(binding.clone());
+                self.record(format!("command-alias:{binding}={source}"));
+            }
+            if checked_conversion {
+                self.command_bindings.remove(&binding);
+            }
+        }
+        syn::visit::visit_local(self, local);
+    }
+
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
         let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+        let previous_bindings = std::mem::take(&mut self.command_bindings);
+        self.seed_command_parameters(&item.sig);
         syn::visit::visit_item_fn(self, item);
+        self.command_bindings = previous_bindings;
         self.owner = previous;
     }
 
     fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
         let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
+        let previous_bindings = std::mem::take(&mut self.command_bindings);
+        self.seed_command_parameters(&item.sig);
         syn::visit::visit_impl_item_fn(self, item);
+        self.command_bindings = previous_bindings;
         self.owner = previous;
     }
 
@@ -2412,8 +3446,8 @@ impl<'ast> Visit<'ast> for NonModelCapabilityVisitor {
             let source_subject = source
                 .rsplit("::")
                 .next()
-                .is_some_and(is_nonmodel_capability);
-            if source_subject || is_nonmodel_capability(&binding) {
+                .is_some_and(|name| is_nonmodel_capability(name) || name == "checked");
+            if source_subject || is_nonmodel_capability(&binding) || binding == "checked" {
                 self.record(format!("import:{source}->{binding}"));
             }
         }
@@ -2446,7 +3480,16 @@ impl<'ast> Visit<'ast> for NonModelCapabilityVisitor {
                 return;
             }
             if last == "Self" && is_nonmodel_capability(&self.implementation) {
-                self.record(format!("construct-self:{}", self.implementation));
+                let arguments = expression
+                    .args
+                    .iter()
+                    .map(value_label)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                self.record(format!(
+                    "construct-self:{}:args={arguments}",
+                    self.implementation
+                ));
                 for argument in &expression.args {
                     self.visit_expr(argument);
                 }
@@ -2491,6 +3534,16 @@ impl<'ast> Visit<'ast> for NonModelCapabilityVisitor {
         }
         syn::visit::visit_expr_field(self, expression);
     }
+
+    fn visit_expr_assign(&mut self, expression: &'ast syn::ExprAssign) {
+        if let Some(binding) = self.command_binding(&expression.left) {
+            self.record(format!(
+                "command-assign:{binding}={}",
+                value_label(&expression.right)
+            ));
+        }
+        syn::visit::visit_expr_assign(self, expression);
+    }
 }
 
 fn nonmodel_capability_census() -> SiteCensus {
@@ -2512,6 +3565,14 @@ fn nonmodel_capability_census() -> SiteCensus {
     events
 }
 
+fn nonmodel_capability_events(source: &str) -> Vec<(String, String)> {
+    let file = syn::parse_file(source).expect("parse non-model boundary source");
+    let mut visitor = NonModelCapabilityVisitor::default();
+    visitor.visit_file(&file);
+    visitor.events.sort();
+    visitor.events
+}
+
 #[test]
 fn only_the_finite_provider_seam_constructs_agent_commands() {
     let actual = agent_capability_census();
@@ -2526,11 +3587,172 @@ fn only_the_finite_provider_seam_constructs_agent_commands() {
     );
 
     let seam = production(&repo().join(PROVIDER_SEAM));
-    for provider in KNOWN_PROVIDERS {
-        assert!(
-            seam.contains(&format!("\"{provider}\"")),
-            "{provider} is absent from the finite provider registry"
+    assert_eq!(
+        string_array_constant(&seam, "PROVIDER_PROGRAMS"),
+        KNOWN_PROVIDERS,
+        "the provider executable registry changed without an explicit seam decision"
+    );
+}
+
+#[test]
+fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
+    let prompt_source = fs::read_to_string(repo().join("src/model_prompt.rs")).unwrap();
+    let prompt_file = syn::parse_file(&prompt_source).unwrap();
+    let prompt = named_struct(&prompt_file, "ModelPrompt");
+    assert_eq!(visibility_name(&prompt.vis), "pub");
+    assert!(prompt.generics.params.is_empty());
+    let syn::Fields::Named(prompt_fields) = &prompt.fields else {
+        panic!("ModelPrompt must remain a named-field opaque wrapper");
+    };
+    assert_eq!(prompt_fields.named.len(), 1);
+    let rendered = &prompt_fields.named[0];
+    assert_eq!(
+        rendered.ident.as_ref().map(normalized_ident).as_deref(),
+        Some("rendered")
+    );
+    assert_eq!(visibility_name(&rendered.vis), "private");
+    assert_eq!(concrete_type_name(&rendered.ty), "String");
+    assert!(!has_trait_impl(&prompt_file, "ModelPrompt"));
+    assert_eq!(
+        inherent_method_visibilities(&prompt_file, "ModelPrompt"),
+        [
+            ("as_str".to_owned(), "pub(crate)".to_owned()),
+            ("builder".to_owned(), "pub".to_owned()),
+            ("is_empty".to_owned(), "pub".to_owned()),
+            ("len".to_owned(), "pub".to_owned()),
+        ]
+    );
+    assert_eq!(
+        inherent_method_visibilities(&prompt_file, "ModelPromptBuilder"),
+        [
+            ("finish".to_owned(), "pub".to_owned()),
+            ("finish_for".to_owned(), "pub".to_owned()),
+            ("push_commit_sha".to_owned(), "pub".to_owned()),
+            ("push_fragment".to_owned(), "private".to_owned()),
+            ("push_harness".to_owned(), "pub(crate)".to_owned()),
+            ("push_repository".to_owned(), "pub".to_owned()),
+            ("push_u64".to_owned(), "pub".to_owned()),
+            ("push_untrusted".to_owned(), "pub".to_owned()),
+            ("push_usize".to_owned(), "pub".to_owned()),
+        ]
+    );
+
+    let agent_source = fs::read_to_string(repo().join("src/exec/agent.rs")).unwrap();
+    let agent_file = syn::parse_file(&agent_source).unwrap();
+    let agent = named_struct(&agent_file, "AgentCommand");
+    assert_eq!(visibility_name(&agent.vis), "pub");
+    let syn::Fields::Named(agent_fields) = &agent.fields else {
+        panic!("AgentCommand must remain a named-field opaque wrapper");
+    };
+    assert_eq!(agent_fields.named.len(), 2);
+    for field in &agent_fields.named {
+        assert_eq!(visibility_name(&field.vis), "private");
+    }
+    let probe = named_struct(&agent_file, "ProviderProbeCommand");
+    assert_eq!(visibility_name(&probe.vis), "private");
+    let syn::Fields::Unnamed(probe_fields) = &probe.fields else {
+        panic!("ProviderProbeCommand must remain an opaque tuple wrapper");
+    };
+    assert_eq!(probe_fields.unnamed.len(), 1);
+    assert_eq!(visibility_name(&probe_fields.unnamed[0].vis), "private");
+    assert_eq!(
+        visibility_name(&named_enum(&agent_file, "Framing").vis),
+        "private"
+    );
+    assert_eq!(
+        inherent_method_visibilities(&agent_file, "AgentCommand"),
+        [
+            ("args".to_owned(), "private".to_owned()),
+            ("as_std".to_owned(), "pub(crate)".to_owned()),
+        ]
+    );
+    for name in ["command", "command_in"] {
+        assert_eq!(
+            visibility_name(&top_level_function(&agent_file, name).vis),
+            "private"
         );
+    }
+    assert_canonical_external_module(&agent_file, "provider", "private");
+    assert_canonical_external_module(&agent_file, "transport", "private");
+
+    let provider_source = fs::read_to_string(repo().join(PROVIDER_SEAM)).unwrap();
+    let provider_file = syn::parse_file(&provider_source).unwrap();
+    assert_eq!(
+        visibility_name(&top_level_function(&provider_file, "agy_help_probe").vis),
+        "pub(super)"
+    );
+
+    let transport_source = fs::read_to_string(repo().join(MODEL_TRANSPORT)).unwrap();
+    let transport_file = syn::parse_file(&transport_source).unwrap();
+    let permit = named_struct(&transport_file, "ModelPromptPermit");
+    assert_eq!(visibility_name(&permit.vis), "pub(crate)");
+    let syn::Fields::Unnamed(permit_fields) = &permit.fields else {
+        panic!("ModelPromptPermit must remain a tuple capability");
+    };
+    assert_eq!(permit_fields.unnamed.len(), 1);
+    assert_eq!(visibility_name(&permit_fields.unnamed[0].vis), "private");
+    assert_eq!(
+        visibility_name(&named_struct(&transport_file, "PrivatePermit").vis),
+        "private"
+    );
+    assert_eq!(
+        visibility_name(&top_level_function(&transport_file, "probe").vis),
+        "pub(super)"
+    );
+    assert_eq!(
+        visibility_name(&top_level_function(&transport_file, "deliver_with_stdin").vis),
+        "private"
+    );
+
+    assert_concrete_prompt_sink(&transport_source, "deliver", "&ModelPrompt", "pub(super)");
+    assert_concrete_prompt_sink(
+        &agent_source,
+        "deliver",
+        "&crate::model_prompt::ModelPrompt",
+        "pub(super)",
+    );
+    let exec_source = fs::read_to_string(repo().join("src/exec/mod.rs")).unwrap();
+    let exec_file = syn::parse_file(&exec_source).unwrap();
+    assert_canonical_external_module(&exec_file, "agent", "pub");
+    assert_canonical_external_module(&exec_file, "non_model", "private");
+    assert_concrete_prompt_sink(
+        &exec_source,
+        "run_bounded_with_model_prompt",
+        "&ModelPrompt",
+        "pub",
+    );
+    let turn_source = fs::read_to_string(repo().join("src/exec/turn.rs")).unwrap();
+    assert_concrete_prompt_sink(&turn_source, "run", "&ModelPrompt", "pub");
+
+    let nonmodel_source = fs::read_to_string(repo().join(NON_MODEL_TRANSPORT)).unwrap();
+    let nonmodel_file = syn::parse_file(&nonmodel_source).unwrap();
+    assert_canonical_external_module(&nonmodel_file, "transport", "private");
+
+    for (path, source) in [
+        (MODEL_TRANSPORT, &transport_source),
+        ("src/exec/mod.rs", &exec_source),
+        ("src/exec/turn.rs", &turn_source),
+    ] {
+        let file = syn::parse_file(source).unwrap();
+        let mut bindings = Vec::new();
+        for item in &file.items {
+            if let syn::Item::Use(item) = item {
+                collect_use_bindings(&item.tree, &mut Vec::new(), &mut bindings, &mut Vec::new());
+            }
+        }
+        let model_prompt_sources = bindings
+            .iter()
+            .filter(|(_, binding)| binding == "ModelPrompt")
+            .map(|(source, _)| source.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            model_prompt_sources,
+            ["crate::model_prompt::ModelPrompt"],
+            "{path} may not alias the concrete ModelPrompt type"
+        );
+        assert!(!file.items.iter().any(
+            |item| matches!(item, syn::Item::Type(item) if normalized_ident(&item.ident) == "ModelPrompt")
+        ));
     }
 }
 
@@ -2596,15 +3818,15 @@ fn raw_stdin_transport_has_a_closed_production_census() {
         let path = relative(&source_path);
         let source = fs::read_to_string(&source_path).expect("read raw-stdin census source");
         for (owner, event) in boundary_events(&source) {
-            if event == "run_bounded_with_stdin" {
-                callers.push((path.clone(), owner));
+            if event.contains("run_bounded_with_stdin") {
+                callers.push((path.clone(), owner, event));
             }
         }
     }
     callers.sort();
-    let mut expected = EXPECTED_RAW_STDIN_REFERENCES
+    let mut expected = EXPECTED_RAW_STDIN_CALLS
         .iter()
-        .map(|(path, owner)| ((*path).to_owned(), (*owner).to_owned()))
+        .map(|(path, owner, event)| ((*path).to_owned(), (*owner).to_owned(), (*event).to_owned()))
         .collect::<Vec<_>>();
     expected.sort();
     assert_eq!(callers, expected);
@@ -2629,6 +3851,7 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
     assert!(transport.contains("const NON_MODEL_PROGRAMS"));
     assert!(transport.contains("resolve_executable"));
     assert!(transport.contains("is_provider_program(resolved.canonical.as_os_str())"));
+    assert!(transport.contains("bind_std_program"));
     assert!(!transport.contains("Some(\"--help\" | \"--version\")"));
 
     assert_eq!(
@@ -2636,6 +3859,63 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
         NON_MODEL_PROGRAM_VOCABULARY,
         "the executable vocabulary changed without an explicit boundary decision"
     );
+    assert_eq!(
+        string_pair_array_constant(&transport, "CANONICAL_PROGRAM_ALIASES"),
+        CANONICAL_NON_MODEL_ALIASES
+            .iter()
+            .map(|(requested, canonical)| ((*requested).to_owned(), (*canonical).to_owned()))
+            .collect::<Vec<_>>(),
+        "canonical multicall/shim aliases changed without an explicit boundary decision"
+    );
+
+    let mut clear_calls = Vec::new();
+    let mut raw_env_clears = Vec::new();
+    for source_path in all_production_source_paths() {
+        let path = relative(&source_path);
+        let source = fs::read_to_string(&source_path).expect("read environment-boundary source");
+        for (owner, event) in boundary_events(&source) {
+            if event.contains("clear_environment") {
+                clear_calls.push((path.clone(), owner, event));
+            }
+        }
+        let count = named_method_count(&source, "env_clear");
+        if count != 0 {
+            raw_env_clears.push((path, count));
+        }
+    }
+    clear_calls.sort();
+    assert_eq!(
+        clear_calls,
+        [
+            (
+                "src/exec/build_env.rs".to_owned(),
+                "apply".to_owned(),
+                "call:super::non_model::clear_environment:arg0=cmd".to_owned(),
+            ),
+            (
+                "src/exec/gh.rs".to_owned(),
+                "apply".to_owned(),
+                "call:super::non_model::clear_environment:arg0=cmd".to_owned(),
+            ),
+            (
+                "src/exec/net.rs".to_owned(),
+                "apply".to_owned(),
+                "call:super::non_model::clear_environment:arg0=cmd".to_owned(),
+            ),
+        ],
+        "environment-clearing commands must carry the private rebinding marker"
+    );
+    raw_env_clears.sort();
+    assert_eq!(
+        raw_env_clears,
+        [
+            ("src/exec/agent.rs".to_owned(), 1),
+            ("src/exec/non_model.rs".to_owned(), 2),
+        ],
+        "direct env_clear calls bypass the canonical-command rebinder policy"
+    );
+    assert!(transport.contains("command.env(CLEARED_ENV_MARKER, \"1\")"));
+    assert!(transport.contains("std::process::Command::new(canonical)"));
 
     let actual = nonmodel_capability_census();
     let mut expected = EXPECTED_NONMODEL_CAPABILITY_EVENTS
@@ -2646,6 +3926,41 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
     assert_eq!(
         actual, expected,
         "checked non-model capabilities can only be minted and opened at their finite seams"
+    );
+}
+
+#[test]
+fn production_dependencies_cannot_add_an_alternate_process_runtime_silently() {
+    let repository = repo();
+    let packages = cargo_metadata()["packages"]
+        .as_array()
+        .expect("Cargo metadata packages")
+        .iter()
+        .filter(|package| {
+            package["manifest_path"]
+                .as_str()
+                .is_some_and(|path| Path::new(path).starts_with(&repository))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        packages
+            .iter()
+            .filter_map(|package| package["name"].as_str())
+            .collect::<Vec<_>>(),
+        ["anvil"],
+        "a new production package needs an explicit process-boundary review"
+    );
+    let mut dependencies = packages
+        .iter()
+        .flat_map(|package| package["dependencies"].as_array().into_iter().flatten())
+        .filter(|dependency| dependency["kind"].as_str() != Some("dev"))
+        .filter_map(|dependency| dependency["name"].as_str())
+        .collect::<Vec<_>>();
+    dependencies.sort();
+    dependencies.dedup();
+    assert_eq!(
+        dependencies, APPROVED_PRODUCTION_DEPENDENCIES,
+        "a new dependency (including a process library such as duct) requires an explicit execution-seam decision"
     );
 }
 
@@ -2865,9 +4180,12 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
     assert_eq!(
         boundary_events(&agent)
             .into_iter()
-            .filter(|(_, event)| event == "deliver_with_stdin")
+            .filter(|(_, event)| event.contains("deliver_with_stdin"))
             .collect::<Vec<_>>(),
-        [("deliver".to_owned(), "deliver_with_stdin".to_owned())],
+        [(
+            "deliver".to_owned(),
+            "call:deliver_with_stdin:arg0=command".to_owned()
+        )],
         "raw model stdin transport must have exactly one typed caller"
     );
 
@@ -2886,8 +4204,14 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
     assert_eq!(
         boundary_events(&replacement),
         [
-            ("spawn".to_owned(), "is_provider_program".to_owned()),
-            ("spawn".to_owned(), "is_provider_program".to_owned()),
+            (
+                "spawn".to_owned(),
+                "call:is_provider_program:arg0=<non-path>".to_owned()
+            ),
+            (
+                "spawn".to_owned(),
+                "call:is_provider_program:arg0=<non-path>".to_owned()
+            ),
             ("spawn".to_owned(), "spawn".to_owned()),
         ],
         "replacement validation must dominate its sole process spawn"
@@ -3128,6 +4452,7 @@ fn code_aware_census_reads_inactive_cfg_and_macro_aliases() {
     );
 
     let reusable_method = r#"
+        type Process = std::process::Command;
         fn bypass(mut command: Process) {
             let invoke = Process::spawn;
             let _first = invoke(&mut command);
@@ -3226,6 +4551,34 @@ fn macro_classifier_allows_only_proved_data_macros() {
             #[cfg_attr(windows, evil_exec_macros::run_process)]
             fn bypass() {}
         "#,
+        r#"
+            fn bypass(command: Command, raw: &str) {
+                let _ = vec![deliver_with_stdin(command, raw, LIMIT, "bypass")];
+            }
+        "#,
+        r#"
+            fn bypass(tool: &str, posture: &Posture) {
+                let _ = vec![command_in(tool, posture, Framing::Plain, Vec::new())];
+            }
+        "#,
+        r#"
+            fn bypass(command: Command) {
+                let _ = matches!(NonModelCommand::checked(command), Ok(_));
+            }
+        "#,
+        r#"
+            fn bypass(cmd: Command, raw: &str, limit: Duration, what: &str) {
+                let _ = format!("{:?}", run_bounded_with_stdin(cmd, raw, limit, what));
+            }
+        "#,
+        r#"
+            async fn mint(command: Command) -> AgentCommand {
+                let (agent,) = tokio::join!(async {
+                    AgentCommand { command, framing: Framing::Plain }
+                });
+                agent
+            }
+        "#,
     ] {
         assert!(
             contains_process_execution_syntax(shadow),
@@ -3286,12 +4639,50 @@ fn test_only_attributes_prune_entire_ast_subtrees() {
                 }
             }
         "#,
+        r#"
+            #[cfg(all(test, unix))]
+            fn fixture(mut command: Process) { let _ = command.spawn(); }
+        "#,
     ] {
         assert!(
             !contains_process_execution_syntax(source),
             "cfg(test) subtree was classified as shipped execution: {source}"
         );
     }
+
+    let cfg_arm = r#"
+        fn production(value: bool, command: Command) {
+            match value {
+                #[cfg(test)]
+                true => {
+                    let _agent = AgentCommand { command, framing: Framing::Plain };
+                    let _checked = NonModelCommand::checked(command);
+                    let _ = run_bounded_with_stdin(command, "raw", LIMIT, "fixture");
+                }
+                false => {}
+            }
+        }
+    "#;
+    assert!(boundary_events(cfg_arm).is_empty());
+    assert!(agent_capability_events(cfg_arm).is_empty());
+    assert!(nonmodel_capability_events(cfg_arm).is_empty());
+    assert_eq!(command_flow(cfg_arm, "production"), ["bind:command"]);
+}
+
+#[test]
+fn domain_methods_named_like_process_methods_are_not_execution_sites() {
+    let source = r#"
+        struct Report;
+        impl Report { fn status(&self) -> bool { true } }
+        fn inspect(report: Report) {
+            let _ = report.status();
+            let _ = Report::status(&report);
+        }
+    "#;
+    assert!(
+        !contains_process_execution_syntax(source),
+        "definition-unrelated domain methods must remain ordinary production APIs"
+    );
 }
 
 #[test]
@@ -3304,7 +4695,57 @@ fn raw_model_stdin_aliases_and_agent_capability_minting_are_visible() {
     "#;
     assert_eq!(
         boundary_events(aliased_transport),
-        [("deliver".to_owned(), "deliver_with_stdin".to_owned())]
+        [(
+            "deliver".to_owned(),
+            "reference:deliver_with_stdin".to_owned()
+        )]
+    );
+
+    let direct_transport = r#"
+        async fn deliver(command: Command, raw: &str, limit: Duration, what: &str) {
+            let _ = deliver_with_stdin(command, raw, limit, what).await;
+        }
+    "#;
+    assert_eq!(
+        boundary_events(direct_transport),
+        [(
+            "deliver".to_owned(),
+            "call:deliver_with_stdin:arg0=command".to_owned()
+        )]
+    );
+
+    let smuggled_transport = r#"
+        async fn deliver(command: Command, raw: &str, limit: Duration, what: &str) {
+            let _ = deliver_with_stdin(smuggle(command, raw), raw, limit, what).await;
+        }
+    "#;
+    assert_eq!(
+        boundary_events(smuggled_transport),
+        [(
+            "deliver".to_owned(),
+            "call:deliver_with_stdin:arg0=<non-path>".to_owned()
+        )]
+    );
+
+    let imported_alias = r#"
+        use self::deliver_with_stdin as invoke;
+        async fn deliver(
+            command: Command,
+            dummy: Command,
+            raw: &str,
+            limit: Duration,
+            what: &str,
+        ) {
+            if false {
+                let _ = deliver_with_stdin(dummy, raw, limit, what).await;
+            }
+            let _ = invoke(smuggle(command, raw), raw, limit, what).await;
+        }
+    "#;
+    assert!(
+        boundary_events(imported_alias)
+            .iter()
+            .any(|(_, event)| event == "import:self::deliver_with_stdin->invoke")
     );
 
     let aliased_raw_stdin = r#"
@@ -3315,10 +4756,30 @@ fn raw_model_stdin_aliases_and_agent_capability_minting_are_visible() {
     "#;
     assert_eq!(
         boundary_events(aliased_raw_stdin),
-        [("bypass".to_owned(), "run_bounded_with_stdin".to_owned())]
+        [(
+            "bypass".to_owned(),
+            "reference:run_bounded_with_stdin".to_owned()
+        )]
+    );
+    let imported_raw_stdin = r#"
+        use crate::exec::run_bounded_with_stdin as invoke;
+        async fn bypass(command: Command, dummy: Command, body: &str) {
+            if false {
+                let _ = crate::exec::run_bounded_with_stdin(
+                    dummy, body, Duration::from_secs(1), "dummy"
+                ).await;
+            }
+            let _ = invoke(command, body, Duration::from_secs(1), "bypass").await;
+        }
+    "#;
+    assert!(
+        boundary_events(imported_raw_stdin)
+            .iter()
+            .any(|(_, event)| { event == "import:crate::exec::run_bounded_with_stdin->invoke" })
     );
 
     let arbitrary_constructor = r#"
+        use super::command_in as mint;
         pub(crate) fn arbitrary(tool: &str, posture: &Posture) -> AgentCommand {
             command(tool, posture, Framing::Plain)
         }
@@ -3335,6 +4796,119 @@ fn raw_model_stdin_aliases_and_agent_capability_minting_are_visible() {
     assert!(events.iter().any(|(owner, event)| {
         owner == "literal" && event.starts_with("construct-agent:AgentCommand:")
     }));
+    assert!(
+        events
+            .iter()
+            .any(|(_, event)| event == "import:super::command_in->mint"),
+        "renaming the finite constructor cannot create an uncounted mint"
+    );
+
+    let posture_bypass = r#"
+        fn command_in(mut cmd: Command, posture: &Posture, environment: Environment) {
+            unsafe_apply(posture, &mut cmd, environment);
+        }
+    "#;
+    assert!(
+        !agent_capability_events(posture_bypass)
+            .iter()
+            .any(|(_, event)| event == "posture-method:posture:apply_from")
+    );
+
+    let arbitrary_probe = r#"
+        impl ProviderProbeCommand {
+            pub(crate) fn arbitrary(raw: Command) -> Self { Self(raw) }
+        }
+    "#;
+    assert!(
+        agent_capability_events(arbitrary_probe)
+            .iter()
+            .any(|(owner, event)| owner == "arbitrary"
+                && event == "construct-self:ProviderProbeCommand")
+    );
+
+    let prompt_to_environment = r#"
+        fn bypass(mut command: Command, rendered: &str) {
+            command.env("MODEL_PROMPT", rendered);
+        }
+    "#;
+    assert!(
+        agent_capability_events(prompt_to_environment)
+            .iter()
+            .any(|(_, event)| event == "command-method:command:env")
+    );
+
+    let macro_prompt_to_environment = r#"
+        fn bypass(mut cmd: Command, rendered: &str) {
+            let _ = vec![cmd.env("MODEL_PROMPT", rendered)];
+        }
+    "#;
+    assert!(
+        agent_capability_events(macro_prompt_to_environment)
+            .iter()
+            .any(|(_, event)| event == "command-macro:vec")
+    );
+
+    let aliased_raw_command = r#"
+        fn bypass(mut cmd: Command) {
+            cmd.env_clear();
+            let raw = cmd;
+            raw.envs(std::env::vars());
+        }
+    "#;
+    let events = agent_capability_events(aliased_raw_command);
+    assert!(
+        events
+            .iter()
+            .any(|(_, event)| event == "command-alias:raw=cmd")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|(_, event)| event == "command-method:raw:envs")
+    );
+
+    let raw_agent_escape = r#"
+        impl AgentCommand {
+            pub fn raw_mut(&mut self) -> &mut Command {
+                let Self { command, .. } = self;
+                command
+            }
+        }
+    "#;
+    assert!(
+        agent_capability_events(raw_agent_escape)
+            .iter()
+            .any(|(owner, event)| owner == "raw_mut" && event == "destructure-agent:Self")
+    );
+
+    let shadowed_postured_command = r#"
+        fn command_in(tool: &str, posture: &Posture, framing: Framing) -> AgentCommand {
+            let mut cmd = Command::new(tool);
+            posture.apply_from(&mut cmd, Vec::new());
+            let cmd = crate::exec::build_env::command("agy");
+            AgentCommand { command: cmd, framing }
+        }
+    "#;
+    assert!(
+        agent_capability_events(shadowed_postured_command)
+            .iter()
+            .any(|(_, event)| event.starts_with("command-shadow:cmd="))
+    );
+
+    let shadowed_validated_command = r#"
+        impl NonModelCommand {
+            fn checked(command: Command) -> Result<Self> {
+                let resolved = validate_program(&command)?;
+                let command = crate::exec::build_env::command("agy");
+                Ok(Self(command, resolved.canonical))
+            }
+        }
+    "#;
+    assert!(
+        nonmodel_capability_events(shadowed_validated_command)
+            .iter()
+            .any(|(_, event)| event.starts_with("command-shadow:command="))
+    );
 
     let substituted_nonmodel = r#"
         async fn run_with_stdin(
@@ -3520,7 +5094,9 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
     let target_repository = target_fixture.path().to_path_buf();
     let target_root = target_repository.join("target/shipped.rs");
     let target_helper = target_repository.join("target/helper.rs");
+    let decoy_root = target_repository.join("target/shipped/helper.rs");
     fs::create_dir_all(target_root.parent().unwrap()).unwrap();
+    fs::create_dir_all(decoy_root.parent().unwrap()).unwrap();
     fs::write(&target_root, "#[cfg(windows)] mod helper;\n").unwrap();
     fs::write(
         &target_helper,
@@ -3529,17 +5105,24 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
          let _ = invoke(&mut command);\n}\n",
     )
     .unwrap();
+    fs::write(&decoy_root, "// independently scanned decoy target\n").unwrap();
     let target_metadata = serde_json::json!({
         "packages": [{
             "manifest_path": target_repository.join("Cargo.toml").display().to_string(),
-            "targets": [{
-                "kind": ["bin"],
-                "src_path": target_root.display().to_string(),
-            }],
+            "targets": [
+                {
+                    "kind": ["bin"],
+                    "src_path": target_root.display().to_string(),
+                },
+                {
+                    "kind": ["bin"],
+                    "src_path": decoy_root.display().to_string(),
+                },
+            ],
         }],
     });
     let target_paths = source_paths_from_metadata(&target_metadata, &target_repository);
-    assert_eq!(target_paths, std::slice::from_ref(&target_root));
+    assert_eq!(target_paths, [decoy_root, target_root.clone()]);
     let scanned_target_paths = target_paths.iter().cloned().collect::<BTreeSet<_>>();
     assert!(
         !process_execution_sites_with_context(
@@ -3550,6 +5133,40 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
         .is_empty(),
         "an explicit target under Cargo's artifact directory cannot hide cfg-inactive helper modules"
     );
+    #[cfg(unix)]
+    {
+        fs::remove_file(&target_root).unwrap();
+        std::os::unix::fs::symlink(&target_helper, &target_root).unwrap();
+        assert!(
+            std::panic::catch_unwind(|| {
+                source_paths_from_metadata(&target_metadata, &target_repository)
+            })
+            .is_err(),
+            "an explicit Cargo target cannot bypass the Rust symlink policy"
+        );
+
+        let outside = tempfile::tempdir().unwrap();
+        let outside_source = outside.path().join("shipped.rs");
+        fs::write(&outside_source, "fn main() {}\n").unwrap();
+        let linked_directory = target_repository.join("target/link");
+        std::os::unix::fs::symlink(outside.path(), &linked_directory).unwrap();
+        let ancestor_symlink_metadata = serde_json::json!({
+            "packages": [{
+                "manifest_path": target_repository.join("Cargo.toml").display().to_string(),
+                "targets": [{
+                    "kind": ["bin"],
+                    "src_path": linked_directory.join("shipped.rs").display().to_string(),
+                }],
+            }],
+        });
+        assert!(
+            std::panic::catch_unwind(|| {
+                source_paths_from_metadata(&ancestor_symlink_metadata, &target_repository)
+            })
+            .is_err(),
+            "a symlinked ancestor cannot move an explicit target outside the repository"
+        );
+    }
 
     #[cfg(unix)]
     {

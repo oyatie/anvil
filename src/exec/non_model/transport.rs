@@ -57,6 +57,7 @@ pub(super) async fn run_status(
     what: &str,
 ) -> Result<ExitStatus> {
     command.kill_on_drop(true);
+    command.stdin(std::process::Stdio::null());
     command
         .status()
         .await

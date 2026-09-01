@@ -78,7 +78,7 @@ pub fn command(program: &str) -> tokio::process::Command {
 
 /// Clear the environment and hand back only what a toolchain needs.
 pub fn apply(cmd: &mut tokio::process::Command) {
-    cmd.env_clear();
+    super::non_model::clear_environment(cmd);
     for name in BUILD_INHERITED {
         if let Ok(value) = std::env::var(name) {
             cmd.env(name, value);

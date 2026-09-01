@@ -46,14 +46,14 @@ use std::path::{Path, PathBuf};
 /// Keyed to the declaration that performs the read, never to a line number.
 /// Each entry should name a reason a reviewer can disagree with; an allowlist
 /// that grows without argument is the same as no gate.
-const ALLOWED: &[(&str, &str)] = &[(
-    "fidelity_citation_form_test::line_citations_do_not_grow_against_the_merge_base",
-    "measures the same text on both sides of a merge base. The base side reads \
-     a git tree by path and has no `module_source` counterpart, so converting \
-     only the working-tree side would leave two different measures compared to \
-     each other -- and a ratchet whose count falls because the two sides stopped \
-     matching records a blind spot as progress",
-)];
+/// Empty, and that is the whole point: the one exemption that stood here is
+/// gone because the read it excused is gone. `line_citations_do_not_grow_against_the_merge_base`
+/// named `src/fidelity/registry.rs` on the working-tree side, which was
+/// accurate until the registry's entries moved into `registry/entries_*.rs` and
+/// the coordinate stopped naming the corpus. It now walks the directory both
+/// sides already agreed on, so the exemption has no subject and is removed
+/// rather than left to be inherited by whatever takes that name next.
+const ALLOWED: &[(&str, &str)] = &[];
 
 /// The calls that read a file.
 ///

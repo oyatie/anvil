@@ -547,7 +547,13 @@ impl QueueHealer {
     /// Split out so `heal_in_worktree` can hold the outcome as a value: the
     /// heal note is derived from it and the caller is answered with it, and a
     /// `?` in the middle of the push-comment-enlist sequence could do neither.
-    async fn certify_and_reenlist(
+    ///
+    /// `pub` for the reason `MergeEnlister::subject_refusal` is: this is the
+    /// re-enlist door, an integration test sees only `pub` items, and the only
+    /// public way in is `heal_ejected_pr`, which clones, writes and pushes
+    /// before it gets here. Left private the door was pinned by a source scan
+    /// and nothing else.
+    pub async fn certify_and_reenlist(
         &self,
         state: &crate::webhook::AppState,
         repo: &str,

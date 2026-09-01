@@ -865,11 +865,67 @@ fn discards_call_result(text: &str, call: &Call) -> bool {
         return true;
     }
     let prefix = text[statement_start(text, call.idx)..call.idx].trim_end();
-    if prefix.ends_with("drop(") || prefix.contains("_ =") {
+    // `contains`, not `ends_with`: the door is reached through a receiver, so
+    // the text between `drop(` and the call is `self.merge_enlister.`.
+    if prefix.contains("drop(") || prefix.contains("_ =") {
         return true;
     }
+    let stmt = statement(text, call.idx);
     // `let _ignored = ..` is `let _ = ..` with a comment attached to it.
-    binder(&statement(text, call.idx)).is_some_and(|b| b.starts_with('_'))
+    if binder(&stmt).is_some_and(|b| b.starts_with('_')) {
+        return true;
+    }
+    binder(&stmt).is_some_and(|name| {
+        binder_is_thrown_away_later(text, statement_end(text, call.close), &name)
+    })
+}
+
+/// The end of the block holding `from`: the first bracket that closes something
+/// `from` is inside.
+///
+/// Bounds a search to the rest of the enclosing function body. Searched over
+/// the whole file instead, a binding of the same name in an unrelated function
+/// would answer a question about this one.
+fn block_end(text: &str, from: usize) -> usize {
+    let mut depth = 0i32;
+    for (off, c) in text[from..].char_indices() {
+        match c {
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => {
+                depth -= 1;
+                if depth < 0 {
+                    return from + off;
+                }
+            }
+            _ => {}
+        }
+    }
+    text.len()
+}
+
+/// Whether `name` is thrown away later in the block that holds `from`.
+///
+/// `let outcome = door().await; let _ = outcome;` is `let _ = door().await`
+/// with one identifier in between, and it is the shape a scan anchored to the
+/// call's own statement cannot see: that statement binds a name, so it reads as
+/// handled, and the value dies a line later. `drop(outcome)` is the same move
+/// spelled differently. Both compile without a `must_use` warning, which is
+/// what makes them the silencer to reach for.
+fn binder_is_thrown_away_later(text: &str, from: usize, name: &str) -> bool {
+    let from = from.min(text.len());
+    statements_in(text, from, block_end(text, from))
+        .iter()
+        .any(|s| {
+            let compact = s.split_whitespace().collect::<Vec<_>>().join(" ");
+            if compact.contains(&format!("drop({name})")) {
+                return true;
+            }
+            let Some(rest) = compact.strip_prefix("let _") else {
+                return false;
+            };
+            rest.split_once('=')
+                .is_some_and(|(_, value)| value.trim().trim_end_matches(';').trim() == name)
+        })
 }
 
 /// The end of the statement starting at `start`, following `else` chains.
@@ -1482,7 +1538,7 @@ impl MergeQueueDoor {
 /// failure mode this pins is a door *disappearing* from the scan: a shrinking
 /// list of offenders reads like progress.
 const KNOWN_DOOR_FILES: [&str; 4] = [
-    "src/cli/handlers.rs",
+    "src/cli/enlist.rs",
     "src/queue_healer.rs",
     "src/webhook/manual_handlers.rs",
     "src/webhook/pipelines/review.rs",
@@ -2554,6 +2610,56 @@ fn no_path_drops_a_merge_queue_refusal_on_the_floor() {
          downstream can tell a withheld pull request from an admitted one.",
         discarded.join("\n")
     );
+}
+
+/// What `no_path_drops_a_merge_queue_refusal_on_the_floor` must read as a
+/// discard, and what it must not.
+///
+/// Calibrated in both directions, on literals, before it is pointed at
+/// production. A scan that misses the launder passes a door that swallows its
+/// refusal; a scan that reads `?` or a logged `Err` as a discard accuses every
+/// correct door and gets deleted. Neither failure is visible from the green
+/// this test's subject reports over four call sites that are currently fine.
+#[test]
+fn the_discard_scan_reads_a_laundered_outcome_as_discarded_and_a_handled_one_as_handled() {
+    const NEEDLE: &str = "enlist_into_merge_queue(";
+    let discarded = |body: &str| {
+        let call = find_call(body, NEEDLE, 0).expect("the sample calls the door");
+        discards_call_result(body, &call)
+    };
+
+    for thrown_away in [
+        "fn f() { let _ = e.enlist_into_merge_queue(r, n, x).await; }",
+        "fn f() { drop(e.enlist_into_merge_queue(r, n, x).await); }",
+        "fn f() { e.enlist_into_merge_queue(r, n, x).await.ok(); }",
+        // The launder: bound, so the call's own statement reads as handled,
+        // and discarded one statement later.
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; let _ = out; Ok(()) }",
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; drop(out); Ok(()) }",
+    ] {
+        assert!(
+            discarded(thrown_away),
+            "the discard scan reads this as handling the enlistment outcome, and \
+             nothing in it does: {thrown_away}"
+        );
+    }
+
+    for handled in [
+        "fn f() { e.enlist_into_merge_queue(r, n, x).await?; Ok(()) }",
+        "fn f() { e.enlist_into_merge_queue(r, n, x).await }",
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; out }",
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; \
+         if let Err(e) = out { warn!(\"{e}\"); } Ok(()) }",
+        // A binder discarded inside another function is not this one's outcome.
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; out } \
+         fn g() { let out = h(); let _ = out; }",
+    ] {
+        assert!(
+            !discarded(handled),
+            "the discard scan accuses a door that handles its outcome, which is \
+             how a scan gets deleted rather than fixed: {handled}"
+        );
+    }
 }
 
 /// P3, one layer out. The refusal not being dropped at the call site is a third

@@ -776,16 +776,18 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
         .split_once("do not fully measure")
         .expect("disclosure line")
         .1;
-    // `debt-shrink` used to stand here as a gate the registry did not record.
-    // It does now: this pull request audited it and entered it as Heuristic,
-    // so naming it in the disclosure became correct and it is no longer a
-    // negative example. `idempotency` replaces it -- still unaudited, so the
-    // list keeps exactly as many gates that must NOT appear.
-    for gate in ["cell-isolation", "monorepo", "idempotency"] {
+    // These three used to stand here as gates the registry did not record. It
+    // records all three now, as Heuristic, so naming them became correct and
+    // they stopped being negative examples. Nothing is unaudited any more, so
+    // the negative examples are the two gates recorded as `Measured`: the
+    // disclosure is for gates that pass while measuring less than their name
+    // says, and a gate that measures what it claims must stay out of it.
+    for gate in ["shape", "unresolved-review"] {
         assert!(
             !disclosure.contains(gate),
-            "gate {gate} is not recorded below Measured fidelity, so naming it \
-             in the disclosure makes the list meaningless:\n{body}"
+            "gate {gate} is recorded as Measured, so naming it in the \
+             disclosure of gates that do not fully measure makes the list \
+             meaningless:\n{body}"
         );
     }
 

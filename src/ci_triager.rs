@@ -95,16 +95,8 @@ impl CiTriager {
             String::from_utf8_lossy(&output.stderr).to_string()
         };
 
-        // Returned whole. `Untrusted<CiLogs>` is the single truncation point,
-        // and it keeps the trailing bytes.
-        //
-        // Capping here as well was two bounds in different units retaining
-        // opposite ends: this kept the last 20,000 CHARS, then `cap_declaring`
-        // kept the leading 20,000 BYTES of that. CI output is multibyte -- cargo
-        // and clippy emit checkmarks, arrows and box-drawing glyphs -- so chars
-        // exceeded bytes, the second cap fired, and what survived was the FRONT
-        // of a tail: `test result: FAILED`, the panic and the exit code were
-        // dropped from the prompt whose only job is to diagnose them.
+        // Whole: `Untrusted<CiLogs>` is the single truncation point and keeps
+        // the trailing bytes. Capping here too retained the opposite end.
         Ok(logs)
     }
 

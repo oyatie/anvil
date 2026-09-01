@@ -27,16 +27,18 @@ impl FixEngine {
         );
 
         for (item, eval) in valid_items {
-            // `item.body` is the review comment as written by whoever left it,
-            // and this turn holds write access to the workspace: it edits the
-            // tree and the result is committed and pushed. The evaluator that
-            // merely DECIDES already routes this text through the seam; the step
-            // that ACTS was reading it raw (#199), which is the more dangerous
-            // half of the same channel.
             prompt.push_str(&format!(
-                "- **File**: {}\n  **Proposed Fix**: {}\n{}\n",
-                item.file_path.as_deref().unwrap_or("N/A"),
-                eval.proposed_fix.as_deref().unwrap_or("Fix as required"),
+                "{}{}{}\n",
+                Untrusted::new(
+                    UntrustedLabel::ReviewedPath,
+                    item.file_path.as_deref().unwrap_or("N/A"),
+                )
+                .render(),
+                Untrusted::new(
+                    UntrustedLabel::ProposedFix,
+                    eval.proposed_fix.as_deref().unwrap_or("Fix as required"),
+                )
+                .render(),
                 Untrusted::new(UntrustedLabel::ReviewComment, &item.body).render()
             ));
         }

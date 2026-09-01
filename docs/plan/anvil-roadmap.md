@@ -2,8 +2,10 @@
 
 **Status:** living document. Amend by PR to `dev`; every amendment adds a decision-log row.
 **Written:** 2026-08-31, measured against `origin/dev` @ `6128284` (`git rev-parse origin/dev`).
-**Companion files:** [`research.md`](research.md) (dated evidence base, all sources 2026-03..2026-08) and
-one `ws-*.md` detail file per workstream, beside this file.
+**Companion files:** [`research.md`](research.md) (dated evidence base, all sources 2026-03..2026-08),
+one `ws-*.md` detail file per workstream, and [`h1-execution-prompt.md`](h1-execution-prompt.md) — the
+reusable session commission for executing a single H1 milestone (one `ACTIVE MILESTONE` slot per run;
+grading is done by an independent verifier, never by the implementing agent), all beside this file.
 
 Anvil's mission, restated as the two obligations this plan never conflates:
 

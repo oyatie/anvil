@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn ci_prompt_uses_trusted_unknown_for_an_omitted_commit_sha() {
+    for commit_sha in [None, Some("")] {
+        let prompt = build_ci_triage_prompt(
+            "oyatie/anvil",
+            42,
+            "main",
+            commit_sha,
+            "presubmit",
+            "error: fixture failure",
+        )
+        .expect("an omitted commit SHA is valid metadata absence");
+        assert!(!prompt.is_empty());
+    }
+}
+
+#[test]
+fn ci_prompt_still_rejects_a_malformed_nonempty_commit_sha() {
+    let error = match build_ci_triage_prompt(
+        "oyatie/anvil",
+        42,
+        "main",
+        Some("not-a-sha"),
+        "presubmit",
+        "error: fixture failure",
+    ) {
+        Ok(_) => panic!("nonempty commit metadata must remain strictly validated"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("invalid commit SHA"));
+}
+
+#[test]
 fn test_parse_ci_triage_diagnosis() {
     let raw = r#####"```json
 {

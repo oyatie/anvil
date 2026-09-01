@@ -401,6 +401,7 @@ async fn a_missing_curl_is_an_error_the_gate_can_report() {
     assert!(!err.trim().is_empty());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_nonzero_exit_is_an_error_the_gate_can_report() {
     let dir = tempfile::tempdir().expect("tempdir");

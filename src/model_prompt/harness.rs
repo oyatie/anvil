@@ -49,6 +49,7 @@ pub(crate) enum HarnessText {
     CiPreambleAndRepository,
     CiRunId,
     CiCommitSha,
+    CiUnknownCommitSha,
     CiMetadataEnd,
     CiResponseContract,
     QueuePreamble,
@@ -223,6 +224,7 @@ Return strictly valid JSON matching this schema:
             }
             Self::CiRunId => "\n- **Workflow Run ID**: #",
             Self::CiCommitSha => "\n- **Commit SHA**: ",
+            Self::CiUnknownCommitSha => "unknown",
             Self::CiMetadataEnd => "\n",
             Self::CiResponseContract => {
                 r####"## Instructions:

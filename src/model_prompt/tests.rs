@@ -97,6 +97,18 @@ fn ci_contract_renders_a_single_valid_json_object_opening() {
 }
 
 #[test]
+fn ci_unknown_commit_sha_is_a_finite_trusted_fragment() {
+    let mut builder = ModelPrompt::builder();
+    builder
+        .push_harness(HarnessText::CiCommitSha)
+        .push_harness(HarnessText::CiUnknownCommitSha)
+        .push_harness(HarnessText::CiResponseContract);
+    let prompt = builder.finish().expect("trusted unknown SHA prompt");
+
+    assert!(prompt.rendered.contains("- **Commit SHA**: unknown"));
+}
+
+#[test]
 fn appending_after_a_terminal_schema_invalidates_finish() {
     let mut builder = ModelPrompt::builder();
     builder

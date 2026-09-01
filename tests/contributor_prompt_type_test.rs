@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Behavioral discharge for the typed contributor-to-model boundary.
 //!
 //! Negative compile-shape cases live as `compile_fail` doctests on

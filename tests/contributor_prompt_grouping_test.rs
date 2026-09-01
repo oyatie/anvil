@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Stable grouping for repeated review-feedback items in model prompts.
 
 use anvil::ai_driver::router::run_with_prompt_on_stdin;

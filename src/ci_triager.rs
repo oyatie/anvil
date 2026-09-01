@@ -58,9 +58,35 @@ impl CiTriager {
         workflow_name: &str,
         repo_dir: &Path,
     ) -> Result<CiTriageDiagnosis> {
+        self.triage_workflow_run_with_optional_sha(
+            repo,
+            run_id,
+            branch,
+            (!commit_sha.is_empty()).then_some(commit_sha),
+            workflow_name,
+            repo_dir,
+        )
+        .await
+    }
+
+    pub(crate) async fn triage_workflow_run_with_optional_sha(
+        &self,
+        repo: &str,
+        run_id: u64,
+        branch: &str,
+        commit_sha: Option<&str>,
+        workflow_name: &str,
+        repo_dir: &Path,
+    ) -> Result<CiTriageDiagnosis> {
         info!(
             "Triaging failed workflow run #{} ('{}') on {}/{} (commit: {})...",
-            run_id, workflow_name, repo, branch, commit_sha
+            run_id,
+            workflow_name,
+            repo,
+            branch,
+            commit_sha
+                .filter(|sha| !sha.is_empty())
+                .unwrap_or("unknown")
         );
 
         // Fetch failed logs using `gh run view --log-failed`
@@ -125,26 +151,12 @@ impl CiTriager {
         repo: &str,
         run_id: u64,
         branch: &str,
-        commit_sha: &str,
+        commit_sha: Option<&str>,
         workflow_name: &str,
         logs: &str,
         working_dir: &Path,
     ) -> Result<CiTriageDiagnosis> {
-        let mut prompt = ModelPrompt::builder();
-        prompt.push_harness(HarnessText::CiPreambleAndRepository);
-        prompt.push_repository(repo)?;
-        prompt
-            .push_harness(HarnessText::CiRunId)
-            .push_u64(run_id)
-            .push_harness(HarnessText::CiCommitSha);
-        prompt.push_commit_sha(commit_sha)?;
-        prompt
-            .push_harness(HarnessText::CiMetadataEnd)
-            .push_untrusted(Untrusted::new(UntrustedLabel::BranchName, branch))
-            .push_untrusted(Untrusted::new(UntrustedLabel::WorkflowName, workflow_name))
-            .push_untrusted(Untrusted::new(UntrustedLabel::CiLogs, logs))
-            .push_harness(HarnessText::CiResponseContract);
-        let prompt = prompt.finish()?;
+        let prompt = build_ci_triage_prompt(repo, run_id, branch, commit_sha, workflow_name, logs)?;
 
         let output = self.run_agy_prompt(&prompt, working_dir).await?;
         let json_candidate = extract_json_block(&output);
@@ -206,6 +218,35 @@ impl CiTriager {
 
         turn.into_result()
     }
+}
+
+fn build_ci_triage_prompt(
+    repo: &str,
+    run_id: u64,
+    branch: &str,
+    commit_sha: Option<&str>,
+    workflow_name: &str,
+    logs: &str,
+) -> Result<ModelPrompt> {
+    let mut prompt = ModelPrompt::builder();
+    prompt.push_harness(HarnessText::CiPreambleAndRepository);
+    prompt.push_repository(repo)?;
+    prompt
+        .push_harness(HarnessText::CiRunId)
+        .push_u64(run_id)
+        .push_harness(HarnessText::CiCommitSha);
+    if let Some(commit_sha) = commit_sha.filter(|sha| !sha.is_empty()) {
+        prompt.push_commit_sha(commit_sha)?;
+    } else {
+        prompt.push_harness(HarnessText::CiUnknownCommitSha);
+    }
+    prompt
+        .push_harness(HarnessText::CiMetadataEnd)
+        .push_untrusted(Untrusted::new(UntrustedLabel::BranchName, branch))
+        .push_untrusted(Untrusted::new(UntrustedLabel::WorkflowName, workflow_name))
+        .push_untrusted(Untrusted::new(UntrustedLabel::CiLogs, logs))
+        .push_harness(HarnessText::CiResponseContract);
+    prompt.finish()
 }
 
 /// HTML-escapes the longest UTF-8 suffix whose escaped representation fits the

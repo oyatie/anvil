@@ -32,6 +32,7 @@ conformance, in this repo and in any repo it manages. That covers three artifact
 | H1 | Pointer-liveness check: every path/URL an ADR or doctrine page cites must resolve at the cited rev — **plus the inward-target watch**: a weekly scripted diff of oyatie's `docs/ADR-INDEX.md` (the canonical index — `docs/decisions/` holds only a redirect stub `INDEX.md`; an earlier revision of this row named `docs/decisions/ADR-INDEX.md`, which does not exist — a dead pointer inside the pointer-liveness milestone, caught by external review and kept here as this check's second seed) and the `docs/decisions/` ADR-07xx set (this is the H1 mechanism behind roadmap §5's "oyatie layout law moves" tripwire and WS-01's weekly re-measurement; the full conformance engine takes over at H2-10) | seeded dead pointer red; ADR-0006's dead citation caught by the check on its first run (the live defect is the seed); the watch job's weekly artifact exists and a seeded ADR-INDEX change opens a ticket | Docs |
 | H1 | ADR freshness: `last_verified_at` older than policy on a `canonical_authority: true` page is a finding; ADR-0005's toolchain claim corrected through DocGuard's honest-page path | drift census = 0 on anvil after the sweep; recurrence caught weekly | Docs |
 | H1 | Harness-instruction template v1: canonical `CLAUDE.md`/`AGENTS.md` law (from this commission's research: instruction-source discipline, batched-interview/defaults pattern for commissions, prove-a-check, measure-don't-trust) versioned in-repo; anvil adopts it | template exists; anvil's root files match template + declared delta (drift check green, seeded drift red) | Docs |
+| WS14-H1b | **The plan is not exempt from the plan.** Two gaps measured at `6128284`: (a) `corpus_sync::OWNED` is `["README.md", "docs/doctrine.md", "openapi/openapi.yaml"]` plus `docs/adr`+`docs/decisions` (`src/doc_guard/corpus_sync.rs:23`), so `docs/plan/` is outside the perimeter that amends published gate counts — this plan states 73/72/64 and would silently go stale when `TOTAL_GATES` moves, while README and doctrine are corrected; (b) 22 milestone IDs are duplicated between the roadmap and `ws-*` files, the structural cause of ~half of all review findings | `docs/plan/` inside the owned perimeter (or an equivalent that amends its gate-count claims), proven by seeding a `TOTAL_GATES` change and asserting a plan page is rewritten; **and** a milestone-table drift check: for every ID in both files, title and horizon must agree and the `ws-*` row is authority for the rest — seeded with a divergent owner and shown red | Docs |
 | H2-10 | Conformance engine v1 across the fleet: weekly `ConformanceReport` per managed repo; drift auto-opens tickets (cockpit) | three repos reporting weekly; a seeded drift in console opens a ticket end-to-end | Docs |
 | H3 | Onboarding path: a new managed repo receives template + shape spec + conformance schedule as one codemod run (with WS-02) | onboarding drill produces first green report in ≤1 week | Implementation |
 
@@ -39,6 +40,12 @@ conformance, in this repo and in any repo it manages. That covers three artifact
 
 - Doc-parity fails closed (ADR-0002 honesty law): a page DocGuard cannot amend honestly is a red,
   not a skip.
+- Milestone-table drift check (`WS14-H1b`): a roadmap row disagreeing with its `ws-*` twin is
+  merge-blocking, so the next divergence cannot be written — the four review passes that each
+  hand-reconciled these tables are the evidence that a manual convention does not hold.
+- Ownership ratchet: a normative claim (gate count, ruleset state, baseline) added to a page
+  outside the amendable perimeter fails the check — an unowned claim is one that goes stale in
+  silence, which is invariant I1 wearing a document.
 - Pointer-liveness and freshness run on self **and** tenants from the same entrypoints — the
   self-exemption spelling does not exist.
 - Template drift: harness files diverging from template+delta is merge-blocking in the managed repo

@@ -1,5 +1,25 @@
 # RULESET — H1-9, specified and NOT applied
 
+> ## DECISION, 2026-09-01 (Jason): NOT YET, AND NOT ON A SCHEDULE
+>
+> The ruleset change is **not** the step after `SETUP.md`. It is gated on an
+> observation: that the App demonstrably leaves reviews under **its own identity**,
+> watched over time rather than declared once.
+>
+> The reason is a genuine unknown, and this document should not pretend otherwise.
+> GitHub's ruleset docs describe `required_approving_review_count` in terms of
+> "people with write permissions" and code owners, and say nothing about whether a
+> GitHub App's `APPROVE` counts toward it. That question is not answerable from the
+> documentation, and guessing it wrong in either direction is expensive: guess that
+> App approvals count and the gate may be unsatisfiable; guess that they do not and
+> the gate may be satisfiable by the very actor it exists to constrain.
+>
+> So it is measured instead. This is the trust ratchet the plan already specifies,
+> applied to the *mechanism* rather than to an agent: earn the rung with evidence,
+> do not declare it.
+>
+> **The observation, and what discharges it — see §2a.**
+
 > ## PRECONDITION: THE APP MUST EXIST AND THE DAEMON MUST RUN AS IT
 >
 > Do not run the command in §3 until `SETUP.md` is complete **and**
@@ -145,6 +165,51 @@ interim, add a scoped `bypass_actors` entry (repository admin, `bypass_mode: pul
 rather than lowering the count — a bypass is visible in the ruleset and in the merge's
 provenance; a lowered count is not. `bypass_actors` is `[]` today and should return to
 `[]`.
+
+---
+
+## 2a. The observation that gates §3
+
+Nothing in §3 is run until every line below holds. None of it requires the ruleset
+to be enabled — that is the point: the property is observable **before** it is
+relied upon.
+
+**O1 — the App's review is attributed to the App.** After the App submits a review,
+its author is the App's own principal, not a human's:
+
+```
+gh api repos/oyatie/anvil/pulls/<N>/reviews \
+  --jq '.[] | {user: .user.login, type: .user.type, state}'
+```
+
+Every Anvil-submitted review must show `type: "Bot"` and a login ending `[bot]`.
+A single row reading `jason931225` means the migration is incomplete, whatever
+`SETUP.md` reported.
+
+**O2 — it holds over time, not once.** At least **10 reviews across at least 14
+days**, on real pull requests, with zero misattributions. One successful review
+proves the call worked; it does not prove the identity is stable across token
+refresh, re-installation, or the paths in `CODE-CHANGES.md` that were not exercised
+that day.
+
+**O3 — the reviewer and the reviewed are different principals.** Over the same
+window, a review Jason leaves and a review Anvil leaves are distinguishable by
+principal alone, and the fixer answers the first and not the second — the seeded
+pair in `CODE-CHANGES.md` §2, re-run at the end of the window rather than only at
+the start.
+
+**O4 — the open question is answered by observation, not by reading.** Whether an
+App approval counts toward `required_approving_review_count` is settled empirically
+on a throwaway branch with its own ruleset, never by first enabling it on `dev`.
+
+**If O1–O4 hold**, §3 is a decision Jason takes with the evidence in hand, recorded
+in the decision registry. **If any fails**, §3 stays unapplied and the failure is the
+finding — the mechanism in §2 (`require_code_owner_review`, which an App cannot
+satisfy because code owners must be users or teams) exists precisely so the gate does
+not depend on O4's answer.
+
+Until then `required_approving_review_count` stays **0**. Zero tells the truth about
+itself; a gate satisfied by the actor it gates does not.
 
 ---
 

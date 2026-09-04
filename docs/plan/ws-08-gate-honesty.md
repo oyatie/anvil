@@ -10,8 +10,14 @@
 2. **Proxy gates** (#59): 59 of 64 evaluated gates decide by inspecting the diff string in-process;
    5 invoke real tooling. Source text as a proxy for behaviour — cheap, mostly right, silent when
    wrong.
-3. **Fabricated inputs** (#53): daemon timers evaluating literals (`tests::flaky_test`), fleet
-   summaries publishing `"HEAD"` and zeros nobody measured.
+3. **Fabricated inputs** (#53, #200): daemon timers evaluating literals (`tests::flaky_test`),
+   fleet summaries publishing `"HEAD"` and zeros nobody measured; `aggregate_fleet_overview`
+   replacing every failed query with a healthy literal — a fabricated DORA snapshot on error
+   (whose `change_failure_rate_percent: 1.4` regenerates the exact 98.6% figure this module's own
+   doc comment says it removed), `unwrap_or_default()` open-PR counts, `unwrap_or(0)` queue depth —
+   making the dashboard's em-dash path unreachable in production (#200, filed 2026-09-01; its sites are the H1 drain's newest
+   seeds — per prove-a-check, each failing query is seeded and the surface shown reporting absence
+   before the fix is trusted).
 
 These are one root pattern (a proxy trusted as the thing), so the fix is class-level: change the
 types so the defect has no spelling, then drain the instances against a ratchet. Never one more

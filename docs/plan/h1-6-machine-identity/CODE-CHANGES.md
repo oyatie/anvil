@@ -337,11 +337,15 @@ claiming more than it checks.
 absence, and the reasoning there is right: opening a pull request needs only
 `pull-requests: write`.
 
-**The allow-list is unaffected.** `tests/promotion_ladder_test.rs:181-196` allow-lists
-exactly `github.rest.pulls.list`, `github.rest.pulls.create`,
-`github.rest.repos.compareCommitsWithBasehead` inside the inline script. A new *step*
-adds no `github.` call, and `inline_script` (`:90`) asserts there is exactly one
-`script: |` block — so do not add a second inline script.
+**The token is not an open-only capability.** `pull-requests: write` also authorizes merge
+endpoints. A dot-form scan for `github.rest.*` is not a security boundary: bracket access,
+optional chaining, destructuring, `fetch`, and other JavaScript forms evade it. The durable
+ratchet in `tests/promotion_ladder_test.rs` therefore fingerprints the exact YAML-parsed
+`github-script` body and separately inventories its three reviewed canonical calls:
+`github.rest.pulls.list`, `github.rest.pulls.create`, and
+`github.rest.repos.compareCommitsWithBasehead`. Any executable change must update the
+fingerprint in review; the inventory remains explanatory rather than pretending to attenuate
+the credential.
 
 ### 7b. Same defect, not yet observed: `.github/workflows/toolchain-weekly.yml`
 

@@ -35,10 +35,11 @@ nobody hears; it normalizes red and buries real signal. The class-level fix is a
 - Promotion rungs never skip: `promotion-predecessor` fails a base whose head is not its
   predecessor, and the staging/canary/production ruleset **already requires it**
   (`gh api repos/oyatie/anvil/rulesets/21064983` → `required_status_checks:
-  [promotion-predecessor]`). The workflow's own PR-body text still claims "no branch here is
-  protected, so that check is advisory until one requires it" — stale prose contradicting the live
-  ruleset, which is a doc-drift instance for WS-14's pointer/claim-liveness sweep; H1-11 corrects
-  the template. The ratchet here: the requirement stays, and `strict_required_status_checks_policy`
+  [promotion-predecessor]`). The former PR-body text claimed "no branch here is protected, so that
+  check is advisory until one requires it" — stale prose that contradicted the measured ruleset.
+  H1-11 removes that mutable configuration claim: the template now defers merge eligibility to the
+  repository rules and required checks in force when eligibility is evaluated. The ratchet here:
+  the requirement stays, and `strict_required_status_checks_policy`
   (currently `false` on that ruleset) is revisited by registry ticket once promotion PRs flow.
 
 ## Non-goals

@@ -31,8 +31,14 @@ fi
 # `corpus_sync::OWNED` with no test reading it -- so a docs-only push passed
 # through this hook AND through CI untouched. Seven consecutive docs-only
 # pushes on #207/#209 carried six wrong published numbers to the remote that
-# way, each found afterwards by a reviewer doing by hand what this does in
-# milliseconds.
+# way, each found afterwards by a reviewer.
+#
+# Cost, measured rather than asserted: ~40ms once the harness is built, but a
+# full cold build (1m08s on a fresh worktree) when it is not -- and a docs-only
+# push is exactly when the tree may be cold, because nothing else here compiles
+# it. That breaks the "seconds once warm" promise the block below makes, for
+# the docs-only path only, and is the stated price of catching the class before
+# it reaches the remote rather than after.
 if git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'docs/plan/' | grep -q .; then
   echo "[pre-push] published commands reproduce their numbers..."
   set +e

@@ -5,10 +5,10 @@
 # pull request; it contains no merge, approval, or ref-write operation.
 #
 # The repository-scoped App token asks only for `contents: read` and
-# `pull-requests: write`. The read grant prevents this token from pushing or
-# deleting refs, but the pull-request grant inherently also authorizes merge
-# endpoints. It is not an "open only" capability. Repository rules decide what
-# can merge and may change independently of this file. The executable script is
+# `pull-requests: write`. REST merge endpoints require `contents: write`, so
+# this token cannot push, delete refs, or REST-merge. Its pull-request grant
+# still permits PR and review mutation, and repository rules remain an external
+# defense that may change independently of this file. The executable script is
 # fingerprinted in `tests/promotion_ladder_test.rs`, so every code-path change --
 # including alternate JavaScript access syntax -- requires an explicit ratchet
 # update and review rather than slipping past a partial API-call scanner.

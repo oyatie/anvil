@@ -1,12 +1,44 @@
 #!/bin/sh
 # Staged *.rs: rustfmt --check on that file list. Also refuse agent-dir
-# and gitignored paths in the index.
+# and gitignored paths in the index, and paths outside a declared run scope.
 set -eu
 if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
 if [ -n "$(git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' || true)" ]; then
   echo "pre-commit: staged path under an agent directory" >&2
   git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' >&2
   exit 1
+fi
+# Run scope. `.anvil/run-scope` lists the path prefixes a milestone run may
+# write, one per line, and is written by whoever commissions the run. It is
+# gitignored and exists only while a run is in flight, so ordinary work sees no
+# constraint at all -- the check is absent, not permissive.
+#
+# This is a git hook rather than a harness setting on purpose. The rule has to
+# hold for every agent that touches this repository -- claude, codex, cursor,
+# grok, agy, one not written yet, or a human -- and only the commit is common to
+# all of them. A policy expressed in one harness's config is a policy the other
+# harnesses never see, and enumerating the writing verbs (cp, dd, mv, install,
+# a shell redirect, python -c) is a closed list that goes stale in silence.
+# Gating the artifact instead of the actor closes the whole class at once.
+scope_file=".anvil/run-scope"
+if [ -f "$scope_file" ]; then
+  outside=""
+  for f in $(git diff --cached --name-only --diff-filter=ACMR); do
+    ok=""
+    while IFS= read -r prefix; do
+      case "$prefix" in ''|'#'*) continue ;; esac
+      case "$f" in $prefix|$prefix*) ok=1; break ;; esac
+    done < "$scope_file"
+    [ -n "$ok" ] || outside="$outside $f"
+  done
+  if [ -n "$outside" ]; then
+    echo "pre-commit: staged path outside the declared run scope ($scope_file):" >&2
+    for f in $outside; do echo "  $f" >&2; done
+    echo "pre-commit: in scope for this run:" >&2
+    sed 's/^/  /' "$scope_file" >&2
+    echo "pre-commit: widen the scope deliberately, or stage only what the run authorises." >&2
+    exit 1
+  fi
 fi
 git diff --cached --name-only --diff-filter=ACM | while IFS= read -r f; do
   [ -z "$f" ] && continue

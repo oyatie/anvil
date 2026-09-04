@@ -26,29 +26,37 @@ ambiguity in a new place."
 
 **Registry state, measured 2026-09-04** (`cat src/fidelity/registry/entries_*.rs | grep -oE 'fidelity: Fidelity::[A-Za-z]+' | sort | uniq -c`):
 73 entries — 42 `Heuristic`, 22 `Aspirational`, 7 `Partial`, **2 `Measured`**. Of the 73, 36 carry
-`blocked_on: None` (promotable with work alone) and 37 are blocked. The 37 blocker strings are
-pairwise distinct, but **distinct strings are not disjoint dependencies** — a keyword pass over the
-same 37 shows shared capabilities: `telemetry` in 4, `deploy` in 4, and `prometheus`, `opentelemetry`,
-`canary` and `signing` in 3 each. One reachable Prometheus/OTel endpoint therefore unblocks several
-rows at once, and the blocked set should be scheduled by shared capability, not one ticket per gate
-(doctrine: measure overlap before claiming disjoint — an earlier draft of this section claimed the
-blockers were disjoint on exact-string distinctness alone, which is the same proxy error the
-workstream drains).
+`blocked_on: None` (promotable with work alone) and 37 are blocked.
 
-The gap field carries a second signal, and it is softer than a count implies, so the instrument is
-stated with it. Classifying the 73 `gap` strings by phrase match: under a narrow pattern
-(`regex|substring|grep|keyword|string`) **26** describe a string decision standing in for the named
-instrument and **10** (`hardcod|hard-cod|constant`) describe a fixed result; under a broader phrase
-set those rise to ~30 and ~31. **The two sets overlap under every pattern tried** (3 gates narrow,
-13 broad), so they are a signal about the drain's shape — one dominant cause rather than seventy
-independent ones — and explicitly not a partition of the corpus. Any number published from this
-field must carry the pattern that produced it.
+**The proxy-gate count is that typed field, not a scan of prose.** `Fidelity::Heuristic` is
+*defined* at `src/fidelity/mod.rs:55-58` as "a proxy signal -- a regex, a line count, a filename
+match", so the count above already **is** the proxy census: **42 of 73**, from the same command, no
+further derivation. Earlier drafts classified the free-text `gap` field with a regex and
+published counts from it instead -- three times, all three wrong: the published pattern returned
+34/11/5 while the text claimed 26/10/3 (that pair comes from an unstated word-boundary form, which
+silently drops six genuine members whose gap text pluralises "regexes"/"substrings"); a second pair
+shipped with no pattern at all; and the two sets were never disjoint under any pattern tried. The
+lesson is this workstream's own -- a number derived from prose by regex is a proxy, and the typed
+field beside it was the thing all along. **No count from the `gap` field is published here.**
+
+**The blocked set schedules by shared capability, not one ticket per gate.** The 37 blocker strings
+are pairwise distinct, but distinct strings are not disjoint dependencies. Counted case-insensitively
+over the `blocked_on` values (`prometheus` and `opentelemetry` return 0 under a case-sensitive grep,
+so the fold is load-bearing and stated): `telemetry` 4, `deploy` 4, `prometheus` 3, `opentelemetry` 3,
+`canary` 3, `signing` 3. Read in full, those three Prometheus rows want different things -- one names
+only "a reachable Prometheus or OpenTelemetry endpoint", while the other two also require a canary
+deployment, one noting "this crate has no HTTP client to reach one with". So an endpoint is a
+**shared prerequisite of three rows**, not something that unblocks them: exactly one of the three is
+unblocked by the endpoint alone. Keyword co-occurrence is itself a proxy for a dependency, used here
+to group the drain and never to assert that a capability closes a row.
 
 A second measured item, because it changes sequencing: the drift ledger is **computed in
 production and then dropped**. `gap_report` calls `drift::against_the_proof_ledger()`
 (`src/fidelity/mod.rs:181`), which is a non-`cfg(test)` function — the "0 drifting by construction"
-defect was fixed in `7aceff9` (2026-08-29) and `tests/the_scorecard_stops_printing_zero_drifting_test.rs:29`
-now asserts `drift: Vec::new()` cannot return. What remains is that nothing publishes the result:
+defect was fixed in `7aceff9` (2026-08-29) and `tests/the_scorecard_stops_printing_zero_drifting_test.rs:27-28`
+asserts the literal `drift: Vec::new()` is absent from the source -- a text scan, so it proves the
+literal is not *written*, not that empty cannot be *returned*; the runtime path is exercised at
+`tests/fidelity_drift_ratchet_test.rs:57`, which calls `against_the_proof_ledger()` for real. What remains is that nothing publishes the result:
 `src/publish/scorecard.rs:309` is the only production `gap_report` caller and reads `.unaudited`
 only, and `GapReport::summary()` — the one place that renders `drift.len()` — has no production
 caller. So drift is measured and unread, which is a weaker defect than a dead ledger but the same
@@ -83,8 +91,15 @@ the function beneath it. "Measured, not quoted" governs state claims, not only c
 | H1→H2 | Gate drain: each of the 59 in-process gates either (a) becomes an M2 rule invoking its real instrument, (b) is re-labeled to claim only what it checks (honest-names line), or (c) is deleted per ARCHITECTURE.md §8's ~10,600-line delete list | census trend + delete-list burndown, both charted from CI artifacts | Architecture |
 | H1-15 | **Finding disposition captured**: every finding a gate emits carries an outcome (fixed / dismissed / ignored), on the M3 `Finding` type rather than a side table | a gate whose findings carry no disposition fails registration; disposition queryable per gate over real PRs | Architecture |
 | H1-16 | **Usefulness ratio + disable threshold** (Tricorder's rule): dismissed / total per gate, measured on real PRs; a gate over threshold is **disabled**, not annotated | threshold stated in the registry; a seeded all-dismissed gate trips the disable path; disable is exercised at least once against a real gate | Quality sign-off |
-| H1-17 | **`KANI_STATUS` promoted by invoking Kani**, not by linting for `// SAFETY:`. Domain is **anvil's own tree**, not the reviewed diff: `git grep -nE 'unsafe (fn\|impl\|\{\|trait)' -- src` = 4 hits, all fixtures or prose, so the surface is empty today and the honest first outcome is `Withheld`/`NothingToMeasure` from a gate that really ran, not a green from a lint. Kani over an arbitrary contributor's repo is a separate, much larger piece of work and is **not** this milestone | Kani installed and invoked in anvil's CI; a seeded `unsafe` block with real UB fails the gate (proving the instrument on a surface deliberately created for it); empty surface reports `Withheld`, never `Passed`; registry row moves `Heuristic` → `Measured` only once a `proof.rs` entry names that seed | Implementation |
+| H1-17 | **`KANI_STATUS` promoted by invoking Kani**, not by linting for `// SAFETY:`. Domain is **`src/`** -- not the reviewed diff, and not the whole tree. Over `src/` the unsafe surface is 4 hits, all fixtures or module prose, so it is empty today (command in the note below this table: pipes in an inline regex do not survive a markdown cell, and printed inside one it returns 0 -- which would agree with the conclusion, so the broken form could not have expressed a failure). Over the whole tree there are 30 hits, ~10 real `unsafe { std::env::set_var(..) }` blocks in tests -- Rust-2024 ceremony, not proof obligations, so they widen the domain without adding a Kani target and the honest first outcome is `Withheld`/`NothingToMeasure` from a gate that really ran, not a green from a lint. Kani over an arbitrary contributor's repo is a separate, much larger piece of work and is **not** this milestone | Kani installed and invoked in anvil's CI; a seeded `unsafe` block with real UB fails the gate (proving the instrument on a surface deliberately created for it); empty surface reports `Withheld`, never `Passed`; registry row moves `Heuristic` → `Measured` only once a `proof.rs` entry names that seed | Implementation |
+| H1-18 | Horizon budget ratified: a `Measured`-share target **and** a usefulness-ratio threshold (two different operands, one ticket). Blocked on H1-15 | registry ticket exists and names both numbers against the measured 2/73 baseline; the stop condition is a predicate over those two numbers, evaluated in CI; a seeded over-budget state halts the drain | Human ticket queue (Jason ratifies) |
 | H2 | Admission at target: `admission_refusal()` the only door (diagnostic `is_admissible()` retired or renamed per its weaker semantics) | one admission door (grep-level assertion + behavioural test); weekly admissibility count ≥ 1 sustained | Quality sign-off |
+
+**H1-17's command**, outside the table so its regex survives:
+
+```
+git grep -nE 'unsafe (fn|impl|\{|trait)' -- src   # 4 hits, all fixtures or module prose
+```
 
 ## Ratchets
 
@@ -115,20 +130,20 @@ budget is met the drain **stops** and capacity returns to delivery, rather than 
 gates because promotion is available.
 
 **The rule is not decidable yet, and saying so is the point.** No number is stated here, and none is
-invented: per ledger A-3 thresholds are ratified by Jason on an evidence ticket, not chosen by the
-drafter. Until that ticket exists a machine cannot tell whether the drain should stop, so this rule
+invented: ledger A-3 puts *tier promotions* on a Jason-ratified evidence ticket, and
+this extends that mechanism to a gate-honesty threshold -- an extension of A-3, not a quotation of
+it, and owed a ledger row of its own if it stands. Until that ticket exists a machine cannot tell whether the drain should stop, so this rule
 is an aspirational claim of exactly the kind this workstream drains — recorded as such rather than
 presented as a control. **H1-18** closes it: the horizon budget is set by ratified ticket, with the
-baseline being the measured 2/73, and both this rule and H1-16's deferred threshold resolve to that
-one number so the same operand is not deferred twice.
+baseline being the measured 2/73, and one ticket sets **both** operands together -- a corpus-level
+`Measured`-share target and a per-gate usefulness ratio, which are different numbers -- so the two
+deferrals resolve on one ratification instead of drifting apart. H1-18 cannot start before H1-15:
+a usefulness ratio has nothing to measure until findings carry a disposition.
 
-| ID | Milestone | Exit criterion | Owner |
-|---|---|---|---|
-| H1-18 | Horizon budget ratified: a `Measured`-share target and a usefulness-ratio threshold, one ticket, one operand shared with H1-16 | registry ticket exists and names both numbers against the 2/73 baseline; the drain's stop condition is machine-checkable against them; a seeded over-budget state halts the drain in CI | Human ticket queue (Jason ratifies) |
 
 **Evidence gap, recorded rather than papered over:** the error-budget practice is foundational SRE
 (2016-vintage), and a search for a source inside the commission's six-month window returned only
-undated vendor pages and two posts whose URLs date them before the window opens. No in-window citation
+undated vendor pages and two posts whose URLs date them 2026-01-30 and 2026-02-20, both before the window opens. No in-window citation
 is therefore recorded in `research.md` for this item, and it is carried here as a design decision
 with its provenance named. If it is later ratified as roadmap doctrine it needs a decision-log row,
 not a silent promotion to "researched".

@@ -231,9 +231,11 @@ fn app_tokens_are_sha_pinned_repo_scoped_and_explicitly_attenuated() {
         ]);
         assert_eq!(
             actual, expected,
-            "{workflow_name}: App-token inputs must be exact. Omitting either permission-* input \
-             inherits the App installation's full permissions; owner/repositories would widen \
-             the token beyond the current repository."
+            "{workflow_name}: App-token inputs must be exact. With no permission-* inputs the \
+             action would inherit every permission granted to the App installation; these \
+             explicit inputs attenuate it. owner/repositories stay absent so the action defaults \
+             to the current repository. Explicitly naming only that repository would not widen \
+             scope, but omission is pinned so any new scope declaration is review-visible."
         );
     }
 }

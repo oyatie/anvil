@@ -86,8 +86,8 @@ milestone text (`ws-05 "Enlist doors driven behaviourally (#52)"`). Of 43 H1 row
 bare `H1-<n>` id, so a bare number usually does not identify one:
 
 ```
-grep -chE '^\| *H1-[0-9]+ *\|' docs/plan/ws-*.md | paste -sd+ - | bc     #= 8
-grep -chE '^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|' docs/plan/ws-*.md | paste -sd+ - | bc   #= 43
+count '^\| *H1-[0-9]+ *\|' in docs/plan/ws-*.md     #= 8
+count '^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|' in docs/plan/ws-*.md   #= 43
 grep -rnE '^\| *H1 *\|' docs/plan/ws-*.md        # the 7 bare-H1 rows, listed
 ```
 

@@ -4,13 +4,14 @@
 # work lands there. This file OPENS pull requests. It never merges one, never
 # approves one, and never pushes to a rung.
 #
-# `contents: read` is not what holds that. It stops a push to a rung and a
-# branch deletion; it stops no merge at all, because `pulls.merge`,
-# `mergePullRequest` and `enablePullRequestAutoMerge` each run on
-# `pull-requests: write` alone -- and with `allow_auto_merge` on and no
-# required status check on any rung, an auto-merge lands the promotion at once
-# and unreviewed. What holds it is `tests/promotion_ladder_test.rs`, which
-# allow-lists the three API calls this script may make and fails on any fourth.
+# The repository-scoped App token asks only for `contents: read` and
+# `pull-requests: write`. The read grant stops a push to a rung and a branch
+# deletion; it stops no merge at all, because `pulls.merge`, `mergePullRequest`
+# and `enablePullRequestAutoMerge` each run on `pull-requests: write` alone --
+# and with `allow_auto_merge` on and no required status check on any rung, an
+# auto-merge lands the promotion at once and unreviewed. What holds it is
+# `tests/promotion_ladder_test.rs`, which allow-lists the three API calls this
+# script may make and fails on any fourth.
 #
 # Why it exists: all three promotions to date were hand-opened, and `dev` fell
 # 43 commits behind `main` inside a single session before anyone noticed. Drift
@@ -27,9 +28,9 @@ on:
   push:
     branches: [dev, staging, canary]
 
-permissions:
-  contents: read
-  pull-requests: write
+# Every GitHub API call below receives the explicitly attenuated App token.
+# The ambient Actions token needs no repository authority.
+permissions: {}
 
 # Two pushes to the same rung in quick succession would otherwise race between
 # the "is one already open?" read and the create, and open the rung twice. This
@@ -44,18 +45,22 @@ jobs:
     name: open-next
     runs-on: ubuntu-latest
     steps:
+      # With no owner input, the action scopes the installation token to this
+      # repository. Missing credentials fail this job; there is no Actions-token
+      # or human-token fallback.
+      - name: Mint repository-scoped App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.ANVIL_APP_ID }}
+          private-key: ${{ secrets.ANVIL_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+
       - name: Open the next rung
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        env:
-          # A pull request opened by GITHUB_TOKEN does not trigger further
-          # workflow runs, so anvil-ci and promotion-predecessor would not run
-          # on it. That is a promotion nothing checked, which is worse than no
-          # promotion at all. Setting PROMOTION_PAT makes the checks run;
-          # without it this step says so loudly and the pull request body
-          # carries the manual remedy.
-          HAS_PAT: ${{ secrets.PROMOTION_PAT != '' }}
         with:
-          github-token: ${{ secrets.PROMOTION_PAT || secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const next = { dev: "staging", staging: "canary", canary: "production" };
             const head = context.ref.replace(/^refs\/heads\//, "");
@@ -88,17 +93,6 @@ jobs:
               return;
             }
 
-            const patWarning =
-              "`PROMOTION_PAT` is not set, so this pull request was opened by " +
-              "`GITHUB_TOKEN`. GitHub does not trigger workflow runs for such " +
-              "pull requests, so **anvil-ci and promotion-predecessor have not " +
-              "run on it**. Close and reopen it to trigger them, or set " +
-              "`PROMOTION_PAT`.";
-            const hasPat = process.env.HAS_PAT === "true";
-            if (!hasPat) {
-              core.warning(patWarning);
-            }
-
             const body = [
               `Automated promotion: \`${head}\` -> \`${base}\`, ${cmp.data.ahead_by} commit(s) ahead.`,
               ``,
@@ -109,9 +103,6 @@ jobs:
               `**fails** a base whose head is not its predecessor. It does not block the merge:`,
               `no branch here is protected, so that check is advisory until one requires it.`,
             ];
-            if (!hasPat) {
-              body.push(``, `> [!WARNING]`, `> ${patWarning}`);
-            }
 
             const pr = await github.rest.pulls.create({
               owner, repo, base, head,

@@ -15,9 +15,10 @@ on:
     - cron: "17 3 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
+# The channel job's pushes and pull-request creation use the explicitly
+# attenuated App token. The ambient Actions token starts with no authority;
+# nightly grants it read access only for checkout below.
+permissions: {}
 
 jobs:
   channel:
@@ -25,7 +26,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      # With no owner input, the action scopes the installation token to this
+      # repository. Missing credentials fail this job; there is no Actions-token
+      # or human-token fallback.
+      - name: Mint repository-scoped App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.ANVIL_APP_ID }}
+          private-key: ${{ secrets.ANVIL_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       # Discovered, never hardcoded. A pin that names the answer cannot notice
       # the answer changing, which is the whole failure this lane exists for.
@@ -57,7 +72,7 @@ jobs:
       - name: Open the bump
         if: steps.compare.outputs.behind == 'yes'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           LATEST: ${{ steps.compare.outputs.latest }}
           CHANNEL: ${{ steps.compare.outputs.channel }}
         run: |
@@ -83,6 +98,8 @@ jobs:
     name: nightly-canary
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
     # Advisory. Nightly breaking is information about a future stable, not a
     # defect in this tree, and it must never gate a merge.
     continue-on-error: true

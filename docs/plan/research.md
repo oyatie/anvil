@@ -3,7 +3,7 @@
 **Date:** 2026-08-31. **Method:** eight parallel fresh-context research agents (one per topic) plus one
 completeness critic, run as a dynamic workflow; every citation carries a publication or last-updated date
 the researching agent verified on the source, and the consolidated set was mechanically re-checked:
-**90 citations, all dated 2026-03-01..2026-08-31; 0 outside the window** (schema-enforced pattern plus a
+**93 citations, all dated 2026-03-01..2026-08-31; 0 outside the window** (schema-enforced pattern plus a
 post-hoc regex sweep). Sources older than six months were discarded per commission; where a foundational
 older work matters, a 2026 treatment of it is cited instead.
 
@@ -1065,3 +1065,51 @@ These are recorded so the roadmap can schedule them, not silently claim coverage
   mechanical, the date extraction is not.
 - The critic's gaps above were deliberately not back-filled in this pass (single research round per the
   commission's iteration cap); each gap is scheduled in the roadmap's research backlog.
+
+---
+
+## Proof over test for safety-critical Rust, and the governance of analyzer usefulness, state of 2026
+
+The two questions WS-08 actually faces — "when is a gate strong enough to be believed?" and "when should a gate be deleted rather than documented?" — have separate 2026 answers. On strength, AWS's Automated Reasoning line has moved bounded model checking from a research tool to per-change CI at standard-library scale: Kani now runs over 16,000 harnesses per code change against the Rust standard library, with no user annotation required for its default safety properties. That is the mature form of what Anvil's registry currently records as `KANI_STATUS` — a comment-presence lint that greps for `// SAFETY:` within five lines and never reads the comment. On governance, the 2026 literature converges on a point Google's Tricorder established a decade earlier and which Anvil has not yet mechanised: the binding constraint on an analysis platform is not coverage but *trust*, and trust is only maintained by measuring each analyzer's usefulness against developer disposition and disabling the ones that fail. A 2026 systematic survey finds that no existing system feeds human triage signals back into the analysis models at all — which is precisely the loop Anvil's fidelity registry describes honestly but does not close.
+
+### Bounded model checking as a per-change CI gate at standard-library scale
+
+**Who:** AWS Automated Reasoning Group (Kani), presented at ASE 2026 Industry Showcase; the Rust standard library verification campaign
+
+
+**Mechanism:** Kani compiles proof harnesses from Rust's MIR into CBMC's bit-precise engine and checks a comprehensive set of safety properties with no user annotation; contracts for functions and loops, quantifiers, and function stubs extend it past bounded cases. The reported deployment is per-change, not periodic: over 16,000 harnesses verified per code change in the standard-library campaign, with six previously undiscovered bugs found in industrial Rust projects.
+
+
+**Anvil implication:** For memory-safety obligations, the hyperscaler answer is a *proof*, not a sample — and the tool is the one Anvil's registry already names. `KANI_STATUS` is currently `Fidelity::Heuristic`: it lints for a `// SAFETY:` comment near an `unsafe` item and reads nothing. Promoting that single gate to `Measured` by actually invoking Kani is the highest-value promotion available in the corpus, is unblocked (`blocked_on: None`), and converts a presence check into the property it claims. It also sets the precedent for the fidelity ladder generally: `Measured` should mean "the instrument ran", and where a proof is available a proof is the instrument.
+
+
+**Sources:** [Kani: A Model Checker for Rust](https://arxiv.org/abs/2607.01504) (Delmas, Hassan, Hu, Kumar, Monteiro, Nguyen, Palacios, Val, Tautschnig, Adam, Schwartz-Narbonne, Zech; ASE 2026 Industry Showcase, arXiv, 2026-07-01)
+
+
+### Human triage signal as the missing feedback loop in program analysis
+
+**Who:** Michael Wienczkowski, systematic survey of program analysis, feedback-driven testing, and hybrid learning-based approaches
+
+
+**Mechanism:** The survey maps static/dynamic analysis, feedback-driven testing, and learning-based detection, and reports "structural-adaptive fragmentation": structural program representations (ASTs, CFGs, CPGs) sit disconnected from the adaptive mechanisms that would tune them. Its sharpest negative result is that **no surveyed system incorporates human triage signals as feedback for refining structural models** — tools emit warnings requiring manual triage, and the triage outcome never returns to the tool.
+
+
+**Anvil implication:** This is the gap between Anvil's fidelity registry and Google's Tricorder. The registry records, per gate, what it claims and where it falls short — an honest static snapshot. What it does not carry is the disposition of each finding a gate produced (fixed, dismissed, ignored), which is the only signal that distinguishes a useful heuristic from noise. Without it, a gate that invokes a real instrument and a gate that emits unactionable findings are indistinguishable in the corpus, and the drain has no way to prioritise. Disposition capture is a prerequisite for a usefulness threshold, and it belongs on the M3 `Finding` type rather than in a side table.
+
+
+**Sources:** [Adaptive and AI-Augmented Security Testing: A Systematic Survey of Program Analysis, Feedback-Driven Testing, and Hybrid Learning-Based Approaches](https://arxiv.org/abs/2604.27000) (Michael Wienczkowski, arXiv, 2026-04-29)
+
+
+### Scanner trust, not scan coverage, as the 2026 governance question
+
+**Who:** AppSec tooling analysts and vendors (vendor-adjacent source; benchmark numbers are vendor-reported and are cited as positioning, not as independent measurement)
+
+
+**Mechanism:** The 2026 framing holds that the governance gap is no longer whether code is scanned but whether findings are trustworthy and actionable: "when findings are noisy, incomplete, or hard to remediate, teams accumulate risk without reducing it", and a scanner engineers cannot use comfortably "will become a reporting exercise rather than a control". Reported untuned SAST false-positive rates sit in the 30–70% band and fall to roughly 10–20% only when tuned.
+
+
+**Anvil implication:** "A reporting exercise rather than a control" is a precise description of the failure mode Anvil's own doctrine names as a proxy trusted as the thing. It supplies the missing half of the fidelity ladder: the ladder measures whether a gate *can* be believed, and says nothing about whether its output is *worth reading*. A gate can invoke a real instrument, sit at `Measured`, and still be noise. WS-08's proxy census should therefore be paired with a usefulness ratio, and — following Tricorder's rule rather than this source's — a gate that exceeds the threshold is **disabled**, not annotated. Deletion is already representable in Anvil (ARCHITECTURE.md §8's delete list, shrink-only); what is missing is the measured trigger for it.
+
+
+**Sources:** [SAST accuracy is the real differentiator in 2026 AppSec tooling](https://nhimg.org/articles/sast-accuracy-is-the-real-differentiator-in-2026-appsec-tooling/) (NHI Mgmt Group (vendor-adjacent analysis), 2026-05-05, editorial note 2026-08-20)
+

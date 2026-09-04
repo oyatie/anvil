@@ -66,13 +66,22 @@ use std::sync::mpsc;
 
 /// Verbs that may appear in a claim. None of these can execute another program
 /// or write a file, given the argument refusal below.
+/// `sort` and `uniq` were here and are gone, each demonstrated writing:
+/// `sort -uo FILE` (and `-o/path`, `--out=`, since long options accept any
+/// unambiguous prefix), `sort --compress-program=/bin/sh` which *executes* the
+/// piped data on GNU coreutils, and `uniq INPUT OUTPUT`, which writes with no
+/// flag at all. `verbs_on_the_allowlist_cannot_write` runs the write shapes
+/// against every entry below, so the next addition has to prove itself rather
+/// than be vouched for.
 const ALLOWED: &[&str] = &[
-    "grep", "cat", "sort", "uniq", "wc", "head", "tail", "cut", "tr", "paste", "bc", "echo", "ls",
-    "true",
+    "grep", "cat", "wc", "head", "tail", "cut", "tr", "paste", "bc", "echo", "ls", "true",
 ];
 
-/// Arguments refused for every verb: `sort -o FILE` writes, and the long forms
-/// of the same idea do too.
+/// Kept as a second line of defence only. It is deliberately NOT the guard:
+/// refusing named flags is the losing game this file already warns about --
+/// `-o` misses `-uo`, `-o/path`, `--out=` and `--compress-program`, and no list
+/// reaches `uniq IN OUT`, which needs no flag. The guard is that a verb on the
+/// allowlist has been shown unable to write at all.
 const REFUSED_ARGS: &[&str] = &["-o", "--output"];
 
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -354,9 +363,16 @@ fn nothing_that_executes_or_writes_is_permitted() {
         "git worktree add /tmp/x HEAD",
         "git log --oneline -1 | git config zz.canary 1",
         "git -c core.hooksPath=/dev/null push",
-        // Writes through a verb that is otherwise read-only.
+        // Writes and exec through verbs that looked read-only. Every one of
+        // these was PERMITTED until the verb was removed; `-o` was refused
+        // while four other spellings of the same capability were not.
         "grep -c foo Cargo.toml | sort -o /tmp/written",
         "grep -c foo Cargo.toml | sort --output=/tmp/written",
+        "grep -c foo Cargo.toml | sort -uo /tmp/written",
+        "sort -o/tmp/written Cargo.toml",
+        "sort --out=/tmp/written Cargo.toml",
+        "echo touch /tmp/pwned | sort --compress-program=/bin/sh",
+        "uniq Cargo.toml /tmp/written",
         // Bare hostile verbs.
         "rm -rf /tmp/anvil-should-not-exist",
         "curl https://example.invalid",
@@ -380,6 +396,70 @@ fn nothing_that_executes_or_writes_is_permitted() {
             "refused a read-only command: {benign}"
         );
     }
+}
+
+#[test]
+fn verbs_on_the_allowlist_cannot_write() {
+    // The guard, replacing "I read the man page and it looked read-only".
+    // `sort` and `uniq` were both vouched for that way and both wrote:
+    // `sort -uo F`, `sort -o/F`, `sort --out=F`, and `uniq IN OUT`, which takes
+    // an output path positionally and so is reachable by no flag list at all.
+    // Every verb admitted here has to survive these shapes.
+    let dir = std::env::temp_dir().join("anvil-verb-write-probe");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("probe dir");
+    let input = dir.join("in.txt");
+    std::fs::write(&input, "b\na\na\n").expect("probe input");
+
+    let mut wrote = Vec::new();
+    for verb in ALLOWED {
+        for shape in [
+            vec![
+                input.display().to_string(),
+                dir.join("out").display().to_string(),
+            ],
+            vec![
+                "-o".into(),
+                dir.join("out").display().to_string(),
+                input.display().to_string(),
+            ],
+            vec![
+                format!("-o{}", dir.join("out").display()),
+                input.display().to_string(),
+            ],
+            vec!["-uo".into(), dir.join("out").display().to_string()],
+            vec![
+                format!("--out={}", dir.join("out").display()),
+                input.display().to_string(),
+            ],
+            vec![
+                format!("--output={}", dir.join("out").display()),
+                input.display().to_string(),
+            ],
+        ] {
+            let out = dir.join("out");
+            let _ = std::fs::remove_file(&out);
+            let _ = Command::new(verb)
+                .args(&shape)
+                .current_dir(&dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .output();
+            if out.exists() {
+                wrote.push(format!("`{verb} {}` created a file", shape.join(" ")));
+                let _ = std::fs::remove_file(&out);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        wrote.is_empty(),
+        "a verb on the allowlist can write a file, so document text can write \
+         one:\n  {}\nRemove the verb. Refusing the flag is not sufficient -- \
+         `uniq IN OUT` needs none.",
+        wrote.join("\n  ")
+    );
 }
 
 #[test]

@@ -6,7 +6,11 @@ text in a language whose comments and string literals mimic code; a grep countin
 ok` that could not express a failure reported a pass; a monitor whose `|| echo 0` made "not
 finished" true immediately; the path-keyed source reads across test files that go **blind, not red**, the day
 their subject file is split (`unwrap_or_default()` on the read — absent evidence published as a
-pass, invariant I1, inside the test suite itself).
+pass, invariant I1, inside the test suite itself). #199 adds the newest instance (2026-09-01):
+`tests/no_model_prompt_fences_contributor_text_by_hand_test.rs` — absent at `48cf259`, arriving
+with open PR #202 — keys on fences, so a prompt site that never had a fence — the fixer's
+write-access turn, all of `queue_healer` — scans clean; its green is the absence of backticks, not
+a measurement (the seam fix itself is WS-10's H1-5a).
 
 **Corrected by external review (2026-08-31), and the correction is itself an RC-6 instance:** the
 grep issue #179 headlined (`grep -rn 'src/[a-z_]*\.rs"' tests/*.rs | wc -l` — 332 on 2026-08-30,

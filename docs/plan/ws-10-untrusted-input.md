@@ -4,7 +4,14 @@
 decisions and model prompts. Instances found: a PR title containing `[skip review]` kept a merge
 armed; author-string `contains("bot")` decided loop-guard behaviour; `doc_guard` interpolates the
 contributor's diff into a bare markdown fence at the end of a second, hand-built prompt — forgeable
-fence, worst position (#192). #152's fix made the *reviewer's* assembly structurally safe
+fence, worst position (#192); the fixer's write-access turn interpolates the raw review comment
+into its prompt (`src/fixer/engine.rs:23-35` at `48cf259` — `git grep Untrusted -- src/fixer/` is
+empty on dev; #199's "seam applied 144 lines below" describes the #196 branch snapshot it reviewed,
+and the current #196/#202 revisions already wrap `item.body`), and `queue_healer` interpolates
+contributor branch names and merge stderr raw under the same in-workspace posture
+(`src/queue_healer.rs:262-296`) (#199 — both sites fenceless, hence invisible to a fence-keyed
+scan; that instrument half is WS-12's class, and both sites are required red seeds for H1-5a's
+meta-test). #152's fix made the *reviewer's* assembly structurally safe
 (`BEGIN/END UNTRUSTED` markers neutralized before capping; `Part::Contributor` holds only
 `Untrusted`); the class is every *other* prompt and every other control-plane read.
 

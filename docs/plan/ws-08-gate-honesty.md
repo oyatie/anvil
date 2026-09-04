@@ -31,18 +31,25 @@ ambiguity in a new place."
 **The proxy-gate count is that typed field, not a scan of prose.** `Fidelity::Heuristic` is
 *defined* at `src/fidelity/mod.rs:55-58` as "a proxy signal -- a regex, a line count, a filename
 match", so the count above already **is** the proxy census: **42 of 73**, from the same command, no
-further derivation. Earlier drafts classified the free-text `gap` field with a regex and
+further derivation.
+
+This is **not** the same number as class 2's "59 of 64", and the two must not be conflated: that
+census counts *evaluated gates deciding by in-process string inspection*, and it is what H1-3
+scripts and ratchets monotone-decreasing; this one counts *registry rows whose declared fidelity is
+`Heuristic`*. Different populations, different methods, both real — H1-3 tracks the 59, and 42/73 is
+the registry's own view of the same malpractice. Earlier drafts classified the free-text `gap` field with a regex and
 published counts from it instead -- three times, all three wrong: the published pattern returned
 34/11/5 while the text claimed 26/10/3 (that pair comes from an unstated word-boundary form, which
-silently drops six genuine members whose gap text pluralises "regexes"/"substrings"); a second pair
+silently drops seven genuine members whose gap text pluralises "regexes"/"substrings", plus one true positive of the plain form); a second pair
 shipped with no pattern at all; and the two sets were never disjoint under any pattern tried. The
 lesson is this workstream's own -- a number derived from prose by regex is a proxy, and the typed
 field beside it was the thing all along. **No count from the `gap` field is published here.**
 
 **The blocked set schedules by shared capability, not one ticket per gate.** The 37 blocker strings
-are pairwise distinct, but distinct strings are not disjoint dependencies. Counted case-insensitively
-over the `blocked_on` values (`prometheus` and `opentelemetry` return 0 under a case-sensitive grep,
-so the fold is load-bearing and stated): `telemetry` 4, `deploy` 4, `prometheus` 3, `opentelemetry` 3,
+are pairwise distinct, but distinct strings are not disjoint dependencies. Counted case-insensitively over the `blocked_on`
+values, **after joining Rust's `\`-continuations** -- 11 of the 37 strings span lines, so a
+single-line `grep -c` returns 3/2/2/2/2/1, every one of them wrong -- and the case-fold is
+load-bearing too, since `prometheus` and `opentelemetry` return 0 case-sensitively: `telemetry` 4, `deploy` 4, `prometheus` 3, `opentelemetry` 3,
 `canary` 3, `signing` 3. Read in full, those three Prometheus rows want different things -- one names
 only "a reachable Prometheus or OpenTelemetry endpoint", while the other two also require a canary
 deployment, one noting "this crate has no HTTP client to reach one with". So an endpoint is a
@@ -91,7 +98,7 @@ the function beneath it. "Measured, not quoted" governs state claims, not only c
 | H1→H2 | Gate drain: each of the 59 in-process gates either (a) becomes an M2 rule invoking its real instrument, (b) is re-labeled to claim only what it checks (honest-names line), or (c) is deleted per ARCHITECTURE.md §8's ~10,600-line delete list | census trend + delete-list burndown, both charted from CI artifacts | Architecture |
 | H1-15 | **Finding disposition captured**: every finding a gate emits carries an outcome (fixed / dismissed / ignored), on the M3 `Finding` type rather than a side table | a gate whose findings carry no disposition fails registration; disposition queryable per gate over real PRs | Architecture |
 | H1-16 | **Usefulness ratio + disable threshold** (Tricorder's rule): dismissed / total per gate, measured on real PRs; a gate over threshold is **disabled**, not annotated | threshold stated in the registry; a seeded all-dismissed gate trips the disable path; disable is exercised at least once against a real gate | Quality sign-off |
-| H1-17 | **`KANI_STATUS` promoted by invoking Kani**, not by linting for `// SAFETY:`. Domain is **`src/`** -- not the reviewed diff, and not the whole tree. Over `src/` the unsafe surface is 4 hits, all fixtures or module prose, so it is empty today (command in the note below this table: pipes in an inline regex do not survive a markdown cell, and printed inside one it returns 0 -- which would agree with the conclusion, so the broken form could not have expressed a failure). Over the whole tree there are 30 hits, ~10 real `unsafe { std::env::set_var(..) }` blocks in tests -- Rust-2024 ceremony, not proof obligations, so they widen the domain without adding a Kani target and the honest first outcome is `Withheld`/`NothingToMeasure` from a gate that really ran, not a green from a lint. Kani over an arbitrary contributor's repo is a separate, much larger piece of work and is **not** this milestone | Kani installed and invoked in anvil's CI; a seeded `unsafe` block with real UB fails the gate (proving the instrument on a surface deliberately created for it); empty surface reports `Withheld`, never `Passed`; registry row moves `Heuristic` → `Measured` only once a `proof.rs` entry names that seed | Implementation |
+| H1-17 | **`KANI_STATUS` promoted by invoking Kani**, not by linting for `// SAFETY:`. Domain is **`src/`** -- not the reviewed diff, and not the whole tree. Over `src/` the unsafe surface is 4 hits, all fixtures or module prose, so it is empty today (command in the note below this table: pipes in an inline regex do not survive a markdown cell, and printed inside one it returns 0 -- which would agree with the conclusion, so the broken form could not have expressed a failure). Scoped to code (`-- src tests`) there are 30 hits, 26 of them in `tests/` and largely Rust-2024 `env::set_var` ceremony -- not proof obligations, so they widen the domain without adding a Kani target. Unscoped the same regex returns 31, because it matches this sentence: an unscoped search that counts its own statement is the RC-6 class the roadmap logs two rows above, and the scope is the fix and the honest first outcome is `Withheld`/`NothingToMeasure` from a gate that really ran, not a green from a lint. Kani over an arbitrary contributor's repo is a separate, much larger piece of work and is **not** this milestone | Kani installed and invoked in anvil's CI; a seeded `unsafe` block with real UB fails the gate (proving the instrument on a surface deliberately created for it); empty surface reports `Withheld`, never `Passed`; registry row moves `Heuristic` → `Measured` only once a `proof.rs` entry names that seed | Implementation |
 | H1-18 | Horizon budget ratified: a `Measured`-share target **and** a usefulness-ratio threshold (two different operands, one ticket). Blocked on H1-15 | registry ticket exists and names both numbers against the measured 2/73 baseline; the stop condition is a predicate over those two numbers, evaluated in CI; a seeded over-budget state halts the drain | Human ticket queue (Jason ratifies) |
 | H2 | Admission at target: `admission_refusal()` the only door (diagnostic `is_admissible()` retired or renamed per its weaker semantics) | one admission door (grep-level assertion + behavioural test); weekly admissibility count ≥ 1 sustained | Quality sign-off |
 

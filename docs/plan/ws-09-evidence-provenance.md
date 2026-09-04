@@ -30,6 +30,7 @@ signatures take `&SubjectRoot`").
 
 ## Ratchets
 
+- **A fetch that failed may not return a value a caller can read as measured.** `github::fetch_merge_queue_depth` (`src/github/mod.rs:482-484`) converts a non-zero exit into `Ok(0)`, so an absence-aware consumer still receives a measured zero and RC-2's missing distinction is re-derived at every call site (#200). Seeded both directions: a failing `gh` invocation must surface absence, and a real zero must still read as zero. This is the fetch-boundary twin of WS-08's `Evaluated` -- absence gets a spelling at the boundary that produces it, not only at the gate that consumes it.
 - Wrong-head refusal is a standing fixture in CI (red on a seeded stale worktree).
 - The retriable-abort primitive (RC-4) replaces per-site rollbacks: anything holding merge authority
   returns an `Err` that cannot be discarded by `warn!` — enforced by type (`#[must_use]` +

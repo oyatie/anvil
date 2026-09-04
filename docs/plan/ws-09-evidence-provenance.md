@@ -5,7 +5,10 @@ fixer and certifier mutate one shared clone per repository with no repo-level lo
 can be committed and pushed onto another's branch (#149); the gate corpus reads the shared clone's
 working tree, which is never checked out at the certified head — the dependency audit audits the
 base branch, added policy files are silently skipped (#151). A build of a different commit is not
-this pull request's evidence.
+this pull request's evidence. The same class sits one layer lower (#200): `github::fetch_merge_queue_depth`
+converts a failed process into `Ok(0)`, so even an absence-aware caller receives a measured zero —
+the fetch boundary must carry its own absence, or every consumer re-derives RC-2's missing
+distinction at its own call site.
 
 `SubjectRoot` exists and is landed (built only by cloning; worktree-at-head verified by
 `rev-parse`, per ADR-0002 loop step 1). `TrunkRev` does **not** exist yet — `git grep TrunkRev
@@ -27,6 +30,7 @@ signatures take `&SubjectRoot`").
 
 ## Ratchets
 
+- **A fetch that failed may not return a value a caller can read as measured.** `github::fetch_merge_queue_depth` (`src/github/mod.rs:482-484`) converts a non-zero exit into `Ok(0)`, so an absence-aware consumer still receives a measured zero and RC-2's missing distinction is re-derived at every call site (#200). Seeded both directions: a failing `gh` invocation must surface absence, and a real zero must still read as zero. This is the fetch-boundary twin of WS-08's `Evaluated` -- absence gets a spelling at the boundary that produces it, not only at the gate that consumes it.
 - Wrong-head refusal is a standing fixture in CI (red on a seeded stale worktree).
 - The retriable-abort primitive (RC-4) replaces per-site rollbacks: anything holding merge authority
   returns an `Err` that cannot be discarded by `warn!` — enforced by type (`#[must_use]` +

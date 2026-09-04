@@ -275,12 +275,12 @@ $ gh api orgs/oyatie/actions/secrets  --jq '[.secrets[].name]'         # []
 
 so every run falls through to `GITHUB_TOKEN` and every run 403s at `pulls.create`.
 
-**Cause B — a pull request opened by `GITHUB_TOKEN` triggers no workflow runs.** The
-workflow says so itself (`:50-56`), and it matters here more than usual: ruleset 21064983
-makes `promotion-predecessor` a **required status check** on `staging` / `canary` /
-`production`. A promotion pull request that triggers no runs can never satisfy its own
-required check. Flipping only the org toggle in Cause A produces promotion pull requests
-that are permanently un-mergeable — a second broken state, not a fix.
+**Cause B — workflow runs from a pull request opened by `GITHUB_TOKEN` wait for approval.**
+For the `opened`, `synchronize`, and `reopened` events, GitHub creates workflow runs in an
+approval-required state. Until manual approval, `promotion-predecessor` cannot produce the
+result required by ruleset 21064983 on `staging` / `canary` / `production`. Flipping only the
+org toggle in Cause A therefore produces promotion pull requests whose checks wait for a
+person before they execute — a second broken state, not a fix.
 
 ### 4.2 What the App fixes
 
@@ -289,12 +289,13 @@ principal, which is neither `GITHUB_TOKEN` nor a human:
 
 - Cause A disappears — `can_approve_pull_request_reviews` governs the Actions token, not
   an App installation token.
-- Cause B disappears — events from an App-authored pull request are ordinary events, so
-  `presubmit` and `promotion-predecessor` run on it.
+- Cause B disappears — App-authored `opened`, `synchronize`, and `reopened` events let
+  `presubmit` and `promotion-predecessor` execute without manual approval.
 - The pull request is attributed to `anvil[bot]`, so a promotion is visibly a machine's
   proposal awaiting a human, which is what `ws-13` H1-11 asks for.
 
-The workflow edit is specified in `CODE-CHANGES.md` §5. It is not applied here.
+The workflow edit is specified in `CODE-CHANGES.md` §7 and implemented by H1-11. It fails
+closed until the repository variable and secret described in `SETUP.md` are present.
 
 ### 4.3 Is a PAT a valid interim?
 
@@ -390,7 +391,7 @@ $ grep -rn 'Command::new("git")' src/ --include='*.rs'     # push/clone paths
 | `metadata: read` | mandatory; implied by every other permission | — |
 | `contents: write` | the fixer and the healers commit and push to branches | `src/fixer/mod.rs:238` `git push origin HEAD:<branch>`; `src/pr_self_healer.rs:127`; `src/queue_healer.rs:443`; `src/lockfile_reconciler.rs:189`; `.github/workflows/toolchain-weekly.yml:75` |
 | ” (read half) | clone and commit reads | `src/git_manager/mod.rs:103` `git clone https://github.com/{repo}.git`; `src/github/mod.rs:448` `GET repos/{}/commits/{}`; `promotion-open-next.yml` `repos.compareCommitsWithBasehead` |
-| `pull_requests: write` | publishes reviews, replies in threads, arms and disarms auto-merge, edits bodies, opens promotion pull requests | `src/github/reviews.rs:95` `POST repos/{}/pulls/{}/reviews`; `src/merge_enlister/mod.rs:499` (the `APPROVE`); `src/github/mod.rs:377` `POST .../comments/{}/replies`; `src/merge_enlister/mod.rs:234,287` `gh pr merge --auto`; `src/merge_enlister/disarm.rs:53` `--disable-auto`; `src/merge_enlister/mod.rs:541` `gh pr edit --body`; `promotion-open-next.yml` `pulls.create`; `toolchain-weekly.yml:76` `gh pr create` |
+| `pull_requests: write` | publishes reviews, replies in threads, edits bodies, and opens pull requests | `src/github/reviews.rs:95` `POST repos/{}/pulls/{}/reviews`; `src/merge_enlister/mod.rs:499` (the `APPROVE`); `src/github/mod.rs:377` `POST .../comments/{}/replies`; `src/merge_enlister/mod.rs:541` `gh pr edit --body`; `promotion-open-next.yml` `pulls.create`; `toolchain-weekly.yml:76` `gh pr create` |
 | ” (read half) | every merge-admission read | `src/github/mod.rs:172,354,408,467,510`; `src/merge_enlister/mod.rs:374`; `src/recovery/reconciliation_sweep.rs:159`; `src/unresolved_review_guard/mod.rs:210` (GraphQL `reviewThreads`) |
 | `issues: write` | **pull-request conversation comments are issue comments in GitHub's model** — this permission is what backs `gh pr comment` and the scorecard upsert, not only literal issues | `src/github/mod.rs:266` `gh pr comment`; `src/github/mod.rs:300,323` `GET`/`PATCH repos/{}/issues/{}/comments`, `repos/{}/issues/comments/{id}` (scorecard upsert); `src/github/reviews.rs:148` fallback summary comment; `src/ci_triager.rs:207` `gh issue create`; `src/issue_reconciler/mod.rs:36,89` `gh issue list` / `gh issue comment` |
 | `actions: read` | reads failing CI logs and run history; backs the `workflow_run` subscription | `src/ci_triager.rs:74` `gh run view --log-failed`; `src/github/mod.rs:570` `gh run list` (change-failure-rate) |

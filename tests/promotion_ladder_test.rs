@@ -176,9 +176,10 @@ fn the_opener_triggers_on_exactly_the_rungs_that_can_advance() {
 fn the_opener_has_no_ref_write_and_its_reviewed_script_is_pinned() {
     let src = workflow("promotion-open-next.yml");
 
-    // This is a real capability boundary for refs: the token cannot push or
-    // delete one. It is NOT a merge boundary. Creating a pull request requires
-    // `pull-requests: write`, and that same grant also authorizes merge APIs.
+    // REST merge endpoints require `contents: write`; this contents-read token
+    // therefore cannot push, delete a ref, or REST-merge. `pull-requests: write`
+    // still permits PR and review mutation, which keeps the executable script
+    // worth pinning exactly.
     assert!(
         src.contains("permission-contents: read"),
         "promotion-open-next.yml must request `permission-contents: read`"
@@ -193,9 +194,9 @@ fn the_opener_has_no_ref_write_and_its_reviewed_script_is_pinned() {
     assert_eq!(
         script_fingerprint(&script),
         REVIEWED_OPENER_SCRIPT_SHA256,
-        "promotion-open-next.yml's executable script changed. `pull-requests: write` can merge, \
-         so every script change needs line-by-line review and a deliberate fingerprint update. \
-         The fingerprint is a change-detection boundary, not permission attenuation."
+        "promotion-open-next.yml's executable script changed. REST merge endpoints require \
+         `contents: write`, which this token lacks, but PR-write still grants mutation authority. \
+         Every script change needs line-by-line review and a deliberate fingerprint update."
     );
 
     // This inventory makes the manually reviewed surface legible. The
@@ -218,26 +219,28 @@ fn the_opener_has_no_ref_write_and_its_reviewed_script_is_pinned() {
 }
 
 #[test]
-fn alternate_javascript_authority_paths_trip_the_script_fingerprint() {
+fn alternate_javascript_pr_mutations_trip_the_script_fingerprint() {
     let script = inline_script(&workflow("promotion-open-next.yml"));
     let old_inventory = dot_form_api_inventory(&script);
     let alternates = [
         (
             "bracket access",
-            format!(r#"{script}\nawait github["rest"]["pulls"]["merge"]({{}});"#),
+            format!(r#"{script}\nawait github["rest"]["pulls"]["update"]({{}});"#),
         ),
         (
             "optional chaining",
-            format!("{script}\nawait github?.rest?.pulls?.merge({{}});"),
+            format!("{script}\nawait github?.rest?.pulls?.update({{}});"),
         ),
         (
             "destructured alias",
-            format!("{script}\nconst {{ rest }} = github; await rest.pulls.merge({{}});"),
+            format!("{script}\nconst {{ rest }} = github; await rest.pulls.update({{}});"),
         ),
         (
             "direct fetch",
             format!(
-                "{script}\nawait fetch('https://api.' + 'github' + '.com/repos/o/r/pulls/1/merge');"
+                "{script}\nconst token = core.getInput('github-token'); \
+                 await fetch('https://api.' + 'github' + '.com/repos/o/r/pulls/1', \
+                 {{ method: 'PATCH', headers: {{ authorization: 'Bearer ' + token }} }});"
             ),
         ),
     ];

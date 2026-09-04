@@ -39,6 +39,15 @@ fn workflow(name: &str) -> (String, Value) {
     (body, doc)
 }
 
+fn repo_text(path: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} must exist: {e}", path.display()))
+}
+
+fn normalized_words(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn job_steps<'a>(doc: &'a Value, workflow: &str, job: &str) -> &'a Vec<Value> {
     doc["jobs"][job]["steps"]
         .as_sequence()
@@ -317,5 +326,149 @@ fn missing_app_credentials_cannot_skip_token_minting() {
             step["continue-on-error"].is_null(),
             "{workflow_name}: App-token minting must fail the job when credentials are absent or invalid"
         );
+    }
+}
+
+#[test]
+fn promotion_claims_the_established_merge_permission_boundary() {
+    let claims = [
+        (
+            ".github/workflows/promotion-open-next.yml",
+            repo_text(".github/workflows/promotion-open-next.yml"),
+        ),
+        (
+            "tests/promotion_ladder_test.rs",
+            repo_text("tests/promotion_ladder_test.rs"),
+        ),
+        (
+            "docs/plan/h1-6-machine-identity/CODE-CHANGES.md",
+            repo_text("docs/plan/h1-6-machine-identity/CODE-CHANGES.md"),
+        ),
+    ];
+    for (path, claim) in claims {
+        let claim = claim.to_ascii_lowercase();
+        for stale in [
+            "inherently also authorizes merge",
+            "same grant also authorizes merge APIs",
+            "`pull-requests: write` can merge",
+            "`pull-requests: write` also authorizes merge",
+        ] {
+            assert!(
+                !claim.contains(stale),
+                "{path} repeats the stale permission claim {stale:?}"
+            );
+        }
+        assert!(
+            claim.contains("rest merge endpoints require `contents: write`"),
+            "{path} must state the established REST merge permission boundary"
+        );
+    }
+
+    let readme = repo_text("docs/plan/h1-6-machine-identity/README.md");
+    let pull_permission_row = readme
+        .lines()
+        .find(|line| line.starts_with("| `pull_requests: write` |"))
+        .expect("README App permission table must retain its pull_requests: write row");
+    for unsupported in ["auto-merge", "gh pr merge", "--disable-auto"] {
+        assert!(
+            !pull_permission_row.contains(unsupported),
+            "README attributes {unsupported:?} to pull_requests: write without direct support: \
+             {pull_permission_row}"
+        );
+    }
+}
+
+#[test]
+fn documented_app_token_example_is_explicitly_attenuated_and_repo_scoped() {
+    let doc = repo_text("docs/plan/h1-6-machine-identity/CODE-CHANGES.md");
+    let marker = "uses: actions/create-github-app-token@<pin-by-sha>";
+    let after_marker = doc
+        .split_once(marker)
+        .expect("CODE-CHANGES must retain the App-token example")
+        .1;
+    let example = after_marker
+        .split_once("```")
+        .expect("App-token example fence must close")
+        .0;
+
+    for input in [
+        "app-id: ${{ vars.ANVIL_APP_ID }}",
+        "private-key: ${{ secrets.ANVIL_APP_PRIVATE_KEY }}",
+        "permission-contents: read",
+        "permission-pull-requests: write",
+    ] {
+        assert!(
+            example.contains(input),
+            "documented App-token example omits required input {input:?}"
+        );
+    }
+    let permission_inputs: Vec<&str> = example
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("permission-"))
+        .collect();
+    assert_eq!(
+        permission_inputs,
+        [
+            "permission-contents: read",
+            "permission-pull-requests: write",
+        ],
+        "documented App-token example must request exactly the reviewed permissions"
+    );
+    for wider_scope_input in ["owner:", "repositories:"] {
+        assert!(
+            !example.contains(wider_scope_input),
+            "documented App-token example must omit {wider_scope_input} so it defaults to the \
+             current repository"
+        );
+    }
+}
+
+#[test]
+fn github_token_pr_event_docs_describe_the_approval_hold_not_absent_runs() {
+    let code_changes = repo_text("docs/plan/h1-6-machine-identity/CODE-CHANGES.md");
+    let code_claim = code_changes
+        .split_once("That warning describes obsolete behavior:")
+        .expect("CODE-CHANGES must explain why the old warning was removed")
+        .1
+        .split_once("**Do not add `contents: write`.**")
+        .expect("CODE-CHANGES trigger explanation must end before the permission boundary")
+        .0;
+    let readme = repo_text("docs/plan/h1-6-machine-identity/README.md");
+    let readme_claim = readme
+        .split_once("**Cause B —")
+        .expect("README must retain the second promotion failure cause")
+        .1
+        .split_once("### 4.3 Is a PAT a valid interim?")
+        .expect("README Cause B and App remedy must stay in section 4")
+        .0;
+
+    for (path, section) in [
+        (
+            "docs/plan/h1-6-machine-identity/CODE-CHANGES.md",
+            code_claim,
+        ),
+        ("docs/plan/h1-6-machine-identity/README.md", readme_claim),
+    ] {
+        let claim = normalized_words(section).to_ascii_lowercase();
+        for stale in ["triggers no workflow runs", "triggers no runs"] {
+            assert!(
+                !claim.contains(stale),
+                "{path} repeats obsolete GitHub Actions behavior: {stale:?}"
+            );
+        }
+        for required in [
+            "opened",
+            "synchronize",
+            "reopened",
+            "approval-required",
+            "manual approval",
+            "execute without manual approval",
+        ] {
+            assert!(
+                claim.contains(required),
+                "{path} must describe current GITHUB_TOKEN PR-event behavior using {required:?}"
+            );
+        }
     }
 }

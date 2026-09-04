@@ -5,7 +5,10 @@ fixer and certifier mutate one shared clone per repository with no repo-level lo
 can be committed and pushed onto another's branch (#149); the gate corpus reads the shared clone's
 working tree, which is never checked out at the certified head — the dependency audit audits the
 base branch, added policy files are silently skipped (#151). A build of a different commit is not
-this pull request's evidence.
+this pull request's evidence. The same class sits one layer lower (#200): `github::fetch_merge_queue_depth`
+converts a failed process into `Ok(0)`, so even an absence-aware caller receives a measured zero —
+the fetch boundary must carry its own absence, or every consumer re-derives RC-2's missing
+distinction at its own call site.
 
 `SubjectRoot` exists and is landed (built only by cloning; worktree-at-head verified by
 `rev-parse`, per ADR-0002 loop step 1). `TrunkRev` does **not** exist yet — `git grep TrunkRev

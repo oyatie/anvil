@@ -221,15 +221,33 @@ pub async fn manual_triage_handler(
     let repo = req.repo.clone();
     let run_id = req.run_id;
     let branch = req.branch.unwrap_or_else(|| "main".to_string());
-    let commit_sha = req.commit_sha.unwrap_or_default();
+    let commit_sha = req.commit_sha;
     let wf_name = req.workflow_name.unwrap_or_else(|| "CI".to_string());
 
     tokio::spawn(async move {
-        if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo).await {
-            let _ = state_clone
-                .ci_triager
-                .triage_workflow_run(&repo, run_id, &branch, &commit_sha, &wf_name, &repo_dir)
-                .await;
+        let repo_dir = match state_clone.git_mgr.ensure_repo_cloned(&repo).await {
+            Ok(repo_dir) => repo_dir,
+            Err(err) => {
+                error!("Manual CI triage could not prepare {}: {:?}", repo, err);
+                return;
+            }
+        };
+        if let Err(err) = state_clone
+            .ci_triager
+            .triage_workflow_run_with_optional_sha(
+                &repo,
+                run_id,
+                &branch,
+                commit_sha.as_deref(),
+                &wf_name,
+                &repo_dir,
+            )
+            .await
+        {
+            error!(
+                "Manual CI triage failed for run #{} on {}: {:?}",
+                run_id, repo, err
+            );
         }
     });
 
@@ -614,4 +632,20 @@ pub async fn fleet_shape_handler(
     axum::extract::State(state): axum::extract::State<crate::webhook::AppState>,
 ) -> axum::Json<std::collections::HashMap<String, crate::telemetry_store::ShapeMeasurementRecord>> {
     axum::Json(state.telemetry_store.latest_shape_measurements().await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ManualTriageRequest;
+
+    #[test]
+    fn manual_triage_json_keeps_commit_sha_optional() {
+        let request: ManualTriageRequest = serde_json::from_value(serde_json::json!({
+            "repo": "oyatie/anvil",
+            "run_id": 42
+        }))
+        .expect("manual triage without commit_sha remains valid");
+
+        assert!(request.commit_sha.is_none());
+    }
 }

@@ -1,0 +1,12 @@
+# Direct process execution is a transport capability, not a general-purpose
+# `Command` method. Production crate roots deny this symbol-resolved list and
+# the three checked transport modules carry the only local exemptions.
+disallowed-methods = [
+    { path = "std::process::Command::output", reason = "route process execution through a checked exec transport" },
+    { path = "std::process::Command::spawn", reason = "route process execution through a checked exec transport" },
+    { path = "std::process::Command::status", reason = "route process execution through a checked exec transport" },
+    { path = "tokio::process::Command::output", reason = "route process execution through a checked exec transport" },
+    { path = "tokio::process::Command::spawn", reason = "route process execution through a checked exec transport" },
+    { path = "tokio::process::Command::status", reason = "route process execution through a checked exec transport" },
+    { path = "std::os::unix::process::CommandExt::exec", reason = "route process execution through a checked exec transport", allow-invalid = true },
+]

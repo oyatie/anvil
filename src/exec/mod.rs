@@ -18,8 +18,12 @@ pub mod build_env;
 pub mod gh;
 pub mod inherited;
 pub mod net;
+mod non_model;
+mod replacement;
 pub mod turn;
-pub use agent::{Posture, agent};
+pub use agent::{
+    AgentCommand, Posture, agy_agent, claude_agent, codex_agent, cursor_agent, grok_agent,
+};
 pub use gh::command as gh;
 pub use inherited::INHERITED;
 pub use net::command as net;
@@ -28,7 +32,8 @@ use anyhow::{Result, bail};
 use std::process::Output;
 use std::time::Duration;
 use tokio::process::Command;
-use tracing::warn;
+
+use crate::model_prompt::ModelPrompt;
 
 /// How long a class of subprocess may run before it is killed.
 ///
@@ -138,47 +143,53 @@ pub fn agy_print_timeout_arg(limit: Duration) -> String {
 /// `cursor-agent` and `cargo` all fork helpers of their own, which survive.
 /// Full containment needs a process group and a negative-pgid kill; that is
 /// tracked separately and is not attempted here.
-pub async fn run_bounded(mut cmd: Command, class: ExecClass, what: &str) -> Result<Output> {
-    cmd.kill_on_drop(true);
-    match tokio::time::timeout(class.timeout(), cmd.output()).await {
-        Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => bail!("{} failed to run: {}", what, e),
-        Err(_) => {
-            warn!(
-                "{} exceeded the {} timeout of {}s and was killed",
-                what,
-                class.label(),
-                class.timeout().as_secs()
-            );
-            bail!(
-                "{} timed out after {}s ({} class)",
-                what,
-                class.timeout().as_secs(),
-                class.label()
-            )
-        }
-    }
+pub(crate) async fn run_bounded(cmd: Command, class: ExecClass, what: &str) -> Result<Output> {
+    non_model::run(cmd, class, what).await
 }
 
 /// Same bound, with an explicit duration for callers that carry their own
 /// configured limit (for example `ModelExecutionConfig::print_timeout_secs`).
-pub async fn run_bounded_for(mut cmd: Command, limit: Duration, what: &str) -> Result<Output> {
-    cmd.kill_on_drop(true);
-    match tokio::time::timeout(limit, cmd.output()).await {
-        Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => bail!("{} failed to run: {}", what, e),
-        Err(_) => {
-            warn!(
-                "{} exceeded its {}s timeout and was killed",
-                what,
-                limit.as_secs()
-            );
-            bail!("{} timed out after {}s", what, limit.as_secs())
-        }
-    }
+pub(crate) async fn run_bounded_for(cmd: Command, limit: Duration, what: &str) -> Result<Output> {
+    non_model::run_for(cmd, limit, what).await
+}
+
+/// Runs an intentionally long-lived checked non-model command until it exits.
+/// Cancellation still kills the child; this is used only for supervised forge
+/// forwarders whose job is to outlive every finite [`ExecClass`] budget.
+pub(crate) async fn run_unbounded_status(
+    cmd: Command,
+    what: &str,
+) -> std::io::Result<std::process::ExitStatus> {
+    non_model::run_status(cmd, what)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
+/// Synchronous checked non-model runner for call chains and destructors that
+/// cannot await. The same finite executable/alias admission policy applies.
+pub(crate) fn run_sync_bounded(
+    cmd: std::process::Command,
+    limit: Duration,
+    what: &str,
+) -> Result<Output> {
+    non_model::run_sync_bounded(cmd, limit, what)
+}
+
+/// Starts the one detached process that replaces the running Anvil binary.
+/// The underlying `Command` remains inside a purpose-specific private seam.
+pub(crate) fn spawn_replacement_binary(
+    path: &std::path::Path,
+    args: &[String],
+) -> Result<tokio::process::Child> {
+    replacement::spawn(path, args)
 }
 
 /// Same bound, plus delivery of a payload on the child's STDIN.
+///
+/// This raw API is admitted only for the finite direct non-model vocabulary in
+/// `non_model`; a model turn must use [`run_bounded_with_model_prompt`]. It is
+/// not a descendant-process sandbox: admitted build/toolchain programs can
+/// launch their own children.
 ///
 /// # Why this lives here and not at the call site
 ///
@@ -202,50 +213,24 @@ pub async fn run_bounded_for(mut cmd: Command, limit: Duration, what: &str) -> R
 ///
 /// The pipe is closed once the payload is written; without that EOF the child
 /// waits for more input and every call runs to the timeout.
-pub async fn run_bounded_with_stdin(
-    mut cmd: Command,
+pub(crate) async fn run_bounded_with_stdin(
+    cmd: Command,
     stdin_payload: &str,
     limit: Duration,
     what: &str,
 ) -> Result<Output> {
-    use tokio::io::AsyncWriteExt;
+    non_model::run_with_stdin(cmd, stdin_payload, limit, what).await
+}
 
-    cmd.kill_on_drop(true);
-    cmd.stdin(std::process::Stdio::piped());
-
-    let deliver = async {
-        let mut child = match cmd.spawn() {
-            Ok(child) => child,
-            Err(e) => bail!("{} failed to run: {}", what, e),
-        };
-
-        let pipe = child.stdin.take();
-        let write = async move {
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.write_all(stdin_payload.as_bytes()).await;
-                let _ = pipe.shutdown().await;
-            }
-        };
-        let wait = child.wait_with_output();
-
-        let (_, waited) = tokio::join!(write, wait);
-        match waited {
-            Ok(output) => Ok(output),
-            Err(e) => bail!("{} failed to run: {}", what, e),
-        }
-    };
-
-    match tokio::time::timeout(limit, deliver).await {
-        Ok(result) => result,
-        Err(_) => {
-            warn!(
-                "{} exceeded its {}s timeout while being fed on stdin and was killed",
-                what,
-                limit.as_secs()
-            );
-            bail!("{} timed out after {}s", what, limit.as_secs())
-        }
-    }
+/// Delivers an opaque model prompt. This is the only non-streaming transport
+/// allowed to obtain its bytes; callers cannot substitute a raw `String`.
+pub async fn run_bounded_with_model_prompt(
+    cmd: AgentCommand,
+    prompt: &ModelPrompt,
+    limit: Duration,
+    what: &str,
+) -> Result<Output> {
+    agent::deliver(cmd, prompt, limit, what).await
 }
 
 /// Lives here rather than in one of its callers. It was defined in

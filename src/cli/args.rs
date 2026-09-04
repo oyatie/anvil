@@ -55,7 +55,7 @@ pub enum Commands {
         #[arg(short, long, help = "Repository (e.g. oyatie/oyatie)")]
         repo: String,
 
-        #[arg(short, long, help = "Workflow Run ID")]
+        #[arg(short = 'i', long, help = "Workflow Run ID")]
         run_id: u64,
 
         #[arg(short, long, help = "Branch name (default: main)")]
@@ -239,6 +239,30 @@ pub enum Commands {
     Forward,
     /// Verify GitHub CLI authentication and environment readiness
     Check,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    #[test]
+    fn triage_cli_keeps_commit_sha_optional() {
+        let cli = Cli::try_parse_from([
+            "pr-watch",
+            "triage",
+            "--repo",
+            "oyatie/anvil",
+            "--run-id",
+            "42",
+        ])
+        .expect("triage without --commit-sha remains valid");
+
+        let Some(Commands::Triage { commit_sha, .. }) = cli.command else {
+            panic!("expected triage command");
+        };
+        assert!(commit_sha.is_none());
+    }
 }
 
 #[derive(Subcommand, Debug)]

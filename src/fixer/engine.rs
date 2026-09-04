@@ -1,9 +1,57 @@
+use crate::model_prompt::{HarnessText, ModelPrompt};
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use super::evaluator::{ItemEvaluation, ReviewFeedbackItem};
+
+/// Builds the write-capable fix turn from classified review fields. Returning
+/// only [`ModelPrompt`] lets behavioral tests exercise the real sink without
+/// exposing a raw prompt constructor.
+pub fn build_apply_prompt(
+    repo: &str,
+    valid_items: &[(ReviewFeedbackItem, ItemEvaluation)],
+) -> Result<ModelPrompt> {
+    let mut prompt = ModelPrompt::builder();
+    prompt.push_harness(HarnessText::FixApplyPreambleAndRepository);
+    prompt.push_repository(repo)?;
+    prompt.push_harness(HarnessText::FixApplyRepositoryEnd);
+
+    for (index, (item, eval)) in valid_items.iter().enumerate() {
+        prompt
+            .push_harness(HarnessText::FixApplyItemStart)
+            .push_usize(index)
+            .push_harness(HarnessText::FixApplyItemHeaderEnd);
+        if let Some(path) = item.file_path.as_deref() {
+            prompt.push_untrusted(Untrusted::new(UntrustedLabel::FilePath, path));
+        } else {
+            prompt.push_harness(HarnessText::FixApplyMissingPath);
+        }
+        prompt.push_untrusted(Untrusted::new(UntrustedLabel::ReviewComment, &item.body));
+        if let Some(proposed) = eval.proposed_fix.as_deref() {
+            prompt.push_untrusted(Untrusted::new(UntrustedLabel::ProposedFix, proposed));
+        } else {
+            prompt.push_harness(HarnessText::FixApplyMissingProposal);
+        }
+        prompt.push_harness(HarnessText::FixApplyItemEnd);
+    }
+
+    prompt.push_harness(HarnessText::FixApplyTask);
+    prompt.finish()
+}
+
+/// Builds the self-correction turn while retaining both path-order extremes of
+/// an oversized working diff and restoring trusted instructions at the tail.
+pub fn build_self_correction_prompt(diff: &str) -> Result<ModelPrompt> {
+    let mut prompt = ModelPrompt::builder();
+    prompt
+        .push_harness(HarnessText::FixSelfCorrectionPreamble)
+        .push_untrusted(Untrusted::new(UntrustedLabel::WorkingDiff, diff))
+        .push_harness(HarnessText::FixSelfCorrectionTask);
+    prompt.finish()
+}
 
 pub struct FixEngine {
     agy_effort: String,
@@ -20,21 +68,7 @@ impl FixEngine {
         repo_dir: &Path,
         valid_items: &[(ReviewFeedbackItem, ItemEvaluation)],
     ) -> Result<()> {
-        let mut prompt = format!(
-            "You are Oyatie's Principal Engineer. Directly implement code fixes in this workspace for `{}` to resolve the following valid review findings:\n\n",
-            repo
-        );
-
-        for (item, eval) in valid_items {
-            prompt.push_str(&format!(
-                "- **File**: {}\n  **Finding**: {}\n  **Proposed Fix**: {}\n\n",
-                item.file_path.as_deref().unwrap_or("N/A"),
-                item.body,
-                eval.proposed_fix.as_deref().unwrap_or("Fix as required")
-            ));
-        }
-
-        prompt.push_str("Inspect the workspace files, make all necessary edits cleanly, ensure types and tests are preserved or updated, and complete the implementation.");
+        let prompt = build_apply_prompt(repo, valid_items)?;
 
         info!("Invoking Antigravity to write code fixes in {:?}", repo_dir);
         let _ = self.run_agy_prompt(&prompt, repo_dir).await?;
@@ -165,19 +199,22 @@ impl FixEngine {
         .await?;
         let diff_str = String::from_utf8_lossy(&diff_out.stdout);
 
-        let prompt = format!(
-            "The previous code edits caused build or test failures. Inspect the repository, check the current diff, diagnose the root cause, and fix the errors so that the test suite passes cleanly.\n\nCurrent diff:\n```diff\n{}\n```",
-            diff_str
-        );
+        // The diff is the contributor's, and this prompt drives a turn with
+        // write access to the tree. See `reviewer::untrusted`.
+        let prompt = build_self_correction_prompt(&diff_str)?;
 
         let _ = self.run_agy_prompt(&prompt, repo_dir).await?;
         Ok(())
     }
 
-    async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
+    async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
         let budget = crate::exec::ExecClass::Model.timeout();
-        let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
-        crate::exec::turn::agy_turn(&mut cmd, &self.agy_effort, budget);
+        let cmd = crate::exec::agy_agent(
+            &crate::exec::Posture::in_workspace(working_dir),
+            &self.agy_effort,
+            budget,
+            None,
+        )?;
 
         let turn = crate::exec::turn::run(cmd, prompt, budget, "agy fix prompt")
             .await

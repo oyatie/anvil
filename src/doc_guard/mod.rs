@@ -1,3 +1,5 @@
+use crate::model_prompt::{HarnessText, ModelPrompt};
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -306,75 +308,7 @@ impl DocGuard {
         pr_title: &str,
         pr_body: &str,
     ) -> Result<DocParityEvaluation> {
-        let changed_files_preview = if diff_ctx.changed_files.len() > 100 {
-            format!(
-                "{}\n- ... and {} more files",
-                diff_ctx
-                    .changed_files
-                    .iter()
-                    .take(100)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("\n- "),
-                diff_ctx.changed_files.len() - 100
-            )
-        } else {
-            diff_ctx.changed_files.join("\n- ")
-        };
-
-        let diff_content_bounded = if diff_ctx.diff_content.chars().count() > 50_000 {
-            let truncated: String = diff_ctx.diff_content.chars().take(50_000).collect();
-            format!("{truncated}\n\n[... remaining diff truncated for doc evaluation ...]")
-        } else {
-            diff_ctx.diff_content.clone()
-        };
-
-        let prompt = format!(
-            r#####"You are Oyatie's Principal Documentation Architect. Evaluate whether this Pull Request on `{repo}` has sufficient documentation parity or if documentation must be updated.
-
-## Pull Request Information:
-- **Repository**: {repo}
-- **PR Number**: #{pr_number}
-- **Title**: {pr_title}
-- **Description**: {pr_body}
-- **Changed Files**:
-- {changed_files}
-
-## Evaluation Criteria:
-1. **API / Public Interface Changes**: Are new public functions, types, routes, or CLI flags introduced without docstrings or `docs/reference/` updates?
-2. **Architectural / Doctrine Shifts**: Does this change introduce a new architectural decision, storage pattern, cell boundary, or platform contract that requires an ADR (in `docs/adr/` or `docs/decisions/`)?
-3. **User-Facing / Config Changes**: Does `README.md`, `CLAUDE.md`, `AGENTS.md`, or runbooks need updating?
-4. **Changelog**: Does `CHANGELOG.md` need a release note entry?
-
-## Output Format:
-Output strictly valid JSON matching this schema:
-```json
-{{
-  "is_doc_sufficient": false,
-  "missing_doc_summary": "Explanation of what documentation or ADR is missing",
-  "doc_files_to_update": ["docs/reference/feature.md", "CHANGELOG.md"],
-  "suggested_adr_title": null
-}}
-```
-
-Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `missing_doc_summary: null`, `doc_files_to_update: []`.
-
-## Git Diff:
-```diff
-{diff_content}
-```
-"#####,
-            repo = repo,
-            pr_number = diff_ctx.pr_number,
-            pr_title = pr_title,
-            pr_body = if pr_body.is_empty() {
-                "No description"
-            } else {
-                pr_body
-            },
-            changed_files = changed_files_preview,
-            diff_content = diff_content_bounded
-        );
+        let prompt = build_doc_parity_prompt(repo, diff_ctx, pr_title, pr_body)?;
 
         let target = format!("{}#{}", repo, diff_ctx.pr_number);
         // The `Live` arm is what this line always did, verbatim. See
@@ -394,15 +328,19 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
             }
         };
         let repo_dir_owned = repo_dir.to_path_buf();
-        let prompt_clone = prompt.clone();
+        let prompt_for_turn = prompt;
 
         crate::watchdog::PipelineWatchdog::run_with_watchdog(
             "DocGuardEvaluation",
             &target,
             DOC_PARITY_PROBE.supervisor(),
             move || async move {
-                let mut cmd =
-                    crate::exec::agent("agy", &crate::exec::Posture::in_workspace(&repo_dir_owned));
+                let cmd = crate::exec::agy_agent(
+                    &crate::exec::Posture::in_workspace(&repo_dir_owned),
+                    &agy_effort,
+                    DOC_PARITY_PROBE.supervisor(),
+                    None,
+                )?;
                 // The prompt travels on STDIN. It carries the pull request's
                 // title, body and diff -- text an outsider wrote -- and argv is
                 // world-readable through `ps`.
@@ -413,19 +351,9 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
                 // `permissions.allow` in a settings.json rather than a flag,
                 // measured against the installed CLI, so it is not a change that
                 // can be made here.
-                crate::exec::turn::agy_turn(
-                    &mut cmd,
-                    &agy_effort,
-                    // The third consumer of the same budget: the process bound,
-                    // alongside the watchdog above and agy's own
-                    // `--print-timeout`. Three deadlines for one turn, from one
-                    // value, so none can be tightened without the others.
-                    DOC_PARITY_PROBE.supervisor(),
-                );
-
                 match crate::exec::turn::run(
                     cmd,
-                    &prompt_clone,
+                    &prompt_for_turn,
                     DOC_PARITY_PROBE.supervisor(),
                     "doc parity probe",
                 )
@@ -505,6 +433,44 @@ Note: If documentation is already sufficient, set `is_doc_sufficient: true`, `mi
         }
         Ok(updated)
     }
+}
+
+/// Builds the exact typed prompt used by the DocGuard probe. Kept as a narrow
+/// seam so the transport-boundary tests can verify delimiter and ordering
+/// behaviour without exposing bytes from [`ModelPrompt`] in production.
+pub fn build_doc_parity_prompt(
+    repo: &str,
+    diff_ctx: &PrDiffContext,
+    pr_title: &str,
+    pr_body: &str,
+) -> Result<ModelPrompt> {
+    // Preserve the complete measured source for `Untrusted`; the channel's
+    // own policy is the only place that may select an excerpt.
+    let changed_files = diff_ctx.changed_files.join("\n- ");
+
+    let mut prompt = ModelPrompt::builder();
+    prompt.push_harness(HarnessText::DocGuardPreambleAndRepository);
+    prompt.push_repository(repo)?;
+    prompt
+        .push_harness(HarnessText::DocGuardPrNumber)
+        .push_u64(diff_ctx.pr_number)
+        .push_harness(HarnessText::DocGuardMetadataEnd)
+        .push_untrusted(Untrusted::new(UntrustedLabel::DocTitle, pr_title))
+        .push_untrusted(Untrusted::new(
+            UntrustedLabel::DocBody,
+            if pr_body.is_empty() {
+                "No description"
+            } else {
+                pr_body
+            },
+        ))
+        .push_untrusted(Untrusted::new(UntrustedLabel::ChangedFiles, &changed_files))
+        .push_untrusted(Untrusted::new(
+            UntrustedLabel::DocDiff,
+            &diff_ctx.diff_content,
+        ))
+        .push_harness(HarnessText::DocGuardResponseContract);
+    prompt.finish()
 }
 
 /// What the gate appends to its summary when the corpus sync did not apply.

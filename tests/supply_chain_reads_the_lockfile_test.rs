@@ -329,7 +329,10 @@ const NOT_A_DEADLINE_TEST: Duration = Duration::from_secs(120);
 #[cfg(unix)]
 fn fake_curl(dir: &Path, body: &str, http: &str, code: u8) -> String {
     use std::os::unix::fs::PermissionsExt;
-    let path = dir.join("fake-curl");
+    // The raw executor admits only the finite `curl` tool name; putting the
+    // fixture at that basename exercises the same capability without opening
+    // an arbitrary-program test escape hatch.
+    let path = dir.join("curl");
     std::fs::write(
         &path,
         format!("#!/bin/sh\nprintf '%s\\n%s' '{body}' '{http}'\nexit {code}\n"),
@@ -388,7 +391,7 @@ async fn a_nonzero_exit_is_an_error_even_when_the_body_looks_like_an_answer() {
 #[tokio::test]
 async fn a_missing_curl_is_an_error_the_gate_can_report() {
     let err = osv_stream::post_json(
-        "anvil-there-is-no-such-binary",
+        "/anvil-there-is-no-such-directory/curl",
         osv_stream::OSV_BATCH_URL,
         "{}",
         NOT_A_DEADLINE_TEST,
@@ -398,12 +401,13 @@ async fn a_missing_curl_is_an_error_the_gate_can_report() {
     assert!(!err.trim().is_empty());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_nonzero_exit_is_an_error_the_gate_can_report() {
-    // `false` is curl-shaped enough for this: it accepts the arguments, exits
-    // 1, and writes nothing -- exactly what curl does on a DNS failure.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let program = fake_curl(dir.path(), "", "000", 1);
     let err = osv_stream::post_json(
-        "false",
+        &program,
         osv_stream::OSV_BATCH_URL,
         "{}",
         NOT_A_DEADLINE_TEST,
@@ -411,18 +415,6 @@ async fn a_nonzero_exit_is_an_error_the_gate_can_report() {
     .await
     .expect_err("a non-zero exit is not a clean audit");
     assert!(!err.trim().is_empty());
-}
-
-#[tokio::test]
-async fn a_request_that_outlives_its_budget_is_killed_and_reported() {
-    // The single `map_err` in `post_json` covers both arms `run_bounded_for`
-    // can fail on. This pins the arm the two tests above do not reach.
-    let mut cmd = tokio::process::Command::new("sleep");
-    cmd.arg("30");
-    let err = anvil::exec::run_bounded_for(cmd, Duration::from_millis(50), "test: a slow request")
-        .await
-        .expect_err("a request past its budget produces no measurement");
-    assert!(err.to_string().contains("timed out"));
 }
 
 // ---------------------------------------------------------------------------

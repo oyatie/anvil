@@ -13,6 +13,8 @@ use crate::exec::ExecClass;
 use crate::git_manager::GitManager;
 use crate::github::{GitHubClient, PrMetadata};
 use crate::merge_enlister::MergeEnlister;
+use crate::model_prompt::{HarnessText, ModelPrompt};
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 
 /// Upper bound for one agy repair turn, matching `ExecClass::Model`.
 ///
@@ -22,6 +24,38 @@ use crate::merge_enlister::MergeEnlister;
 /// a little under its own kill so the two deadlines agree and agy's default
 /// never silently wins.
 const AGY_TURN_LIMIT: Duration = crate::exec::ExecClass::Model.timeout();
+
+/// Builds the exact write-capable queue-repair prompt. Branch names and merge
+/// diagnostics remain typed data while their roles and the repair task remain
+/// trusted harness text.
+pub fn build_queue_repair_prompt(
+    repo: &str,
+    pr_number: u64,
+    base_branch: &str,
+    head_branch: &str,
+    conflict_details: Option<&str>,
+) -> Result<ModelPrompt> {
+    let mut prompt = ModelPrompt::builder();
+    prompt
+        .push_harness(HarnessText::QueuePreamble)
+        .push_u64(pr_number)
+        .push_harness(HarnessText::QueueRepositoryStart);
+    prompt.push_repository(repo)?;
+    prompt
+        .push_harness(HarnessText::QueueContextAndBaseBranch)
+        .push_untrusted(Untrusted::new(UntrustedLabel::BranchName, base_branch))
+        .push_harness(HarnessText::QueueHeadBranch)
+        .push_untrusted(Untrusted::new(UntrustedLabel::BranchName, head_branch));
+    if let Some(details) = conflict_details {
+        prompt
+            .push_harness(HarnessText::QueueConflictPresent)
+            .push_untrusted(Untrusted::new(UntrustedLabel::MergeConflict, details));
+    } else {
+        prompt.push_harness(HarnessText::QueueNoTextConflict);
+    }
+    prompt.push_harness(HarnessText::QueueRepairTask);
+    prompt.finish()
+}
 
 /// Outcome of the local verification gate.
 ///
@@ -270,30 +304,13 @@ impl QueueHealer {
             "Invoking Antigravity to repair merge train divergence in {:?}",
             work_dir
         );
-        let prompt = format!(
-            r#####"You are Oyatie's Principal Merge Train Resilience Engineer. Pull Request #{pr_number} on `{repo}` failed or was ejected from the GitHub Merge Queue due to train divergence or semantic conflict against trunk.
-
-**Context:**
-- **Repository**: {repo}
-- **Base Branch**: {base_branch}
-- **PR Head Branch**: {head_ref}
-- **Merge Conflict Status**: {conflict_status}
-
-**Task:**
-1. Inspect the workspace, resolve any git merge conflict markers (`<<<<<<<`), and fix any broken type definitions or API calls caused by upstream trunk changes.
-2. Ensure the codebase compiles and passes all tests.
-3. Do NOT commit; leave your changes in the working tree.
-"#####,
-            pr_number = pr_number,
-            repo = repo,
-            base_branch = base_branch,
-            head_ref = meta.head_ref_name,
-            conflict_status = if has_merge_conflict {
-                format!("Merge Conflicts Present:\n{}", conflict_details)
-            } else {
-                "No textual conflict; Semantic / Test divergence".to_string()
-            }
-        );
+        let prompt = build_queue_repair_prompt(
+            repo,
+            pr_number,
+            base_branch,
+            &meta.head_ref_name,
+            has_merge_conflict.then_some(conflict_details.as_str()),
+        )?;
 
         self.run_agy_prompt(&prompt, work_dir).await?;
 
@@ -304,8 +321,10 @@ impl QueueHealer {
                 "Gate `{}` failed after queue healing for {}#{}. Attempting self-correction...",
                 label, repo, pr_number
             );
-            let retry_prompt = "Tests failed after merging trunk. Inspect test output, fix the errors, and ensure all tests pass. Do NOT commit.";
-            self.run_agy_prompt(retry_prompt, work_dir).await?;
+            let mut retry_prompt = ModelPrompt::builder();
+            retry_prompt.push_harness(HarnessText::QueueRetryTask);
+            let retry_prompt = retry_prompt.finish()?;
+            self.run_agy_prompt(&retry_prompt, work_dir).await?;
             gate = Self::run_local_test_gate(work_dir).await;
         }
         match &gate {
@@ -778,9 +797,13 @@ impl QueueHealer {
             .unwrap_or(false)
     }
 
-    async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
-        let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
-        crate::exec::turn::agy_turn(&mut cmd, &self.agy_effort, AGY_TURN_LIMIT);
+    async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
+        let cmd = crate::exec::agy_agent(
+            &crate::exec::Posture::in_workspace(working_dir),
+            &self.agy_effort,
+            AGY_TURN_LIMIT,
+            None,
+        )?;
 
         let turn = crate::exec::turn::run(cmd, prompt, AGY_TURN_LIMIT, "agy (queue healer)")
             .await

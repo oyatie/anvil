@@ -70,13 +70,17 @@ struct Claim {
     fenced: bool,
 }
 
-fn plan_docs() -> Vec<PathBuf> {
+fn plan_docs() -> Result<Vec<PathBuf>, String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/plan");
     let mut out = Vec::new();
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let p = entry.path();
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| format!("`{}` cannot be listed ({e})", dir.display()))?;
+        for entry in entries {
+            let p = entry
+                .map_err(|e| format!("`{}` cannot be listed ({e})", dir.display()))?
+                .path();
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|e| e == "md") {
@@ -85,18 +89,45 @@ fn plan_docs() -> Vec<PathBuf> {
         }
     }
     out.sort();
-    out
+    Ok(out)
 }
 
 /// Every `#=` in the file, with whether it sat inside a fence. Unfenced ones are
 /// collected rather than dropped: markers in `~~~` fences, indented blocks and
 /// table cells were silently unexamined by an earlier revision while it reported
 /// green. A marker the scan cannot evaluate is a finding, not a non-event.
-fn claims_in(path: &Path) -> Vec<Claim> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
+fn claims_in(path: &Path) -> Result<Vec<Claim>, String> {
+    // Every IO error is propagated, never defaulted. `unwrap_or_default()` here
+    // turned an unreadable file into a corpus of zero claims, so a single
+    // invalid UTF-8 byte appended to this file made both real claims vanish
+    // while the run stayed green -- invariant I1 ("absent evidence is never a
+    // pass") broken inside the gate that exists to enforce it.
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("{}: cannot be read ({e})", path.display()))?;
     let mut out = Vec::new();
     let mut fence: Option<char> = None;
     for (i, raw) in text.lines().enumerate() {
+        // The marker is tested BEFORE the fence toggle. It used to be tested
+        // after, so a marker on a fence-opening line was consumed by the
+        // `continue` and never seen -- one of three ways this reported "4
+        // passed" while measuring nothing.
+        if let Some((spec, expected)) = raw.split_once("#=") {
+            out.push(Claim {
+                file: path.to_path_buf(),
+                line: i + 1,
+                // An empty left side is NOT skipped: it falls through to
+                // `evaluate` and fails loudly as "not a claim". Skipping it
+                // silently dropped any claim whose marker sat on its own line.
+                spec: spec
+                    .trim()
+                    .trim_start_matches(['`', '~'])
+                    .trim()
+                    .to_string(),
+                expected: expected.trim().to_string(),
+                fenced: fence.is_some(),
+            });
+            continue;
+        }
         let t = raw.trim_start();
         if let Some(c) = ['`', '~']
             .into_iter()
@@ -107,50 +138,66 @@ fn claims_in(path: &Path) -> Vec<Claim> {
                 None => fence = Some(c),
                 _ => {}
             }
-            continue;
         }
-        let Some((spec, expected)) = raw.split_once("#=") else {
-            continue;
-        };
-        if spec.trim().is_empty() {
-            continue;
-        }
-        out.push(Claim {
-            file: path.to_path_buf(),
-            line: i + 1,
-            spec: spec.trim().to_string(),
-            expected: expected.trim().to_string(),
-            fenced: fence.is_some(),
-        });
     }
-    out
+    Ok(out)
 }
 
 /// Expand a trailing-component `*` by reading the directory. Bounded, and it
 /// cannot execute anything; an unmatched pattern yields nothing, which the
 /// caller reports rather than treating as an empty-and-green zero.
-fn expand(glob: &str) -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+fn expand(glob: &str) -> Result<Vec<PathBuf>, String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .canonicalize()
+        .map_err(|e| format!("the repository root is unreadable ({e})"))?;
     let (dir, file) = match glob.rfind('/') {
         Some(slash) => (&glob[..slash], &glob[slash + 1..]),
         None => (".", glob),
     };
+    // Containment, checked after canonicalisation. Without it a claim could
+    // read `../../../../etc/hosts` or follow a symlink out of the tree, and the
+    // failure message printed the count -- one measured bit per claim of
+    // anything the CI runner can read.
+    let inside = |p: &Path| -> bool {
+        p.canonicalize()
+            .map(|c| c.starts_with(&root))
+            .unwrap_or(false)
+    };
     let Some((prefix, suffix)) = file.split_once('*') else {
         let p = root.join(glob);
-        return if p.is_file() { vec![p] } else { Vec::new() };
+        if !p.is_file() {
+            return Ok(Vec::new());
+        }
+        if !inside(&p) {
+            return Err(format!("`{glob}` resolves outside the repository"));
+        }
+        return Ok(vec![p]);
     };
-    let mut hits: Vec<PathBuf> = std::fs::read_dir(root.join(dir))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| {
-            let n = e.file_name().to_string_lossy().to_string();
-            n.len() >= prefix.len() + suffix.len() && n.starts_with(prefix) && n.ends_with(suffix)
-        })
-        .map(|e| e.path())
-        .collect();
+    let base = root.join(dir);
+    if !inside(&base) {
+        return Err(format!("`{glob}` resolves outside the repository"));
+    }
+    let entries = std::fs::read_dir(&base)
+        .map_err(|e| format!("`{}` cannot be listed ({e})", base.display()))?;
+    let mut hits = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("`{}` cannot be listed ({e})", base.display()))?;
+        let n = entry.file_name().to_string_lossy().to_string();
+        // A shell `*` does not match a leading dot; matching one here would
+        // silently disagree with the command this replaces.
+        if n.starts_with('.') || !n.starts_with(prefix) || !n.ends_with(suffix) {
+            continue;
+        }
+        if n.len() < prefix.len() + suffix.len() {
+            continue;
+        }
+        let p = entry.path();
+        if p.is_file() && inside(&p) {
+            hits.push(p);
+        }
+    }
     hits.sort();
-    hits
+    Ok(hits)
 }
 
 /// The one claim form. `Err` says why a line is not a claim; malformed is a
@@ -176,26 +223,28 @@ fn evaluate(spec: &str) -> Result<String, String> {
         return Err("the glob is empty".to_string());
     }
     let re = Regex::new(pattern).map_err(|e| format!("the regex does not compile: {e}"))?;
-    let files = expand(glob);
+    let files = expand(glob)?;
     if files.is_empty() {
         return Err(format!("`{glob}` matched no files"));
     }
-    let total: usize = files
-        .iter()
-        .map(|f| {
-            std::fs::read_to_string(f)
-                .unwrap_or_default()
-                .lines()
-                .filter(|l| re.is_match(l))
-                .count()
-        })
-        .sum();
+    let mut total = 0usize;
+    for f in &files {
+        // Propagated, not defaulted: an unreadable file is absent evidence,
+        // and absent evidence is never a pass.
+        let text = std::fs::read_to_string(f)
+            .map_err(|e| format!("{}: cannot be read ({e})", f.display()))?;
+        total += text.lines().filter(|l| re.is_match(l)).count();
+    }
     Ok(total.to_string())
 }
 
 #[test]
 fn every_published_claim_produces_the_number_published_beside_it() {
-    let claims: Vec<Claim> = plan_docs().iter().flat_map(|p| claims_in(p)).collect();
+    let docs = plan_docs().expect("docs/plan must be listable; an unreadable corpus is not a pass");
+    let mut claims: Vec<Claim> = Vec::new();
+    for p in &docs {
+        claims.extend(claims_in(p).unwrap_or_else(|e| panic!("{e}")));
+    }
 
     // A scan that examined nothing must not report a pass.
     assert!(
@@ -298,9 +347,18 @@ fn a_malformed_claim_is_reported_rather_than_ignored() {
 fn the_one_claim_form_measures_what_it_says() {
     // Against a known answer rather than trusted: this file holds exactly four
     // `#[test]` lines, including this one.
+    // Derived, not hardcoded: an earlier revision pinned this to "4" and would
+    // have broken the moment a test was added, for a reason unrelated to the
+    // thing under test.
+    let me = std::fs::read_to_string(file!()).expect("readable");
+    let expect = me.lines().filter(|l| l.starts_with("#[test]")).count();
     let n = evaluate("count '^#\\[test\\]' in tests/published_commands_reproduce_test.rs")
         .expect("well-formed");
-    assert_eq!(n, "4", "counted the wrong number of #[test] lines");
+    assert_eq!(
+        n,
+        expect.to_string(),
+        "counted the wrong number of #[test] lines"
+    );
 
     // A glob matching nothing is an error, not an empty-and-green zero.
     assert!(evaluate("count 'x' in docs/plan/zz-nonexistent-*.md").is_err());

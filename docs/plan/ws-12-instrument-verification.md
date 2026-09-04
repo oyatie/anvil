@@ -8,7 +8,7 @@ finished" true immediately; the path-keyed source reads across test files that g
 their subject file is split (`unwrap_or_default()` on the read — absent evidence published as a
 pass, invariant I1, inside the test suite itself). #199 adds the newest instance (2026-09-01):
 `tests/no_model_prompt_fences_contributor_text_by_hand_test.rs` — absent at `48cf259`, arriving
-with open PR #202 — keys on fences, so a prompt site that never had a fence — the fixer's
+with PR #202 @ `1ce2121` (open at the time of writing) — keys on fences, so a prompt site that never had a fence — the fixer's
 write-access turn, all of `queue_healer` — scans clean; its green is the absence of backticks, not
 a measurement (the seam fix itself is WS-10's H1-5a).
 

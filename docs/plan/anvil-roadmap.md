@@ -245,7 +245,11 @@ Issue map (no finding left unscheduled): #15→WS-04 · #19→WS-08+WS-07 · #52
 #59→WS-08 · #149→WS-09 · #151→WS-09 · #171→WS-11 · #179→WS-12 · #191→WS-05 · #192→WS-10.
 #198→WS-14 (its pointer-liveness seed; filed by this plan's WS-01 duty) ·
 #199→WS-10 (two unfenced prompt sites, required red seeds for H1-5a's meta-test; open PR #202
-already carries its fix direction, so the seeds prove that PR's ratchet) + WS-12 (a fence-keyed
+already carries its fix direction, so the seeds prove **H1-5a's meta-test, which #202's scan cannot**:
+that scan's own header at `tests/no_model_prompt_fences_contributor_text_by_hand_test.rs:1` reads
+"ADVISORY, NOT A RATCHET", and its documented hole 2 is this very `queue_healer` case -- "zero
+backticks, so this scan called it green by absence (#199)". The fixer half reddens nothing in #202
+at all) + WS-12 (a fence-keyed
 ratchet cannot see a site that has no fence — RC-1) ·
 #200→WS-08 (fabricated fleet literals, the #53 drain's newest seeds) + WS-09 (the fetch boundary
 must carry its own absence) ·

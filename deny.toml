@@ -14,9 +14,9 @@
 # cargo-deny policy (M01-P14-IP-004).
 #
 # Hyperscaler-grade dependency policy: licenses, advisories, bans, and
-# registry sources are all governed here. `cargo deny check` is wired
-# into `scripts/check.sh` and CI; any change to this file is a policy
-# change and must be reviewed under that lens (security + licensing).
+# registry sources are all governed here. `cargo deny --all-features check`
+# runs in `.github/workflows/supply-chain-weekly.yml`; any change to this file
+# is a policy change and must be reviewed under that lens (security + licensing).
 
 [licenses]
 version = 2
@@ -32,6 +32,9 @@ allow = [
 ]
 confidence-threshold = 0.8
 unused-allowed-license = "allow"
+# The first-party workspace crate is explicitly non-publishable. Ignore only
+# that private crate; dependencies remain subject to this license policy.
+private = { ignore = true }
 # SQLx Postgres adapter review, 2026-05-23:
 # - foldhash@0.1.5 is Zlib-licensed and enters only through sqlx-core's
 #   hashlink/hashbrown cache path.

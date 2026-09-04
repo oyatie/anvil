@@ -22,6 +22,13 @@ fn manifest() -> String {
     fs::read_to_string("Cargo.toml").expect("Cargo.toml")
 }
 
+fn parsed_toml(path: &str) -> toml::Value {
+    fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("{path} must be readable: {error}"))
+        .parse()
+        .unwrap_or_else(|error| panic!("{path} must parse as TOML: {error}"))
+}
+
 /// Direct `[dependencies]` crate names from a Cargo manifest.
 ///
 /// A missing or unreadable `[dependencies]` table is a failed ratchet, not an
@@ -93,6 +100,57 @@ fn an_admission_policy_exists_and_denies_the_things_that_matter() {
             "deny.toml has no `{needle}` policy — {why}"
         );
     }
+}
+
+#[test]
+fn the_private_workspace_license_exception_is_narrow_and_paired() {
+    let cargo = parsed_toml("Cargo.toml");
+    let package = cargo
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .expect("Cargo.toml must have a [package] table");
+    assert_eq!(
+        package.get("publish").and_then(toml::Value::as_bool),
+        Some(false),
+        "cargo-deny may ignore the first-party workspace crate only when Cargo.toml explicitly \
+         marks it non-publishable with `publish = false`"
+    );
+
+    let deny = parsed_toml("deny.toml");
+    let licenses = deny
+        .get("licenses")
+        .and_then(toml::Value::as_table)
+        .expect("deny.toml must have a [licenses] table");
+    let private = licenses
+        .get("private")
+        .and_then(toml::Value::as_table)
+        .expect("[licenses] must narrowly configure private workspace crates");
+    assert_eq!(
+        private.get("ignore").and_then(toml::Value::as_bool),
+        Some(true),
+        "cargo-deny must ignore the explicitly non-publishable first-party workspace crate"
+    );
+    assert_eq!(
+        private.len(),
+        1,
+        "[licenses].private must contain only `ignore = true`; broadening this exception needs \
+         separate policy review"
+    );
+
+    assert!(
+        licenses
+            .get("allow")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|allowed| !allowed.is_empty()),
+        "the private-workspace exception must not disable the dependency license allowlist"
+    );
+    assert_eq!(
+        licenses
+            .get("confidence-threshold")
+            .and_then(toml::Value::as_float),
+        Some(0.8),
+        "the private-workspace exception must not weaken dependency license identification"
+    );
 }
 
 #[test]

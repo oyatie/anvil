@@ -260,8 +260,12 @@ function, and survives this seed. That is coverage detection, not fence detectio
 (46 tests): **46/46 unseeded, 45 pass / 1 fail** reverting only the cited site. Reverting the whole
 file gives 44/2, the extra failure being the *fence* scan catching dev's hand-rolled fence at
 `engine.rs:169` -- so that scan is blind to the fenceless site specifically, not to `engine.rs`
-generally. An earlier revision named `WorkingDiff` among the unwired labels, which the 45/1 count it
-published contradicts. An earlier revision of this row claimed the fixer half
+generally. An earlier revision named `WorkingDiff` among the unwired labels. The count does **not** settle
+that -- the assertion is one `#[test]` looping over `UntrustedLabel::ALL`, so the first unwired
+label panics and the test ends, making 45/1 the result under one, two or three unwired labels
+alike. What settles it is the panic *text*: `ALL` orders `WorkingDiff` (`label.rs:81`) ahead of
+`ReviewedPath` (`:86`), so an unwired `WorkingDiff` would be named first, and the run names
+`ReviewedPath`. An earlier revision of this row claimed the fixer half
 "reddens nothing at all" -- published with no command beside it, and false) + WS-12 (a fence-keyed
 ratchet cannot see a site that has no fence — RC-1) ·
 #200→WS-08 (fabricated fleet literals, the #53 drain's newest seeds) + WS-09 (the fetch boundary

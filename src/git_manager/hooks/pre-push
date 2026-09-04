@@ -39,7 +39,14 @@ fi
 # it. That breaks the "seconds once warm" promise the block below makes, for
 # the docs-only path only, and is the stated price of catching the class before
 # it reaches the remote rather than after.
-if git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'docs/plan/' | grep -q .; then
+# The `-f` guard is load-bearing, not defensive. This hook is installed once in
+# .git/hooks and runs on every branch, including every branch that predates the
+# test -- and `cargo test --test X` where X does not exist fails, which refused
+# the push of an unrelated docs branch the first time it ran. A check that
+# cannot run must decline, not block: the rule hook_liveness.rs enforces one
+# level up.
+if [ -f tests/published_commands_reproduce_test.rs ] \
+   && git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'docs/plan/' | grep -q .; then
   echo "[pre-push] published commands reproduce their numbers..."
   set +e
   claim_out=$(cargo test --locked --quiet --test published_commands_reproduce_test 2>&1)

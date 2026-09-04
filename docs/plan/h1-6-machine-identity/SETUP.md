@@ -38,7 +38,7 @@ noise (`/favicon.ico`) does not consume it.
 
 ```sh
 cat > ~/.anvil/catch.py <<'PY'
-import http.server, json, urllib.request, pathlib
+import http.server, json, os, pathlib, urllib.request
 from urllib.parse import urlparse, parse_qs
 box = {}
 class H(http.server.BaseHTTPRequestHandler):
@@ -58,7 +58,10 @@ class H(http.server.BaseHTTPRequestHandler):
             self.wfile.write(("conversion failed: %s" % e).encode())
             box["err"] = str(e); return
         pem = pathlib.Path("anvil-app.private-key.pem")
-        pem.write_text(app["pem"]); pem.chmod(0o600)
+        # 0600 at creation, not after: write_text then chmod leaves a window
+        # at the umask default, and this is the one artefact shown exactly once.
+        with os.fdopen(os.open(pem, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+            fh.write(app["pem"])
         box["app"] = {"app_id": app["id"], "slug": app["slug"],
                       "html_url": app["html_url"],
                       "webhook_secret": app.get("webhook_secret")}
@@ -220,6 +223,7 @@ weakening it.
 |---|---|
 | `GITHUB_APP_ID` | from `anvil-app.json` |
 | `GITHUB_APP_INSTALLATION_ID` | from step 3 |
+| `GITHUB_APP_BOT_USER_ID` | the `<slug>[bot]` numeric id recorded in step 4 — `CODE-CHANGES.md` §2a reads the principal from it |
 | `GITHUB_APP_PRIVATE_KEY` | the PEM contents (or `GITHUB_APP_PRIVATE_KEY_PATH` — `CODE-CHANGES.md` §1 specifies both) |
 
 `GITHUB_APP_PRIVATE_KEY` is that exact name on purpose: it is already on the

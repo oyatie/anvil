@@ -202,6 +202,19 @@ the start.
 App approval counts toward `required_approving_review_count` is settled empirically
 on a throwaway branch with its own ruleset, never by first enabling it on `dev`.
 
+Note that by then **no in-tree path submits an App approval at all** — `CODE-CHANGES.md`
+§6 deletes the enlister's `APPROVE` arm — so this one is exercised by hand, with an
+installation token:
+
+```
+gh api repos/oyatie/anvil/pulls/<N>/reviews -f event=APPROVE -f body='O4 probe'
+gh api repos/oyatie/anvil/pulls/<N> --jq '.mergeable_state'   # on the probe branch,
+                                                              # with its own 1-approval ruleset
+```
+
+**Pass:** the probe branch reports mergeable with the App's approval as the only one.
+**Fail:** it does not. Either answer discharges O4; only an unrun probe leaves it open.
+
 **If O1–O4 hold**, §3 is a decision Jason takes with the evidence in hand, recorded
 in the decision registry. **If any fails**, §3 stays unapplied and the failure is the
 finding — the mechanism in §2 (`require_code_owner_review`, which an App cannot

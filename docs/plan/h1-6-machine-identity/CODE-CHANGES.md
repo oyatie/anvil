@@ -323,8 +323,12 @@ Add a token-minting step before the script step and consume its output:
           github-token: ${{ steps.app-token.outputs.token }}
 ```
 
-Then delete the `HAS_PAT` env (`:53`) and the `patWarning` text and its two uses
-(`:88-102`). That warning exists because a `GITHUB_TOKEN`-opened pull request triggers no
+Then delete the `HAS_PAT` env (`:56`) and the `github-token` line (`:58`), and the
+`patWarning` text (`:91`) with **both** its uses — `:99` and `:113`. The second use is
+outside the block the text sits in (`body.push(..., \`> ${patWarning}\`)`), so deleting a
+contiguous range around the declaration leaves an undefined reference at `:113` and the
+inline script throws. Delete by identifier, not by line range; re-read the file first,
+because these numbers move. That warning exists because a `GITHUB_TOKEN`-opened pull request triggers no
 workflow runs; an App-opened one does, so leaving the warning in would publish a false
 statement on every promotion pull request — the class this repository calls a gate
 claiming more than it checks.
@@ -416,6 +420,25 @@ and the ratchet exists to make this a visible decision — which is what taking 
 | `tests/anvil_does_not_answer_its_own_comments_test.rs:22-35` | door → door census |
 | new meta-test | zero substring identity predicates in authority modules (seed-proved) |
 | new meta-test | no `verdict: "APPROVE"` constructed outside tests |
-| `.github/workflows/promotion-open-next.yml:53,57,88-102` | App token; delete the PAT warning |
+| `.github/workflows/promotion-open-next.yml:56,58,91,99,113` | App token; delete the PAT warning and **both** its uses |
+
+### Two call sites the token change reaches that are not in the table above
+
+Injecting `GH_TOKEN` inside `exec::gh::apply()` covers all 35 `crate::exec::gh()` sites —
+which is the point, and also means it reaches two that an installation token may not
+satisfy. Neither is a safety problem; both fail closed, and both are the likeliest thing
+to stall day one, so they are named rather than discovered:
+
+- **`check_auth` — `gh auth status` (`src/github/mod.rs:92`)**, called at boot from
+  `src/cli/server.rs:30` and `:369`, and it `bail!`s on a non-zero exit. `gh auth status`
+  resolves a *login*; an installation token has no user behind it. Verify this before
+  cutting over, and if it refuses, `check_auth` needs a token-shape-aware probe
+  (`gh api installation/repositories`) rather than a login lookup.
+- **`gh webhook forward` (`src/cli/server.rs:216` and `:307`)**, which authenticates to
+  create and drive a forwarding session. Untested under an installation token. If it
+  refuses, webhooks stop arriving — visibly, not silently.
+
+Both are stated as unverified rather than assumed to work. `SETUP.md` §4's token check is
+the place to find out, before anything depends on it.
 | `.github/workflows/toolchain-weekly.yml:60,76` | App token |
 | `tests/dependency_admission_test.rs:16,19` | ceilings, if path (a) in §8 |

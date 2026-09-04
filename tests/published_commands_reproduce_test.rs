@@ -45,10 +45,58 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Verbs that may open a pipeline segment. Read-only, no network, no writes.
+///
+/// `sed`, `awk`, `find` and `python3` were here and are deliberately gone: each
+/// executes arbitrary code without a metacharacter (`find -exec`, `awk
+/// 'system()'`, `python3 -c`, `sed w`), so no amount of pipeline parsing makes
+/// them safe to run on text out of a document.
 const ALLOWED: &[&str] = &[
-    "git", "grep", "cat", "sed", "awk", "sort", "uniq", "wc", "head", "tail", "cut", "tr", "paste",
-    "bc", "echo", "ls", "find", "python3", "true",
+    "git", "grep", "cat", "sort", "uniq", "wc", "head", "tail", "cut", "tr", "paste", "bc", "echo",
+    "ls", "true",
 ];
+
+/// Characters that can introduce a second command, redirect output, or
+/// substitute one. A claim is a single read-only pipeline; anything holding one
+/// of these is refused without being parsed further.
+///
+/// This is the guard that matters, and the first version did not have it. That
+/// version allowlisted the first verb of each `|`-separated segment, which
+/// meant `grep foo src ; rm -rf ~` presented as `grep` and would have RUN --
+/// along with `&&  git push`, `$(...)`, `> file`, `find -exec` and
+/// `python3 -c`. Seven of eight hostile forms passed. The seeds that "proved"
+/// the allowlist had all been written in the one shape it caught (`| xargs`),
+/// which is the one-directional verification this repo keeps re-learning:
+/// seeding only what a design already handles measures the seeds, not the
+/// design.
+/// Dangerous **unquoted**; inside single quotes every one of them is inert.
+const FORBIDDEN_BARE: &[char] = &[';', '&', '$', '`', '>', '<', '\n', '(', ')'];
+
+/// Still dangerous inside double quotes, where the shell keeps expanding them.
+const FORBIDDEN_IN_DOUBLE: &[char] = &['$', '`'];
+
+/// The first shell-active metacharacter, or `None`.
+///
+/// Quote state is tracked because the counts this repo publishes are grep
+/// patterns: `'^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|'` holds parentheses, and a
+/// flat character scan rejected both real claims in the corpus. A guard that
+/// refuses every genuine claim is not strict, it is broken -- it would have
+/// left the scan running on nothing while reporting green.
+fn first_metacharacter(command: &str) -> Option<char> {
+    let (mut single, mut double) = (false, false);
+    let mut prev = '\0';
+    for c in command.chars() {
+        match c {
+            '\'' if !double && prev != '\\' => single = !single,
+            '"' if !single && prev != '\\' => double = !double,
+            _ if single => {}
+            _ if double && FORBIDDEN_IN_DOUBLE.contains(&c) => return Some(c),
+            _ if !double && FORBIDDEN_BARE.contains(&c) => return Some(c),
+            _ => {}
+        }
+        prev = c;
+    }
+    None
+}
 
 /// `git` subcommands that only read. `git push`, `git commit`, `git checkout`
 /// and friends are refused even though `git` is allowed.
@@ -157,8 +205,21 @@ fn segment_verbs(command: &str) -> Vec<String> {
         .collect()
 }
 
-/// `Err` names the verb that is not permitted. Refusal is a failure, never a skip.
+/// `Err` names why the command is not permitted. Refusal is a failure, never a skip.
 fn refuse_unless_read_only(command: &str) -> Result<(), String> {
+    // Metacharacters first: a command holding one is refused without being
+    // parsed, because parsing is exactly what the first version got wrong.
+    if let Some(c) = first_metacharacter(command) {
+        return Err(format!(
+            "`{}` can introduce or redirect a second command; a claim must be one \
+             read-only pipeline",
+            if c == '\n' {
+                "\\n".to_string()
+            } else {
+                c.to_string()
+            }
+        ));
+    }
     for verb in segment_verbs(command) {
         if !ALLOWED.contains(&verb.as_str()) {
             return Err(format!("`{verb}` is not a permitted verb"));
@@ -240,6 +301,24 @@ fn a_command_that_writes_is_refused_rather_than_run() {
         "curl https://example.invalid",
         "grep -c foo src/lib.rs | xargs rm",
         "git commit -m x",
+        // Every one of these RAN under the first implementation, which
+        // allowlisted only the first verb of each `|` segment. They are the
+        // seeds that version should have been written against.
+        "grep foo src ; rm -rf /tmp/x",
+        "grep foo src && git push origin dev",
+        "grep foo src || rm -rf /tmp/x",
+        "echo $(rm -rf /tmp/x)",
+        "echo `rm -rf /tmp/x`",
+        "grep foo src > /tmp/written",
+        "grep foo src >> /tmp/written",
+        "cat < /etc/passwd",
+        "find . -name x -exec rm {} ;",
+        "python3 -c 'import os; os.system(\"rm -rf /tmp/x\")'",
+        "awk 'BEGIN{system(\"rm -rf /tmp/x\")}'",
+        "sed -i 's/a/b/' Cargo.toml",
+        "git -c core.hooksPath=/dev/null push",
+        "grep foo src\nrm -rf /tmp/x",
+        "FOO=1 rm -rf /tmp/x",
     ] {
         assert!(
             refuse_unless_read_only(hostile).is_err(),

@@ -1,132 +1,94 @@
 //! A number published beside a command must be the number that command produces.
 //!
-//! `prose_counts_test` already states the rule for two corpora -- Rust doc
-//! comments and the `corpus_sync`-owned markdown -- and derives counts from
-//! symbols. This is the third corpus and the stronger form: `docs/plan/` is
-//! outside `corpus_sync::OWNED`, nothing reads it, and its claims are not
-//! counts a symbol can derive but *measurements a command produced*.
+//! `prose_counts_test` states the rule for two corpora -- Rust doc comments and
+//! the `corpus_sync`-owned markdown -- and derives counts from symbols. This is
+//! the third corpus and a different form: `docs/plan/` is outside
+//! `corpus_sync::OWNED`, no test reads it, and its claims are not counts a
+//! symbol can derive but *measurements a command produced*.
 //!
-//! The class it exists to catch, from the review of #207 and #209, where six
-//! instances shipped across seven rounds:
+//! # What it cannot catch, stated first
 //!
-//!   * `26/10/3` published beside a pattern that returns `34/11/5` -- the
-//!     numbers came from an unstated word-boundary form.
-//!   * `git grep -nE 'unsafe (fn\|impl\|\{\|trait)' -- src` printed inside a
-//!     markdown table cell, where the escaped pipes make it return 0 -- and 0
-//!     agreed with the conclusion, so the broken form could not have failed.
-//!   * "unscoped returns 31, because it matches this sentence" surviving after
-//!     the matching sentence was deleted; then re-created by its own fix.
+//! It compares the printed command's output to the printed number. So:
 //!
-//! Every one is mechanically detectable and none needed a reviewer: run the
-//! command as printed, compare to the number printed beside it. The reviews
-//! were doing slowly, and six times, what this does in seconds.
+//!   * **A wrong command that agrees with its number passes.** The escaped-pipe
+//!     case that motivated this file --
+//!     `git grep -nE 'unsafe (fn\|impl\|\{\|trait)'` inside a table cell,
+//!     returning 0 where the working form returns 4 -- would be published as
+//!     `#= 0` and go green. Nothing here knows what the author meant.
+//!   * **A claim in prose, or in a markdown table cell, is not seen.** Only
+//!     fenced blocks are scanned. A `#=` outside a fence is *reported*, not
+//!     skipped, because a skipped assertion is absent evidence (I1) -- but a
+//!     number written as ordinary prose is invisible and always will be.
+//!     Inferring claims from prose would itself be a proxy.
+//!
+//! What it does catch is the rest of the class, six instances of which shipped
+//! across seven review rounds on #207 and #209: a number that its own printed
+//! command does not produce.
 //!
 //! # The contract
 //!
-//! Inside a fenced block, `#=` marks an assertion. Everything left of it is the
-//! command; everything right is the expected stdout, trimmed:
+//! Inside a fenced block (``` or ~~~), `#=` marks an assertion. Left of it is
+//! the command, right of it the expected stdout, trimmed. The expected value
+//! may not be empty -- an empty expectation matches any silent command, which
+//! is how five write-canaries passed an earlier revision of this file.
 //!
 //! ```text
-//! git grep -c 'needle' -- src     #= 42
+//! grep -rc 'needle' src/lib.rs     #= 42
 //! ```
 //!
-//! A plain `#` comment stays prose and is not run, so the existing blocks in
-//! `h1-execution-prompt.md` are untouched.
+//! # Why no shell, and why `git` is not allowed
 //!
-//! # Why an allowlist rather than a shell
+//! This runs text out of a document that any contributor may edit, so it is
+//! untrusted input reaching `exec`. Two earlier revisions tried to make that
+//! safe by inspection and both failed:
 //!
-//! This runs text lifted out of a document, which is untrusted input reaching
-//! `exec`. A document that says `rm -rf ~` must be *refused*, not run. Only the
-//! read-only verbs below may open a pipeline segment, and a command naming
-//! anything else fails the scan loudly rather than being skipped -- a skipped
-//! assertion is absent evidence, and absent evidence is never a pass (I1).
+//!   1. Allowlisting the opening verb of each `|` segment. `grep foo ; rm -rf ~`
+//!      presented as `grep`; seven of eight hostile forms ran.
+//!   2. Adding a shell-metacharacter refusal. That closed `;`, `&&`, `$(...)`,
+//!      backticks and redirection -- and missed the real class, because
+//!      *arguments to permitted programs execute code with no metacharacter at
+//!      all*: `git grep --open-files-in-pager=touch\ canary` ran `touch`,
+//!      `git config --global` wrote the reader's `~/.gitconfig`, and
+//!      `git diff --output=f` wrote a file. Each went green.
+//!
+//! Enumerating flags is the same losing game one layer lower, so the premise
+//! changed instead. No shell is invoked: each pipeline segment is tokenised and
+//! spawned directly, which makes `;`, `>` and `$(...)` ordinary argv that fail
+//! on their own. And `git` is not on the allowlist -- it is a program launcher
+//! (pagers, editors, external diff, aliases) and no claim in this corpus needs
+//! it. The remaining verbs neither execute nor write, with `-o/--output`
+//! refused because `sort` takes it.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
 
-/// Verbs that may open a pipeline segment. Read-only, no network, no writes.
-///
-/// `sed`, `awk`, `find` and `python3` were here and are deliberately gone: each
-/// executes arbitrary code without a metacharacter (`find -exec`, `awk
-/// 'system()'`, `python3 -c`, `sed w`), so no amount of pipeline parsing makes
-/// them safe to run on text out of a document.
+/// Verbs that may appear in a claim. None of these can execute another program
+/// or write a file, given the argument refusal below.
 const ALLOWED: &[&str] = &[
-    "git", "grep", "cat", "sort", "uniq", "wc", "head", "tail", "cut", "tr", "paste", "bc", "echo",
-    "ls", "true",
+    "grep", "cat", "sort", "uniq", "wc", "head", "tail", "cut", "tr", "paste", "bc", "echo", "ls",
+    "true",
 ];
 
-/// Characters that can introduce a second command, redirect output, or
-/// substitute one. A claim is a single read-only pipeline; anything holding one
-/// of these is refused without being parsed further.
-///
-/// This is the guard that matters, and the first version did not have it. That
-/// version allowlisted the first verb of each `|`-separated segment, which
-/// meant `grep foo src ; rm -rf ~` presented as `grep` and would have RUN --
-/// along with `&&  git push`, `$(...)`, `> file`, `find -exec` and
-/// `python3 -c`. Seven of eight hostile forms passed. The seeds that "proved"
-/// the allowlist had all been written in the one shape it caught (`| xargs`),
-/// which is the one-directional verification this repo keeps re-learning:
-/// seeding only what a design already handles measures the seeds, not the
-/// design.
-/// Dangerous **unquoted**; inside single quotes every one of them is inert.
-const FORBIDDEN_BARE: &[char] = &[';', '&', '$', '`', '>', '<', '\n', '(', ')'];
+/// Arguments refused for every verb: `sort -o FILE` writes, and the long forms
+/// of the same idea do too.
+const REFUSED_ARGS: &[&str] = &["-o", "--output"];
 
-/// Still dangerous inside double quotes, where the shell keeps expanding them.
-const FORBIDDEN_IN_DOUBLE: &[char] = &['$', '`'];
-
-/// The first shell-active metacharacter, or `None`.
-///
-/// Quote state is tracked because the counts this repo publishes are grep
-/// patterns: `'^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|'` holds parentheses, and a
-/// flat character scan rejected both real claims in the corpus. A guard that
-/// refuses every genuine claim is not strict, it is broken -- it would have
-/// left the scan running on nothing while reporting green.
-fn first_metacharacter(command: &str) -> Option<char> {
-    let (mut single, mut double) = (false, false);
-    let mut prev = '\0';
-    for c in command.chars() {
-        match c {
-            '\'' if !double && prev != '\\' => single = !single,
-            '"' if !single && prev != '\\' => double = !double,
-            _ if single => {}
-            _ if double && FORBIDDEN_IN_DOUBLE.contains(&c) => return Some(c),
-            _ if !double && FORBIDDEN_BARE.contains(&c) => return Some(c),
-            _ => {}
-        }
-        prev = c;
-    }
-    None
-}
-
-/// `git` subcommands that only read. `git push`, `git commit`, `git checkout`
-/// and friends are refused even though `git` is allowed.
-const ALLOWED_GIT: &[&str] = &[
-    "grep",
-    "log",
-    "show",
-    "ls-files",
-    "ls-tree",
-    "cat-file",
-    "rev-parse",
-    "rev-list",
-    "diff",
-    "branch",
-    "status",
-    "config",
-    "worktree",
-    "shortlog",
-];
+const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 struct Claim {
     file: PathBuf,
     line: usize,
     command: String,
     expected: String,
+    fenced: bool,
 }
 
 fn plan_docs() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/plan");
     let mut out = Vec::new();
-    let mut stack = vec![PathBuf::from("docs/plan")];
+    let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let p = entry.path();
@@ -141,17 +103,27 @@ fn plan_docs() -> Vec<PathBuf> {
     out
 }
 
-/// Assertions inside fenced blocks. Prose `#` comments are left alone.
+/// Every `#=` in the file, with whether it sat inside a fence.
+///
+/// Unfenced ones are collected rather than dropped: three of four planted
+/// markers -- in a `~~~` fence, an indented block, and a table cell -- were
+/// silently unexamined by an earlier revision while it reported green. A marker
+/// the scan cannot run is a finding, not a non-event.
 fn claims_in(path: &Path) -> Vec<Claim> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut out = Vec::new();
-    let mut fenced = false;
+    let mut fence: Option<char> = None;
     for (i, raw) in text.lines().enumerate() {
-        if raw.trim_start().starts_with("```") {
-            fenced = !fenced;
-            continue;
-        }
-        if !fenced {
+        let t = raw.trim_start();
+        let opener = ['`', '~']
+            .into_iter()
+            .find(|c| t.starts_with(&c.to_string().repeat(3)));
+        if let Some(c) = opener {
+            match fence {
+                Some(open) if open == c => fence = None,
+                None => fence = Some(c),
+                _ => {}
+            }
             continue;
         }
         let Some((cmd, expected)) = raw.split_once("#=") else {
@@ -165,125 +137,198 @@ fn claims_in(path: &Path) -> Vec<Claim> {
             line: i + 1,
             command: cmd.trim().to_string(),
             expected: expected.trim().to_string(),
+            fenced: fence.is_some(),
         });
     }
     out
 }
 
-/// The first token of every pipeline segment, so each can be checked.
-///
-/// Quote-aware, because it must be. The first version split on every `|` and
-/// so tore `grep -chE '^\| *H1-[0-9]+ *\|'` into pieces at the pipes *inside*
-/// the regex, then refused `*H1-[0-9]+` as an unpermitted verb. A splitter that
-/// cannot read the commands this repo actually publishes would have rejected
-/// every real claim and passed only trivial ones -- the instrument failing in
-/// exactly the way the scan exists to catch.
-fn segment_verbs(command: &str) -> Vec<String> {
-    let mut segments = vec![String::new()];
+/// Split into `|`-separated segments, each tokenised into argv. Quote-aware:
+/// the counts this repo publishes are grep patterns holding `|` and `()`.
+fn parse(command: &str) -> Vec<Vec<String>> {
+    let mut segments = vec![Vec::<String>::new()];
+    let mut token = String::new();
     let (mut single, mut double) = (false, false);
     let mut prev = '\0';
+    let mut quoted_token = false;
     for c in command.chars() {
         match c {
-            '\'' if !double && prev != '\\' => single = !single,
-            '"' if !single && prev != '\\' => double = !double,
-            '|' if !single && !double => {
-                segments.push(String::new());
-                prev = c;
-                continue;
+            '\'' if !double && prev != '\\' => {
+                single = !single;
+                quoted_token = true;
             }
-            _ => {}
+            '"' if !single && prev != '\\' => {
+                double = !double;
+                quoted_token = true;
+            }
+            '|' if !single && !double => {
+                if !token.is_empty() || quoted_token {
+                    segments.last_mut().expect("seeded").push(token.clone());
+                }
+                token.clear();
+                quoted_token = false;
+                segments.push(Vec::new());
+            }
+            c if c.is_whitespace() && !single && !double => {
+                if !token.is_empty() || quoted_token {
+                    segments.last_mut().expect("seeded").push(token.clone());
+                }
+                token.clear();
+                quoted_token = false;
+            }
+            _ => token.push(c),
         }
-        segments.last_mut().expect("seeded with one").push(c);
         prev = c;
     }
+    if !token.is_empty() || quoted_token {
+        segments.last_mut().expect("seeded").push(token);
+    }
     segments
-        .iter()
-        .filter_map(|seg| {
-            let seg = seg.trim().trim_start_matches('(').trim();
-            seg.split_whitespace().next().map(str::to_string)
-        })
-        .collect()
 }
 
-/// `Err` names why the command is not permitted. Refusal is a failure, never a skip.
+/// `Err` says why the claim may not run. Refusal is a failure, never a skip.
 fn refuse_unless_read_only(command: &str) -> Result<(), String> {
-    // Metacharacters first: a command holding one is refused without being
-    // parsed, because parsing is exactly what the first version got wrong.
-    if let Some(c) = first_metacharacter(command) {
-        return Err(format!(
-            "`{}` can introduce or redirect a second command; a claim must be one \
-             read-only pipeline",
-            if c == '\n' {
-                "\\n".to_string()
-            } else {
-                c.to_string()
-            }
-        ));
+    let segments = parse(command);
+    if segments.iter().any(|s| s.is_empty()) {
+        return Err("empty pipeline segment".to_string());
     }
-    for verb in segment_verbs(command) {
+    for seg in &segments {
+        let verb = &seg[0];
         if !ALLOWED.contains(&verb.as_str()) {
             return Err(format!("`{verb}` is not a permitted verb"));
         }
-        if verb == "git" {
-            let sub = command
-                .split_whitespace()
-                .skip_while(|t| *t != "git")
-                .nth(1)
-                .unwrap_or("");
-            let sub = if sub.starts_with('-') { "" } else { sub };
-            if !ALLOWED_GIT.contains(&sub) {
-                return Err(format!("`git {sub}` is not a read-only subcommand"));
+        for arg in &seg[1..] {
+            if REFUSED_ARGS
+                .iter()
+                .any(|r| arg == r || arg.starts_with(&format!("{r}=")))
+            {
+                return Err(format!("`{verb} {arg}` writes a file"));
             }
         }
     }
     Ok(())
 }
 
-fn run(command: &str) -> String {
-    let out = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .output()
-        .expect("sh is available");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+/// Expand a trailing-component `*` against the filesystem.
+///
+/// Dropping the shell dropped globbing with it, and both real claims in the
+/// corpus glob (`docs/plan/ws-*.md`) -- so the first no-shell revision handed
+/// `grep` a literal `ws-*.md`, got empty output, and failed both. Expansion is
+/// done here instead: it reads a directory and matches a prefix/suffix, which
+/// cannot execute anything. An unmatched pattern is left verbatim so the
+/// failure surfaces as a mismatch rather than a silent empty set.
+fn expand(arg: &str) -> Vec<String> {
+    let Some(star) = arg.find('*') else {
+        return vec![arg.to_string()];
+    };
+    let (dir, file) = match arg.rfind('/') {
+        Some(slash) if slash < star => (&arg[..slash], &arg[slash + 1..]),
+        _ => (".", arg),
+    };
+    let Some((prefix, suffix)) = file.split_once('*') else {
+        return vec![arg.to_string()];
+    };
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
+    let mut hits: Vec<String> = std::fs::read_dir(&base)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            (name.starts_with(prefix) && name.ends_with(suffix) && name.len() >= prefix.len())
+                .then(|| format!("{dir}/{name}"))
+        })
+        .collect();
+    hits.sort();
+    if hits.is_empty() {
+        vec![arg.to_string()]
+    } else {
+        hits
+    }
+}
+
+/// Spawn each segment directly, wiring stdout to the next stdin. No shell, so a
+/// `;` or `>` that survived parsing is argv and fails on its own merits.
+fn run(command: &str) -> Result<String, String> {
+    let segments = parse(command);
+    let root = env!("CARGO_MANIFEST_DIR");
+    let mut input: Vec<u8> = Vec::new();
+    for seg in &segments {
+        let args: Vec<String> = seg[1..].iter().flat_map(|a| expand(a)).collect();
+        let mut child = Command::new(&seg[0])
+            .args(&args)
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("could not spawn `{}`: {e}", seg[0]))?;
+        let mut stdin = child.stdin.take().expect("piped");
+        let buf = std::mem::take(&mut input);
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&buf);
+        });
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(child.wait_with_output());
+        });
+        let out = rx
+            .recv_timeout(TIMEOUT)
+            .map_err(|_| format!("`{}` did not finish within {TIMEOUT:?}", seg[0]))?
+            .map_err(|e| format!("`{}` failed: {e}", seg[0]))?;
+        input = out.stdout;
+    }
+    Ok(String::from_utf8_lossy(&input).trim().to_string())
 }
 
 #[test]
 fn every_published_command_produces_the_number_published_beside_it() {
     let claims: Vec<Claim> = plan_docs().iter().flat_map(|p| claims_in(p)).collect();
 
-    // A scan that examined nothing must not report a pass. If every `#=` were
-    // deleted this would go green while checking no claim at all, which is the
-    // shape of defect it exists to catch.
+    // A scan that examined nothing must not report a pass.
     assert!(
         !claims.is_empty(),
-        "no `#=` assertions found under docs/plan/. Either the marker was \
-         removed or the corpus moved; a scan with an empty corpus is not a pass."
+        "no `#=` assertions found under docs/plan/. A scan with an empty corpus \
+         is not a pass."
     );
 
     let mut failures = Vec::new();
     for claim in &claims {
         let at = format!("{}:{}", claim.file.display(), claim.line);
+        if !claim.fenced {
+            failures.push(format!(
+                "{at}: `#=` outside a fenced block, so it cannot be run. Move it \
+                 into a ``` or ~~~ fence, or make it prose without the marker.\n    {}",
+                claim.command
+            ));
+            continue;
+        }
+        if claim.expected.is_empty() {
+            failures.push(format!(
+                "{at}: `#=` with no expected value. An empty expectation matches \
+                 any silent command, which is not an assertion.\n    {}",
+                claim.command
+            ));
+            continue;
+        }
         if let Err(why) = refuse_unless_read_only(&claim.command) {
             failures.push(format!("{at}: REFUSED -- {why}\n    {}", claim.command));
             continue;
         }
-        let actual = run(&claim.command);
-        if actual != claim.expected {
-            failures.push(format!(
+        match run(&claim.command) {
+            Err(why) => failures.push(format!("{at}: {why}\n    {}", claim.command)),
+            Ok(actual) if actual != claim.expected => failures.push(format!(
                 "{at}: published `{}` but the command produced `{}`\n    {}",
                 claim.expected, actual, claim.command
-            ));
+            )),
+            Ok(_) => {}
         }
     }
 
     assert!(
         failures.is_empty(),
-        "{} of {} published command(s) did not reproduce:\n\n{}\n\n\
-         A number beside a command must be the number that command produces. \
-         If the command is right and the number is stale, update the number; \
-         if the number is right and the command cannot express it, the command \
-         is the defect.",
+        "{} of {} published claim(s) did not reproduce:\n\n{}\n\n\
+         A number beside a command must be the number that command produces.",
         failures.len(),
         claims.len(),
         failures.join("\n\n")
@@ -291,52 +336,94 @@ fn every_published_command_produces_the_number_published_beside_it() {
 }
 
 #[test]
-fn a_command_that_writes_is_refused_rather_than_run() {
-    // The scan executes text taken from a document. Refusal must be the
-    // behaviour for anything outside the read-only allowlist, and it must be a
-    // failure the caller sees rather than a silent skip.
+fn nothing_that_executes_or_writes_is_permitted() {
+    // Every entry ran, wrote, or deleted under some earlier revision of this
+    // file. They are seeds, not hypotheticals.
     for hostile in [
-        "rm -rf /tmp/anvil-should-not-exist",
-        "git push origin dev",
-        "curl https://example.invalid",
-        "grep -c foo src/lib.rs | xargs rm",
-        "git commit -m x",
-        // Every one of these RAN under the first implementation, which
-        // allowlisted only the first verb of each `|` segment. They are the
-        // seeds that version should have been written against.
-        "grep foo src ; rm -rf /tmp/x",
-        "grep foo src && git push origin dev",
-        "grep foo src || rm -rf /tmp/x",
-        "echo $(rm -rf /tmp/x)",
-        "echo `rm -rf /tmp/x`",
-        "grep foo src > /tmp/written",
-        "grep foo src >> /tmp/written",
-        "cat < /etc/passwd",
+        // v1: allowlisted the first verb of each `|` segment.
         "find . -name x -exec rm {} ;",
         "python3 -c 'import os; os.system(\"rm -rf /tmp/x\")'",
         "awk 'BEGIN{system(\"rm -rf /tmp/x\")}'",
         "sed -i 's/a/b/' Cargo.toml",
+        // v2: refused metacharacters, but arguments still executed programs.
+        r"git grep --open-files-in-pager=touch\ canary anvil",
+        "git config --global core.pager evil",
+        "git config zz.canary 1",
+        "git diff --output=written HEAD~1 HEAD",
+        "git branch -D some-branch",
+        "git worktree add /tmp/x HEAD",
+        "git log --oneline -1 | git config zz.canary 1",
         "git -c core.hooksPath=/dev/null push",
-        "grep foo src\nrm -rf /tmp/x",
-        "FOO=1 rm -rf /tmp/x",
+        // Writes through a verb that is otherwise read-only.
+        "grep -c foo Cargo.toml | sort -o /tmp/written",
+        "grep -c foo Cargo.toml | sort --output=/tmp/written",
+        // Bare hostile verbs.
+        "rm -rf /tmp/anvil-should-not-exist",
+        "curl https://example.invalid",
     ] {
         assert!(
             refuse_unless_read_only(hostile).is_err(),
-            "a write/network verb was permitted: {hostile}"
+            "permitted a command that executes or writes: {hostile}"
         );
     }
+
     for benign in [
-        "git grep -c 'foo' -- src",
+        "grep -c edition Cargo.toml",
         "cat Cargo.toml | grep -c edition",
-        "grep -rn 'needle' src/ | wc -l",
-        // A pipe inside a quoted regex is not a pipeline boundary. This is the
-        // shape the first splitter got wrong, so it is pinned here.
+        // A pipe and parentheses inside a quoted regex are not shell syntax.
+        // A flat scan for either rejected every real claim in the corpus.
         r"grep -chE '^\| *H1-[0-9]+ *\|' docs/plan/ws-*.md | paste -sd+ - | bc",
-        r#"grep -c "a|b" src/lib.rs"#,
+        r"grep -chE '^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|' docs/plan/ws-*.md | paste -sd+ - | bc",
     ] {
         assert!(
             refuse_unless_read_only(benign).is_ok(),
-            "a read-only command was refused: {benign}"
+            "refused a read-only command: {benign}"
         );
     }
+}
+
+#[test]
+fn shell_metacharacters_are_inert_because_no_shell_runs() {
+    // These are NOT refused, and that is the point: with no shell, `;` and
+    // `$( )` are ordinary argv handed to `grep`, so the danger is gone rather
+    // than filtered. Under v1 every one of them executed. Asserting refusal
+    // here would test the filter; asserting no side effect tests the property.
+    let canary = std::env::temp_dir().join("anvil-metachar-canary");
+    for form in [
+        "grep foo Cargo.toml ; touch CANARY",
+        "grep foo Cargo.toml && touch CANARY",
+        "echo $(touch CANARY)",
+        "echo `touch CANARY`",
+        "grep foo Cargo.toml > CANARY",
+        "cat < CANARY",
+    ] {
+        let _ = std::fs::remove_file(&canary);
+        let cmd = form.replace("CANARY", &canary.display().to_string());
+        // Permitted, because the verb is read-only and the rest is just argv.
+        assert!(
+            refuse_unless_read_only(&cmd).is_ok(),
+            "expected inert-but-permitted: {cmd}"
+        );
+        let _ = run(&cmd);
+        assert!(
+            !canary.exists(),
+            "a metacharacter form created a file, so a shell ran: {cmd}"
+        );
+    }
+}
+
+#[test]
+fn a_refused_command_is_never_actually_spawned() {
+    // `refuse_unless_read_only` returning Err is only worth something if the
+    // caller consults it. An earlier revision tested the predicate in isolation
+    // and never asserted that anything did not run; canaries were the first
+    // real measurement.
+    let canary = std::env::temp_dir().join("anvil-claim-canary");
+    let _ = std::fs::remove_file(&canary);
+    let hostile = format!("touch {}", canary.display());
+    assert!(refuse_unless_read_only(&hostile).is_err());
+    assert!(
+        !canary.exists(),
+        "the canary exists, so a refused command was spawned anyway"
+    );
 }

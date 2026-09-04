@@ -6,6 +6,8 @@
 //! and nothing but these tests makes them stay that way: a `next` that has
 //! drifted from `pred` opens promotion pull requests the guard is guaranteed
 //! to reject, which reads as a broken repository rather than as a broken map.
+//! The predecessor must also be the branch in this repository: a fork branch
+//! with the same short name is not a rung in this ladder.
 //!
 //! The ladder itself is `dev -> staging -> canary -> production`, with `dev`
 //! as the trunk. It went unexercised for its whole existence — `staging`,
@@ -19,6 +21,8 @@ use std::path::PathBuf;
 
 const REVIEWED_OPENER_SCRIPT_SHA256: &str =
     "dde564f3ed83d279e5a31b40f7a6ca00d169ac015e79a1b45165abb92d95777d";
+const REVIEWED_PREDECESSOR_SCRIPT_SHA256: &str =
+    "8ab4b706ee812ca2a849485264d9142012eb519daddf025033f92fcafa210acf";
 
 fn workflow(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -90,13 +94,14 @@ fn push_branches(src: &str, name: &str) -> Vec<String> {
     branches
 }
 
-/// The exact JavaScript value GitHub Actions passes to `actions/github-script`.
-fn inline_script(src: &str) -> String {
+/// The exact JavaScript value GitHub Actions passes to one
+/// `actions/github-script` job.
+fn inline_script(src: &str, workflow_name: &str, job_name: &str) -> String {
     let doc: serde_yaml::Value =
-        serde_yaml::from_str(src).expect("promotion-open-next.yml must parse as YAML");
-    let steps = doc["jobs"]["open-next"]["steps"]
+        serde_yaml::from_str(src).unwrap_or_else(|error| panic!("{workflow_name}: {error}"));
+    let steps = doc["jobs"][job_name]["steps"]
         .as_sequence()
-        .expect("promotion-open-next.yml must declare jobs.open-next.steps");
+        .unwrap_or_else(|| panic!("{workflow_name} must declare jobs.{job_name}.steps"));
     let found: Vec<&serde_yaml::Value> = steps
         .iter()
         .filter(|step| {
@@ -108,16 +113,30 @@ fn inline_script(src: &str) -> String {
     assert_eq!(
         found.len(),
         1,
-        "promotion-open-next.yml must carry exactly one actions/github-script step"
+        "{workflow_name} must carry exactly one actions/github-script step"
     );
     found[0]["with"]["script"]
         .as_str()
-        .expect("promotion-open-next.yml github-script step must carry an inline script")
+        .unwrap_or_else(|| panic!("{workflow_name} github-script step must carry an inline script"))
         .to_string()
 }
 
 fn script_fingerprint(script: &str) -> String {
     hex::encode(Sha256::digest(script.as_bytes()))
+}
+
+fn normalized_words(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_predecessor_source(
+    current_repo: &str,
+    base_repo: Option<&str>,
+    head_repo: Option<&str>,
+    expected_ref: &str,
+    head_ref: &str,
+) -> bool {
+    base_repo == Some(current_repo) && head_repo == base_repo && head_ref == expected_ref
 }
 
 /// An inventory of canonical dot-form client paths in the already fingerprinted
@@ -190,7 +209,7 @@ fn the_opener_has_no_ref_write_and_its_reviewed_script_is_pinned() {
          its App token push to a rung directly"
     );
 
-    let script = inline_script(&src);
+    let script = inline_script(&src, "promotion-open-next.yml", "open-next");
     assert_eq!(
         script_fingerprint(&script),
         REVIEWED_OPENER_SCRIPT_SHA256,
@@ -220,7 +239,11 @@ fn the_opener_has_no_ref_write_and_its_reviewed_script_is_pinned() {
 
 #[test]
 fn alternate_javascript_pr_mutations_trip_the_script_fingerprint() {
-    let script = inline_script(&workflow("promotion-open-next.yml"));
+    let script = inline_script(
+        &workflow("promotion-open-next.yml"),
+        "promotion-open-next.yml",
+        "open-next",
+    );
     let old_inventory = dot_form_api_inventory(&script);
     let alternates = [
         (
@@ -258,6 +281,100 @@ fn alternate_javascript_pr_mutations_trip_the_script_fingerprint() {
             "{name} escaped the whole-script fingerprint"
         );
     }
+}
+
+#[test]
+fn the_predecessor_guard_rejects_forks_and_missing_head_repositories() {
+    let script = inline_script(
+        &workflow("promotion-predecessor.yml"),
+        "promotion-predecessor.yml",
+        "promotion-predecessor",
+    );
+
+    for required in [
+        "const currentRepo = `${context.repo.owner}/${context.repo.repo}`;",
+        "const baseRepo = context.payload.pull_request.base.repo?.full_name;",
+        "const headRepo = context.payload.pull_request.head.repo?.full_name;",
+    ] {
+        assert!(
+            script.contains(required),
+            "promotion-predecessor.yml must derive repository provenance with {required:?}"
+        );
+    }
+
+    let normalized = normalized_words(&script);
+    let exact_predicate = "const sourceIsPredecessor = baseRepo === currentRepo && \
+                           headRepo === baseRepo && head === want;";
+    assert!(
+        normalized.contains(exact_predicate),
+        "promotion-predecessor.yml must derive its decision from the same repository-and-ref \
+         predicate exercised below"
+    );
+    assert!(
+        normalized.contains("if (!sourceIsPredecessor) { core.setFailed(")
+            && normalized.contains("return; }"),
+        "a source that fails the reviewed predicate must fail the check and return"
+    );
+
+    let current = "oyatie/anvil";
+    let cases = [
+        (
+            "same-repository predecessor",
+            Some(current),
+            Some(current),
+            "dev",
+            true,
+        ),
+        (
+            "same-named fork",
+            Some(current),
+            Some("attacker/anvil"),
+            "dev",
+            false,
+        ),
+        ("deleted fork", Some(current), None, "dev", false),
+        ("missing base repository", None, Some(current), "dev", false),
+        (
+            "foreign base and head",
+            Some("attacker/anvil"),
+            Some("attacker/anvil"),
+            "dev",
+            false,
+        ),
+        (
+            "same repository, wrong predecessor ref",
+            Some(current),
+            Some(current),
+            "feature",
+            false,
+        ),
+    ];
+    for (name, base_repo, head_repo, head_ref, accepted) in cases {
+        assert_eq!(
+            is_predecessor_source(current, base_repo, head_repo, "dev", head_ref),
+            accepted,
+            "unexpected predecessor decision for {name}"
+        );
+    }
+    let forged_head_ref = "dev";
+    let expected_ref = "dev";
+    let retired_ref_only_accepts = forged_head_ref == expected_ref;
+    assert!(
+        retired_ref_only_accepts,
+        "the retired ref-only predicate accepted attacker/anvil:dev"
+    );
+    assert!(
+        !is_predecessor_source(current, Some(current), Some("attacker/anvil"), "dev", "dev"),
+        "the repository-aware predicate must close the demonstrated ref-only false green"
+    );
+
+    assert_eq!(
+        script_fingerprint(&script),
+        REVIEWED_PREDECESSOR_SCRIPT_SHA256,
+        "promotion-predecessor.yml's executable script changed. Repository provenance and the \
+         predecessor ref are one reviewed decision; every script change needs line-by-line review \
+         and a deliberate fingerprint update."
+    );
 }
 
 #[test]

@@ -32,8 +32,9 @@ nobody hears; it normalizes red and buries real signal. The class-level fix is a
   ticketed, owned defect within 7 days by construction.
 - Branch-count ratchet: one baseline authority — the H1-11d row above (167 @ 2026-08-31, with
   its `--format` instrument); growth past it is a red in the weekly sweep.
-- Promotion rungs never skip: `promotion-predecessor` fails a base whose head is not its
-  predecessor, and the staging/canary/production ruleset **already requires it**
+- Promotion rungs never skip: `promotion-predecessor` fails unless the head is the same repository
+  as the base and its ref is that base's predecessor; a same-named fork branch fails. The
+  staging/canary/production ruleset **already requires it**
   (`gh api repos/oyatie/anvil/rulesets/21064983` → `required_status_checks:
   [promotion-predecessor]`). The former PR-body text claimed "no branch here is protected, so that
   check is advisory until one requires it" — stale prose that contradicted the measured ruleset.

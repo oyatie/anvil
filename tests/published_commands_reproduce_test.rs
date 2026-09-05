@@ -25,9 +25,13 @@
 //! Each fix closed the layer it had been shown, and the pattern was the finding:
 //! a design and the seeds proving it came from one author, so the seeds could
 //! only confirm the design. The premise is therefore gone rather than patched.
-//! **No process is spawned.** `no_process_is_ever_spawned` holds that as a fact
-//! about this source instead of an argument about flags -- a grep a reader can
-//! run, rather than a claim they must take on trust.
+//! **No process is spawned** -- and what carries that is the design, not a
+//! scan: the evaluator has one form, `count '<regex>' in <glob>`, with no
+//! branch anywhere that takes a program name from the document.
+//! `no_source_here_reaches_a_process_or_writes` is a *proxy* guarding future
+//! edits to this file, and a brace import (`use std::{process as p}`) defeats
+//! it. An earlier header called it a fact, under a test name that no longer
+//! existed -- an overclaim and a dead pointer in one sentence.
 //!
 //! # The contract
 //!
@@ -58,6 +62,15 @@
 //!     are scanned; a `#=` outside a fence is *reported* rather than skipped,
 //!     but an unmarked number is invisible. Inferring claims from prose would
 //!     itself be a proxy.
+//!   * **Un-marking a checked claim is invisible too**, and that is worse than
+//!     never marking one: deleting the `=` from a `#=` returns a verified
+//!     number to prose, and the run stays green so long as any other claim
+//!     exists anywhere in the corpus -- the emptiness guard is corpus-wide with
+//!     no per-file floor. Deleting this file has the same effect and is
+//!     invisible to the hook too, since `--diff-filter=ACMR` excludes
+//!     deletions. Both want a gate registry, where a removed gate is a red
+//!     rather than a silence -- the mechanism issue #210 needs for a component
+//!     constructed and never called. One registry, not a third bespoke guard.
 
 use regex::Regex;
 use std::path::{Path, PathBuf};
@@ -70,26 +83,66 @@ struct Claim {
     fenced: bool,
 }
 
-fn plan_docs() -> Result<Vec<PathBuf>, String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/plan");
+fn repo_root() -> Result<PathBuf, String> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .canonicalize()
+        .map_err(|e| format!("the repository root is unreadable ({e})"))
+}
+
+/// Whether `p` resolves inside `root`. The single containment predicate: an
+/// earlier revision had one of these in `expand` and none in the corpus walk,
+/// so a symlink under `docs/plan/` read outside the tree and echoed what it
+/// found into the failure message. Containment added to one of two paths is
+/// the instance, not the class.
+fn inside(root: &Path, p: &Path) -> bool {
+    p.canonicalize()
+        .map(|c| c.starts_with(root))
+        .unwrap_or(false)
+}
+
+/// `.md` files under `dir`, refusing anything that leaves `root`.
+///
+/// Symlinks are refused rather than followed. Nothing under `docs/plan/` is
+/// legitimately a link, git carries symlinks in a PR, and the hook's
+/// `--diff-filter=ACMR` includes additions -- so following one is a read
+/// outside the repository triggered by a contributor.
+fn md_files_under(root: &Path, dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
-    let mut stack = vec![root];
-    while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir)
-            .map_err(|e| format!("`{}` cannot be listed ({e})", dir.display()))?;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let entries = std::fs::read_dir(&d)
+            .map_err(|e| format!("`{}` cannot be listed ({e})", d.display()))?;
         for entry in entries {
             let p = entry
-                .map_err(|e| format!("`{}` cannot be listed ({e})", dir.display()))?
+                .map_err(|e| format!("`{}` cannot be listed ({e})", d.display()))?
                 .path();
-            if p.is_dir() {
+            let meta = std::fs::symlink_metadata(&p)
+                .map_err(|e| format!("`{}` cannot be inspected ({e})", p.display()))?;
+            if meta.file_type().is_symlink() {
+                return Err(format!(
+                    "`{}` is a symlink. Nothing under the corpus may be one: following it \
+                     reads outside the repository.",
+                    p.display()
+                ));
+            }
+            if !inside(root, &p) {
+                return Err(format!("`{}` resolves outside the repository", p.display()));
+            }
+            if meta.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "md") {
+            } else if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")) {
                 out.push(p);
             }
         }
     }
     out.sort();
     Ok(out)
+}
+
+fn plan_docs() -> Result<Vec<PathBuf>, String> {
+    let root = repo_root()?;
+    let dir = root.join("docs/plan");
+    md_files_under(&root, &dir)
 }
 
 /// Every `#=` in the file, with whether it sat inside a fence. Unfenced ones are
@@ -147,9 +200,7 @@ fn claims_in(path: &Path) -> Result<Vec<Claim>, String> {
 /// cannot execute anything; an unmatched pattern yields nothing, which the
 /// caller reports rather than treating as an empty-and-green zero.
 fn expand(glob: &str) -> Result<Vec<PathBuf>, String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .canonicalize()
-        .map_err(|e| format!("the repository root is unreadable ({e})"))?;
+    let root = repo_root()?;
     let (dir, file) = match glob.rfind('/') {
         Some(slash) => (&glob[..slash], &glob[slash + 1..]),
         None => (".", glob),
@@ -158,23 +209,18 @@ fn expand(glob: &str) -> Result<Vec<PathBuf>, String> {
     // read `../../../../etc/hosts` or follow a symlink out of the tree, and the
     // failure message printed the count -- one measured bit per claim of
     // anything the CI runner can read.
-    let inside = |p: &Path| -> bool {
-        p.canonicalize()
-            .map(|c| c.starts_with(&root))
-            .unwrap_or(false)
-    };
     let Some((prefix, suffix)) = file.split_once('*') else {
         let p = root.join(glob);
         if !p.is_file() {
             return Ok(Vec::new());
         }
-        if !inside(&p) {
+        if !inside(&root, &p) {
             return Err(format!("`{glob}` resolves outside the repository"));
         }
         return Ok(vec![p]);
     };
     let base = root.join(dir);
-    if !inside(&base) {
+    if !inside(&root, &base) {
         return Err(format!("`{glob}` resolves outside the repository"));
     }
     let entries = std::fs::read_dir(&base)
@@ -192,7 +238,7 @@ fn expand(glob: &str) -> Result<Vec<PathBuf>, String> {
             continue;
         }
         let p = entry.path();
-        if p.is_file() && inside(&p) {
+        if p.is_file() && inside(&root, &p) {
             hits.push(p);
         }
     }
@@ -313,8 +359,9 @@ fn no_source_here_reaches_a_process_or_writes() {
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
         .join("\n")
-        .replace(" ::", "::")
-        .replace(":: ", "::");
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let forbidden = [
         format!("{}::{}", "Command", "new"),
         format!("{}::{}", "process", "Command"),
@@ -322,6 +369,10 @@ fn no_source_here_reaches_a_process_or_writes() {
         format!("{}::{}", "libc", "system"),
         format!("{}::{}", "std", "net"),
         format!("{}::{}", "fs", "write"),
+        format!("{}::{}", "File", "create"),
+        format!("{}{}", "Open", "Options"),
+        format!("{}::{}", "fs", "remove"),
+        format!("{}::{}", "fs", "rename"),
         format!("{}!", "include"),
         format!("#[{}", "path"),
     ];

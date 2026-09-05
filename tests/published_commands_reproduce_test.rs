@@ -131,7 +131,7 @@ fn claims_in(path: &Path) -> Result<Vec<Claim>, String> {
         let t = raw.trim_start();
         if let Some(c) = ['`', '~']
             .into_iter()
-            .find(|c| t.starts_with(&c.to_string().repeat(3)))
+            .find(|c| t.chars().take_while(|x| x == c).count() >= 3)
         {
             match fence {
                 Some(open) if open == c => fence = None,
@@ -290,32 +290,48 @@ fn every_published_claim_produces_the_number_published_beside_it() {
 }
 
 #[test]
-fn no_process_is_ever_spawned() {
-    // The safety property, held as a fact about this source rather than an
-    // argument about which flags are dangerous. Three revisions argued the
-    // latter and three were wrong; this one a reader checks with a grep.
+fn no_source_here_reaches_a_process_or_writes() {
+    // A PROXY, deliberately labelled as one. An earlier revision called this
+    // "a fact about this source"; a review then defeated it two ways, each
+    // with a real canary file created:
+    //
+    //     use std :: process :: Command as X    -- missed, spacing
+    //     include!("elsewhere.rs")              -- missed, another file
+    //
+    // `#[path] mod` and anything under tests/common/ are the same hole, and
+    // clippy's disallowed_methods cannot help: it is configured repo-wide, and
+    // src/exec legitimately spawns processes. So this is a best-effort scan
+    // over one file, and what actually carries the safety property is that the
+    // evaluator has one form -- `count '<regex>' in <glob>' -- with no branch
+    // that takes a program name from the document at all.
+    //
+    // Whitespace around `::` is normalised so spacing cannot defeat it, and the
+    // needles are assembled at runtime so the scan does not match its own list.
     let me = std::fs::read_to_string(file!()).expect("this file is readable");
     let body: String = me
         .lines()
         .filter(|l| !l.trim_start().starts_with("//"))
-        .collect();
-    // Assembled at runtime rather than written as literals, because a literal
-    // needle makes the scan match its own forbidden list -- which is exactly
-    // what happened, and is the same self-match that has now appeared four
-    // times in this session's work. A detector whose corpus includes its own
-    // statement measures the statement.
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(" ::", "::")
+        .replace(":: ", "::");
     let forbidden = [
         format!("{}::{}", "Command", "new"),
         format!("{}::{}", "process", "Command"),
         format!("{}::{}", "std", "process"),
+        format!("{}::{}", "libc", "system"),
+        format!("{}::{}", "std", "net"),
+        format!("{}::{}", "fs", "write"),
+        format!("{}!", "include"),
+        format!("#[{}", "path"),
     ];
-    for forbidden in &forbidden {
+    for needle in &forbidden {
         assert!(
-            !body.contains(forbidden.as_str()),
-            "`{forbidden}` appears in the scan. Document text must never reach a \
-             process: `sort --compress-program`, `uniq IN OUT` and \
-             `git grep --open-files-in-pager` all executed or wrote through \
-             allowlists that looked airtight."
+            !body.contains(needle.as_str()),
+            "`{needle}` appears in the scan. Document text must never reach a \
+             process, the network, or a write: `sort --compress-program`, \
+             `uniq IN OUT` and `git grep --open-files-in-pager` all executed or \
+             wrote through allowlists that looked airtight."
         );
     }
 }

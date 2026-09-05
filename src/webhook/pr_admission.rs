@@ -1,22 +1,21 @@
 //! Whether a pull-request event is work anvil owns.
 //!
-//! # Why this is a function and not three `if`s in the handler
+//! The decision is a pure function so it can be exercised without standing up
+//! a server. `webhook_handler` takes HTTP state and returns a response; a
+//! decision embedded there is reachable only through a live socket, and so is
+//! measured by nothing.
 //!
-//! It was three `if`s in the handler, and the decision was therefore
-//! unreachable: `webhook_handler` takes HTTP state and returns a response, so
-//! "should this pull request be reviewed?" could only be exercised by standing
-//! up a server. A decision nothing can call is a decision nothing can measure,
-//! and the gap that produced this module is what that costs.
+//! Two rules, and they are load-bearing only together:
 //!
-//! `ready_for_review` was missing from the supported actions. GitHub sends it
-//! the moment a draft becomes ready — the exact moment the work becomes
-//! anvil's — and nothing matched it, so a finished pull request sat untouched
-//! until some later push happened to emit `synchronize`. Meanwhile `opened` and
-//! `synchronize` fire regardless of draft state, so drafts *were* reviewed. The
-//! behaviour was inverted: review the unfinished, ignore the finished.
+//! - `ready_for_review` is a reviewable action. GitHub sends it when a draft
+//!   becomes ready, which is the moment the work becomes anvil's.
+//! - A draft is never reviewed, on any action. `opened` and `synchronize` fire
+//!   while a pull request is still a draft.
 //!
-//! Neither half is visible in a test that goes through HTTP, and neither was
-//! caught by 65 passing tests over this file.
+//! These do not conflict: GitHub clears `draft` before sending
+//! `ready_for_review`, so refusing drafts does not refuse the transition out of
+//! one. Admitting the action without the draft rule reviews drafts as well as
+//! ready work; the draft rule without the action ignores both.
 
 /// What anvil should do with a `pull_request` event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,10 +49,7 @@ impl SkipReason {
 
 /// The actions that carry a head anvil should review.
 ///
-/// `ready_for_review` is in this list and `opened`/`synchronize` are gated by
-/// the draft check below, which together are the whole fix: adding the action
-/// without the draft gate reviews drafts *and* ready PRs; adding the gate
-/// without the action ignores both.
+/// Anything absent here is skipped, including `closed` and `converted_to_draft`.
 const REVIEWABLE_ACTIONS: &[&str] = &["opened", "synchronize", "reopened", "ready_for_review"];
 
 /// Pure, so the decision can be exercised without a server.
@@ -76,8 +72,8 @@ mod tests {
 
     #[test]
     fn a_draft_becoming_ready_is_reviewed() {
-        // The defect this module exists for. GitHub clears `draft` before it
-        // sends `ready_for_review`, so the payload arrives ready.
+        // GitHub clears `draft` before it sends `ready_for_review`, so the
+        // payload arrives ready and the draft rule does not catch it.
         assert_eq!(
             admit("ready_for_review", false, "a title"),
             PrAdmission::Review
@@ -86,8 +82,8 @@ mod tests {
 
     #[test]
     fn a_draft_is_not_reviewed_on_any_action_that_carries_one() {
-        // The other half. `opened` and `synchronize` fire while still a draft,
-        // and used to be reviewed because nothing looked at the flag.
+        // These actions fire while a pull request is still a draft, so the
+        // draft rule -- not the action list -- is what refuses them.
         for action in ["opened", "synchronize", "reopened"] {
             assert_eq!(
                 admit(action, true, "a title"),

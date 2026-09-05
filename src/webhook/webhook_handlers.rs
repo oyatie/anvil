@@ -151,18 +151,15 @@ pub async fn webhook_handler(
 
     let action = payload.action.as_deref().unwrap_or("");
 
-    // Case 1: Pull Request lifecycle events. Which actions those are is
-    // `pr_admission`'s to say, not this handler's -- naming them here is how
-    // the list silently lost `ready_for_review`.
+    // Case 1: Pull Request lifecycle events. Which actions those are, and
+    // whether a draft is one, is `pr_admission`'s to say, not this handler's.
     if event_type == "pull_request"
         && let Some(pr) = payload.pull_request
     {
         let pr_number = pr.number;
         let head_sha = pr.head.sha.clone();
 
-        // One pure decision, exercisable without a server. It was three
-        // inline `if`s, which is why `ready_for_review` could go missing
-        // while 65 tests over this file stayed green.
+        // One pure decision, exercisable without a server.
         if let crate::webhook::pr_admission::PrAdmission::Skip(why) =
             crate::webhook::pr_admission::admit(action, pr.draft, &pr.title)
         {

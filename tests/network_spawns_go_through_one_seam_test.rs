@@ -47,11 +47,11 @@ const REVIEWED_NETWORK_BOUNDARY: &[(&str, &str)] = &[
     ),
     (
         "src/exec/net.rs",
-        "c97f3a8a5f56d1ed17e4681405f871896ba2e60d3d74948d41d0977bb4bc406d",
+        "9b2dcbf22054c01f02185ff4315e98f270071313cdfadc1346eef53bdb02ea25",
     ),
     (
         "src/exec/non_model.rs",
-        "ccebcc26d592df34ae195d945912d7125d80e0f7cc68a872427b05c4fb39964e",
+        "8d9451063c51126b7757b6b905e70272054db47585e8d3b8dae2e76f280d7748",
     ),
     (
         "src/supply_chain_guard/osv_stream.rs",

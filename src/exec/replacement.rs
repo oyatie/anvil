@@ -13,6 +13,13 @@ use std::path::Path;
     reason = "validated blue/green replacement transport owns this execution"
 )]
 pub(super) fn spawn() -> Result<tokio::process::Child> {
+    let mut command = replacement_command()?;
+    command
+        .spawn()
+        .map_err(|error| anyhow::anyhow!("failed to spawn replacement binary: {error}"))
+}
+
+fn replacement_command() -> Result<tokio::process::Command> {
     // A handover starts one finite daemon operation. Replaying the ambient
     // argv would repeat whichever state-changing command requested the swap
     // (`review`, `fix`, or `swap --binary`) in the replacement process.
@@ -27,9 +34,7 @@ pub(super) fn spawn() -> Result<tokio::process::Child> {
     command.arg("serve");
     #[cfg(unix)]
     command.process_group(0);
-    command
-        .spawn()
-        .map_err(|error| anyhow::anyhow!("failed to spawn replacement binary: {error}"))
+    Ok(command)
 }
 
 fn installed_anvil(requested: &Path) -> Result<std::path::PathBuf> {
@@ -97,11 +102,12 @@ mod tests {
 
     #[test]
     fn replacement_invocation_is_the_typed_serve_command() {
-        // This assertion is intentionally source-adjacent: spawning the test
-        // binary as a daemon would recurse. The runtime constructor above has
-        // no argv input and this pins its sole argument.
-        let source = include_str!("replacement.rs");
-        assert!(source.contains("command.arg(\"serve\")"));
-        assert!(!source.contains("args_os().skip(1)"));
+        let command = replacement_command().expect("construct replacement without launching");
+        let command = command.as_std();
+        let running = std::env::current_exe()
+            .and_then(std::fs::canonicalize)
+            .expect("installed executable");
+        assert_eq!(command.get_program(), running.as_os_str());
+        assert_eq!(command.get_args().collect::<Vec<_>>(), ["serve"]);
     }
 }

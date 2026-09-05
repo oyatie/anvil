@@ -136,10 +136,6 @@ pub(super) fn run_sync_bounded(
     transport::run_sync_bounded(command, limit, what)
 }
 
-fn validate_program(command: &Command) -> Result<ResolvedExecutable> {
-    validate_program_for(command, NON_MODEL_PROGRAMS)
-}
-
 fn validate_program_for(command: &Command, admitted: &[&str]) -> Result<ResolvedExecutable> {
     validate_std_program_for(command.as_std(), admitted)
 }

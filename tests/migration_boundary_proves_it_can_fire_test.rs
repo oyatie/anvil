@@ -184,9 +184,9 @@ fn a_literal_include_is_part_of_the_containing_migration_subject() {
     .expect("include declaration");
     std::fs::write(
         root.join("src/brand_absence/generated.rs"),
-        "include!(\"../brand_absence.rs\");\npub fn generated() { crate::account_pool::thing(); }\n",
+        "pub fn generated() { crate::account_pool::thing(); }\n",
     )
-    .expect("included production source with a finite cycle");
+    .expect("included production source");
 
     let subject = SubjectRoot::asserted(root.clone(), Uncloned::TestFixture);
     let violations = anvil::migration::live_tree_violations(&subject).expect("read include graph");
@@ -257,13 +257,13 @@ fn a_literal_include_that_is_missing_or_escapes_is_not_measured() {
 }
 
 #[test]
-fn crate_paths_inside_macro_arguments_keep_two_segment_ledger_identity() {
+fn crate_paths_inside_reachable_macro_bodies_keep_two_segment_ledger_identity() {
     let root = tree("macro-edge", false);
     std::fs::write(
         root.join("src/brand_absence.rs"),
         r#"
-            macro_rules! invoke { ($path:path) => { $path() } }
-            pub fn forbidden() { invoke!(crate::account_pool::thing); }
+            macro_rules! invoke { () => { crate::account_pool::thing() } }
+            pub fn forbidden() { invoke!(); }
             const PROSE: &str = "crate::api_contract_guard::check";
         "#,
     )

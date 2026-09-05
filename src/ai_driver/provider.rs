@@ -23,19 +23,21 @@ impl ModelProvider {
             "cursor" | "cursor-agent" | "agent" => ModelProvider::CursorAgent,
             "grok" | "grok4" | "grok4.6" | "grok4.6high" | "xai" => ModelProvider::XAiGrok,
             "ensemble" | "multi" | "hybrid" => ModelProvider::SubscriptionEnsemble,
-            "gemini" | "gemini3.7" | "gemini-3.7-flash" => ModelProvider::Antigravity,
+            "gemini" | "gemini3.7" | "gemini-3.7-flash" | "gemini3.8" | "gemini-3.8-flash" => {
+                ModelProvider::Antigravity
+            }
             _ => ModelProvider::Antigravity,
         }
     }
 
     pub fn default_frontier_model(&self) -> &'static str {
         match self {
-            ModelProvider::AnthropicClaudeCode => "opus5",
+            ModelProvider::AnthropicClaudeCode => "claude-opus-5",
             ModelProvider::OpenAiCodex => "gpt-5.6-sol",
             ModelProvider::XAiGrok => "grok-4.6",
-            ModelProvider::Antigravity => "gemini-3.7-flash",
+            ModelProvider::Antigravity => "gemini-3.8-flash",
             ModelProvider::CursorAgent => "gpt-5.6-sol",
-            ModelProvider::SubscriptionEnsemble => "opus5",
+            ModelProvider::SubscriptionEnsemble => "claude-opus-5",
         }
     }
 

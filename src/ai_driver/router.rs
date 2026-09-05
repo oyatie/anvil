@@ -5,7 +5,7 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use super::provider::{ModelExecutionConfig, ModelProvider};
-use crate::exec::AgentCommand;
+use crate::exec::{AgentCommand, ProviderCredential};
 use crate::model_prompt::ModelPrompt;
 use crate::self_governance::account_pool::AccountPoolManager;
 
@@ -112,12 +112,12 @@ impl SubscriptionExecutor {
                     acc.account_id, model_name, config.reasoning_effort
                 );
                 if let Some(dir) = &acc.config_dir {
-                    posture = posture.with_credential("CLAUDE_CONFIG_DIR", dir);
+                    posture = posture.with_credential(ProviderCredential::ClaudeConfigDir, dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
                     posture = posture
-                        .with_credential("CLAUDE_CODE_OAUTH_TOKEN", tok)
-                        .with_credential("ANTHROPIC_AUTH_TOKEN", tok);
+                        .with_credential(ProviderCredential::ClaudeCodeOauthToken, tok)
+                        .with_credential(ProviderCredential::AnthropicAuthToken, tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -125,7 +125,7 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    posture = posture.with_credential("ANTHROPIC_API_KEY", key);
+                    posture = posture.with_credential(ProviderCredential::AnthropicApiKey, key);
                 }
                 acc.account_id.clone()
             }
@@ -224,12 +224,12 @@ impl SubscriptionExecutor {
                     acc.account_id, model_name, config.reasoning_effort
                 );
                 if let Some(dir) = &acc.config_dir {
-                    posture = posture.with_credential("CODEX_HOME", dir);
+                    posture = posture.with_credential(ProviderCredential::CodexHome, dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
                     posture = posture
-                        .with_credential("OPENAI_AUTH_TOKEN", tok)
-                        .with_credential("CODEX_AUTH_TOKEN", tok);
+                        .with_credential(ProviderCredential::OpenAiAuthToken, tok)
+                        .with_credential(ProviderCredential::CodexAuthToken, tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -237,7 +237,7 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    posture = posture.with_credential("OPENAI_API_KEY", key);
+                    posture = posture.with_credential(ProviderCredential::OpenAiApiKey, key);
                 }
                 acc.account_id.clone()
             }
@@ -308,10 +308,10 @@ impl SubscriptionExecutor {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
-                    posture = posture.with_credential("CURSOR_CONFIG_DIR", dir);
+                    posture = posture.with_credential(ProviderCredential::CursorConfigDir, dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
-                    posture = posture.with_credential("CURSOR_AUTH_TOKEN", tok);
+                    posture = posture.with_credential(ProviderCredential::CursorAuthToken, tok);
                 }
                 acc.account_id.clone()
             }
@@ -373,12 +373,12 @@ impl SubscriptionExecutor {
             Ok(acc_arc) => {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
-                    posture = posture.with_credential("GROK_CONFIG_DIR", dir);
+                    posture = posture.with_credential(ProviderCredential::GrokConfigDir, dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
                     posture = posture
-                        .with_credential("GROK_AUTH_TOKEN", tok)
-                        .with_credential("XAI_API_KEY", tok);
+                        .with_credential(ProviderCredential::GrokAuthToken, tok)
+                        .with_credential(ProviderCredential::XAiApiKey, tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -386,7 +386,7 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    posture = posture.with_credential("XAI_API_KEY", key);
+                    posture = posture.with_credential(ProviderCredential::XAiApiKey, key);
                 }
                 acc.account_id.clone()
             }
@@ -451,13 +451,13 @@ impl SubscriptionExecutor {
                 let acc = acc_arc.read().await;
                 if let Some(dir) = &acc.config_dir {
                     posture = posture
-                        .with_credential("ANTIGRAVITY_CONFIG_DIR", dir)
-                        .with_credential("GEMINI_CLI_CONFIG_DIR", dir);
+                        .with_credential(ProviderCredential::AntigravityConfigDir, dir)
+                        .with_credential(ProviderCredential::GeminiCliConfigDir, dir);
                 }
                 if let Some(tok) = &acc.oauth_token {
                     posture = posture
-                        .with_credential("ANTIGRAVITY_AUTH_TOKEN", tok)
-                        .with_credential("GEMINI_API_KEY", tok);
+                        .with_credential(ProviderCredential::AntigravityAuthToken, tok)
+                        .with_credential(ProviderCredential::GeminiApiKey, tok);
                 }
                 // Let-chain, stable in edition 2024: the HOST_ prefix marks a
                 // host-managed profile name rather than a key, and must never be
@@ -465,7 +465,7 @@ impl SubscriptionExecutor {
                 if let Some(key) = &acc.auth_profile_or_key
                     && !key.starts_with("HOST_")
                 {
-                    posture = posture.with_credential("GEMINI_API_KEY", key);
+                    posture = posture.with_credential(ProviderCredential::GeminiApiKey, key);
                 }
                 acc.account_id.clone()
             }

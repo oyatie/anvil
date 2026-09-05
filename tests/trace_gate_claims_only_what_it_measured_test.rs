@@ -102,9 +102,9 @@
 //! `SpanTracker::scan_detached_tasks` (`span_tracker.rs:28`) matches the single
 //! regex `tokio::spawn\s*\(`. It therefore does not see `tokio::task::spawn`,
 //! `tokio::task::spawn_blocking`, `JoinSet::spawn`, or `std::thread::spawn`.
-//! That last one is not hypothetical: `src/predictive_test_selector/workspace_dag.rs`
-//! spawns two uninstrumented reader threads (verified on this checkout at lines
-//! 38 and 45), and the gate reports a file containing them as clean. The fixture
+//! That last one is not hypothetical: `src/exec/non_model/transport.rs` spawns
+//! two uninstrumented reader threads (verified on this checkout at lines 137
+//! and 144), and the gate reports a file containing them as clean. The fixture
 //! for that case is lifted out of the live file at test time rather than copied,
 //! so it cannot quietly go stale.
 //!
@@ -697,9 +697,9 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
         ),
         (
             // A child process is not a traced task and will never carry
-            // `.instrument(...)`. This line is live at
-            // `src/predictive_test_selector/workspace_dag.rs:28`, so a matcher
-            // that reads the word alone fails every pull request touching it.
+            // `.instrument(...)`. A child-process spawn is live at
+            // `src/exec/non_model/transport.rs:133`, so a matcher that reads the
+            // word alone fails every pull request touching it.
             "std::process::Command::spawn",
             "pub fn build() -> std::io::Result<()> {\n    let mut child = std::process::Command::new(\"cargo\").spawn()?;\n    let _ = child.wait()?;\n    Ok(())\n}",
             NotABoundary,
@@ -1176,7 +1176,7 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     // time, so it tracks the source instead of drifting away from it.
     // The module names the subject; the diff the gate reads needs a path, and
     // it must end in the Rust extension or the gate reads no Rust hunk at all.
-    const LIVE_MODULE: &str = "src/predictive_test_selector/workspace_dag";
+    const LIVE_MODULE: &str = "src/exec/non_model/transport";
     let live_file = format!("{LIVE_MODULE}.rs");
     let source = anvil::source_scan::paths::module_source(
         LIVE_MODULE,
@@ -1268,7 +1268,7 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
         report
             .detached_findings
             .iter()
-            .any(|f| f.file_path.contains("workspace_dag.rs")),
+            .any(|f| f.file_path == live_file),
         "a finding must name the file it is in so a reviewer can go to it; \
          got {:?}",
         report

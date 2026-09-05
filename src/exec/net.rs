@@ -1,6 +1,6 @@
-//! The one place an outbound network tool is spawned.
+//! The one finite off-forge HTTP request Anvil can spawn.
 //!
-//! The fourth outbound seam, alongside `exec::agent`, [`super::build_env`]
+//! The fourth outbound seam, alongside `exec::agent`, [`crate::exec::build_env`]
 //! and `exec::gh`. Those three bound a model turn, a build and a forge call;
 //! this one bounds a transport -- `curl` reaching a public HTTP endpoint.
 //!
@@ -32,20 +32,20 @@
 
 use tokio::process::Command;
 
+const CURL: &str = "curl";
+const CURL_MAX_TIME: &str = "15";
+const OSV_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// What an outbound network tool is given.
 ///
 /// Shorter than the other three lists because the subject is smaller: resolve a
 /// name, open a TLS connection, write a body, read the answer. As with every
 /// other seam this bounds what the daemon HANDS OVER; it is not a sandbox, and
 /// that smaller claim is the only one the list supports.
-pub const NET_INHERITED: &[&str] = &[
+const NET_INHERITED: &[&str] = &[
     // Without this the tool is not found at all and every request fails as a
     // spawn error rather than as the network result it never got to make.
     "PATH",
-    // `curl` reads `~/.curlrc` on every invocation, which is where a
-    // deployment sets its proxy, its CA path, and whether `~/.netrc` applies.
-    // Clearing `HOME` discards that configuration with nothing said.
-    "HOME",
     // Where a transport spools a body too large to hold in memory.
     "TMPDIR",
     // Corporate egress. Without these the request never leaves the box, and the
@@ -72,7 +72,7 @@ pub const NET_INHERITED: &[&str] = &[
 /// beside this one. `GH_TOKEN` and `GITHUB_TOKEN` are here and NOT on
 /// [`super::gh::GH_INHERITED`]'s exclusions -- a forge credential belongs at
 /// exactly one seam, and this is not it.
-pub const NEVER_HANDED_OVER: &[&str] = &[
+const NEVER_HANDED_OVER: &[&str] = &[
     "GITHUB_WEBHOOK_SECRET",
     "GH_TOKEN",
     "GITHUB_TOKEN",
@@ -84,29 +84,125 @@ pub const NEVER_HANDED_OVER: &[&str] = &[
     "GOOGLE_APPLICATION_CREDENTIALS",
 ];
 
-/// A network tool carrying only what a transport needs.
+/// Constructs a fixed POST to OSV's batch endpoint.
 ///
-/// A constructor rather than a scrub applied afterwards, for the reason the
-/// other three seams give: a call site that forgets to scrub compiles, and a
-/// call site that cannot reach `Command::new` does not. Returns the `Command`
-/// rather than running it, so the caller keeps its own budget and its own
-/// choice of runner.
-///
-/// `program` is a parameter because the caller takes one, so every way the
-/// subprocess can fail stays reachable from a test that makes no network
-/// request. Production passes `curl`.
-pub fn command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
+/// No command, URL, method, header, argv, or budget crosses this module
+/// boundary. Keeping those choices here prevents the generic network seam
+/// from becoming a raw direct-model HTTP transport.
+pub(super) async fn post_osv_batch(
+    packages: &[crate::supply_chain_guard::LockedPackage],
+) -> anyhow::Result<std::process::Output> {
+    let cmd = command(packages);
+    let command = super::NonModelCommand::checked_for(cmd, &[CURL])?;
+    super::transport::run_for(command, OSV_BUDGET, "curl OSV querybatch", None).await
+}
+
+fn command(packages: &[crate::supply_chain_guard::LockedPackage]) -> Command {
+    let payload =
+        crate::supply_chain_guard::osv_stream::OsvAdvisoryStream::build_batch_payload(packages);
+    let mut cmd = Command::new(CURL);
     apply(&mut cmd);
+    cmd.args([
+        // Must be argv[0]. This disables ~/.curlrc before curl reads it, so a
+        // daemon HOME cannot replace the sealed URL or add a second upload.
+        "-q",
+        "-s",
+        "-X",
+        "POST",
+        crate::supply_chain_guard::osv_stream::OSV_BATCH_URL,
+        "-H",
+        "Content-Type: application/json",
+        "--max-time",
+        CURL_MAX_TIME,
+        "-w",
+        "\n%{http_code}",
+        "-d",
+        &payload,
+    ]);
     cmd
 }
 
 /// Applies the environment bound to a command the caller already holds.
-pub fn apply(cmd: &mut Command) {
-    super::non_model::clear_environment(cmd);
-    for name in NET_INHERITED {
-        if let Ok(value) = std::env::var(name) {
+fn apply(cmd: &mut Command) {
+    apply_from(cmd, std::env::vars());
+}
+
+pub(super) fn apply_from<I>(cmd: &mut Command, environment: I)
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    // The canonical executable rebinder constructs a fresh Command. The
+    // private marker is how it knows this environment was intentionally
+    // cleared; a bare `env_clear` here would be lost during rebinding and the
+    // canonical curl would inherit the daemon environment again.
+    super::clear_environment(cmd);
+    for (name, value) in environment {
+        if NET_INHERITED.contains(&name.as_str()) {
             cmd.env(name, value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn osv_command_has_a_fixed_destination_and_ignores_home_curl_config() {
+        let packages = [crate::supply_chain_guard::LockedPackage {
+            name: "tokio".to_owned(),
+            version: "1.0.0".to_owned(),
+        }];
+        let command = command(&packages);
+        let command = command.as_std();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args.first().map(String::as_str), Some("-q"));
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.as_str() == crate::supply_chain_guard::osv_stream::OSV_BATCH_URL)
+                .count(),
+            1
+        );
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some(
+                r#"{"queries":[{"package":{"name":"tokio","ecosystem":"crates.io"},"version":"1.0.0"}]}"#
+            )
+        );
+
+        let mut probe = Command::new("curl");
+        apply_from(
+            &mut probe,
+            [
+                ("HOME".to_owned(), "/tmp/hostile-curlrc-home".to_owned()),
+                ("PATH".to_owned(), "/usr/bin".to_owned()),
+                ("HTTPS_PROXY".to_owned(), "http://proxy.invalid".to_owned()),
+                ("OPENAI_API_KEY".to_owned(), "secret".to_owned()),
+            ],
+        );
+        let environment = probe
+            .as_std()
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(environment.get("HOME"), None);
+        assert_eq!(environment["PATH"].as_deref(), Some("/usr/bin"));
+        assert_eq!(
+            environment["HTTPS_PROXY"].as_deref(),
+            Some("http://proxy.invalid")
+        );
+        assert_eq!(environment.get("OPENAI_API_KEY"), None);
+        for forbidden in NEVER_HANDED_OVER {
+            assert_eq!(environment.get(*forbidden), None);
         }
     }
 }

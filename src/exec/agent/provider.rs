@@ -1,4 +1,4 @@
-//! Finite construction seam for commands that may receive a `ModelPrompt`.
+//! Finite construction seam for commands used in a `ModelPrompt` OS-STDIN handoff.
 //!
 //! This is a child of `exec::agent`, so it alone can reach the private command
 //! constructor and argv mutator. Adding a provider or flag requires an explicit
@@ -53,40 +53,40 @@ fn validate_effort(value: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn agy_help_probe() -> ProviderProbeCommand {
-    let mut command = tokio::process::Command::new("agy");
-    command.arg("--help");
-    ProviderProbeCommand(command)
+pub(super) fn agy_help_probe() -> Result<ProviderProbeCommand> {
+    let mut command = super::trusted_provider_command("agy")?;
+    let workspace = std::env::current_dir()
+        .map_err(|error| anyhow::anyhow!("resolve agy probe working directory: {error}"))?;
+    Posture::in_workspace(workspace).apply(&mut command);
+    command.args(agy_help_args());
+    Ok(ProviderProbeCommand(command))
 }
 
 pub fn claude_agent(posture: &Posture, model: &str) -> Result<AgentCommand> {
-    validate_model_selector(model)?;
-    let mut cmd = super::command("claude", posture, Framing::Plain);
-    cmd.args(["-p", "--model", model]);
+    let args = claude_args(model)?;
+    let mut cmd = super::command("claude", posture, Framing::Plain)?;
+    cmd.args(args);
     Ok(cmd)
 }
 
 pub fn codex_agent(posture: &Posture, model: &str) -> Result<AgentCommand> {
-    validate_model_selector(model)?;
-    let mut cmd = super::command("codex", posture, Framing::Plain);
-    cmd.args(["exec", "-", "--model", model]);
+    let args = codex_args(model)?;
+    let mut cmd = super::command("codex", posture, Framing::Plain)?;
+    cmd.args(args);
     Ok(cmd)
 }
 
 pub fn cursor_agent(posture: &Posture, model: Option<&str>) -> Result<AgentCommand> {
-    let mut cmd = super::command("cursor", posture, Framing::Plain);
-    cmd.args(["agent", "--print"]);
-    if let Some(model) = model {
-        validate_model_selector(model)?;
-        cmd.args(["--model", model]);
-    }
+    let args = cursor_args(model)?;
+    let mut cmd = super::command("cursor", posture, Framing::Plain)?;
+    cmd.args(args);
     Ok(cmd)
 }
 
 pub fn grok_agent(posture: &Posture, model: &str) -> Result<AgentCommand> {
-    validate_model_selector(model)?;
-    let mut cmd = super::command("grok", posture, Framing::Plain);
-    cmd.args(["--prompt-file", "/dev/stdin", "--model", model]);
+    let args = grok_args(model)?;
+    let mut cmd = super::command("grok", posture, Framing::Plain)?;
+    cmd.args(args);
     Ok(cmd)
 }
 
@@ -96,52 +96,83 @@ pub fn agy_agent(
     budget: Duration,
     model: Option<&str>,
 ) -> Result<AgentCommand> {
+    let args = agy_args(effort, budget, model)?;
+    let mut cmd = super::command("agy", posture, Framing::AgyStreamJson)?;
+    cmd.args(args);
+    Ok(cmd)
+}
+
+fn agy_help_args() -> [&'static str; 1] {
+    ["--help"]
+}
+
+fn claude_args(model: &str) -> Result<Vec<String>> {
+    validate_model_selector(model)?;
+    Ok(vec!["-p".into(), "--model".into(), model.into()])
+}
+
+fn codex_args(model: &str) -> Result<Vec<String>> {
+    validate_model_selector(model)?;
+    Ok(vec![
+        "exec".into(),
+        "-".into(),
+        "--model".into(),
+        model.into(),
+    ])
+}
+
+fn cursor_args(model: Option<&str>) -> Result<Vec<String>> {
+    let mut args = vec!["agent".into(), "--print".into()];
+    if let Some(model) = model {
+        validate_model_selector(model)?;
+        args.extend(["--model".into(), model.into()]);
+    }
+    Ok(args)
+}
+
+fn grok_args(model: &str) -> Result<Vec<String>> {
+    validate_model_selector(model)?;
+    Ok(vec![
+        "--prompt-file".into(),
+        "/dev/stdin".into(),
+        "--model".into(),
+        model.into(),
+    ])
+}
+
+fn agy_args(effort: &str, budget: Duration, model: Option<&str>) -> Result<Vec<String>> {
     validate_effort(effort)?;
     if let Some(model) = model {
         validate_model_selector(model)?;
     }
     let timeout = crate::exec::agy_print_timeout_arg(budget);
-    let mut cmd = super::command("agy", posture, Framing::AgyStreamJson);
-    cmd.args([
-        "--print",
-        "",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--effort",
-        effort,
-        "--print-timeout",
-        &timeout,
-        "--dangerously-skip-permissions",
-    ]);
+    let mut args = vec![
+        "--print".into(),
+        "".into(),
+        "--input-format".into(),
+        "stream-json".into(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--effort".into(),
+        effort.into(),
+        "--print-timeout".into(),
+        timeout,
+        "--dangerously-skip-permissions".into(),
+    ];
     if let Some(model) = model {
-        cmd.args(["--model", model]);
+        args.extend(["--model".into(), model.into()]);
     }
-    Ok(cmd)
+    Ok(args)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn args(cmd: &AgentCommand) -> Vec<String> {
-        cmd.as_std()
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect()
-    }
-
     #[test]
     fn agy_argv_is_complete_and_prompt_free() {
-        let cmd = agy_agent(
-            &Posture::in_workspace("."),
-            "high",
-            Duration::from_secs(600),
-            Some("gpt-5.6-sol"),
-        )
-        .expect("valid selectors");
-        let args = args(&cmd);
+        let args = agy_args("high", Duration::from_secs(600), Some("gpt-5.6-sol"))
+            .expect("valid selectors");
         let print = args.iter().position(|arg| arg == "--print").unwrap();
         assert_eq!(args[print + 1], "");
         assert!(args.windows(2).any(|w| w == ["--print-timeout", "570s"]));
@@ -150,34 +181,30 @@ mod tests {
 
     #[test]
     fn every_provider_argv_keeps_prompt_on_stdin_and_metadata_in_its_exact_slot() {
-        let posture = Posture::in_workspace(".");
         let model = "sentinel-model";
 
         assert_eq!(
-            args(&claude_agent(&posture, model).expect("valid selector")),
+            claude_args(model).expect("valid selector"),
             ["-p", "--model", model]
         );
         assert_eq!(
-            args(&codex_agent(&posture, model).expect("valid selector")),
+            codex_args(model).expect("valid selector"),
             ["exec", "-", "--model", model]
         );
         assert_eq!(
-            args(&cursor_agent(&posture, None).expect("optional selector")),
+            cursor_args(None).expect("optional selector"),
             ["agent", "--print"]
         );
         assert_eq!(
-            args(&cursor_agent(&posture, Some(model)).expect("valid selector")),
+            cursor_args(Some(model)).expect("valid selector"),
             ["agent", "--print", "--model", model]
         );
         assert_eq!(
-            args(&grok_agent(&posture, model).expect("valid selector")),
+            grok_args(model).expect("valid selector"),
             ["--prompt-file", "/dev/stdin", "--model", model]
         );
         assert_eq!(
-            args(
-                &agy_agent(&posture, "high", Duration::from_secs(600), Some(model),)
-                    .expect("valid selectors"),
-            ),
+            agy_args("high", Duration::from_secs(600), Some(model)).expect("valid selectors"),
             [
                 "--print",
                 "",
@@ -198,15 +225,14 @@ mod tests {
 
     #[test]
     fn dynamic_provider_options_reject_argv_syntax() {
-        let posture = Posture::in_workspace(".");
         for invalid in ["--model", "safe\n--prompt=attack"] {
-            assert!(claude_agent(&posture, invalid).is_err());
-            assert!(codex_agent(&posture, invalid).is_err());
-            assert!(cursor_agent(&posture, Some(invalid)).is_err());
-            assert!(grok_agent(&posture, invalid).is_err());
-            assert!(agy_agent(&posture, "high", Duration::from_secs(600), Some(invalid)).is_err());
+            assert!(claude_args(invalid).is_err());
+            assert!(codex_args(invalid).is_err());
+            assert!(cursor_args(Some(invalid)).is_err());
+            assert!(grok_args(invalid).is_err());
+            assert!(agy_args("high", Duration::from_secs(600), Some(invalid)).is_err());
         }
-        assert!(agy_agent(&posture, "high\n--model", Duration::from_secs(600), None).is_err());
+        assert!(agy_args("high\n--model", Duration::from_secs(600), None).is_err());
     }
 
     #[test]
@@ -222,8 +248,6 @@ mod tests {
 
     #[test]
     fn provider_presence_probe_has_one_finite_prompt_free_argument() {
-        let probe = agy_help_probe();
-        let args: Vec<_> = probe.0.as_std().get_args().collect();
-        assert_eq!(args, ["--help"]);
+        assert_eq!(agy_help_args(), ["--help"]);
     }
 }

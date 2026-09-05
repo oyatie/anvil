@@ -1045,6 +1045,17 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   lifecycle. Counterpart NOT established for the lifecycle half.",
     },
     MigrationEntry {
+        component: "model_prompt",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Unresolved,
+        oyatie_counterpart: "",
+        counterpart_loc: 0,
+        evidence: "Introduced after the component audit as the typed boundary between contributor-authored \
+                  text and a model-provider command. No oyatie counterpart has been established, so the \
+                  conservative disposition is to carry the boundary forward rather than infer that an \
+                  existing model executor supersedes its authorship, size, and terminal-task guarantees.",
+    },
+    MigrationEntry {
         component: "modularization_guard.rs",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
@@ -1152,7 +1163,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                    source when it cannot.",
     },
     MigrationEntry {
-        component: "queue_healer (dir)",
+        component: "queue_healer/bisector",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
         oyatie_counterpart: "none found",

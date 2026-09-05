@@ -16,7 +16,7 @@
 //! by spelling a provider, `env`, a shell, or a provider symlink.
 
 use anyhow::{Result, bail};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Output};
 use std::time::Duration;
@@ -25,7 +25,7 @@ use tokio::process::Command;
 use super::{ExecClass, agent};
 
 const NON_MODEL_PROGRAMS: &[&str] = &[
-    "cargo", "cedar", "curl", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
+    "cargo", "cedar", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
 ];
 const CANONICAL_PROGRAM_ALIASES: &[(&str, &str)] = &[
     // These launchers require Unix `arg0` restoration to retain their
@@ -55,7 +55,11 @@ struct ResolvedExecutable {
 
 impl NonModelCommand {
     fn checked(command: Command) -> Result<Self> {
-        let resolved = validate_program(&command)?;
+        Self::checked_for(command, NON_MODEL_PROGRAMS)
+    }
+
+    fn checked_for(command: Command, admitted: &[&str]) -> Result<Self> {
+        let resolved = validate_program_for(&command, admitted)?;
         Ok(Self(Command::from(bind_std_program(
             command.as_std(),
             &resolved.canonical,
@@ -83,7 +87,12 @@ pub(super) fn clear_environment(command: &mut Command) {
     command.env(CLEARED_ENV_MARKER, "1");
 }
 
+#[path = "net.rs"]
+mod net;
+pub(in crate::exec) mod resolution;
 mod transport;
+
+use resolution::resolve_executable;
 
 pub(super) async fn run(command: Command, class: ExecClass, what: &str) -> Result<Output> {
     let command = NonModelCommand::checked(command)?;
@@ -93,6 +102,14 @@ pub(super) async fn run(command: Command, class: ExecClass, what: &str) -> Resul
 pub(super) async fn run_for(command: Command, limit: Duration, what: &str) -> Result<Output> {
     let command = NonModelCommand::checked(command)?;
     transport::run_for(command, limit, what, None).await
+}
+
+/// Executes the one finite non-forge HTTP request. No raw curl command,
+/// destination, or payload crosses this module boundary.
+pub(super) async fn post_osv_batch(
+    packages: &[crate::supply_chain_guard::LockedPackage],
+) -> Result<Output> {
+    net::post_osv_batch(packages).await
 }
 
 pub(super) async fn run_with_stdin(
@@ -120,10 +137,21 @@ pub(super) fn run_sync_bounded(
 }
 
 fn validate_program(command: &Command) -> Result<ResolvedExecutable> {
-    validate_std_program(command.as_std())
+    validate_program_for(command, NON_MODEL_PROGRAMS)
+}
+
+fn validate_program_for(command: &Command, admitted: &[&str]) -> Result<ResolvedExecutable> {
+    validate_std_program_for(command.as_std(), admitted)
 }
 
 fn validate_std_program(command: &std::process::Command) -> Result<ResolvedExecutable> {
+    validate_std_program_for(command, NON_MODEL_PROGRAMS)
+}
+
+fn validate_std_program_for(
+    command: &std::process::Command,
+    admitted: &[&str],
+) -> Result<ResolvedExecutable> {
     let requested = command.get_program();
     let requested_name = executable_name(requested)
         .ok_or_else(|| anyhow::anyhow!("raw subprocess program has no valid executable name"))?;
@@ -132,7 +160,7 @@ fn validate_std_program(command: &std::process::Command) -> Result<ResolvedExecu
         bail!("model provider commands require the typed AgentCommand + ModelPrompt transport");
     }
 
-    if !NON_MODEL_PROGRAMS.contains(&requested_name) {
+    if !admitted.contains(&requested_name) {
         bail!(
             "raw subprocess program {requested_name:?} is outside the finite non-model tool seam"
         );
@@ -153,6 +181,18 @@ fn validate_std_program(command: &std::process::Command) -> Result<ResolvedExecu
     if !canonical_name_is_admitted(requested_name, canonical_name) {
         bail!(
             "raw subprocess alias {requested_name:?} resolves outside the finite non-model tool seam as {canonical_name:?}"
+        );
+    }
+    let trusted = resolve_executable(&std::process::Command::new(requested_name)).ok_or_else(|| {
+        anyhow::anyhow!(
+            "approved raw subprocess {requested_name:?} has no trusted executable on the service PATH"
+        )
+    })?;
+    if resolved.canonical != trusted.canonical {
+        bail!(
+            "raw subprocess {requested_name:?} resolves to {}, not the trusted installed executable {}",
+            resolved.canonical.display(),
+            trusted.canonical.display()
         );
     }
     Ok(ResolvedExecutable {
@@ -233,82 +273,6 @@ fn executable_name(program: &OsStr) -> Option<&str> {
             }
         })
         .filter(|name| !name.is_empty())
-}
-
-fn resolve_executable(command: &std::process::Command) -> Option<ResolvedExecutable> {
-    let program = Path::new(command.get_program());
-    if program.components().count() > 1 {
-        let candidate = if program.is_absolute() {
-            program.to_path_buf()
-        } else {
-            command
-                .get_current_dir()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(program)
-        };
-        return runnable_canonical(&candidate).map(|canonical| ResolvedExecutable {
-            canonical,
-            requested_name: String::new(),
-        });
-    }
-
-    let explicit_path = command.get_envs().find_map(|(name, value)| {
-        (name == OsStr::new("PATH")).then(|| value.map(OsStr::to_os_string))?
-    });
-    let search_path: OsString = explicit_path.or_else(|| std::env::var_os("PATH"))?;
-    for dir in std::env::split_paths(&search_path) {
-        let effective_dir = if dir.is_absolute() {
-            dir
-        } else {
-            command
-                .get_current_dir()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(dir)
-        };
-        let Some(canonical) = runnable_in(&effective_dir, program) else {
-            continue;
-        };
-        return Some(ResolvedExecutable {
-            canonical,
-            requested_name: String::new(),
-        });
-    }
-    None
-}
-
-fn runnable_in(directory: &Path, program: &Path) -> Option<PathBuf> {
-    let candidate = directory.join(program);
-    if let Some(canonical) = runnable_canonical(&candidate) {
-        return Some(canonical);
-    }
-    #[cfg(windows)]
-    if program.extension().is_none() {
-        for extension in ["exe", "cmd"] {
-            let candidate = directory.join(program).with_extension(extension);
-            if let Some(canonical) = runnable_canonical(&candidate) {
-                return Some(canonical);
-            }
-        }
-    }
-    None
-}
-
-fn runnable_canonical(candidate: &Path) -> Option<PathBuf> {
-    let canonical = std::fs::canonicalize(candidate).ok()?;
-    let metadata = std::fs::metadata(&canonical).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 == 0 {
-            return None;
-        }
-    }
-    Some(canonical)
 }
 
 #[cfg(test)]

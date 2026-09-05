@@ -12,20 +12,96 @@ use std::path::Path;
     clippy::disallowed_methods,
     reason = "validated blue/green replacement transport owns this execution"
 )]
-pub(super) fn spawn(replacement_binary: &Path, args: &[String]) -> Result<tokio::process::Child> {
-    if super::agent::is_provider_program(replacement_binary.as_os_str())
-        || std::fs::canonicalize(replacement_binary)
-            .ok()
-            .is_some_and(|resolved| super::agent::is_provider_program(resolved.as_os_str()))
-    {
-        bail!("a model provider cannot be used as Anvil's replacement binary");
-    }
+pub(super) fn spawn() -> Result<tokio::process::Child> {
+    // A handover starts one finite daemon operation. Replaying the ambient
+    // argv would repeat whichever state-changing command requested the swap
+    // (`review`, `fix`, or `swap --binary`) in the replacement process.
+    // There is intentionally no caller-supplied program or argv surface here:
+    // `/usr/bin/env agy`, `sh -c agy`, and PATH aliases are all ordinary
+    // process launchers, not blue/green replacement capabilities.
+    let running = std::env::current_exe()
+        .map_err(|error| anyhow::anyhow!("cannot identify the running Anvil binary: {error}"))?;
+    let replacement_binary = installed_anvil(&running)?;
 
     let mut command = tokio::process::Command::new(replacement_binary);
-    command.args(args);
+    command.arg("serve");
     #[cfg(unix)]
     command.process_group(0);
     command
         .spawn()
         .map_err(|error| anyhow::anyhow!("failed to spawn replacement binary: {error}"))
+}
+
+fn installed_anvil(requested: &Path) -> Result<std::path::PathBuf> {
+    if super::agent::is_provider_program(requested.as_os_str()) {
+        bail!("a model provider cannot be used as Anvil's replacement binary");
+    }
+    let requested = std::fs::canonicalize(requested).map_err(|error| {
+        anyhow::anyhow!(
+            "replacement path {} is not a runnable installed Anvil binary: {error}",
+            requested.display()
+        )
+    })?;
+    let running = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .map_err(|error| anyhow::anyhow!("cannot identify the running Anvil binary: {error}"))?;
+    if requested != running {
+        bail!(
+            "replacement path {} is not the installed Anvil binary {}",
+            requested.display(),
+            running.display()
+        );
+    }
+    let metadata = std::fs::metadata(&requested).map_err(|error| {
+        anyhow::anyhow!(
+            "cannot inspect installed Anvil binary {}: {error}",
+            requested.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        bail!(
+            "installed Anvil replacement {} is not a regular file",
+            requested.display()
+        );
+    }
+    Ok(requested)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rejection(path: &Path) -> String {
+        installed_anvil(path)
+            .expect_err("arbitrary replacement launcher was admitted")
+            .to_string()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_and_env_launchers_cannot_enter_the_replacement_seam() {
+        assert!(rejection(Path::new("/usr/bin/env")).contains("Anvil"));
+        assert!(rejection(Path::new("/bin/sh")).contains("Anvil"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_lookalike_named_anvil_has_no_replacement_authority() {
+        use std::os::unix::fs::symlink;
+
+        let scratch = tempfile::tempdir().expect("replacement fixture");
+        let alias = scratch.path().join("anvil");
+        symlink("/usr/bin/env", &alias).expect("launcher alias");
+        assert!(rejection(&alias).contains("Anvil"));
+    }
+
+    #[test]
+    fn replacement_invocation_is_the_typed_serve_command() {
+        // This assertion is intentionally source-adjacent: spawning the test
+        // binary as a daemon would recurse. The runtime constructor above has
+        // no argv input and this pins its sole argument.
+        let source = include_str!("replacement.rs");
+        assert!(source.contains("command.arg(\"serve\")"));
+        assert!(!source.contains("args_os().skip(1)"));
+    }
 }

@@ -1,12 +1,101 @@
 #!/bin/sh
 # Staged *.rs: rustfmt --check on that file list. Also refuse agent-dir
-# and gitignored paths in the index.
+# and gitignored paths in the index, and paths outside a declared run scope.
 set -eu
 if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
 if [ -n "$(git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' || true)" ]; then
   echo "pre-commit: staged path under an agent directory" >&2
   git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' >&2
   exit 1
+fi
+# Run scope. `.anvil/run-scope` lists the path prefixes a milestone run may
+# write, one per line. Gitignored, and present only while a run is in flight, so
+# ordinary work sees no constraint at all -- the check is absent, not permissive.
+#
+# This is a git hook rather than a harness setting on purpose. The rule has to
+# hold for every agent that touches this repository -- claude, codex, cursor,
+# grok, agy, one not written yet, or a human -- and only the commit is common to
+# all of them. A policy expressed in one harness's config is a policy the other
+# harnesses never see, and enumerating the writing verbs (cp, dd, mv, install,
+# a shell redirect, python -c) is a closed list that goes stale in silence.
+#
+# WHAT THIS IS, stated so the name does not overclaim: a guardrail against a run
+# writing outside its scope by accident. It is NOT containment, and every one of
+# these defeats is real and measured: `--no-verify`, `ANVIL_SKIP_HOOKS=1`,
+# `git cherry-pick`, `git merge --no-ff` and `git rebase` each land an
+# out-of-scope path with the scope declared and this hook live, because
+# `pre-commit` is invoked by `git commit` and not by the others. The run being
+# constrained can also edit or delete its own `$scope_file`, which needs no
+# commit at all -- gitignoring it makes that tampering harder to see, not harder
+# to do. The value here is against a run that is not trying to escape.
+#
+# NO PRODUCER YET. Nothing under `src/` writes `$scope_file`; today only the
+# tests do, so in a real checkout this branch never executes. The wiring belongs
+# at `Posture` in src/exec/agent.rs -- the seam every model turn already goes
+# through, ratcheted by tests/model_spawns_go_through_one_seam_test.rs -- as
+# `with_run_scope(..)` plus `apply_from` exporting the scope to the turn's
+# environment, which cannot fail on IO the way a file write can. That file is in
+# #196's write-set, and `occupancy` refuses two hops that share one, so it waits
+# for #196 to land. Until then this rule is inert in production, and saying so
+# here is the point: a gate that never runs must not read as one that passes.
+scope_file=".anvil/run-scope"
+if [ -f "$scope_file" ]; then
+  outside=""
+  # No `--diff-filter`. `ACMR` omitted `D` and `T`, so deleting an out-of-scope
+  # file and replacing one with a symlink both committed -- and under `T` the
+  # loop saw no staged paths at all, so the body never ran and nothing was
+  # checked. Deleting and retargeting are writes. `--no-renames` splits a rename
+  # into add + delete, so the out-of-scope SOURCE of a rename is checked rather
+  # than only its in-scope destination. The paragraph above about closed lists
+  # was not true of this line while it named four letters.
+  #
+  # One path per line, read as a line. `for f in $(git ...)` word-split on IFS
+  # and then glob-expanded each field before `case` ever saw it, which was two
+  # bypasses of everything above: a file named `src src` split into two fields
+  # that both matched `src/`, and a file named `s*` expanded against the working
+  # tree to `src` and matched. It also refused paths it should have allowed --
+  # `src/a b.txt` reported a nonexistent `b.txt` as the offender. Replacing four
+  # diff-filter letters while leaving the shell's expansion rules in place was
+  # the same defect in a second dialect.
+  #
+  # `core.quotepath=false` stops git C-quoting non-ASCII, so `src/café.txt` is
+  # compared as itself rather than as `"src/caf\303\251.txt"`. A path holding a
+  # newline or a quote is still C-quoted by git, so it arrives with a leading
+  # `"`, matches no prefix, and is refused -- the safe direction.
+  #
+  # The loop is fed by redirect rather than a pipe: `... | while read` runs the
+  # body in a subshell in POSIX sh, and the offender list would not survive it.
+  staged=$(mktemp) || exit 1
+  offenders=$(mktemp) || exit 1
+  git -c core.quotepath=false diff --cached --name-only --no-renames > "$staged"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    ok=""
+    while IFS= read -r prefix; do
+      case "$prefix" in ''|'#'*) continue ;; esac
+      # Quoted, so a scope line is data rather than glob syntax: unquoted, `*`
+      # authorised everything and `sr?/` matched `src/`. Matched as a path
+      # boundary rather than a string prefix -- two arms, no `*` on the bare
+      # form -- so `src` no longer admits `srcfoo/`. One trailing slash is
+      # stripped first, so `src` and `src/` mean the same thing.
+      prefix=${prefix%/}
+      case "$f" in
+        "$prefix"|"$prefix"/*) ok=1; break ;;
+      esac
+    done < "$scope_file"
+    [ -n "$ok" ] || printf '%s\n' "$f" >> "$offenders"
+  done < "$staged"
+  rm -f "$staged"
+  if [ -s "$offenders" ]; then
+    echo "pre-commit: staged path outside the declared run scope ($scope_file):" >&2
+    sed 's/^/  /' "$offenders" >&2
+    echo "pre-commit: in scope for this run:" >&2
+    sed 's/^/  /' "$scope_file" >&2
+    echo "pre-commit: widen the scope deliberately, or stage only what the run authorises." >&2
+    rm -f "$offenders"
+    exit 1
+  fi
+  rm -f "$offenders"
 fi
 git diff --cached --name-only --diff-filter=ACM | while IFS= read -r f; do
   [ -z "$f" ] && continue

@@ -29,9 +29,19 @@
 //! scan: the evaluator has one form, `count '<regex>' in <glob>`, with no
 //! branch anywhere that takes a program name from the document.
 //! `no_source_here_reaches_a_process_or_writes` is a *proxy* guarding future
-//! edits to this file, and a brace import (`use std::{process as p}`) defeats
-//! it. An earlier header called it a fact, under a test name that no longer
-//! existed -- an overclaim and a dead pointer in one sentence.
+//! edits to this file. An earlier header called it a fact, under a test name
+//! that no longer existed -- an overclaim and a dead pointer in one sentence --
+//! and then named the wrong defeat, which is worse than naming none: a reader
+//! checks the named hole, finds it closed, and trusts the rest. Measured:
+//!
+//!   * `use std::{process as p}` -- **trips**. The form the header used to name.
+//!   * `use std::{process::{Command as C}}` -- **green, a real defeat**.
+//!   * `File::options().create(true).write(true).open(..)` -- **green**, a write
+//!     path on no list and named nowhere until now.
+//!   * spacing (`std :: process`) and newline-split paths -- trip, since
+//!     whitespace is stripped before matching.
+//!
+//! What carries the property is the design above, not this scan.
 //!
 //! # The contract
 //!
@@ -193,10 +203,23 @@ fn claims_in(path: &Path) -> Result<Vec<Claim>, String> {
     let mut out = Vec::new();
     let mut fence: Option<char> = None;
     for (i, raw) in text.lines().enumerate() {
-        // The marker is tested BEFORE the fence toggle. It used to be tested
-        // after, so a marker on a fence-opening line was consumed by the
-        // `continue` and never seen -- one of three ways this reported "4
-        // passed" while measuring nothing.
+        // The fence toggle runs for EVERY line, including one carrying a
+        // marker. Testing the marker first and `continue`ing was half a fix:
+        // the marker was seen, but the toggle it sat on was swallowed, so fence
+        // state inverted for the rest of the file and a later, correctly fenced
+        // claim was reported "outside a fenced block". Toggling first and
+        // recording after keeps both facts.
+        let t = raw.trim_start();
+        if let Some(c) = ['`', '~']
+            .into_iter()
+            .find(|c| t.chars().take_while(|x| x == c).count() >= 3)
+        {
+            match fence {
+                Some(open) if open == c => fence = None,
+                None => fence = Some(c),
+                _ => {}
+            }
+        }
         if let Some((spec, expected)) = raw.split_once("#=") {
             out.push(Claim {
                 file: path.to_path_buf(),
@@ -213,17 +236,6 @@ fn claims_in(path: &Path) -> Result<Vec<Claim>, String> {
                 fenced: fence.is_some(),
             });
             continue;
-        }
-        let t = raw.trim_start();
-        if let Some(c) = ['`', '~']
-            .into_iter()
-            .find(|c| t.chars().take_while(|x| x == c).count() >= 3)
-        {
-            match fence {
-                Some(open) if open == c => fence = None,
-                None => fence = Some(c),
-                _ => {}
-            }
         }
     }
     Ok(out)

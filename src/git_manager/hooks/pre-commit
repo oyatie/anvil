@@ -9,9 +9,8 @@ if [ -n "$(git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude
   exit 1
 fi
 # Run scope. `.anvil/run-scope` lists the path prefixes a milestone run may
-# write, one per line, and is written by whoever commissions the run. It is
-# gitignored and exists only while a run is in flight, so ordinary work sees no
-# constraint at all -- the check is absent, not permissive.
+# write, one per line. Gitignored, and present only while a run is in flight, so
+# ordinary work sees no constraint at all -- the check is absent, not permissive.
 #
 # This is a git hook rather than a harness setting on purpose. The rule has to
 # hold for every agent that touches this repository -- claude, codex, cursor,
@@ -19,15 +18,49 @@ fi
 # all of them. A policy expressed in one harness's config is a policy the other
 # harnesses never see, and enumerating the writing verbs (cp, dd, mv, install,
 # a shell redirect, python -c) is a closed list that goes stale in silence.
-# Gating the artifact instead of the actor closes the whole class at once.
+#
+# WHAT THIS IS, stated so the name does not overclaim: a guardrail against a run
+# writing outside its scope by accident. It is NOT containment, and every one of
+# these defeats is real and measured: `--no-verify`, `ANVIL_SKIP_HOOKS=1`,
+# `git cherry-pick`, `git merge --no-ff` and `git rebase` each land an
+# out-of-scope path with the scope declared and this hook live, because
+# `pre-commit` is invoked by `git commit` and not by the others. The run being
+# constrained can also edit or delete its own `$scope_file`, which needs no
+# commit at all -- gitignoring it makes that tampering harder to see, not harder
+# to do. The value here is against a run that is not trying to escape.
+#
+# NO PRODUCER YET. Nothing under `src/` writes `$scope_file`; today only the
+# tests do, so in a real checkout this branch never executes. The wiring belongs
+# at `Posture` in src/exec/agent.rs -- the seam every model turn already goes
+# through, ratcheted by tests/model_spawns_go_through_one_seam_test.rs -- as
+# `with_run_scope(..)` plus `apply_from` exporting the scope to the turn's
+# environment, which cannot fail on IO the way a file write can. That file is in
+# #196's write-set, and `occupancy` refuses two hops that share one, so it waits
+# for #196 to land. Until then this rule is inert in production, and saying so
+# here is the point: a gate that never runs must not read as one that passes.
 scope_file=".anvil/run-scope"
 if [ -f "$scope_file" ]; then
   outside=""
-  for f in $(git diff --cached --name-only --diff-filter=ACMR); do
+  # No `--diff-filter`. `ACMR` omitted `D` and `T`, so deleting an out-of-scope
+  # file and replacing one with a symlink both committed -- and under `T` the
+  # loop saw no staged paths at all, so the body never ran and nothing was
+  # checked. Deleting and retargeting are writes. `--no-renames` splits a rename
+  # into add + delete, so the out-of-scope SOURCE of a rename is checked rather
+  # than only its in-scope destination. The paragraph above about closed lists
+  # was not true of this line while it named four letters.
+  for f in $(git diff --cached --name-only --no-renames); do
     ok=""
     while IFS= read -r prefix; do
       case "$prefix" in ''|'#'*) continue ;; esac
-      case "$f" in $prefix|$prefix*) ok=1; break ;; esac
+      # Quoted, so a scope line is data rather than glob syntax: unquoted, `*`
+      # authorised everything and `sr?/` matched `src/`. Matched as a path
+      # boundary rather than a string prefix -- two arms, no `*` on the bare
+      # form -- so `src` no longer admits `srcfoo/`. One trailing slash is
+      # stripped first, so `src` and `src/` mean the same thing.
+      prefix=${prefix%/}
+      case "$f" in
+        "$prefix"|"$prefix"/*) ok=1; break ;;
+      esac
     done < "$scope_file"
     [ -n "$ok" ] || outside="$outside $f"
   done

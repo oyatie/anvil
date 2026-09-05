@@ -5,6 +5,7 @@ pub mod manual_handlers;
 pub mod next_phase;
 pub mod payload;
 pub mod pipelines;
+pub mod pr_admission;
 pub mod repo_guard;
 pub mod sse;
 pub mod webhook_handlers;

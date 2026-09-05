@@ -143,3 +143,111 @@ fn the_scope_file_is_gitignored() {
         ".anvil/run-scope must be gitignored, or a run could commit its own authorisation"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The review's attacks, as assertions. Each of these committed successfully
+// against the first revision of the hook; the exit code, not the message, is
+// what changed.
+// ---------------------------------------------------------------------------
+
+/// Deleting a file is a write. `--diff-filter=ACMR` omitted `D`, so removing an
+/// out-of-scope file was authorised by a scope that did not mention it.
+#[test]
+fn deleting_an_out_of_scope_file_is_refused() {
+    let d = lab("delete");
+    commit(&d, &["src/inside.txt", "outside.txt"], "seed");
+    fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
+    fs::remove_file(d.join("outside.txt")).unwrap();
+    let out = commit(&d, &["outside.txt"], "delete out of scope");
+    assert!(
+        !out.status.success(),
+        "deleting an out-of-scope file was authorised by a scope that does not \
+         name it: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// A rename reports only its destination under `--diff-filter=ACMR`, so moving
+/// an out-of-scope file INTO scope hid the deletion of the source.
+#[test]
+fn renaming_an_out_of_scope_file_into_scope_is_refused() {
+    let d = lab("rename");
+    commit(&d, &["src/inside.txt", "outside.txt"], "seed");
+    fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
+    fs::rename(d.join("outside.txt"), d.join("src/moved.txt")).unwrap();
+    let out = commit(&d, &["outside.txt", "src/moved.txt"], "rename into scope");
+    assert!(
+        !out.status.success(),
+        "a rename hid the removal of its out-of-scope source: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// Replacing a file with a symlink is a typechange (`T`), which `ACMR` also
+/// omitted -- and under it the hook saw NO staged paths, so the loop body never
+/// ran and nothing was checked at all.
+#[cfg(unix)]
+#[test]
+fn replacing_an_out_of_scope_file_with_a_symlink_is_refused() {
+    let d = lab("typechange");
+    commit(&d, &["src/inside.txt", "outside.txt"], "seed");
+    fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
+    fs::remove_file(d.join("outside.txt")).unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", d.join("outside.txt")).unwrap();
+    let out = commit(&d, &["outside.txt"], "retarget out of scope");
+    assert!(
+        !out.status.success(),
+        "an out-of-scope file was replaced with a symlink and the hook saw \
+         nothing staged: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// `src` must not authorise `srcfoo/`. The prefix was matched as a string, so
+/// any path merely beginning with those characters was in scope.
+#[test]
+fn a_scope_prefix_is_a_path_boundary_not_a_string_prefix() {
+    let d = lab("prefix");
+    fs::create_dir_all(d.join("srcfoo")).unwrap();
+    fs::write(d.join("srcfoo/evil.txt"), "a\n").unwrap();
+    fs::write(d.join(".anvil/run-scope"), "src\n").unwrap();
+    let out = commit(&d, &["srcfoo/evil.txt"], "prefix collision");
+    assert!(
+        !out.status.success(),
+        "a scope of `src` admitted `srcfoo/`: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    // ...and stripping the trailing slash did not change what `src/` means.
+    let d2 = lab("prefix-slash");
+    fs::write(d2.join(".anvil/run-scope"), "src/\n").unwrap();
+    let ok = commit(&d2, &["src/inside.txt"], "still in scope");
+    assert!(
+        ok.status.success(),
+        "`src/` must still authorise `src/inside.txt`: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let _ = fs::remove_dir_all(&d);
+    let _ = fs::remove_dir_all(&d2);
+}
+
+/// The scope line reached the decision as shell-glob syntax rather than as
+/// data, so `sr?/` matched `src/` and a scope of `*` authorised everything.
+#[test]
+fn a_scope_line_is_data_not_a_glob_pattern() {
+    for (scope, staged) in [("sr?/", "src/inside.txt"), ("*", "outside.txt")] {
+        let d = lab(&format!("glob-{}", scope.len()));
+        fs::write(d.join(".anvil/run-scope"), format!("{scope}\n")).unwrap();
+        let out = commit(&d, &[staged], "glob scope");
+        assert!(
+            !out.status.success(),
+            "a scope line of `{scope}` was interpreted as a pattern and admitted \
+             `{staged}`: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let _ = fs::remove_dir_all(&d);
+    }
+}

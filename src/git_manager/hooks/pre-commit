@@ -48,7 +48,28 @@ if [ -f "$scope_file" ]; then
   # into add + delete, so the out-of-scope SOURCE of a rename is checked rather
   # than only its in-scope destination. The paragraph above about closed lists
   # was not true of this line while it named four letters.
-  for f in $(git diff --cached --name-only --no-renames); do
+  #
+  # One path per line, read as a line. `for f in $(git ...)` word-split on IFS
+  # and then glob-expanded each field before `case` ever saw it, which was two
+  # bypasses of everything above: a file named `src src` split into two fields
+  # that both matched `src/`, and a file named `s*` expanded against the working
+  # tree to `src` and matched. It also refused paths it should have allowed --
+  # `src/a b.txt` reported a nonexistent `b.txt` as the offender. Replacing four
+  # diff-filter letters while leaving the shell's expansion rules in place was
+  # the same defect in a second dialect.
+  #
+  # `core.quotepath=false` stops git C-quoting non-ASCII, so `src/café.txt` is
+  # compared as itself rather than as `"src/caf\303\251.txt"`. A path holding a
+  # newline or a quote is still C-quoted by git, so it arrives with a leading
+  # `"`, matches no prefix, and is refused -- the safe direction.
+  #
+  # The loop is fed by redirect rather than a pipe: `... | while read` runs the
+  # body in a subshell in POSIX sh, and the offender list would not survive it.
+  staged=$(mktemp) || exit 1
+  offenders=$(mktemp) || exit 1
+  git -c core.quotepath=false diff --cached --name-only --no-renames > "$staged"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
     ok=""
     while IFS= read -r prefix; do
       case "$prefix" in ''|'#'*) continue ;; esac
@@ -62,16 +83,19 @@ if [ -f "$scope_file" ]; then
         "$prefix"|"$prefix"/*) ok=1; break ;;
       esac
     done < "$scope_file"
-    [ -n "$ok" ] || outside="$outside $f"
-  done
-  if [ -n "$outside" ]; then
+    [ -n "$ok" ] || printf '%s\n' "$f" >> "$offenders"
+  done < "$staged"
+  rm -f "$staged"
+  if [ -s "$offenders" ]; then
     echo "pre-commit: staged path outside the declared run scope ($scope_file):" >&2
-    for f in $outside; do echo "  $f" >&2; done
+    sed 's/^/  /' "$offenders" >&2
     echo "pre-commit: in scope for this run:" >&2
     sed 's/^/  /' "$scope_file" >&2
     echo "pre-commit: widen the scope deliberately, or stage only what the run authorises." >&2
+    rm -f "$offenders"
     exit 1
   fi
+  rm -f "$offenders"
 fi
 git diff --cached --name-only --diff-filter=ACM | while IFS= read -r f; do
   [ -z "$f" ] && continue

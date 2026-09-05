@@ -51,6 +51,26 @@ fn lab(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// Refused *for the scope reason*, and naming the offending path.
+///
+/// Every one of these tests used to assert only `!status.success()`. Against a
+/// hook whose refusal message was replaced with unrelated text, all five stayed
+/// green -- they could not tell a right refusal from a wrong one, which is the
+/// "passes for the wrong reason" failure they exist to prevent.
+fn refused_for_scope(out: &std::process::Output, path: &str) {
+    let err = String::from_utf8_lossy(&out.stderr);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), err);
+    assert!(
+        !out.status.success(),
+        "must be refused, and was not. Output: {all}"
+    );
+    assert!(
+        err.contains("outside the declared run scope"),
+        "refused, but not for the scope reason: {all}"
+    );
+    assert!(err.contains(path), "the refusal must name `{path}`: {all}");
+}
+
 fn commit(dir: &Path, paths: &[&str], msg: &str) -> std::process::Output {
     let mut args = vec!["add"];
     args.extend_from_slice(paths);
@@ -159,12 +179,7 @@ fn deleting_an_out_of_scope_file_is_refused() {
     fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
     fs::remove_file(d.join("outside.txt")).unwrap();
     let out = commit(&d, &["outside.txt"], "delete out of scope");
-    assert!(
-        !out.status.success(),
-        "deleting an out-of-scope file was authorised by a scope that does not \
-         name it: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    refused_for_scope(&out, "outside.txt");
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -177,11 +192,7 @@ fn renaming_an_out_of_scope_file_into_scope_is_refused() {
     fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
     fs::rename(d.join("outside.txt"), d.join("src/moved.txt")).unwrap();
     let out = commit(&d, &["outside.txt", "src/moved.txt"], "rename into scope");
-    assert!(
-        !out.status.success(),
-        "a rename hid the removal of its out-of-scope source: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    refused_for_scope(&out, "outside.txt");
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -197,12 +208,7 @@ fn replacing_an_out_of_scope_file_with_a_symlink_is_refused() {
     fs::remove_file(d.join("outside.txt")).unwrap();
     std::os::unix::fs::symlink("/etc/hosts", d.join("outside.txt")).unwrap();
     let out = commit(&d, &["outside.txt"], "retarget out of scope");
-    assert!(
-        !out.status.success(),
-        "an out-of-scope file was replaced with a symlink and the hook saw \
-         nothing staged: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    refused_for_scope(&out, "outside.txt");
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -215,11 +221,7 @@ fn a_scope_prefix_is_a_path_boundary_not_a_string_prefix() {
     fs::write(d.join("srcfoo/evil.txt"), "a\n").unwrap();
     fs::write(d.join(".anvil/run-scope"), "src\n").unwrap();
     let out = commit(&d, &["srcfoo/evil.txt"], "prefix collision");
-    assert!(
-        !out.status.success(),
-        "a scope of `src` admitted `srcfoo/`: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    refused_for_scope(&out, "srcfoo/evil.txt");
 
     // ...and stripping the trailing slash did not change what `src/` means.
     let d2 = lab("prefix-slash");
@@ -242,12 +244,55 @@ fn a_scope_line_is_data_not_a_glob_pattern() {
         let d = lab(&format!("glob-{}", scope.len()));
         fs::write(d.join(".anvil/run-scope"), format!("{scope}\n")).unwrap();
         let out = commit(&d, &[staged], "glob scope");
-        assert!(
-            !out.status.success(),
-            "a scope line of `{scope}` was interpreted as a pattern and admitted \
-             `{staged}`: {}",
-            String::from_utf8_lossy(&out.stdout)
-        );
+        refused_for_scope(&out, staged);
         let _ = fs::remove_dir_all(&d);
     }
+}
+
+/// The staged list is read one path per line, not split into shell words.
+///
+/// `for f in $(git diff ...)` split a path on IFS, so a file named `src src`
+/// became two fields that each matched the scope `src/` and committed cleanly.
+#[test]
+fn a_path_containing_a_space_is_one_path_not_two() {
+    let d = lab("wordsplit");
+    fs::write(d.join("src src"), "a\n").unwrap();
+    fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
+    let out = commit(&d, &["src src"], "word split");
+    refused_for_scope(&out, "src src");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// ...and not glob-expanded against the working tree either.
+///
+/// A staged path named `s*` expanded to `src` and matched the scope. Staged as
+/// a deletion, which is how the expansion had a directory left to match.
+#[test]
+fn a_path_containing_a_glob_character_is_not_expanded() {
+    let d = lab("globchar");
+    fs::write(d.join("s*"), "a\n").unwrap();
+    commit(&d, &["src/inside.txt", "s*"], "seed");
+    fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
+    fs::remove_file(d.join("s*")).unwrap();
+    let out = commit(&d, &["s*"], "glob char");
+    refused_for_scope(&out, "s*");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// A non-ASCII path in scope is allowed, rather than refused because git
+/// C-quoted it into `"src/caf\303\251.txt"` and the leading quote matched no
+/// prefix. Over-refusal teaches the operator to disable the check.
+#[test]
+fn a_non_ascii_path_inside_the_scope_is_allowed() {
+    let d = lab("utf8");
+    fs::write(d.join("src/café.txt"), "a\n").unwrap();
+    fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
+    let out = commit(&d, &["src/café.txt"], "utf8 in scope");
+    assert!(
+        out.status.success(),
+        "an in-scope non-ASCII path was refused: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fs::remove_dir_all(&d);
 }

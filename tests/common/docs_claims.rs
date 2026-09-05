@@ -98,14 +98,31 @@ pub fn gate(root: &Path, p: &Path, shown: &str) -> Result<(), String> {
         // path the runner can stat.
         Err(_) => return refuse(),
     }
-    if p.canonicalize()
-        .map(|c| c.starts_with(root))
-        .unwrap_or(false)
-    {
-        Ok(())
-    } else {
-        refuse()
+    let Ok(real) = p.canonicalize() else {
+        return refuse();
+    };
+    if !real.starts_with(root) {
+        return refuse();
     }
+    // The dot rule is applied HERE, to the resolved path, and not only to the
+    // glob the caller wrote. `symlink_metadata` above observes the FINAL
+    // component only, so an intermediate link -- `src/g -> ../.git` -- was
+    // followed by `canonicalize`, landed back inside `root`, and satisfied
+    // containment: `count 's3cret' in src/g/config` returned a real count.
+    // Checking the resolved path closes the link route and the literal
+    // `.git/config` route with one rule.
+    if real
+        .strip_prefix(root)
+        .unwrap_or(&real)
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+    {
+        return Err(format!(
+            "`{shown}` resolves through a path component beginning with `.`; the \
+             corpus is the tracked tree, not the machinery beside it"
+        ));
+    }
+    Ok(())
 }
 
 /// `.md` files under `dir`, refusing anything that leaves `root`.
@@ -321,6 +338,10 @@ pub fn forbidden_needles() -> Vec<String> {
         format!("{}{}", "Open", "Options"),
         format!("{}::{}", "fs", "remove"),
         format!("{}::{}", "fs", "rename"),
+        format!("{}::{}", "fs", "copy"),
+        format!("{}::{}", "fs", "create_dir"),
+        format!("{}::{}", "fs", "hard_link"),
+        format!("{} \"{}\"", "extern", "C"),
         format!("{}!", "include"),
         format!("#[{}", "path"),
     ]
@@ -347,7 +368,10 @@ pub fn forbidden_hits(source: &str) -> Vec<String> {
         // hiding the defeat: `use std::{process as p}` is `std::process` once
         // `{` is gone, and so is `use std::{process::{Command as C}}`.
         .filter(|c| !c.is_whitespace() && *c != '{' && *c != '}')
-        .collect();
+        .collect::<String>()
+        // Raw identifiers are the same path spelled to dodge a literal match:
+        // `::std::r#process::r#Command::r#new` defeated every needle.
+        .replace("r#", "");
     forbidden_needles()
         .into_iter()
         .filter(|n| body.contains(n.as_str()))

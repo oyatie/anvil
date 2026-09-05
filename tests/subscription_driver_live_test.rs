@@ -19,12 +19,12 @@ async fn test_live_claude_opus5_high() {
     let executor = SubscriptionExecutor::new();
     let config = ModelExecutionConfig {
         provider: ModelProvider::AnthropicClaudeCode,
-        specific_model: Some("opus5".to_string()),
+        specific_model: Some("claude-opus-5".to_string()),
         reasoning_effort: "high".to_string(),
         print_timeout_secs: 60,
     };
 
-    assert_eq!(config.resolved_model(), "opus5");
+    assert_eq!(config.resolved_model(), "claude-opus-5");
     let res = executor
         .execute_prompt(
             "Respond strictly with: OPUS5_HIGH_OK",

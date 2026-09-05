@@ -543,7 +543,7 @@ mod tests {
     fn test_frontier_defaults() {
         assert_eq!(
             ModelProvider::AnthropicClaudeCode.default_frontier_model(),
-            "opus5"
+            "claude-opus-5"
         );
         assert_eq!(
             ModelProvider::OpenAiCodex.default_frontier_model(),

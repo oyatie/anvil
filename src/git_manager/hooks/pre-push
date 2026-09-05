@@ -42,22 +42,49 @@ fi
 # The `-f` guard is load-bearing, not defensive. This hook is installed once in
 # .git/hooks and runs on every branch, including every branch that predates the
 # test -- and `cargo test --test X` where X does not exist fails, which refused
-# the push of an unrelated docs branch the first time it ran. A check that
-# cannot run must decline, not block: the rule hook_liveness.rs enforces one
-# level up.
+# the push of an unrelated docs branch the first time it ran.
+#
+# A check that cannot run must decline, not block -- and "cannot run" is
+# separated from "ran and failed" STRUCTURALLY, by building first and running
+# second, rather than by matching the failure text. Matching text would tie the
+# distinction to a message that changes. Before this split, a tree that did not
+# compile printed "a number published beside a command is not what that command
+# produces" and refused the push: the same conflation the `-f` guard above was
+# added to fix, one layer in.
+#
+# hook_liveness.rs is NOT what enforces this. It checks that hooks are
+# installed, executable, and undrifted from their template -- nothing about
+# declining. This rule lives here and is measured by the seeded compile failure
+# recorded in the commit that split it.
 if [ -f tests/published_commands_reproduce_test.rs ] \
    && git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'docs/plan/' | grep -q .; then
   echo "[pre-push] published commands reproduce their numbers..."
   set +e
-  claim_out=$(cargo test --locked --quiet --test published_commands_reproduce_test 2>&1)
-  claim_rc=$?
+  build_out=$(cargo test --locked --quiet --no-run \
+      --test published_commands_reproduce_test \
+      --test docs_claims_hardening_test 2>&1)
+  build_rc=$?
   set -e
-  if [ "$claim_rc" -ne 0 ]; then
-      echo "$claim_out" | tail -30
-      echo "[pre-push] REFUSED: a number published beside a command is not what that"
-      echo "           command produces. Fix the number, or the command that cannot"
-      echo "           express it."
-      exit 1
+  if [ "$build_rc" -ne 0 ]; then
+      echo "$build_out" | tail -20
+      echo "[pre-push] DECLINED: the docs-claim gate could not be built, so it"
+      echo "           measured nothing. Not blocking on absent evidence -- but"
+      echo "           nothing here vouched for the numbers either. CI runs this"
+      echo "           on the merge commit."
+  else
+      set +e
+      claim_out=$(cargo test --locked --quiet \
+          --test published_commands_reproduce_test \
+          --test docs_claims_hardening_test 2>&1)
+      claim_rc=$?
+      set -e
+      if [ "$claim_rc" -ne 0 ]; then
+          echo "$claim_out" | tail -30
+          echo "[pre-push] REFUSED: a number published beside a command is not what that"
+          echo "           command produces. Fix the number, or the command that cannot"
+          echo "           express it."
+          exit 1
+      fi
   fi
 fi
 

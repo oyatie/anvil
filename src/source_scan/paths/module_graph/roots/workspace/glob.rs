@@ -26,7 +26,7 @@ pub(super) fn excluded(relative: &str, patterns: &[String]) -> Result<bool, Stri
         let normalized = trimmed.strip_suffix("/Cargo.toml").unwrap_or(trimmed);
         validate(normalized, "exclude")?;
         let expected = normalized.split('/').collect::<Vec<_>>();
-        let wildcard = normalized.contains(['*', '?', '[']);
+        let wildcard = normalized.contains(['*', '?', '[', '\\']);
         if path_matches(&expected, &actual)
             || (!wildcard && relative.starts_with(&format!("{normalized}/")))
         {
@@ -45,16 +45,8 @@ fn validate(pattern: &str, kind: &str) -> Result<(), String> {
     }
     for segment in pattern.split('/') {
         let chars = segment.chars().collect::<Vec<_>>();
-        let mut cursor = 0;
-        while cursor < chars.len() {
-            if chars[cursor] == '[' {
-                let Some(close) = class_end(&chars, cursor) else {
-                    return Err(format!("malformed workspace {kind} glob `{pattern}`"));
-                };
-                cursor = close + 1;
-            } else {
-                cursor += 1;
-            }
+        if segment_boundaries(&chars).is_none() {
+            return Err(format!("malformed workspace {kind} glob `{pattern}`"));
         }
     }
     Ok(())
@@ -84,7 +76,7 @@ fn expand_parts(
                     .into_iter()
                     .map(|directory| (directory, part_at)),
             );
-        } else if !part.contains(['*', '?', '[']) {
+        } else if !part.contains(['*', '?', '[', '\\']) {
             pending.push((current.join(part), part_at + 1));
         } else {
             for directory in child_directories(&current)? {
@@ -158,10 +150,11 @@ fn path_matches(pattern: &[&str], value: &[&str]) -> bool {
 
 fn segment_matches(pattern: &str, value: &str) -> bool {
     let pattern = pattern.chars().collect::<Vec<_>>();
+    let boundaries = segment_boundaries(&pattern).expect("validated pattern");
     let value = value.chars().collect::<Vec<_>>();
     let mut matched = vec![vec![false; value.len() + 1]; pattern.len() + 1];
     matched[pattern.len()][value.len()] = true;
-    for pattern_at in (0..pattern.len()).rev() {
+    for (pattern_at, next) in boundaries.into_iter().rev() {
         for value_at in (0..=value.len()).rev() {
             matched[pattern_at][value_at] = match pattern.get(pattern_at) {
                 Some('*') => {
@@ -170,7 +163,7 @@ fn segment_matches(pattern: &str, value: &str) -> bool {
                 }
                 Some('?') => value_at < value.len() && matched[pattern_at + 1][value_at + 1],
                 Some('[') => {
-                    let close = class_end(&pattern, pattern_at).expect("validated class");
+                    let close = next - 1;
                     value_at < value.len()
                         && class_matches(&pattern[pattern_at + 1..close], value[value_at])
                         && matched[close + 1][value_at + 1]
@@ -190,6 +183,23 @@ fn segment_matches(pattern: &str, value: &str) -> bool {
         }
     }
     matched[0][0]
+}
+
+/// The same parsed boundaries drive validation and matching. Class members
+/// and escaped characters are data, never independent pattern starts.
+fn segment_boundaries(pattern: &[char]) -> Option<Vec<(usize, usize)>> {
+    let mut boundaries = Vec::new();
+    let mut cursor = 0;
+    while cursor < pattern.len() {
+        let next = match pattern[cursor] {
+            '[' => class_end(pattern, cursor)? + 1,
+            '\\' if cursor + 1 < pattern.len() => cursor + 2,
+            _ => cursor + 1,
+        };
+        boundaries.push((cursor, next));
+        cursor = next;
+    }
+    Some(boundaries)
 }
 
 /// Cargo's globset grammar permits `]` as the first class member (after an
@@ -232,6 +242,30 @@ fn class_matches(class: &[char], value: char) -> bool {
 mod tests {
     use super::{expand_parts, path_matches, segment_matches};
     use std::collections::BTreeSet;
+
+    #[test]
+    fn literal_brackets_and_escaped_metacharacters_match_workspace_names() {
+        let root = tempfile::tempdir().expect("workspace fixture");
+        for name in ["[", "]", "plain"] {
+            let member = root.path().join(name);
+            std::fs::create_dir(&member).expect("member directory");
+            std::fs::write(member.join("Cargo.toml"), "[package]\nname='member'\n")
+                .expect("manifest");
+        }
+        for (pattern, name) in [("[[]", "["), (r"\[", "["), (r"\]", "]")] {
+            assert_eq!(
+                super::expand_member_pattern(root.path(), pattern).expect("valid literal glob"),
+                vec![root.path().join(name)],
+                "pattern {pattern}"
+            );
+            assert!(super::excluded(name, &[pattern.to_owned()]).expect("valid exclusion"));
+            assert!(!super::excluded("plain", &[pattern.to_owned()]).expect("valid exclusion"));
+        }
+        // A literal '*' is not a valid Windows filename, so exercise its
+        // escaping without creating a platform-specific directory.
+        assert!(segment_matches(r"\*", "*"));
+        assert!(!segment_matches(r"\*", "plain"));
+    }
 
     #[test]
     fn repeated_star_matching_has_a_bounded_state_space() {

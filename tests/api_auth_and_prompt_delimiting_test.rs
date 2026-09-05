@@ -727,19 +727,24 @@ fn test_prompt_boundary_diff_one_above_cap_is_truncated_and_declared() {
     );
 }
 
-/// ABSENT EVIDENCE. A complete review cannot be requested when the diff would
-/// be capped: prose declaring omitted bytes cannot authorize a verdict.
+/// The retained review policy accepts an excerpt with a bounded data segment
+/// and an external declaration of its actual original size.
 #[cfg(unix)]
 #[test]
 fn test_prompt_absent_evidence_truncated_diff_is_declared_in_the_prompt() {
     let original_len = MAX_DIFF_CHARS * 3;
     let ctx = diff_context(&"d".repeat(original_len));
-    let error = reviewer()
+    let prompt = reviewer()
         .build_prompt(&ctx, "big pr", "big body", "")
-        .err()
-        .expect("an incomplete diff must not produce a review prompt")
-        .to_string();
-    assert!(error.contains("truncated evidence"), "{error}");
+        .expect("the retained policy permits declared truncation");
+    let rendered = rendered_diff(&ctx.diff_content);
+    let region = fenced_region(&rendered, "GIT_DIFF");
+    assert!(region.len() <= MAX_DIFF_CHARS);
+    assert!(rendered.contains(&original_len.to_string()));
+    assert!(rendered.to_uppercase().contains("TRUNCAT"));
+    assert!(!region.to_uppercase().contains("TRUNCAT"));
+    assert!(prompt.len() >= rendered.len());
+    assert!(prompt.len() <= anvil::model_prompt::MAX_MODEL_PROMPT_BYTES);
 }
 
 // =========================================================================

@@ -26,7 +26,7 @@
 //!
 //! `gh` is Anvil talking to the forge as itself, so a forge credential is
 //! exactly what belongs at that seam. A transport to a public advisory
-//! database authenticates nobody, so `GH_TOKEN` is on [`NEVER_HANDED_OVER`]
+//! database authenticates nobody, so `GH_TOKEN` is on the test's `NEVER_HANDED_OVER` list
 //! here. The two lists disagree on purpose, and the test beside this pins the
 //! disagreement in both directions.
 
@@ -72,6 +72,7 @@ const NET_INHERITED: &[&str] = &[
 /// beside this one. `GH_TOKEN` and `GITHUB_TOKEN` are here and NOT on
 /// [`super::gh::GH_INHERITED`]'s exclusions -- a forge credential belongs at
 /// exactly one seam, and this is not it.
+#[cfg(test)]
 const NEVER_HANDED_OVER: &[&str] = &[
     "GITHUB_WEBHOOK_SECRET",
     "GH_TOKEN",

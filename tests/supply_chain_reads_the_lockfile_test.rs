@@ -478,17 +478,24 @@ fn the_gate_asks_the_advisory_database_rather_than_answering_from_itself() {
     let transport = production_source("src/supply_chain_guard/osv_stream");
     let network = production_source("src/exec/net");
     assert!(
-        transport.contains("let body = post_batch(&payload).await?"),
-        "the query no longer goes through the bounded executor with a budget"
+        transport.contains("let body = post_batch(chunk).await?")
+            && transport.contains("crate::exec::post_osv_batch(packages)"),
+        "the query no longer sends typed locked-package chunks through the finite OSV request"
     );
     assert!(
-        // `run_bounded` and not `run_bounded_for(cmd, budget`: the invariant is
-        // that the subprocess is bounded, and `run_bounded(cmd, ExecClass::Api,
-        // ..)` satisfies it too. Pinning one spelling would turn this guard RED
-        // for a change that breaks nothing.
-        network.contains("non_model::run_for"),
+        network.contains("super::NonModelCommand::checked_for(cmd, &[CURL])?")
+            && network.contains("super::transport::run_for(command, OSV_BUDGET,")
+            && network.contains(
+                "const OSV_BUDGET: std::time::Duration = std::time::Duration::from_secs(20)"
+            ),
         "a per-PR network call outside the bounded executor has no deadline \
          (invariant I5)"
+    );
+    let executor = production_source("src/exec/non_model/transport");
+    assert!(
+        executor.contains("command.kill_on_drop(true)")
+            && executor.contains("tokio::time::timeout(limit, command.output()).await"),
+        "the OSV transport's budget must bound execution and cancel the child"
     );
     assert!(
         // The exact argument, not the mention: `body_of`'s own doc comment

@@ -56,7 +56,24 @@ impl PredictiveTestSelector {
         // found none, so the selector always had something to select and the
         // gate always had something to report. An undiscovered workspace is not
         // a one-package workspace.
-        let workspace_packages = WorkspaceDagSelector::discover_workspace_packages_sync(_repo_dir);
+        let workspace_packages =
+            match WorkspaceDagSelector::discover_workspace_packages_sync(_repo_dir) {
+                Ok(packages) => packages,
+                Err(error) => {
+                    let reason = format!("workspace discovery was not measured: {error:#}");
+                    return Ok(PredictiveTestReport {
+                        status: GateStatus::NotMeasured {
+                            gate_id: GATE_ID.to_string(),
+                            reason: reason.clone(),
+                        },
+                        is_optimized: false,
+                        selected_packages: Vec::new(),
+                        skipped_packages_count: 0,
+                        pruning_ratio: 0.0,
+                        summary: reason,
+                    });
+                }
+            };
         if workspace_packages.is_empty() {
             return Ok(PredictiveTestReport {
                 status: GateStatus::NotMeasured {

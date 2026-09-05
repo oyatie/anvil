@@ -6,9 +6,10 @@
 //! additionally covers inactive platform/feature code and keeps the few raw
 //! subprocess seams finite.
 
+use anvil::source_scan::paths::module_source;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -18,7 +19,7 @@ use syn::visit::Visit;
 
 const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
 const EXPECTED_PROVIDER_SEAM_TOKEN_SHA256: &str =
-    "ce41a9fb08cf947a889e6589148eb843533f3022b09c7d530124cf810b55b79b";
+    "029d05fcc1f50b8d9a750acabbf059837081df6b7f02a9608b2a273fa52b25f3";
 const MODEL_TRANSPORT: &str = "src/exec/agent/transport.rs";
 const NON_MODEL_TRANSPORT: &str = "src/exec/non_model.rs";
 const CLIPPY_CONFIG: &str = "clippy.toml";
@@ -75,26 +76,84 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "",
         "import:tokio::process::Command->Command",
     ),
+    (
+        "src/exec/agent.rs",
+        "apply",
+        "posture-method:self:apply_from",
+    ),
+    (
+        "src/exec/agent.rs",
+        "apply_from",
+        "command-method:cmd:current_dir",
+    ),
+    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
+    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
+    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
+    (
+        "src/exec/agent.rs",
+        "apply_from",
+        "command-method:cmd:env_clear",
+    ),
     ("src/exec/agent.rs", "args", "argv:self.command:args:args"),
+    (
+        "src/exec/agent.rs",
+        "args",
+        "command-method:self.command:args",
+    ),
     ("src/exec/agent.rs", "args", "raw-field:self.command"),
     ("src/exec/agent.rs", "command", "call:command_in:tool"),
+    ("src/exec/agent.rs", "deliver", "reference:command"),
     (
         "src/exec/agent.rs",
-        "command_in",
-        "bind-command-new:cmd:Command::new:tool",
+        "prepare_command",
+        "command-method:cmd:stderr",
     ),
     (
         "src/exec/agent.rs",
-        "command_in",
-        "command-new:Command::new:tool",
+        "prepare_command",
+        "command-method:cmd:stdout",
     ),
     (
         "src/exec/agent.rs",
-        "command_in",
+        "prepare_command",
         "construct-agent:AgentCommand:command=cmd:framing=framing",
     ),
-    ("src/exec/agent.rs", "command_in", "mut-ref:cmd"),
-    ("src/exec/agent.rs", "deliver", "reference:command"),
+    ("src/exec/agent.rs", "prepare_command", "mut-ref:cmd"),
+    (
+        "src/exec/agent.rs",
+        "prepare_command",
+        "posture-method:posture:apply_from",
+    ),
+    (
+        "src/exec/agent.rs",
+        "trusted_provider_command_from",
+        "bind-command-new:bound:std::process::Command::new:canonical",
+    ),
+    (
+        "src/exec/agent.rs",
+        "trusted_provider_command_from",
+        "bind-command-new:requested:std::process::Command::new:tool",
+    ),
+    (
+        "src/exec/agent.rs",
+        "trusted_provider_command_from",
+        "command-method:bound:arg0",
+    ),
+    (
+        "src/exec/agent.rs",
+        "trusted_provider_command_from",
+        "command-method:requested:env_clear",
+    ),
+    (
+        "src/exec/agent.rs",
+        "trusted_provider_command_from",
+        "command-new:std::process::Command::new:canonical",
+    ),
+    (
+        "src/exec/agent.rs",
+        "trusted_provider_command_from",
+        "command-new:std::process::Command::new:tool",
+    ),
     (
         "src/exec/agent/provider.rs",
         "",
@@ -107,33 +166,8 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     ),
     (
         "src/exec/agent/provider.rs",
-        "agy_help_probe",
-        "argv:command:arg:str:\"--help\"",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "agy_help_probe",
-        "bind-command-new:command:tokio::process::Command::new:str:\"agy\"",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "agy_help_probe",
-        "command-new:tokio::process::Command::new:str:\"agy\"",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "agy_help_probe",
-        "construct-probe:ProviderProbeCommand",
-    ),
-    (
-        "src/exec/agent/provider.rs",
         "agy_agent",
-        "argv:cmd:args:[str:\"--print\",str:\"\",str:\"--input-format\",str:\"stream-json\",str:\"--output-format\",str:\"stream-json\",str:\"--effort\",effort,str:\"--print-timeout\",&timeout,str:\"--dangerously-skip-permissions\"]",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "agy_agent",
-        "argv:cmd:args:[str:\"--model\",model]",
+        "argv:cmd:args:args",
     ),
     (
         "src/exec/agent/provider.rs",
@@ -142,8 +176,23 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     ),
     (
         "src/exec/agent/provider.rs",
+        "agy_help_probe",
+        "argv:command:args:call:agy_help_args()",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "agy_help_probe",
+        "construct-probe:ProviderProbeCommand",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "agy_help_probe",
+        "mut-ref:command",
+    ),
+    (
+        "src/exec/agent/provider.rs",
         "claude_agent",
-        "argv:cmd:args:[str:\"-p\",str:\"--model\",model]",
+        "argv:cmd:args:args",
     ),
     (
         "src/exec/agent/provider.rs",
@@ -153,7 +202,7 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/agent/provider.rs",
         "codex_agent",
-        "argv:cmd:args:[str:\"exec\",str:\"-\",str:\"--model\",model]",
+        "argv:cmd:args:args",
     ),
     (
         "src/exec/agent/provider.rs",
@@ -163,12 +212,7 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/agent/provider.rs",
         "cursor_agent",
-        "argv:cmd:args:[str:\"--model\",model]",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "cursor_agent",
-        "argv:cmd:args:[str:\"agent\",str:\"--print\"]",
+        "argv:cmd:args:args",
     ),
     (
         "src/exec/agent/provider.rs",
@@ -178,7 +222,7 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/agent/provider.rs",
         "grok_agent",
-        "argv:cmd:args:[str:\"--prompt-file\",str:\"/dev/stdin\",str:\"--model\",model]",
+        "argv:cmd:args:args",
     ),
     (
         "src/exec/agent/provider.rs",
@@ -200,6 +244,7 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "",
         "import:tokio::process::Command->Command",
     ),
+    ("src/exec/agent/transport.rs", "", "type-alias:ReadTask"),
     (
         "src/exec/agent/transport.rs",
         "deliver",
@@ -209,84 +254,6 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "src/exec/agent/transport.rs",
         "probe",
         "destructure-probe:ProviderProbeCommand",
-    ),
-    (
-        "src/exec/agent.rs",
-        "args",
-        "command-method:self.command:args",
-    ),
-    (
-        "src/exec/agent.rs",
-        "apply_from",
-        "command-method:cmd:env_clear",
-    ),
-    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
-    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
-    ("src/exec/agent.rs", "apply_from", "command-method:cmd:env"),
-    (
-        "src/exec/agent.rs",
-        "apply_from",
-        "command-method:cmd:current_dir",
-    ),
-    (
-        "src/exec/agent.rs",
-        "apply",
-        "posture-method:self:apply_from",
-    ),
-    (
-        "src/exec/agent.rs",
-        "command_in",
-        "posture-method:posture:apply_from",
-    ),
-    (
-        "src/exec/agent.rs",
-        "command_in",
-        "command-method:cmd:stdout",
-    ),
-    (
-        "src/exec/agent.rs",
-        "command_in",
-        "command-method:cmd:stderr",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "agy_help_probe",
-        "command-method:command:arg",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "agy_agent",
-        "command-method:cmd:args",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "agy_agent",
-        "command-method:cmd:args",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "claude_agent",
-        "command-method:cmd:args",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "codex_agent",
-        "command-method:cmd:args",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "cursor_agent",
-        "command-method:cmd:args",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "cursor_agent",
-        "command-method:cmd:args",
-    ),
-    (
-        "src/exec/agent/provider.rs",
-        "grok_agent",
-        "command-method:cmd:args",
     ),
     (
         "src/exec/agent/transport.rs",
@@ -323,11 +290,51 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "deliver_with_stdin",
         "command-method:command:spawn",
     ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "mut-ref:bytes",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "mut-ref:bytes",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "mut-ref:child",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "mut-ref:child",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "mut-ref:child",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "mut-ref:child",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "finish",
+        "mut-ref:self.stderr",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "finish",
+        "mut-ref:self.stdout",
+    ),
 ];
 const EXPECTED_NONMODEL_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/non_model.rs",
-        "checked",
+        "checked_for",
         "construct-self:NonModelCommand:args=<non-path>",
     ),
     (
@@ -335,6 +342,7 @@ const EXPECTED_NONMODEL_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "checked",
         "construct-self:SyncNonModelCommand:args=<non-path>",
     ),
+    ("src/exec/non_model.rs", "checked", "call:Self::checked_for"),
     (
         "src/exec/non_model.rs",
         "run",
@@ -344,6 +352,11 @@ const EXPECTED_NONMODEL_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "src/exec/non_model.rs",
         "run_for",
         "call:NonModelCommand::checked",
+    ),
+    (
+        "src/exec/net.rs",
+        "post_osv_batch",
+        "call:super::NonModelCommand::checked_for",
     ),
     (
         "src/exec/non_model.rs",
@@ -676,36 +689,41 @@ const EXPECTED_RAW_STDIN_CALLS: &[(&str, &str, &str)] = &[
     ),
 ];
 const NON_MODEL_PROGRAM_VOCABULARY: &[&str] = &[
-    "cargo", "cedar", "curl", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
+    "cargo", "cedar", "echo", "gh", "git", "go", "node", "npm", "ps", "python3", "sleep",
 ];
 const CANONICAL_NON_MODEL_ALIASES: &[(&str, &str, &str)] = &[
     ("cargo", "rustup", "unix"),
     ("npm", "npm-cli.js", "unix"),
     ("npm", "npm.cmd", "windows"),
 ];
-const APPROVED_PRODUCTION_DEPENDENCIES: &[&str] = &[
-    "anyhow",
-    "async-trait",
-    "axum",
-    "chrono",
-    "clap",
-    "dotenvy",
-    "futures",
-    "hex",
-    "hmac",
-    "regex",
-    "serde",
-    "serde_json",
-    "serde_yaml",
-    "sha2",
-    "socket2",
-    "subtle",
-    "tempfile",
-    "tokio",
-    "tokio-stream",
-    "toml",
-    "tracing",
-    "tracing-subscriber",
+const APPROVED_PRODUCTION_DEPENDENCIES: &[(&str, &str, &str, &str)] = &[
+    ("anyhow", "anyhow", "normal", "*"),
+    ("async-trait", "async_trait", "normal", "*"),
+    ("axum", "axum", "normal", "*"),
+    ("chrono", "chrono", "normal", "*"),
+    ("clap", "clap", "normal", "*"),
+    ("dotenvy", "dotenvy", "normal", "*"),
+    ("futures", "futures", "normal", "*"),
+    ("hex", "hex", "normal", "*"),
+    ("hmac", "hmac", "normal", "*"),
+    ("proc-macro2", "proc_macro2", "normal", "*"),
+    // ToTokens renders source-classifier AST nodes; this does not add an
+    // alternate execution runtime.
+    ("quote", "quote", "normal", "*"),
+    ("regex", "regex", "normal", "*"),
+    ("serde", "serde", "normal", "*"),
+    ("serde_json", "serde_json", "normal", "*"),
+    ("serde_yaml", "serde_yaml", "normal", "*"),
+    ("sha2", "sha2", "normal", "*"),
+    ("socket2", "socket2", "normal", "*"),
+    ("subtle", "subtle", "normal", "*"),
+    ("syn", "syn", "normal", "*"),
+    ("tempfile", "tempfile", "normal", "*"),
+    ("tokio", "tokio", "normal", "*"),
+    ("tokio-stream", "tokio_stream", "normal", "*"),
+    ("toml", "toml", "normal", "*"),
+    ("tracing", "tracing", "normal", "*"),
+    ("tracing-subscriber", "tracing_subscriber", "normal", "*"),
 ];
 
 /// This is intentionally an associated-function alias through a renamed type,
@@ -749,6 +767,84 @@ fn command_ext_alias_clippy_seed(executable: &std::ffi::OsStr) {
     let mut command = std::process::Command::new(executable);
     let invoke = CommandExt::exec;
     let _error = invoke(&mut command);
+}
+
+// This module is compiled by Rust, then its exact source items are fed to the
+// structural visitors below. It keeps the alias/reference/wrapper regression
+// corpus honest instead of relying on syntax that only `syn` accepts.
+#[allow(dead_code, unused_imports)]
+mod capability_adversarial_compile_seed {
+    #[derive(Clone)]
+    #[cfg_attr(unix, derive(Debug))]
+    struct ModelPromptBuilder;
+    use self::ModelPromptBuilder as ImportedBuilder;
+    type BuilderAlias = ImportedBuilder;
+    struct GenericBuilderWrapper<T = BuilderAlias>(T);
+    struct BuilderEnvelope(GenericBuilderWrapper);
+
+    impl BuilderAlias {
+        fn raw_alias_mutation(&mut self) {}
+    }
+
+    impl BuilderEnvelope {
+        fn raw_wrapper_mutation(&mut self) {}
+    }
+
+    trait BuilderEscape {}
+    struct BuilderProjectionOwner;
+    trait BuilderProjection {
+        type Builder;
+    }
+    impl BuilderProjection for BuilderProjectionOwner {
+        type Builder = BuilderAlias;
+    }
+    impl BuilderEscape for &mut BuilderAlias {}
+    impl BuilderEscape for Box<GenericBuilderWrapper> {}
+    impl BuilderEscape for BuilderEnvelope {}
+    impl BuilderEscape for <BuilderProjectionOwner as BuilderProjection>::Builder {}
+
+    pub(crate) struct ModelPromptPermit(());
+    use self::ModelPromptPermit as PermitConstructor;
+    type PermitAlias = ModelPromptPermit;
+    struct PermitEnvelope(Option<PermitAlias>);
+
+    trait PermitEscape {
+        const EXPORTED: Option<PermitAlias>;
+        fn mint() -> PermitEnvelope;
+    }
+
+    impl PermitEscape for PermitEnvelope {
+        const EXPORTED: Option<PermitAlias> = None;
+        fn mint() -> PermitEnvelope {
+            PermitEnvelope(None)
+        }
+    }
+
+    fn wrapped_permit() -> Box<PermitEnvelope> {
+        Box::new(PermitEnvelope(Some(ModelPromptPermit(()))))
+    }
+
+    fn constructor_as_value() -> ModelPromptPermit {
+        let mint = PermitConstructor;
+        mint(())
+    }
+
+    struct PermitProjectionOwner;
+    trait PermitProjection {
+        type Permit;
+    }
+    impl PermitProjection for PermitProjectionOwner {
+        type Permit = PermitAlias;
+    }
+    fn projected_permit() -> <PermitProjectionOwner as PermitProjection>::Permit {
+        ModelPromptPermit(())
+    }
+
+    pub(crate) use self::ModelPromptPermit as PublishedPermit;
+    mod nested_exports {
+        pub(crate) use super::ModelPromptPermit;
+    }
+    pub(crate) use nested_exports::*;
 }
 
 fn repo() -> PathBuf {
@@ -839,9 +935,12 @@ fn cargo_metadata() -> &'static serde_json::Value {
                 "--format-version",
                 "1",
                 "--no-deps",
+                "--locked",
+                "--offline",
                 "--manifest-path",
             ])
             .arg(repo().join("Cargo.toml"))
+            .current_dir(repo())
             .output()
             .expect("run cargo metadata for the production-target census");
         assert!(
@@ -851,6 +950,37 @@ fn cargo_metadata() -> &'static serde_json::Value {
         );
         serde_json::from_slice(&output.stdout).expect("parse cargo metadata")
     })
+}
+
+fn production_dependency_bindings(
+    packages: &[&serde_json::Value],
+) -> Vec<(String, String, String, String)> {
+    let mut bindings = packages
+        .iter()
+        .flat_map(|package| package["dependencies"].as_array().into_iter().flatten())
+        .filter(|dependency| dependency["kind"].as_str() != Some("dev"))
+        .map(|dependency| {
+            let package = dependency["name"]
+                .as_str()
+                .expect("Cargo dependency package name");
+            let extern_name = dependency["rename"]
+                .as_str()
+                .unwrap_or(package)
+                .replace('-', "_");
+            let kind = dependency["kind"].as_str().unwrap_or("normal");
+            let target = dependency["target"].as_str().unwrap_or("*");
+            (
+                package.to_owned(),
+                extern_name,
+                kind.to_owned(),
+                target.to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    // Deliberately preserve equal rows: multiplicity is part of the reviewed
+    // Cargo binding surface, just as alias, kind, and target are.
+    bindings.sort();
+    bindings
 }
 
 fn targets_from_metadata(metadata: &serde_json::Value, repository: &Path) -> Vec<ProductionTarget> {
@@ -894,15 +1024,6 @@ fn targets_from_metadata(metadata: &serde_json::Value, repository: &Path) -> Vec
                             path.starts_with(repository),
                             "production target root escaped the repository: {}",
                             path.display()
-                        );
-                        let relative = path
-                            .strip_prefix(repository)
-                            .unwrap()
-                            .to_string_lossy()
-                            .replace('\\', "/");
-                        assert!(
-                            !is_nonproduction_rust(&relative),
-                            "production target root uses an excluded test/example layout: {relative}"
                         );
                         ProductionTarget {
                             path,
@@ -951,13 +1072,42 @@ fn source_paths_from_metadata(metadata: &serde_json::Value, repository: &Path) -
     paths.extend(target_roots.iter().cloned());
     paths.sort();
     paths.dedup();
+    let test_modules = anvil::source_scan::paths::declared_test_module_files_from_roots(
+        repository,
+        &target_roots.iter().cloned().collect::<Vec<_>>(),
+    )
+    .expect("classify declared test modules from Cargo target roots");
+    let production_modules =
+        anvil::source_scan::paths::declared_production_module_files_from_roots(
+            repository,
+            &target_roots.iter().cloned().collect::<Vec<_>>(),
+        )
+        .expect("classify declared production modules from Cargo target roots");
     paths.retain(|path| {
+        let canonical = fs::canonicalize(path).unwrap_or_else(|error| {
+            panic!(
+                "production Rust census cannot resolve {}: {error}",
+                path.display()
+            )
+        });
         let relative = path
             .strip_prefix(repository)
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        target_roots.contains(path) || !is_nonproduction_rust(&relative)
+        let explicit_production_domain = target_roots.iter().any(|root| {
+            let root_relative = root
+                .strip_prefix(repository)
+                .unwrap_or(root)
+                .to_string_lossy()
+                .replace('\\', "/");
+            is_nonproduction_rust(&root_relative)
+                && root.parent().is_some_and(|parent| path.starts_with(parent))
+        });
+        target_roots.contains(path)
+            || production_modules.contains(&canonical)
+            || ((!is_nonproduction_rust(&relative) || explicit_production_domain)
+                && !test_modules.contains(&canonical))
     });
     for path in &paths {
         validate_source_path(repository, path);
@@ -1154,39 +1304,9 @@ fn syn_path_name(path: &syn::Path) -> String {
 }
 
 fn is_test_only(attributes: &[syn::Attribute]) -> bool {
-    fn can_be(meta: &syn::Meta, test: bool, desired: bool) -> bool {
-        match meta {
-            syn::Meta::Path(path) if syn_path_is(path, "test") => test == desired,
-            syn::Meta::Path(_) | syn::Meta::NameValue(_) => true,
-            syn::Meta::List(list) => {
-                let name = syn_path_name(&list.path);
-                let parser = Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
-                let Ok(nested) = parser.parse2(list.tokens.clone()) else {
-                    return true;
-                };
-                match name.as_str() {
-                    "all" if desired => nested.iter().all(|meta| can_be(meta, test, true)),
-                    "all" => nested.iter().any(|meta| can_be(meta, test, false)),
-                    "any" if desired => nested.iter().any(|meta| can_be(meta, test, true)),
-                    "any" => nested.iter().all(|meta| can_be(meta, test, false)),
-                    "not" if nested.len() == 1 => can_be(&nested[0], test, !desired),
-                    _ => true,
-                }
-            }
-        }
-    }
-
     attributes.iter().any(|attribute| {
-        syn_path_is(attribute.path(), "test")
-            || syn_path_name(attribute.path()) == "tokio::test"
-            || (syn_path_is(attribute.path(), "cfg")
-                && attribute
-                    .meta
-                    .require_list()
-                    .ok()
-                    .and_then(|list| syn::parse2::<syn::Meta>(list.tokens.clone()).ok())
-                    .is_some_and(|meta| !can_be(&meta, false, true)))
-    })
+        syn_path_is(attribute.path(), "test") || syn_path_name(attribute.path()) == "tokio::test"
+    }) || anvil::source_scan::excludes_when_test_is_false(attributes)
 }
 
 fn item_attributes(item: &syn::Item) -> &[syn::Attribute] {
@@ -1678,8 +1798,10 @@ struct ProcessExecutionVisitor<'scan> {
     lint_controls: Vec<LintControlSite>,
     source_path: Option<&'scan Path>,
     scanned_paths: Option<&'scan BTreeSet<PathBuf>>,
-    module_stack: Vec<String>,
-    process_type_names: BTreeSet<String>,
+    logical_module: Vec<String>,
+    inline_module_stack: Vec<String>,
+    process_symbols: ProcessSymbols,
+    local_process_aliases: BTreeMap<String, Vec<Vec<String>>>,
     process_bindings: BTreeSet<String>,
 }
 
@@ -1719,9 +1841,7 @@ impl ProcessExecutionVisitor<'_> {
                 continue;
             };
             let type_name = type_name(&input.ty);
-            if self
-                .process_type_names
-                .contains(type_name.trim_start_matches('&'))
+            if self.type_is_process(&input.ty)
                 || matches!(
                     type_name.trim_start_matches('&'),
                     "AgentCommand"
@@ -1745,33 +1865,55 @@ impl ProcessExecutionVisitor<'_> {
             syn::Expr::Reference(reference) => self.process_binding(&reference.expr),
             syn::Expr::Unary(unary) => self.process_binding(&unary.expr),
             syn::Expr::Call(call) => expression_path(&call.func).is_some_and(|path| {
-                path.segments.iter().rev().nth(1).is_some_and(|segment| {
-                    self.process_type_names
-                        .contains(&normalized_ident(&segment.ident))
-                }) && path
-                    .segments
-                    .last()
-                    .is_some_and(|segment| normalized_ident(&segment.ident) == "new")
+                self.path_prefix_is_process(path)
+                    && path
+                        .segments
+                        .last()
+                        .is_some_and(|segment| normalized_ident(&segment.ident) == "new")
             }),
             _ => false,
         }
     }
 
     fn associated_process_method(&self, path: &syn::Path) -> bool {
-        path.segments.iter().rev().nth(1).is_some_and(|segment| {
-            self.process_type_names
-                .contains(&normalized_ident(&segment.ident))
-        })
+        self.path_prefix_is_process(path)
     }
 
     fn qself_process_method(&self, expression: &syn::Expr) -> bool {
         let syn::Expr::Path(path) = expression else {
             return false;
         };
-        path.qself.as_ref().is_some_and(|qself| {
-            self.process_type_names
-                .contains(type_name(&qself.ty).trim_start_matches('&'))
+        path.qself
+            .as_ref()
+            .is_some_and(|qself| self.type_is_process(&qself.ty))
+    }
+
+    fn type_is_process(&self, ty: &syn::Type) -> bool {
+        process_type_path(ty).is_some_and(|path| {
+            self.process_symbols.is_process_type(
+                &path,
+                &self.logical_module,
+                &self.local_process_aliases,
+            )
         })
+    }
+
+    fn path_prefix_is_process(&self, path: &syn::Path) -> bool {
+        let mut segments = path_segments(path);
+        segments.pop();
+        self.process_symbols.is_process_type(
+            &segments,
+            &self.logical_module,
+            &self.local_process_aliases,
+        )
+    }
+
+    fn canonical_safe_spawn(&self, path: &syn::Path) -> Option<String> {
+        self.process_symbols.safe_spawn(
+            &path_segments(path),
+            &self.logical_module,
+            &self.local_process_aliases,
+        )
     }
 }
 
@@ -1983,6 +2125,107 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
         syn::visit::visit_local(self, local);
     }
 
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        let inherited = self.local_process_aliases.clone();
+        let mut additions = BTreeMap::<String, Vec<Vec<String>>>::new();
+        let mut definite = BTreeSet::new();
+        for statement in &block.stmts {
+            let syn::Stmt::Item(item) = statement else {
+                continue;
+            };
+            if is_test_only(item_attributes(item)) {
+                continue;
+            }
+            let always_present =
+                anvil::source_scan::availability_when_test_is_false(item_attributes(item))
+                    == anvil::source_scan::CfgAvailability::AlwaysTrue;
+            match item {
+                syn::Item::Use(item) => {
+                    let mut bindings = Vec::new();
+                    let mut globs = Vec::new();
+                    collect_use_bindings(&item.tree, &mut Vec::new(), &mut bindings, &mut globs);
+                    for (source, binding) in bindings {
+                        if always_present {
+                            definite.insert(binding.clone());
+                        }
+                        additions
+                            .entry(binding)
+                            .or_default()
+                            .push(normalized_path_segments(&source));
+                    }
+                    for source in globs {
+                        additions
+                            .entry("*".to_owned())
+                            .or_default()
+                            .push(normalized_path_segments(&source));
+                    }
+                }
+                syn::Item::Type(item) => {
+                    if always_present {
+                        definite.insert(normalized_ident(&item.ident));
+                    }
+                    additions
+                        .entry(normalized_ident(&item.ident))
+                        .or_default()
+                        .push(
+                            process_type_path(&item.ty)
+                                .unwrap_or_else(|| vec!["@local".to_owned()]),
+                        );
+                }
+                syn::Item::Struct(item) => {
+                    if always_present {
+                        definite.insert(normalized_ident(&item.ident));
+                    }
+                    additions
+                        .entry(normalized_ident(&item.ident))
+                        .or_default()
+                        .push(vec!["@local".to_owned()]);
+                }
+                syn::Item::Enum(item) => {
+                    if always_present {
+                        definite.insert(normalized_ident(&item.ident));
+                    }
+                    additions
+                        .entry(normalized_ident(&item.ident))
+                        .or_default()
+                        .push(vec!["@local".to_owned()]);
+                }
+                syn::Item::ExternCrate(item) => {
+                    let binding = item
+                        .rename
+                        .as_ref()
+                        .map(|(_, name)| normalized_ident(name))
+                        .unwrap_or_else(|| normalized_ident(&item.ident));
+                    let target = if item.ident == "self" {
+                        vec!["crate".to_owned()]
+                    } else {
+                        vec![normalized_ident(&item.ident)]
+                    };
+                    if always_present {
+                        definite.insert(binding.clone());
+                    }
+                    additions.entry(binding).or_default().push(target);
+                }
+                _ => {}
+            }
+        }
+        for (binding, mut targets) in additions {
+            targets.sort();
+            targets.dedup();
+            if definite.contains(&binding) {
+                targets.push(vec!["@shadow".to_owned()]);
+                self.local_process_aliases.insert(binding, targets);
+            } else {
+                let inherited_targets = self.local_process_aliases.entry(binding).or_default();
+                inherited_targets.extend(targets);
+                inherited_targets.sort();
+                inherited_targets.dedup();
+            }
+        }
+        syn::visit::visit_block(self, block);
+        self.local_process_aliases = inherited;
+    }
+
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
         if !is_test_only(&item.attrs) {
             if !approved_reserved_module(item, self.source_path) {
@@ -1992,14 +2235,16 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
                 item,
                 self.source_path,
                 self.scanned_paths,
-                &self.module_stack,
+                &self.inline_module_stack,
             ) {
                 self.record("unscanned-module");
             }
             if item.content.is_some() {
-                self.module_stack.push(normalized_ident(&item.ident));
+                self.logical_module.push(normalized_ident(&item.ident));
+                self.inline_module_stack.push(normalized_ident(&item.ident));
                 syn::visit::visit_item_mod(self, item);
-                self.module_stack.pop();
+                self.inline_module_stack.pop();
+                self.logical_module.pop();
             }
         }
     }
@@ -2026,13 +2271,6 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
 
     fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
         self.reserved_binding(&item.ident, "type");
-        if self
-            .process_type_names
-            .contains(type_name(&item.ty).trim_start_matches('&'))
-        {
-            self.process_type_names
-                .insert(normalized_ident(&item.ident));
-        }
         syn::visit::visit_item_type(self, item);
     }
 
@@ -2053,6 +2291,9 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
 
     fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
         self.reserved_binding(&item.ident, "trait");
+        if item.unsafety.is_some() {
+            self.record("unsafe-trait");
+        }
         syn::visit::visit_item_trait(self, item);
     }
 
@@ -2077,6 +2318,9 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
         if !is_test_only(&item.attrs) {
             let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
             let previous_bindings = std::mem::take(&mut self.process_bindings);
+            if item.sig.unsafety.is_some() {
+                self.record("unsafe-function");
+            }
             self.seed_process_parameters(&item.sig);
             syn::visit::visit_item_fn(self, item);
             self.process_bindings = previous_bindings;
@@ -2088,11 +2332,38 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
         if !is_test_only(&item.attrs) {
             let previous = std::mem::replace(&mut self.owner, normalized_ident(&item.sig.ident));
             let previous_bindings = std::mem::take(&mut self.process_bindings);
+            if item.sig.unsafety.is_some() {
+                self.record("unsafe-function");
+            }
             self.seed_process_parameters(&item.sig);
             syn::visit::visit_impl_item_fn(self, item);
             self.process_bindings = previous_bindings;
             self.owner = previous;
         }
+    }
+
+    fn visit_item_foreign_mod(&mut self, item: &'ast syn::ItemForeignMod) {
+        self.record("unsafe-foreign-module");
+        syn::visit::visit_item_foreign_mod(self, item);
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if item.unsafety.is_some() {
+            self.record("unsafe-impl");
+        }
+        syn::visit::visit_item_impl(self, item);
+    }
+
+    fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+        if item.sig.unsafety.is_some() {
+            self.record("unsafe-function");
+        }
+        syn::visit::visit_trait_item_fn(self, item);
+    }
+
+    fn visit_expr_unsafe(&mut self, expression: &'ast syn::ExprUnsafe) {
+        self.record("unsafe-block");
+        syn::visit::visit_expr_unsafe(self, expression);
     }
 
     fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
@@ -2121,14 +2392,6 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
             self.record("unapproved-glob-import");
         }
         for (source, binding) in bindings {
-            if matches!(
-                source.as_str(),
-                "std::process::Command"
-                    | "tokio::process::Command"
-                    | "std::os::unix::process::CommandExt"
-            ) {
-                self.process_type_names.insert(binding.clone());
-            }
             let approved_macro_import = APPROVED_SAFE_MACRO_IMPORTS.contains(&source.as_str());
             let approved_attribute_import = APPROVED_ATTRIBUTE_IMPORTS.contains(&source.as_str());
             let approved_derive_import = APPROVED_DERIVE_IMPORTS.contains(&source.as_str());
@@ -2183,33 +2446,45 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
     }
 
     fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
-        if let Some(path) = expression_path(&expression.func)
-            && let Some(method) = path.segments.last()
-            && is_process_method(&method.ident)
-            && path.segments.len() > 1
-        {
-            if safe_associated_spawn(path) {
-                self.record_associated_spawn(syn_path_name(path));
-            } else if self.associated_process_method(path)
-                || self.qself_process_method(&expression.func)
+        if let Some(path) = expression_path(&expression.func) {
+            if let Some(spawn) = self
+                .canonical_safe_spawn(path)
+                .or_else(|| safe_associated_spawn(path).then(|| syn_path_name(path)))
+            {
+                self.record_associated_spawn(spawn);
+                for argument in &expression.args {
+                    self.visit_expr(argument);
+                }
+                return;
+            }
+            let Some(method) = path.segments.last() else {
+                syn::visit::visit_expr_call(self, expression);
+                return;
+            };
+            if is_process_method(&method.ident)
+                && path.segments.len() > 1
+                && (self.associated_process_method(path)
+                    || self.qself_process_method(&expression.func))
             {
                 self.record(format!(
                     "associated-call:{}",
                     normalized_ident(&method.ident)
                 ));
-            } else {
-                syn::visit::visit_expr_call(self, expression);
+                for argument in &expression.args {
+                    self.visit_expr(argument);
+                }
                 return;
             }
-            for argument in &expression.args {
-                self.visit_expr(argument);
-            }
-            return;
         }
         syn::visit::visit_expr_call(self, expression);
     }
 
     fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        if expression.qself.is_none() && self.canonical_safe_spawn(&expression.path).is_some() {
+            self.record("associated-reference:spawn");
+            syn::visit::visit_expr_path(self, expression);
+            return;
+        }
         let process_method = expression
             .path
             .segments
@@ -2219,10 +2494,10 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
             && (expression.qself.is_some() || expression.path.segments.len() > 1)
             && (safe_associated_spawn(&expression.path)
                 || self.associated_process_method(&expression.path)
-                || expression.qself.as_ref().is_some_and(|qself| {
-                    self.process_type_names
-                        .contains(type_name(&qself.ty).trim_start_matches('&'))
-                }))
+                || expression
+                    .qself
+                    .as_ref()
+                    .is_some_and(|qself| self.type_is_process(&qself.ty)))
         {
             self.record(format!(
                 "associated-reference:{}",
@@ -2276,6 +2551,21 @@ fn process_scan_with_context(
     Vec<LintControlSite>,
 ) {
     let file = syn::parse_file(source).expect("parse valid Rust production source");
+    let process_symbols = ProcessSymbols::from_file(&file);
+    process_scan_with_symbols(&file, source_path, scanned_paths, process_symbols, &[])
+}
+
+fn process_scan_with_symbols(
+    file: &syn::File,
+    source_path: Option<&Path>,
+    scanned_paths: Option<&BTreeSet<PathBuf>>,
+    process_symbols: ProcessSymbols,
+    logical_module: &[String],
+) -> (
+    Vec<ExecutionSite>,
+    Vec<AssociatedSpawnSite>,
+    Vec<LintControlSite>,
+) {
     let mut visitor = ProcessExecutionVisitor {
         owner: String::new(),
         sites: Vec::new(),
@@ -2283,15 +2573,586 @@ fn process_scan_with_context(
         lint_controls: Vec::new(),
         source_path,
         scanned_paths,
-        module_stack: Vec::new(),
-        process_type_names: BTreeSet::from(["Command".to_owned(), "CommandExt".to_owned()]),
+        logical_module: logical_module.to_vec(),
+        inline_module_stack: Vec::new(),
+        process_symbols,
+        local_process_aliases: BTreeMap::new(),
         process_bindings: BTreeSet::new(),
     };
-    visitor.visit_file(&file);
+    visitor.visit_file(file);
     (
         visitor.sites,
         visitor.associated_spawns,
         visitor.lint_controls,
+    )
+}
+
+#[derive(Clone)]
+struct ProcessAlias {
+    scope: Vec<String>,
+    target: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ProcessResolved {
+    local: bool,
+    segments: Vec<String>,
+}
+
+#[derive(Clone, Default)]
+struct ProcessSymbols {
+    aliases: BTreeMap<Vec<String>, Vec<ProcessAlias>>,
+    globs: BTreeMap<Vec<String>, Vec<ProcessAlias>>,
+    declarations: BTreeSet<Vec<String>>,
+    modules: BTreeSet<Vec<String>>,
+}
+
+impl ProcessSymbols {
+    fn from_file(file: &syn::File) -> Self {
+        let mut symbols = Self::default();
+        symbols.collect_items(&file.items, &[]);
+        symbols
+    }
+
+    fn collect_items(&mut self, items: &[syn::Item], scope: &[String]) {
+        for item in items {
+            if is_test_only(item_attributes(item)) {
+                continue;
+            }
+            match item {
+                syn::Item::Use(item) => {
+                    let mut bindings = Vec::new();
+                    let mut globs = Vec::new();
+                    collect_use_bindings(&item.tree, &mut Vec::new(), &mut bindings, &mut globs);
+                    for (source, binding) in bindings {
+                        self.add_alias(scope, &binding, normalized_path_segments(&source));
+                    }
+                    for source in globs {
+                        self.globs
+                            .entry(scope.to_vec())
+                            .or_default()
+                            .push(ProcessAlias {
+                                scope: scope.to_vec(),
+                                target: normalized_path_segments(&source),
+                            });
+                    }
+                }
+                syn::Item::ExternCrate(item) => {
+                    let binding = item
+                        .rename
+                        .as_ref()
+                        .map(|(_, name)| normalized_ident(name))
+                        .unwrap_or_else(|| normalized_ident(&item.ident));
+                    let target = if item.ident == "self" {
+                        vec!["crate".to_owned()]
+                    } else {
+                        vec![normalized_ident(&item.ident)]
+                    };
+                    self.add_alias(scope, &binding, target);
+                }
+                syn::Item::Type(item) => self.add_declaration_with_target(
+                    scope,
+                    &item.ident,
+                    process_type_path(&item.ty),
+                ),
+                syn::Item::Mod(item) => {
+                    let qualified = qualified_binding(scope, &item.ident);
+                    self.declarations.insert(qualified.clone());
+                    self.modules.insert(qualified);
+                }
+                syn::Item::Struct(item) => self.add_declaration(scope, &item.ident),
+                syn::Item::Enum(item) => self.add_declaration(scope, &item.ident),
+                syn::Item::Union(item) => self.add_declaration(scope, &item.ident),
+                syn::Item::Trait(item) => self.add_declaration(scope, &item.ident),
+                _ => {}
+            }
+        }
+        for item in items {
+            if is_test_only(item_attributes(item)) {
+                continue;
+            }
+            if let syn::Item::Mod(module) = item
+                && let Some((_, nested)) = &module.content
+            {
+                let mut nested_scope = scope.to_vec();
+                nested_scope.push(normalized_ident(&module.ident));
+                self.collect_items(nested, &nested_scope);
+            }
+        }
+    }
+
+    fn add_declaration(&mut self, scope: &[String], name: &syn::Ident) {
+        self.declarations.insert(qualified_binding(scope, name));
+    }
+
+    fn add_declaration_with_target(
+        &mut self,
+        scope: &[String],
+        name: &syn::Ident,
+        target: Option<Vec<String>>,
+    ) {
+        self.add_declaration(scope, name);
+        if let Some(target) = target {
+            self.add_alias(scope, &normalized_ident(name), target);
+        }
+    }
+
+    fn add_alias(&mut self, scope: &[String], binding: &str, target: Vec<String>) {
+        let mut qualified = scope.to_vec();
+        qualified.push(binding.to_owned());
+        self.declarations.insert(qualified.clone());
+        self.aliases
+            .entry(qualified)
+            .or_default()
+            .push(ProcessAlias {
+                scope: scope.to_vec(),
+                target,
+            });
+    }
+
+    fn is_process_type(
+        &self,
+        path: &[String],
+        scope: &[String],
+        locals: &BTreeMap<String, Vec<Vec<String>>>,
+    ) -> bool {
+        if canonical_process_segments(path) {
+            return true;
+        }
+        if matches!(path, [name] if matches!(name.as_str(), "Command" | "CommandExt"))
+            && !locals.contains_key(&path[0])
+            && !self.declared(scope, &path[0])
+        {
+            return true;
+        }
+        self.resolve(path, scope, locals)
+            .iter()
+            .any(|resolved| !resolved.local && canonical_process_segments(&resolved.segments))
+    }
+
+    fn safe_spawn(
+        &self,
+        path: &[String],
+        scope: &[String],
+        locals: &BTreeMap<String, Vec<Vec<String>>>,
+    ) -> Option<String> {
+        self.resolve(path, scope, locals)
+            .into_iter()
+            .find_map(
+                |resolved| match (resolved.local, resolved.segments.as_slice()) {
+                    (false, [root, spawn]) if root == "tokio" && spawn == "spawn" => {
+                        Some("tokio::spawn".to_owned())
+                    }
+                    (false, [root, task, spawn])
+                        if root == "tokio" && task == "task" && spawn == "spawn" =>
+                    {
+                        Some("tokio::spawn".to_owned())
+                    }
+                    (false, [root, thread, spawn])
+                        if root == "std" && thread == "thread" && spawn == "spawn" =>
+                    {
+                        Some("std::thread::spawn".to_owned())
+                    }
+                    (true, [cli, sweep, spawn])
+                        if cli == "cli" && sweep == "sweep_task" && spawn == "spawn" =>
+                    {
+                        Some("crate::cli::sweep_task::spawn".to_owned())
+                    }
+                    (true, [replacement, spawn])
+                        if replacement == "replacement" && spawn == "spawn" =>
+                    {
+                        Some("replacement::spawn".to_owned())
+                    }
+                    _ => None,
+                },
+            )
+    }
+
+    fn declared(&self, scope: &[String], name: &str) -> bool {
+        let mut qualified = scope.to_vec();
+        qualified.push(name.to_owned());
+        self.declarations.contains(&qualified)
+    }
+
+    fn resolve(
+        &self,
+        path: &[String],
+        scope: &[String],
+        locals: &BTreeMap<String, Vec<Vec<String>>>,
+    ) -> BTreeSet<ProcessResolved> {
+        self.resolve_inner(path, scope, locals, &mut BTreeSet::new())
+    }
+
+    fn resolve_inner(
+        &self,
+        path: &[String],
+        scope: &[String],
+        locals: &BTreeMap<String, Vec<Vec<String>>>,
+        visiting: &mut BTreeSet<(Vec<String>, Vec<String>)>,
+    ) -> BTreeSet<ProcessResolved> {
+        let Some(first) = path.first() else {
+            return BTreeSet::new();
+        };
+        let state = (scope.to_vec(), path.to_vec());
+        if !visiting.insert(state.clone()) {
+            return BTreeSet::new();
+        }
+        let mut candidates = BTreeSet::new();
+        match first.as_str() {
+            "crate" => {
+                candidates.insert(ProcessResolved {
+                    local: true,
+                    segments: path[1..].to_vec(),
+                });
+            }
+            "self" => {
+                candidates.insert(ProcessResolved {
+                    local: true,
+                    segments: scope.iter().chain(&path[1..]).cloned().collect(),
+                });
+            }
+            "super" => {
+                let mut absolute = scope.to_vec();
+                let mut cursor = 0;
+                while path.get(cursor).is_some_and(|part| part == "super") {
+                    if absolute.pop().is_none() {
+                        visiting.remove(&state);
+                        return BTreeSet::new();
+                    }
+                    cursor += 1;
+                }
+                absolute.extend_from_slice(&path[cursor..]);
+                candidates.insert(ProcessResolved {
+                    local: true,
+                    segments: absolute,
+                });
+            }
+            "std" | "core" | "tokio"
+                if locals.contains_key(first)
+                    || locals.contains_key("*")
+                    || self.declared(scope, first)
+                    || self.globs.contains_key(scope) =>
+            {
+                // Rust's lexical bindings win over the extern prelude. Treat
+                // an ambiguous glob conservatively as local rather than
+                // blessing it as a known-safe external spawn.
+                self.resolve_bare(first, path, scope, locals, visiting, &mut candidates);
+            }
+            "std" | "core" | "tokio" => {
+                candidates.insert(ProcessResolved {
+                    local: false,
+                    segments: path.to_vec(),
+                });
+            }
+            _ => self.resolve_bare(first, path, scope, locals, visiting, &mut candidates),
+        }
+        let mut expanded = BTreeSet::new();
+        for candidate in candidates {
+            if candidate.local {
+                expanded.extend(self.expand_local(candidate, locals, visiting));
+            } else {
+                expanded.insert(candidate);
+            }
+        }
+        visiting.remove(&state);
+        expanded
+    }
+
+    fn resolve_bare(
+        &self,
+        first: &str,
+        path: &[String],
+        scope: &[String],
+        locals: &BTreeMap<String, Vec<Vec<String>>>,
+        visiting: &mut BTreeSet<(Vec<String>, Vec<String>)>,
+        candidates: &mut BTreeSet<ProcessResolved>,
+    ) {
+        if let Some(targets) = locals.get(first) {
+            let mut definitely_shadowed = false;
+            for target in targets {
+                if target.as_slice() == ["@shadow"] {
+                    definitely_shadowed = true;
+                    continue;
+                }
+                self.resolve_alias(target, scope, &path[1..], locals, visiting, candidates);
+            }
+            if definitely_shadowed {
+                return;
+            }
+        }
+        let mut qualified = scope.to_vec();
+        qualified.push(first.to_owned());
+        if let Some(aliases) = self.aliases.get(&qualified) {
+            for alias in aliases {
+                self.resolve_alias(
+                    &alias.target,
+                    &alias.scope,
+                    &path[1..],
+                    locals,
+                    visiting,
+                    candidates,
+                );
+            }
+        } else if self.modules.contains(&qualified) {
+            candidates.insert(ProcessResolved {
+                local: true,
+                segments: scope.iter().chain(path).cloned().collect(),
+            });
+        } else {
+            for alias in self.globs.get(scope).into_iter().flatten() {
+                self.resolve_alias(
+                    &alias.target,
+                    &alias.scope,
+                    path,
+                    locals,
+                    visiting,
+                    candidates,
+                );
+            }
+            for target in locals.get("*").into_iter().flatten() {
+                self.resolve_alias(target, scope, path, locals, visiting, candidates);
+            }
+        }
+    }
+
+    fn resolve_alias(
+        &self,
+        target: &[String],
+        scope: &[String],
+        suffix: &[String],
+        locals: &BTreeMap<String, Vec<Vec<String>>>,
+        visiting: &mut BTreeSet<(Vec<String>, Vec<String>)>,
+        candidates: &mut BTreeSet<ProcessResolved>,
+    ) {
+        for mut resolved in self.resolve_inner(target, scope, locals, visiting) {
+            resolved.segments.extend_from_slice(suffix);
+            candidates.insert(resolved);
+        }
+    }
+
+    fn expand_local(
+        &self,
+        candidate: ProcessResolved,
+        locals: &BTreeMap<String, Vec<Vec<String>>>,
+        visiting: &mut BTreeSet<(Vec<String>, Vec<String>)>,
+    ) -> BTreeSet<ProcessResolved> {
+        for length in 1..=candidate.segments.len() {
+            if let Some(aliases) = self.aliases.get(&candidate.segments[..length]) {
+                let mut expanded = BTreeSet::new();
+                for alias in aliases {
+                    self.resolve_alias(
+                        &alias.target,
+                        &alias.scope,
+                        &candidate.segments[length..],
+                        locals,
+                        visiting,
+                        &mut expanded,
+                    );
+                }
+                return expanded;
+            }
+        }
+        BTreeSet::from([candidate])
+    }
+}
+
+#[derive(Default)]
+struct ProcessCrateGraph {
+    symbols: ProcessSymbols,
+    contexts: BTreeMap<PathBuf, BTreeSet<Vec<String>>>,
+    seen: BTreeSet<(PathBuf, Vec<String>)>,
+}
+
+impl ProcessCrateGraph {
+    fn from_root(root: &Path, scanned_paths: &BTreeSet<PathBuf>) -> Self {
+        let mut graph = Self::default();
+        graph.collect_file(root, &[], true, scanned_paths);
+        graph
+    }
+
+    fn collect_file(
+        &mut self,
+        path: &Path,
+        scope: &[String],
+        is_crate_root: bool,
+        scanned_paths: &BTreeSet<PathBuf>,
+    ) {
+        let canonical = fs::canonicalize(path).expect("resolve declared production module");
+        if !scanned_paths.contains(&canonical)
+            || !self.seen.insert((canonical.clone(), scope.to_vec()))
+        {
+            return;
+        }
+        let source = fs::read_to_string(&canonical).expect("read declared production module");
+        let file = syn::parse_file(&source).expect("parse declared production module");
+        self.contexts
+            .entry(canonical.clone())
+            .or_default()
+            .insert(scope.to_vec());
+        self.symbols.collect_items(&file.items, scope);
+        let context = if is_crate_root {
+            canonical.parent().unwrap_or(Path::new(".")).to_path_buf()
+        } else {
+            process_child_module_dir(&canonical)
+        };
+        let path_context = canonical.parent().unwrap_or(Path::new("."));
+        self.collect_modules(&file.items, scope, &context, path_context, scanned_paths);
+    }
+
+    fn collect_modules(
+        &mut self,
+        items: &[syn::Item],
+        scope: &[String],
+        context: &Path,
+        path_context: &Path,
+        scanned_paths: &BTreeSet<PathBuf>,
+    ) {
+        for item in items {
+            let syn::Item::Mod(module) = item else {
+                continue;
+            };
+            if is_test_only(&module.attrs) {
+                continue;
+            }
+            let mut nested_scope = scope.to_vec();
+            nested_scope.push(normalized_ident(&module.ident));
+            if let Some((_, nested)) = &module.content {
+                let nested_context = context.join(normalized_ident(&module.ident));
+                self.collect_modules(
+                    nested,
+                    &nested_scope,
+                    &nested_context,
+                    &nested_context,
+                    scanned_paths,
+                );
+            } else {
+                for path in process_module_sources(module, context, path_context, scanned_paths) {
+                    self.collect_file(&path, &nested_scope, false, scanned_paths);
+                }
+            }
+        }
+    }
+}
+
+fn process_child_module_dir(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    if path.file_name().and_then(|name| name.to_str()) == Some("mod.rs") {
+        parent.to_path_buf()
+    } else {
+        parent.join(path.file_stem().expect("Rust module file stem"))
+    }
+}
+
+fn process_module_sources(
+    module: &syn::ItemMod,
+    context: &Path,
+    path_context: &Path,
+    scanned_paths: &BTreeSet<PathBuf>,
+) -> Vec<PathBuf> {
+    if module.attrs.iter().any(|attribute| {
+        syn_path_is(attribute.path(), "cfg_attr")
+            && attribute
+                .meta
+                .require_list()
+                .is_ok_and(|list| tokens_assign_identifier(list.tokens.clone(), "path"))
+    }) {
+        return Vec::new();
+    }
+    let direct = module.attrs.iter().find_map(|attribute| {
+        if !syn_path_is(attribute.path(), "path") {
+            return None;
+        }
+        let syn::Meta::NameValue(value) = &attribute.meta else {
+            return None;
+        };
+        let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(path),
+            ..
+        }) = &value.value
+        else {
+            return None;
+        };
+        Some(path_context.join(path.value()))
+    });
+    let candidates = direct.map_or_else(
+        || {
+            let name = normalized_ident(&module.ident);
+            vec![
+                context.join(format!("{name}.rs")),
+                context.join(name).join("mod.rs"),
+            ]
+        },
+        |path| vec![path],
+    );
+    candidates
+        .into_iter()
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .filter(|path| scanned_paths.contains(path))
+        .collect()
+}
+
+fn precomputed_process_type_names(file: &syn::File) -> BTreeSet<String> {
+    let symbols = ProcessSymbols::from_file(file);
+    symbols
+        .declarations
+        .iter()
+        .filter(|path| path.len() == 1)
+        .filter(|path| symbols.is_process_type(path, &[], &BTreeMap::new()))
+        .map(|path| path[0].clone())
+        .chain(["Command".to_owned(), "CommandExt".to_owned()])
+        .collect()
+}
+
+fn qualified_binding(scope: &[String], name: &syn::Ident) -> Vec<String> {
+    scope
+        .iter()
+        .cloned()
+        .chain(std::iter::once(normalized_ident(name)))
+        .collect()
+}
+
+fn normalized_path_segments(path: &str) -> Vec<String> {
+    let mut segments = path.split("::").map(str::to_owned).collect::<Vec<_>>();
+    if segments.last().is_some_and(|segment| segment == "self") {
+        segments.pop();
+    }
+    segments
+}
+
+fn path_segments(path: &syn::Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|segment| normalized_ident(&segment.ident))
+        .collect()
+}
+
+fn process_type_path(ty: &syn::Type) -> Option<Vec<String>> {
+    match ty {
+        syn::Type::Path(path) if path.qself.is_none() => Some(path_segments(&path.path)),
+        syn::Type::Group(group) => process_type_path(&group.elem),
+        syn::Type::Paren(paren) => process_type_path(&paren.elem),
+        syn::Type::Reference(reference) => process_type_path(&reference.elem),
+        _ => None,
+    }
+}
+
+fn canonical_process_segments(path: &[String]) -> bool {
+    matches!(
+        path,
+        [std, process, command]
+            if std == "std" && process == "process" && command == "Command"
+    ) || matches!(
+        path,
+        [tokio, process, command]
+            if tokio == "tokio" && process == "process" && command == "Command"
+    ) || matches!(
+        path,
+        [std, os, unix, process, extension]
+            if std == "std"
+                && os == "os"
+                && unix == "unix"
+                && process == "process"
+                && extension == "CommandExt"
     )
 }
 
@@ -2536,10 +3397,800 @@ fn inherent_method_visibilities(
     methods
 }
 
-fn has_trait_impl(file: &syn::File, type_name_expected: &str) -> bool {
-    file.items.iter().any(|item| {
-        matches!(item, syn::Item::Impl(item) if item.trait_.is_some() && type_name(&item.self_ty) == type_name_expected)
-    })
+fn capability_inherent_item_census(expected: &str) -> Vec<(String, String, String)> {
+    let files = all_production_source_paths()
+        .into_iter()
+        .map(|source_path| {
+            let path = relative(&source_path);
+            let source = fs::read_to_string(&source_path).unwrap_or_else(|error| {
+                panic!("read production capability source {path}: {error}")
+            });
+            let file = syn::parse_file(&source).unwrap_or_else(|error| {
+                panic!("parse production capability source {path}: {error}")
+            });
+            (path, file)
+        })
+        .collect::<Vec<_>>();
+    capability_inherent_item_events(&files, expected)
+}
+
+fn capability_inherent_item_events(
+    files: &[(String, syn::File)],
+    expected: &str,
+) -> Vec<(String, String, String)> {
+    let types = ProtectedTypes::for_files(files.iter().map(|(_, file)| file), expected);
+    let mut events = Vec::new();
+    for (path, file) in files {
+        struct Visitor<'types> {
+            path: String,
+            types: &'types ProtectedTypes,
+            events: Vec<(String, String, String)>,
+        }
+
+        impl<'ast> Visit<'ast> for Visitor<'_> {
+            fn visit_item(&mut self, item: &'ast syn::Item) {
+                if !is_test_only(item_attributes(item)) {
+                    syn::visit::visit_item(self, item);
+                }
+            }
+
+            fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+                if item.trait_.is_none() && self.types.mentions(&item.self_ty) {
+                    for associated in &item.items {
+                        let (name, visibility) = match associated {
+                            syn::ImplItem::Const(item) => (
+                                format!("const:{}", normalized_ident(&item.ident)),
+                                visibility_name(&item.vis),
+                            ),
+                            syn::ImplItem::Fn(item) => (
+                                format!("fn:{}", normalized_ident(&item.sig.ident)),
+                                visibility_name(&item.vis),
+                            ),
+                            syn::ImplItem::Type(item) => (
+                                format!("type:{}", normalized_ident(&item.ident)),
+                                visibility_name(&item.vis),
+                            ),
+                            syn::ImplItem::Macro(_) | syn::ImplItem::Verbatim(_) => (
+                                "unclassified-associated-item".to_owned(),
+                                "unknown".to_owned(),
+                            ),
+                            _ => ("unknown-associated-item".to_owned(), "unknown".to_owned()),
+                        };
+                        self.events.push((self.path.clone(), name, visibility));
+                    }
+                }
+                syn::visit::visit_item_impl(self, item);
+            }
+        }
+
+        let mut visitor = Visitor {
+            path: path.clone(),
+            types: &types,
+            events: Vec::new(),
+        };
+        visitor.visit_file(file);
+        events.extend(visitor.events);
+    }
+    events.sort();
+    events
+}
+
+#[derive(Clone)]
+struct ProtectedTypes {
+    names: BTreeSet<String>,
+    aliases: BTreeSet<String>,
+    wrappers: BTreeSet<String>,
+}
+
+impl ProtectedTypes {
+    fn for_file(file: &syn::File, expected: &str) -> Self {
+        Self::for_files(std::iter::once(file), expected)
+    }
+
+    fn for_files<'file>(files: impl IntoIterator<Item = &'file syn::File>, expected: &str) -> Self {
+        let mut aliases = Vec::<(String, syn::Type)>::new();
+        let mut imports = Vec::<(String, String)>::new();
+        let mut wrappers = Vec::<(String, Vec<syn::Type>)>::new();
+        for file in files {
+            collect_protected_declarations(&file.items, &mut aliases, &mut imports, &mut wrappers);
+        }
+        let mut names = BTreeSet::from([expected.to_owned()]);
+        loop {
+            let before = names.len();
+            for (source, binding) in &imports {
+                if source.split("::").any(|segment| names.contains(segment)) {
+                    names.insert(binding.clone());
+                }
+            }
+            for (alias, ty) in &aliases {
+                if type_mentions_any(ty, &names) {
+                    names.insert(alias.clone());
+                }
+            }
+            for (wrapper, fields) in &wrappers {
+                if fields.iter().any(|ty| type_mentions_any(ty, &names)) {
+                    names.insert(wrapper.clone());
+                }
+            }
+            if names.len() == before {
+                break;
+            }
+        }
+        let protected_aliases = aliases
+            .iter()
+            .map(|(name, _)| name)
+            .filter(|name| names.contains(*name) && name.as_str() != expected)
+            .cloned()
+            .collect();
+        let protected_wrappers = wrappers
+            .iter()
+            .map(|(name, _)| name)
+            .filter(|name| names.contains(*name) && name.as_str() != expected)
+            .cloned()
+            .collect();
+        Self {
+            names,
+            aliases: protected_aliases,
+            wrappers: protected_wrappers,
+        }
+    }
+
+    fn mentions(&self, ty: &syn::Type) -> bool {
+        type_mentions_any(ty, &self.names)
+    }
+
+    fn path_is_protected(&self, path: &syn::Path) -> bool {
+        path.segments
+            .iter()
+            .any(|segment| self.names.contains(&normalized_ident(&segment.ident)))
+    }
+}
+
+fn collect_protected_declarations(
+    items: &[syn::Item],
+    aliases: &mut Vec<(String, syn::Type)>,
+    imports: &mut Vec<(String, String)>,
+    wrappers: &mut Vec<(String, Vec<syn::Type>)>,
+) {
+    for item in items {
+        if is_test_only(item_attributes(item)) {
+            continue;
+        }
+        match item {
+            syn::Item::Use(item) => {
+                collect_use_bindings(&item.tree, &mut Vec::new(), imports, &mut Vec::new());
+            }
+            syn::Item::Type(item) => {
+                aliases.push((normalized_ident(&item.ident), (*item.ty).clone()));
+                for parameter in &item.generics.params {
+                    if let syn::GenericParam::Type(parameter) = parameter
+                        && let Some(default) = &parameter.default
+                    {
+                        aliases.push((normalized_ident(&item.ident), default.clone()));
+                    }
+                }
+            }
+            syn::Item::Struct(item) => wrappers.push((
+                normalized_ident(&item.ident),
+                item.fields
+                    .iter()
+                    .map(|field| field.ty.clone())
+                    .chain(item.generics.params.iter().filter_map(|parameter| {
+                        let syn::GenericParam::Type(parameter) = parameter else {
+                            return None;
+                        };
+                        parameter.default.clone()
+                    }))
+                    .collect(),
+            )),
+            syn::Item::Enum(item) => wrappers.push((
+                normalized_ident(&item.ident),
+                item.variants
+                    .iter()
+                    .flat_map(|variant| variant.fields.iter().map(|field| field.ty.clone()))
+                    .chain(item.generics.params.iter().filter_map(|parameter| {
+                        let syn::GenericParam::Type(parameter) = parameter else {
+                            return None;
+                        };
+                        parameter.default.clone()
+                    }))
+                    .collect(),
+            )),
+            syn::Item::Union(item) => wrappers.push((
+                normalized_ident(&item.ident),
+                item.fields
+                    .named
+                    .iter()
+                    .map(|field| field.ty.clone())
+                    .chain(item.generics.params.iter().filter_map(|parameter| {
+                        let syn::GenericParam::Type(parameter) = parameter else {
+                            return None;
+                        };
+                        parameter.default.clone()
+                    }))
+                    .collect(),
+            )),
+            syn::Item::Impl(item) => {
+                for associated in &item.items {
+                    if let syn::ImplItem::Type(associated) = associated
+                        && !is_test_only(&associated.attrs)
+                    {
+                        aliases.push((normalized_ident(&associated.ident), associated.ty.clone()));
+                    }
+                }
+            }
+            syn::Item::Trait(item) => {
+                for associated in &item.items {
+                    if let syn::TraitItem::Type(associated) = associated
+                        && !is_test_only(&associated.attrs)
+                        && let Some((_, ty)) = &associated.default
+                    {
+                        aliases.push((normalized_ident(&associated.ident), ty.clone()));
+                    }
+                }
+            }
+            syn::Item::Mod(module) => {
+                if let Some((_, nested)) = &module.content {
+                    collect_protected_declarations(nested, aliases, imports, wrappers);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn trait_impl_names(file: &syn::File, type_name_expected: &str) -> Vec<String> {
+    let types = ProtectedTypes::for_file(file, type_name_expected);
+    trait_impl_names_with_types(file, &types)
+}
+
+fn trait_impl_names_with_types(file: &syn::File, types: &ProtectedTypes) -> Vec<String> {
+    struct Visitor<'types> {
+        types: &'types ProtectedTypes,
+        names: Vec<String>,
+    }
+
+    impl<'ast> Visit<'ast> for Visitor<'_> {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if !is_test_only(item_attributes(item)) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            if let Some((_, trait_path, _)) = &item.trait_
+                && self.types.mentions(&item.self_ty)
+            {
+                self.names.push(syn_path_name(trait_path));
+            }
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+
+    let mut visitor = Visitor {
+        types,
+        names: Vec::new(),
+    };
+    visitor.visit_file(file);
+    visitor.names.sort();
+    visitor.names
+}
+
+fn derived_trait_names(file: &syn::File, type_name_expected: &str) -> Vec<String> {
+    let types = ProtectedTypes::for_file(file, type_name_expected);
+    derived_trait_names_with_types(file, &types)
+}
+
+fn derived_trait_names_with_types(file: &syn::File, types: &ProtectedTypes) -> Vec<String> {
+    struct Visitor<'types> {
+        types: &'types ProtectedTypes,
+        names: Vec<String>,
+    }
+
+    impl Visitor<'_> {
+        fn record(&mut self, ident: &proc_macro2::Ident, attrs: &[syn::Attribute]) {
+            if !self.types.names.contains(&normalized_ident(ident)) {
+                return;
+            }
+            collect_derived_traits(attrs, &mut self.names);
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Visitor<'_> {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if !is_test_only(item_attributes(item)) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+
+        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+            self.record(&item.ident, &item.attrs);
+            syn::visit::visit_item_struct(self, item);
+        }
+
+        fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+            self.record(&item.ident, &item.attrs);
+            syn::visit::visit_item_enum(self, item);
+        }
+
+        fn visit_item_union(&mut self, item: &'ast syn::ItemUnion) {
+            self.record(&item.ident, &item.attrs);
+            syn::visit::visit_item_union(self, item);
+        }
+    }
+
+    let mut visitor = Visitor {
+        types,
+        names: Vec::new(),
+    };
+    visitor.visit_file(file);
+    visitor.names.sort();
+    visitor.names
+}
+
+fn collect_derived_traits(attrs: &[syn::Attribute], names: &mut Vec<String>) {
+    for attr in attrs {
+        if attr.path().is_ident("derive") {
+            let traits = attr
+                .parse_args_with(Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
+                .expect("parse derive list on private capability");
+            names.extend(traits.iter().map(syn_path_name));
+            continue;
+        }
+        if !attr.path().is_ident("cfg_attr") {
+            continue;
+        }
+        let parser = Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
+        let nested = attr
+            .parse_args_with(parser)
+            .expect("parse cfg_attr list on private capability");
+        for meta in nested.into_iter().skip(1) {
+            match meta {
+                syn::Meta::List(list) if list.path.is_ident("derive") => {
+                    let traits = list
+                        .parse_args_with(Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
+                        .expect("parse cfg_attr derive list on private capability");
+                    names.extend(traits.iter().map(syn_path_name));
+                }
+                syn::Meta::List(list) if list.path.is_ident("cfg_attr") => {
+                    let nested_attr: syn::Attribute = syn::parse_quote!(#[#list]);
+                    collect_derived_traits(&[nested_attr], names);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn capability_trait_census(type_names: &[&str]) -> Vec<(String, String, String)> {
+    let mut events = Vec::new();
+    let files = all_production_source_paths()
+        .into_iter()
+        .map(|source_path| {
+            let path = relative(&source_path);
+            let source = fs::read_to_string(&source_path).unwrap_or_else(|error| {
+                panic!("read production capability source {path}: {error}")
+            });
+            let file = syn::parse_file(&source).unwrap_or_else(|error| {
+                panic!("parse production capability source {path}: {error}")
+            });
+            (path, file)
+        })
+        .collect::<Vec<_>>();
+    for type_name_expected in type_names {
+        let types =
+            ProtectedTypes::for_files(files.iter().map(|(_, file)| file), type_name_expected);
+        for (path, file) in &files {
+            events.extend(
+                trait_impl_names_with_types(file, &types)
+                    .into_iter()
+                    .map(|name| {
+                        (
+                            path.clone(),
+                            (*type_name_expected).to_owned(),
+                            format!("impl:{name}"),
+                        )
+                    }),
+            );
+            events.extend(
+                derived_trait_names_with_types(file, &types)
+                    .into_iter()
+                    .map(|name| {
+                        (
+                            path.clone(),
+                            (*type_name_expected).to_owned(),
+                            format!("derive:{name}"),
+                        )
+                    }),
+            );
+        }
+    }
+    events.sort();
+    events
+}
+
+fn type_mentions_any(ty: &syn::Type, expected: &BTreeSet<String>) -> bool {
+    struct Visitor<'names> {
+        expected: &'names BTreeSet<String>,
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for Visitor<'_> {
+        fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
+            if ty
+                .path
+                .segments
+                .iter()
+                .any(|segment| self.expected.contains(&normalized_ident(&segment.ident)))
+            {
+                self.found = true;
+            }
+            syn::visit::visit_type_path(self, ty);
+        }
+    }
+
+    let mut visitor = Visitor {
+        expected,
+        found: false,
+    };
+    visitor.visit_type(ty);
+    visitor.found
+}
+
+fn return_mentions(
+    output: &syn::ReturnType,
+    types: &ProtectedTypes,
+    self_is_protected: bool,
+) -> bool {
+    let syn::ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    types.mentions(ty) || (self_is_protected && type_name(ty) == "Self")
+}
+
+fn permit_value_events(file: &syn::File, expected: &str) -> Vec<String> {
+    let types = ProtectedTypes::for_file(file, expected);
+    permit_value_events_with_types(file, expected, &types)
+}
+
+fn permit_value_events_with_types(
+    file: &syn::File,
+    expected: &str,
+    types: &ProtectedTypes,
+) -> Vec<String> {
+    struct Visitor<'types> {
+        types: &'types ProtectedTypes,
+        expected: &'types str,
+        impl_is_protected: bool,
+        owner: String,
+        events: Vec<String>,
+    }
+
+    impl<'ast> Visit<'ast> for Visitor<'_> {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if !is_test_only(item_attributes(item)) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+
+        fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+            if !is_test_only(impl_item_attributes(item)) {
+                syn::visit::visit_impl_item(self, item);
+            }
+        }
+
+        fn visit_expr(&mut self, expression: &'ast syn::Expr) {
+            if !is_test_only(expression_attributes(expression)) {
+                syn::visit::visit_expr(self, expression);
+            }
+        }
+
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            let previous = self.impl_is_protected;
+            self.impl_is_protected = self.types.mentions(&item.self_ty);
+            syn::visit::visit_item_impl(self, item);
+            self.impl_is_protected = previous;
+        }
+
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            let name = normalized_ident(&item.sig.ident);
+            if return_mentions(&item.sig.output, self.types, false) {
+                self.events.push(format!("free-fn:{name}"));
+            }
+            let previous = std::mem::replace(&mut self.owner, name);
+            syn::visit::visit_item_fn(self, item);
+            self.owner = previous;
+        }
+
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            let name = normalized_ident(&item.sig.ident);
+            if return_mentions(&item.sig.output, self.types, self.impl_is_protected) {
+                self.events.push(format!("associated-fn:{name}"));
+            }
+            let previous = std::mem::replace(&mut self.owner, name);
+            syn::visit::visit_impl_item_fn(self, item);
+            self.owner = previous;
+        }
+
+        fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+            let name = normalized_ident(&item.ident);
+            if self.types.mentions(&item.ty) {
+                self.events.push(format!("free-const:{name}"));
+            }
+            let previous = std::mem::replace(&mut self.owner, name);
+            syn::visit::visit_item_const(self, item);
+            self.owner = previous;
+        }
+
+        fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+            let name = normalized_ident(&item.ident);
+            if self.types.mentions(&item.ty) {
+                self.events.push(format!("free-static:{name}"));
+            }
+            let previous = std::mem::replace(&mut self.owner, name);
+            syn::visit::visit_item_static(self, item);
+            self.owner = previous;
+        }
+
+        fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+            if self.types.aliases.contains(&normalized_ident(&item.ident)) {
+                self.events
+                    .push(format!("type-alias:{}", normalized_ident(&item.ident)));
+            }
+            syn::visit::visit_item_type(self, item);
+        }
+
+        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+            let name = normalized_ident(&item.ident);
+            if name != self.expected && self.types.wrappers.contains(&name) {
+                self.events.push(format!("wrapper-struct:{name}"));
+            }
+            syn::visit::visit_item_struct(self, item);
+        }
+
+        fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+            let name = normalized_ident(&item.ident);
+            if name != self.expected && self.types.wrappers.contains(&name) {
+                self.events.push(format!("wrapper-enum:{name}"));
+            }
+            syn::visit::visit_item_enum(self, item);
+        }
+
+        fn visit_item_union(&mut self, item: &'ast syn::ItemUnion) {
+            let name = normalized_ident(&item.ident);
+            if name != self.expected && self.types.wrappers.contains(&name) {
+                self.events.push(format!("wrapper-union:{name}"));
+            }
+            syn::visit::visit_item_union(self, item);
+        }
+
+        fn visit_impl_item_const(&mut self, item: &'ast syn::ImplItemConst) {
+            let name = normalized_ident(&item.ident);
+            if self.types.mentions(&item.ty)
+                || (self.impl_is_protected && type_name(&item.ty) == "Self")
+            {
+                self.events.push(format!("associated-const:{name}"));
+            }
+            let previous = std::mem::replace(&mut self.owner, name);
+            syn::visit::visit_impl_item_const(self, item);
+            self.owner = previous;
+        }
+
+        fn visit_impl_item_type(&mut self, item: &'ast syn::ImplItemType) {
+            if self.types.mentions(&item.ty)
+                || (self.impl_is_protected && type_name(&item.ty) == "Self")
+            {
+                self.events
+                    .push(format!("associated-type:{}", normalized_ident(&item.ident)));
+            }
+            syn::visit::visit_impl_item_type(self, item);
+        }
+
+        fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+            let name = normalized_ident(&item.sig.ident);
+            if return_mentions(&item.sig.output, self.types, false) {
+                self.events.push(format!("trait-fn:{name}"));
+            }
+            let previous = std::mem::replace(&mut self.owner, name);
+            syn::visit::visit_trait_item_fn(self, item);
+            self.owner = previous;
+        }
+
+        fn visit_trait_item_const(&mut self, item: &'ast syn::TraitItemConst) {
+            let name = normalized_ident(&item.ident);
+            if self.types.mentions(&item.ty) {
+                self.events.push(format!("trait-const:{name}"));
+            }
+            let previous = std::mem::replace(&mut self.owner, name);
+            syn::visit::visit_trait_item_const(self, item);
+            self.owner = previous;
+        }
+
+        fn visit_trait_item_type(&mut self, item: &'ast syn::TraitItemType) {
+            if item
+                .default
+                .as_ref()
+                .is_some_and(|(_, ty)| self.types.mentions(ty))
+            {
+                self.events
+                    .push(format!("trait-type:{}", normalized_ident(&item.ident)));
+            }
+            syn::visit::visit_trait_item_type(self, item);
+        }
+
+        fn visit_foreign_item_fn(&mut self, item: &'ast syn::ForeignItemFn) {
+            let name = normalized_ident(&item.sig.ident);
+            if return_mentions(&item.sig.output, self.types, false) {
+                self.events.push(format!("foreign-fn:{name}"));
+            }
+            syn::visit::visit_foreign_item_fn(self, item);
+        }
+
+        fn visit_foreign_item_static(&mut self, item: &'ast syn::ForeignItemStatic) {
+            if self.types.mentions(&item.ty) {
+                self.events
+                    .push(format!("foreign-static:{}", normalized_ident(&item.ident)));
+            }
+            syn::visit::visit_foreign_item_static(self, item);
+        }
+
+        fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
+            if let Some(path) = expression_path(&expression.func)
+                && (self.types.path_is_protected(path)
+                    || (self.impl_is_protected && syn_path_name(path) == "Self"))
+            {
+                self.events
+                    .push(format!("construct:{}:{}", self.owner, syn_path_name(path)));
+                for argument in &expression.args {
+                    self.visit_expr(argument);
+                }
+                return;
+            }
+            syn::visit::visit_expr_call(self, expression);
+        }
+
+        fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+            if self.types.path_is_protected(&expression.path)
+                || (self.impl_is_protected && syn_path_name(&expression.path) == "Self")
+            {
+                self.events.push(format!(
+                    "constructor-ref:{}:{}",
+                    self.owner,
+                    syn_path_name(&expression.path)
+                ));
+            }
+            syn::visit::visit_expr_path(self, expression);
+        }
+
+        fn visit_expr_struct(&mut self, expression: &'ast syn::ExprStruct) {
+            if self.types.path_is_protected(&expression.path)
+                || (self.impl_is_protected && syn_path_name(&expression.path) == "Self")
+            {
+                self.events.push(format!(
+                    "construct:{}:{}",
+                    self.owner,
+                    syn_path_name(&expression.path)
+                ));
+            }
+            syn::visit::visit_expr_struct(self, expression);
+        }
+    }
+
+    let mut visitor = Visitor {
+        types,
+        expected,
+        impl_is_protected: false,
+        owner: "<module>".to_owned(),
+        events: Vec::new(),
+    };
+    visitor.visit_file(file);
+    visitor.events.sort();
+    visitor.events
+}
+
+fn permit_value_census(expected: &str) -> Vec<(String, String)> {
+    let mut events = Vec::new();
+    let files = all_production_source_paths()
+        .into_iter()
+        .map(|source_path| {
+            let path = relative(&source_path);
+            let source = fs::read_to_string(&source_path)
+                .unwrap_or_else(|error| panic!("read production permit source {path}: {error}"));
+            let file = syn::parse_file(&source)
+                .unwrap_or_else(|error| panic!("parse production permit source {path}: {error}"));
+            (path, file)
+        })
+        .collect::<Vec<_>>();
+    let types = ProtectedTypes::for_files(files.iter().map(|(_, file)| file), expected);
+    for (path, file) in files {
+        events.extend(
+            permit_value_events_with_types(&file, expected, &types)
+                .into_iter()
+                .map(|event| (path.clone(), event)),
+        );
+    }
+    events.sort();
+    events
+}
+
+fn permit_reexport_census(expected: &str) -> Vec<(String, String, String)> {
+    let mut events = Vec::new();
+    let files = all_production_source_paths()
+        .into_iter()
+        .map(|source_path| {
+            let path = relative(&source_path);
+            let source = fs::read_to_string(&source_path)
+                .unwrap_or_else(|error| panic!("read production permit source {path}: {error}"));
+            let file = syn::parse_file(&source)
+                .unwrap_or_else(|error| panic!("parse production permit source {path}: {error}"));
+            (path, file)
+        })
+        .collect::<Vec<_>>();
+    let types = ProtectedTypes::for_files(files.iter().map(|(_, file)| file), expected);
+    for (path, file) in files {
+        events.extend(permit_reexport_events(&file, &path, &types));
+    }
+    events.sort();
+    events
+}
+
+fn permit_reexport_events(
+    file: &syn::File,
+    source_path: &str,
+    types: &ProtectedTypes,
+) -> Vec<(String, String, String)> {
+    struct Visitor<'a> {
+        source_path: &'a str,
+        types: &'a ProtectedTypes,
+        events: Vec<(String, String, String)>,
+    }
+
+    impl<'ast> Visit<'ast> for Visitor<'_> {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            if !is_test_only(item_attributes(item)) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            if matches!(item.vis, syn::Visibility::Inherited) {
+                return;
+            }
+            let mut bindings = Vec::new();
+            let mut globs = Vec::new();
+            collect_use_bindings(&item.tree, &mut Vec::new(), &mut bindings, &mut globs);
+            for (source, binding) in bindings {
+                if self.types.names.contains(&binding)
+                    || source
+                        .split("::")
+                        .any(|segment| self.types.names.contains(segment))
+                {
+                    self.events.push((
+                        self.source_path.to_owned(),
+                        visibility_name(&item.vis),
+                        source,
+                    ));
+                }
+            }
+            for source in globs {
+                if self.source_path != "src/webhook/mod.rs" || source != "manual_handlers" {
+                    self.events.push((
+                        self.source_path.to_owned(),
+                        visibility_name(&item.vis),
+                        format!("{source}::*"),
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut visitor = Visitor {
+        source_path,
+        types,
+        events: Vec::new(),
+    };
+    visitor.visit_file(file);
+    visitor.events
 }
 
 fn concrete_type_name(ty: &syn::Type) -> String {
@@ -2573,7 +4224,32 @@ fn assert_concrete_prompt_sink(
     expected_visibility: &str,
 ) {
     let file = syn::parse_file(source).expect("parse typed model-prompt sink");
-    let function = top_level_function(&file, function_name);
+    let matching = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Fn(function)
+                if normalized_ident(&function.sig.ident) == function_name
+                    && function.sig.inputs.iter().any(|input| {
+                        matches!(
+                            input,
+                            syn::FnArg::Typed(input)
+                                if pattern_name(&input.pat) == "prompt"
+                                    && concrete_type_name(&input.ty) == expected_type
+                        )
+                    }) =>
+            {
+                Some(function)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one {function_name} sink with prompt type {expected_type}"
+    );
+    let function = matching[0];
     assert!(
         function.sig.generics.params.is_empty() && function.sig.generics.where_clause.is_none(),
         "{function_name} may not shadow ModelPrompt through generics"
@@ -2754,6 +4430,25 @@ fn command_flow(source: &str, function: &str) -> Vec<String> {
     visitor.visit_item_fn(top_level_function(&file, function));
     visitor.events.sort();
     visitor.events
+}
+
+fn call_paths_in_function(source: &str, function: &str) -> BTreeSet<String> {
+    #[derive(Default)]
+    struct Calls(BTreeSet<String>);
+
+    impl<'ast> Visit<'ast> for Calls {
+        fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
+            if let Some(path) = expression_path(&expression.func) {
+                self.0.insert(syn_path_name(path));
+            }
+            syn::visit::visit_expr_call(self, expression);
+        }
+    }
+
+    let file = syn::parse_file(source).expect("parse execution seam");
+    let mut calls = Calls::default();
+    calls.visit_item_fn(top_level_function(&file, function));
+    calls.0
 }
 
 #[derive(Default)]
@@ -3486,12 +5181,16 @@ impl<'ast> Visit<'ast> for NonModelCapabilityVisitor {
         if let Some(initializer) = &local.init {
             let checked_conversion = called_path(&initializer.expr).is_some_and(|path| {
                 let mut segments = path.segments.iter().rev();
-                segments
-                    .next()
-                    .is_some_and(|segment| normalized_ident(&segment.ident) == "checked")
-                    && segments.next().is_some_and(|segment| {
-                        is_nonmodel_capability(&normalized_ident(&segment.ident))
-                    })
+                segments.next().is_some_and(|segment| {
+                    matches!(
+                        normalized_ident(&segment.ident).as_str(),
+                        "checked" | "checked_for"
+                    )
+                }) && segments.next().is_some_and(|segment| {
+                    let segment = normalized_ident(&segment.ident);
+                    is_nonmodel_capability(&segment)
+                        || segment == "Self" && is_nonmodel_capability(&self.implementation)
+                })
             });
             if !binding.is_empty()
                 && self.command_bindings.contains(&binding)
@@ -3572,7 +5271,12 @@ impl<'ast> Visit<'ast> for NonModelCapabilityVisitor {
                 .rev()
                 .nth(1)
                 .map(|segment| normalized_ident(&segment.ident));
-            if last == "checked" && previous.as_deref().is_some_and(is_nonmodel_capability) {
+            if matches!(last.as_str(), "checked" | "checked_for")
+                && previous.as_deref().is_some_and(|previous| {
+                    is_nonmodel_capability(previous)
+                        || previous == "Self" && is_nonmodel_capability(&self.implementation)
+                })
+            {
                 self.record(format!("call:{}", syn_path_name(path)));
                 for argument in &expression.args {
                     self.visit_expr(argument);
@@ -3613,7 +5317,8 @@ impl<'ast> Visit<'ast> for NonModelCapabilityVisitor {
             .segments
             .last()
             .map(|segment| normalized_ident(&segment.ident));
-        if last.as_deref() == Some("checked") || last.as_deref().is_some_and(is_nonmodel_capability)
+        if matches!(last.as_deref(), Some("checked" | "checked_for"))
+            || last.as_deref().is_some_and(is_nonmodel_capability)
         {
             self.record(format!("reference:{path}"));
         }
@@ -3650,7 +5355,9 @@ fn nonmodel_capability_census() -> SiteCensus {
     let mut events = Vec::new();
     for source_path in all_production_source_paths().into_iter().filter(|path| {
         let path = relative(path);
-        path == "src/exec/non_model.rs" || path.starts_with("src/exec/non_model/")
+        path == "src/exec/net.rs"
+            || path == "src/exec/non_model.rs"
+            || path.starts_with("src/exec/non_model/")
     }) {
         let source = fs::read_to_string(&source_path).expect("read non-model boundary source");
         let file = syn::parse_file(&source).expect("parse non-model boundary source");
@@ -3757,7 +5464,8 @@ fn provider_argv_census_pins_payload_order_and_dataflow() {
 
 #[test]
 fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
-    let prompt_source = fs::read_to_string(repo().join("src/model_prompt.rs")).unwrap();
+    let prompt_source =
+        anvil::source_scan::without_commentary(&module_source("src/model_prompt", &repo()));
     let prompt_file = syn::parse_file(&prompt_source).unwrap();
     let prompt = named_struct(&prompt_file, "ModelPrompt");
     assert_eq!(visibility_name(&prompt.vis), "pub");
@@ -3773,7 +5481,11 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
     );
     assert_eq!(visibility_name(&rendered.vis), "private");
     assert_eq!(concrete_type_name(&rendered.ty), "String");
-    assert!(!has_trait_impl(&prompt_file, "ModelPrompt"));
+    assert!(
+        capability_trait_census(&["ModelPrompt", "ModelPromptBuilder", "ModelPromptPermit",])
+            .is_empty(),
+        "prompt builders and byte-exposure capabilities may not acquire any explicit or derived trait implementation"
+    );
     assert_eq!(
         inherent_method_visibilities(&prompt_file, "ModelPrompt"),
         [
@@ -3797,8 +5509,86 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
             ("push_usize".to_owned(), "pub".to_owned()),
         ]
     );
+    assert_eq!(
+        capability_inherent_item_census("ModelPrompt"),
+        [
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:as_str".to_owned(),
+                "pub(crate)".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:builder".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:is_empty".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:len".to_owned(),
+                "pub".to_owned(),
+            ),
+        ],
+        "aliases and contained wrappers may not acquire additional inherent ModelPrompt accessors",
+    );
+    assert_eq!(
+        capability_inherent_item_census("ModelPromptBuilder"),
+        [
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:finish".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:finish_for".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:push_commit_sha".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:push_fragment".to_owned(),
+                "private".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:push_harness".to_owned(),
+                "pub(crate)".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:push_repository".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:push_u64".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:push_untrusted".to_owned(),
+                "pub".to_owned(),
+            ),
+            (
+                "src/model_prompt.rs".to_owned(),
+                "fn:push_usize".to_owned(),
+                "pub".to_owned(),
+            ),
+        ],
+        "aliases and contained wrappers may not acquire extra raw builder mutation or minting methods",
+    );
 
-    let agent_source = fs::read_to_string(repo().join("src/exec/agent.rs")).unwrap();
+    let agent_source =
+        anvil::source_scan::without_commentary(&module_source("src/exec/agent", &repo()));
     let agent_file = syn::parse_file(&agent_source).unwrap();
     let agent = named_struct(&agent_file, "AgentCommand");
     assert_eq!(visibility_name(&agent.vis), "pub");
@@ -3836,14 +5626,14 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
     assert_canonical_external_module(&agent_file, "provider", "private");
     assert_canonical_external_module(&agent_file, "transport", "private");
 
-    let provider_source = fs::read_to_string(repo().join(PROVIDER_SEAM)).unwrap();
+    let provider_source = module_source("src/exec/agent/provider", &repo());
     let provider_file = syn::parse_file(&provider_source).unwrap();
     assert_eq!(
         visibility_name(&top_level_function(&provider_file, "agy_help_probe").vis),
         "pub(super)"
     );
 
-    let transport_source = fs::read_to_string(repo().join(MODEL_TRANSPORT)).unwrap();
+    let transport_source = module_source("src/exec/agent/transport", &repo());
     let transport_file = syn::parse_file(&transport_source).unwrap();
     let permit = named_struct(&transport_file, "ModelPromptPermit");
     assert_eq!(visibility_name(&permit.vis), "pub(crate)");
@@ -3864,6 +5654,27 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
         visibility_name(&top_level_function(&transport_file, "deliver_with_stdin").vis),
         "private"
     );
+    assert_eq!(
+        permit_value_census("ModelPromptPermit"),
+        [(
+            MODEL_TRANSPORT.to_owned(),
+            "construct:deliver:ModelPromptPermit".to_owned(),
+        )],
+        "the private transport owns exactly one permit value; no function, associated item, alias, static, or second constructor may mint or export one"
+    );
+    assert_eq!(
+        permit_reexport_census("ModelPromptPermit"),
+        [(
+            "src/exec/agent.rs".to_owned(),
+            "pub(crate)".to_owned(),
+            "transport::ModelPromptPermit".to_owned(),
+        )],
+        "the permit type has one name-only crate re-export so ModelPrompt can name its accessor argument"
+    );
+    assert!(
+        capability_inherent_item_census("ModelPromptPermit").is_empty(),
+        "the permit and every alias or contained wrapper must remain without inherent minting helpers"
+    );
 
     assert_concrete_prompt_sink(&transport_source, "deliver", "&ModelPrompt", "pub(super)");
     assert_concrete_prompt_sink(
@@ -3872,7 +5683,7 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
         "&crate::model_prompt::ModelPrompt",
         "pub(super)",
     );
-    let exec_source = fs::read_to_string(repo().join("src/exec/mod.rs")).unwrap();
+    let exec_source = anvil::source_scan::without_commentary(&module_source("src/exec", &repo()));
     let exec_file = syn::parse_file(&exec_source).unwrap();
     assert_canonical_external_module(&exec_file, "agent", "pub");
     assert_canonical_external_module(&exec_file, "non_model", "private");
@@ -3882,17 +5693,18 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
         "&ModelPrompt",
         "pub",
     );
-    let turn_source = fs::read_to_string(repo().join("src/exec/turn.rs")).unwrap();
+    let turn_source = module_source("src/exec/turn", &repo());
     assert_concrete_prompt_sink(&turn_source, "run", "&ModelPrompt", "pub");
 
-    let nonmodel_source = fs::read_to_string(repo().join(NON_MODEL_TRANSPORT)).unwrap();
+    let nonmodel_source =
+        anvil::source_scan::without_commentary(&module_source("src/exec/non_model", &repo()));
     let nonmodel_file = syn::parse_file(&nonmodel_source).unwrap();
     assert_canonical_external_module(&nonmodel_file, "transport", "private");
 
-    for (path, source) in [
-        (MODEL_TRANSPORT, &transport_source),
-        ("src/exec/mod.rs", &exec_source),
-        ("src/exec/turn.rs", &turn_source),
+    for (module, source, expected_bindings) in [
+        (MODEL_TRANSPORT, &transport_source, 1),
+        ("src/exec", &exec_source, 3),
+        ("src/exec/turn.rs", &turn_source, 1),
     ] {
         let file = syn::parse_file(source).unwrap();
         let mut bindings = Vec::new();
@@ -3906,15 +5718,178 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
             .filter(|(_, binding)| binding == "ModelPrompt")
             .map(|(source, _)| source.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(
-            model_prompt_sources,
-            ["crate::model_prompt::ModelPrompt"],
-            "{path} may not alias the concrete ModelPrompt type"
+        assert_eq!(model_prompt_sources.len(), expected_bindings);
+        assert!(
+            model_prompt_sources
+                .iter()
+                .all(|source| *source == "crate::model_prompt::ModelPrompt"),
+            "{module} may not alias the concrete ModelPrompt type"
         );
         assert!(!file.items.iter().any(
             |item| matches!(item, syn::Item::Type(item) if normalized_ident(&item.ident) == "ModelPrompt")
         ));
     }
+}
+
+#[test]
+fn builder_and_permit_escape_hatches_are_visible_to_the_shape_census() {
+    let builder = syn::parse_file(
+        r#"
+            struct ModelPromptBuilder;
+            impl From<String> for ModelPromptBuilder {}
+            impl std::ops::DerefMut for ModelPromptBuilder {}
+            impl Extend<String> for ModelPromptBuilder {}
+        "#,
+    )
+    .expect("parse builder escape fixtures");
+    assert_eq!(
+        trait_impl_names(&builder, "ModelPromptBuilder"),
+        [
+            "Extend".to_owned(),
+            "From".to_owned(),
+            "std::ops::DerefMut".to_owned(),
+        ],
+        "From, DerefMut, and Extend would reopen unclassified prompt injection"
+    );
+
+    let permit = syn::parse_file(
+        r#"
+            struct PrivatePermit;
+            struct ModelPromptPermit(PrivatePermit);
+            impl Default for ModelPromptPermit {}
+            impl ModelPromptPermit {
+                const OPEN: Self = ModelPromptPermit(PrivatePermit);
+                fn mint() -> Self { Self(PrivatePermit) }
+            }
+            struct Exporter;
+            impl Exporter {
+                const EXPORTED: ModelPromptPermit = ModelPromptPermit(PrivatePermit);
+                fn export_associated() -> ModelPromptPermit {
+                    ModelPromptPermit(PrivatePermit)
+                }
+            }
+            fn export() -> ModelPromptPermit {
+                ModelPromptPermit(PrivatePermit)
+            }
+        "#,
+    )
+    .expect("parse permit escape fixtures");
+    assert_eq!(
+        trait_impl_names(&permit, "ModelPromptPermit"),
+        ["Default".to_owned()],
+        "Default is an implicit public permit mint"
+    );
+    let events = permit_value_events(&permit, "ModelPromptPermit");
+    for expected in [
+        "associated-const:OPEN",
+        "associated-const:EXPORTED",
+        "associated-fn:export_associated",
+        "associated-fn:mint",
+        "free-fn:export",
+    ] {
+        assert!(
+            events.iter().any(|event| event == expected),
+            "permit escape {expected} was invisible: {events:?}"
+        );
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.starts_with("construct:"))
+            .count(),
+        5,
+        "each seeded associated/free permit mint must enter the constructor inventory: {events:?}"
+    );
+}
+
+#[test]
+fn compile_valid_alias_wrapper_and_reexport_capability_bypasses_are_visible() {
+    let source = include_str!("model_spawns_go_through_one_seam_test.rs");
+    let file = syn::parse_file(source).expect("parse this compiled integration test");
+    let items = file
+        .items
+        .into_iter()
+        .find_map(|item| match item {
+            syn::Item::Mod(module)
+                if normalized_ident(&module.ident) == "capability_adversarial_compile_seed" =>
+            {
+                module.content.map(|(_, items)| items)
+            }
+            _ => None,
+        })
+        .expect("compiled capability adversarial module");
+    let fixture = syn::File {
+        shebang: None,
+        attrs: Vec::new(),
+        items,
+    };
+
+    assert_eq!(
+        trait_impl_names(&fixture, "ModelPromptBuilder"),
+        [
+            "BuilderEscape".to_owned(),
+            "BuilderEscape".to_owned(),
+            "BuilderEscape".to_owned(),
+            "BuilderEscape".to_owned(),
+        ],
+        "renamed/type aliases plus reference, Box, generic-default, and contained wrappers must not hide trait impls"
+    );
+    assert_eq!(
+        derived_trait_names(&fixture, "ModelPromptBuilder"),
+        ["Clone".to_owned(), "Debug".to_owned()],
+        "derive expansion on the protected capability must remain visible"
+    );
+    assert_eq!(
+        trait_impl_names(&fixture, "ModelPromptPermit"),
+        ["PermitEscape".to_owned()],
+        "a trait impl on a wrapper containing the permit must remain visible"
+    );
+    let fixture_files = [("compiled-seed.rs".to_owned(), fixture.clone())];
+    let inherent = capability_inherent_item_events(&fixture_files, "ModelPromptBuilder");
+    for expected in ["fn:raw_alias_mutation", "fn:raw_wrapper_mutation"] {
+        assert!(
+            inherent.iter().any(|(_, item, _)| item == expected),
+            "compile-valid inherent capability escape {expected} was invisible: {inherent:?}"
+        );
+    }
+
+    let permit_events = permit_value_events(&fixture, "ModelPromptPermit");
+    for expected in [
+        "constructor-ref:constructor_as_value:PermitConstructor",
+        "free-fn:constructor_as_value",
+        "free-fn:projected_permit",
+        "free-fn:wrapped_permit",
+        "trait-const:EXPORTED",
+        "trait-fn:mint",
+        "type-alias:PermitAlias",
+        "wrapper-struct:PermitEnvelope",
+    ] {
+        assert!(
+            permit_events.iter().any(|event| event == expected),
+            "compile-valid permit escape {expected} was invisible: {permit_events:?}"
+        );
+    }
+
+    let types = ProtectedTypes::for_file(&fixture, "ModelPromptPermit");
+    let reexports = permit_reexport_events(&fixture, "compiled-seed.rs", &types);
+    assert!(
+        reexports
+            .iter()
+            .any(|(_, _, source)| source == "self::ModelPromptPermit"),
+        "renamed permit re-export was invisible: {reexports:?}"
+    );
+    assert!(
+        reexports
+            .iter()
+            .any(|(_, _, source)| source == "super::ModelPromptPermit"),
+        "nested permit re-export was invisible: {reexports:?}"
+    );
+    assert!(
+        reexports
+            .iter()
+            .any(|(_, _, source)| source == "nested_exports::*"),
+        "public glob re-export was invisible: {reexports:?}"
+    );
 }
 
 #[test]
@@ -4078,7 +6053,7 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
             (
                 "src/exec/net.rs".to_owned(),
                 "apply".to_owned(),
-                "call:super::non_model::clear_environment:arg0=cmd".to_owned(),
+                "call:super::clear_environment:arg0=cmd".to_owned(),
             ),
         ],
         "environment-clearing commands must carry the private rebinding marker"
@@ -4128,17 +6103,98 @@ fn production_dependencies_cannot_add_an_alternate_process_runtime_silently() {
         ["anvil"],
         "a new production package needs an explicit process-boundary review"
     );
-    let mut dependencies = packages
+    let dependencies = production_dependency_bindings(&packages);
+    let expected = APPROVED_PRODUCTION_DEPENDENCIES
         .iter()
-        .flat_map(|package| package["dependencies"].as_array().into_iter().flatten())
-        .filter(|dependency| dependency["kind"].as_str() != Some("dev"))
-        .filter_map(|dependency| dependency["name"].as_str())
+        .map(|(package, extern_name, kind, target)| {
+            (
+                (*package).to_owned(),
+                (*extern_name).to_owned(),
+                (*kind).to_owned(),
+                (*target).to_owned(),
+            )
+        })
         .collect::<Vec<_>>();
-    dependencies.sort();
-    dependencies.dedup();
     assert_eq!(
-        dependencies, APPROVED_PRODUCTION_DEPENDENCIES,
-        "a new dependency (including a process library such as duct) requires an explicit execution-seam decision"
+        dependencies, expected,
+        "a dependency package, effective extern alias, kind, target, or multiplicity changed; process and network capabilities require an explicit boundary decision"
+    );
+}
+
+#[test]
+fn dependency_binding_census_preserves_rename_kind_target_and_multiplicity() {
+    let unrenamed = serde_json::json!({
+        "packages": [{
+            "dependencies": [{
+                "name": "socket2",
+                "rename": null,
+                "kind": null,
+                "target": null
+            }]
+        }]
+    });
+    let metadata = serde_json::json!({
+        "packages": [{
+            "dependencies": [
+                {
+                    "name": "socket2",
+                    "rename": "socket",
+                    "kind": null,
+                    "target": null
+                },
+                {
+                    "name": "socket2",
+                    "rename": "socket",
+                    "kind": "build",
+                    "target": "cfg(target_os = \"linux\")"
+                },
+                {
+                    "name": "tokio-stream",
+                    "rename": null,
+                    "kind": null,
+                    "target": null
+                }
+            ]
+        }]
+    });
+    let packages = metadata["packages"]
+        .as_array()
+        .expect("synthetic packages")
+        .iter()
+        .collect::<Vec<_>>();
+    let unrenamed_packages = unrenamed["packages"]
+        .as_array()
+        .expect("synthetic unrenamed packages")
+        .iter()
+        .collect::<Vec<_>>();
+    assert_ne!(
+        production_dependency_bindings(&unrenamed_packages),
+        production_dependency_bindings(&packages),
+        "renaming a Cargo dependency must change the approved binding identity"
+    );
+    assert_eq!(
+        production_dependency_bindings(&packages),
+        [
+            (
+                "socket2".to_owned(),
+                "socket".to_owned(),
+                "build".to_owned(),
+                "cfg(target_os = \"linux\")".to_owned(),
+            ),
+            (
+                "socket2".to_owned(),
+                "socket".to_owned(),
+                "normal".to_owned(),
+                "*".to_owned(),
+            ),
+            (
+                "tokio-stream".to_owned(),
+                "tokio_stream".to_owned(),
+                "normal".to_owned(),
+                "*".to_owned(),
+            ),
+        ],
+        "Cargo rename, kind, target and repeated package bindings are all evidence"
     );
 }
 
@@ -4214,30 +6270,152 @@ fn compiler_owns_process_execution_and_only_private_seams_are_exempt() {
 /// source; conservative macro handling makes an indirect process method an
 /// explicit seam change instead of an invisible execution path.
 fn production_process_census() -> (SiteCensus, SiteCensus, LintCensus) {
+    let repository = repo();
+    let source_paths = all_production_source_paths();
+    let roots = production_target_roots();
+    process_census_from_paths(&repository, &source_paths, &roots)
+}
+
+fn process_census_from_paths(
+    repository: &Path,
+    source_paths: &[PathBuf],
+    crate_roots: &[PathBuf],
+) -> (SiteCensus, SiteCensus, LintCensus) {
     let mut execution_sites = Vec::new();
     let mut associated_spawns = Vec::new();
     let mut lint_controls = Vec::new();
-    let source_paths = all_production_source_paths();
-    let scanned_paths = source_paths.iter().cloned().collect::<BTreeSet<_>>();
-    for source_path in source_paths {
-        let source = fs::read_to_string(&source_path).expect("read production Rust source");
-        let path = relative(&source_path);
-        let (sites, safe_spawns, controls) =
-            process_scan_with_context(&source, Some(&source_path), Some(&scanned_paths));
-        for site in sites {
-            execution_sites.push((path.clone(), site.owner, site.method));
+    let repository = fs::canonicalize(repository).expect("resolve process census repository");
+    let scanned_paths = source_paths
+        .iter()
+        .map(|path| fs::canonicalize(path).expect("resolve production Rust source"))
+        .collect::<BTreeSet<_>>();
+    let mut contexts = BTreeMap::<PathBuf, Vec<(ProcessSymbols, Vec<String>)>>::new();
+    for root in crate_roots {
+        let root = fs::canonicalize(root).expect("resolve production crate root");
+        let graph = ProcessCrateGraph::from_root(&root, &scanned_paths);
+        for (source_path, scopes) in &graph.contexts {
+            for scope in scopes {
+                contexts
+                    .entry(source_path.clone())
+                    .or_default()
+                    .push((graph.symbols.clone(), scope.clone()));
+            }
         }
-        for site in safe_spawns {
-            associated_spawns.push((path.clone(), site.owner, site.path));
-        }
-        for control in controls {
-            lint_controls.push((path.clone(), control.owner, control.level, control.lints));
-        }
+    }
+    for source_path in &scanned_paths {
+        let source = fs::read_to_string(source_path).expect("read production Rust source");
+        let file = syn::parse_file(&source).expect("parse valid Rust production source");
+        let scans = contexts.get(source_path).map_or_else(
+            || {
+                vec![process_scan_with_context(
+                    &source,
+                    Some(source_path),
+                    Some(&scanned_paths),
+                )]
+            },
+            |contexts| {
+                contexts
+                    .iter()
+                    .map(|(symbols, scope)| {
+                        process_scan_with_symbols(
+                            &file,
+                            Some(source_path),
+                            Some(&scanned_paths),
+                            symbols.clone(),
+                            scope,
+                        )
+                    })
+                    .collect()
+            },
+        );
+        append_process_scan(
+            &repository,
+            source_path,
+            merge_process_scans(scans),
+            &mut execution_sites,
+            &mut associated_spawns,
+            &mut lint_controls,
+        );
     }
     execution_sites.sort();
     associated_spawns.sort();
     lint_controls.sort();
     (execution_sites, associated_spawns, lint_controls)
+}
+
+fn merge_process_scans(
+    scans: Vec<(
+        Vec<ExecutionSite>,
+        Vec<AssociatedSpawnSite>,
+        Vec<LintControlSite>,
+    )>,
+) -> (
+    Vec<ExecutionSite>,
+    Vec<AssociatedSpawnSite>,
+    Vec<LintControlSite>,
+) {
+    let sites = scans.iter().map(|scan| scan.0.clone()).collect();
+    let spawns = scans.iter().map(|scan| scan.1.clone()).collect();
+    let controls = scans.into_iter().map(|scan| scan.2).collect();
+    (
+        merge_max_multiplicity(sites),
+        merge_max_multiplicity(spawns),
+        merge_max_multiplicity(controls),
+    )
+}
+
+fn merge_max_multiplicity<T: Clone + Ord>(variants: Vec<Vec<T>>) -> Vec<T> {
+    let mut maximum = BTreeMap::<T, usize>::new();
+    for variant in variants {
+        let mut counts = BTreeMap::new();
+        for item in variant {
+            *counts.entry(item).or_default() += 1;
+        }
+        for (item, count) in counts {
+            maximum
+                .entry(item)
+                .and_modify(|current| *current = (*current).max(count))
+                .or_insert(count);
+        }
+    }
+    maximum
+        .into_iter()
+        .flat_map(|(item, count)| std::iter::repeat_n(item, count))
+        .collect()
+}
+
+fn append_process_scan(
+    repository: &Path,
+    source_path: &Path,
+    (sites, safe_spawns, controls): (
+        Vec<ExecutionSite>,
+        Vec<AssociatedSpawnSite>,
+        Vec<LintControlSite>,
+    ),
+    execution_sites: &mut SiteCensus,
+    associated_spawns: &mut SiteCensus,
+    lint_controls: &mut LintCensus,
+) {
+    let path = source_path
+        .strip_prefix(repository)
+        .expect("production source below repository")
+        .to_string_lossy()
+        .replace('\\', "/");
+    execution_sites.extend(
+        sites
+            .into_iter()
+            .map(|site| (path.clone(), site.owner, site.method)),
+    );
+    associated_spawns.extend(
+        safe_spawns
+            .into_iter()
+            .map(|site| (path.clone(), site.owner, site.path)),
+    );
+    lint_controls.extend(
+        controls
+            .into_iter()
+            .map(|site| (path.clone(), site.owner, site.level, site.lints)),
+    );
 }
 
 #[test]
@@ -4279,9 +6457,9 @@ fn safe_associated_spawns_have_an_exact_site_census() {
 
 #[test]
 fn every_execution_site_is_downstream_of_its_typed_capability() {
-    let agent = fs::read_to_string(repo().join("src/exec/agent/transport.rs")).unwrap();
-    let non_model = fs::read_to_string(repo().join("src/exec/non_model/transport.rs")).unwrap();
-    let replacement = fs::read_to_string(repo().join("src/exec/replacement.rs")).unwrap();
+    let agent = module_source("src/exec/agent/transport", &repo());
+    let non_model = module_source("src/exec/non_model/transport", &repo());
+    let replacement = module_source("src/exec/replacement", &repo());
 
     assert_eq!(
         function_shape(&agent, "probe").1,
@@ -4372,25 +6550,15 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
         !replacement_is_private,
         "replacement seam unexpectedly changed visibility shape"
     );
-    assert_eq!(
-        replacement_parameters,
-        [
-            ("replacement_binary".to_owned(), "&Path".to_owned()),
-            ("args".to_owned(), "&".to_owned()),
-        ]
-    );
+    assert!(replacement_parameters.is_empty());
     assert_eq!(
         boundary_events(&replacement),
         [
-            (
-                "spawn".to_owned(),
-                "call:is_provider_program:arg0=<non-path>".to_owned()
-            ),
-            (
-                "spawn".to_owned(),
-                "call:is_provider_program:arg0=<non-path>".to_owned()
-            ),
             ("spawn".to_owned(), "spawn".to_owned()),
+            (
+                "installed_anvil".to_owned(),
+                "call:is_provider_program:arg0=<non-path>".to_owned()
+            ),
         ],
         "replacement validation must dominate its sole process spawn"
     );
@@ -4427,6 +6595,41 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
         ],
         "replacement execution must use the path that passed provider validation"
     );
+    assert_eq!(
+        call_paths_in_function(&replacement, "spawn"),
+        [
+            "installed_anvil".to_owned(),
+            "std::env::current_exe".to_owned(),
+            "tokio::process::Command::new".to_owned(),
+        ]
+        .into_iter()
+        .collect(),
+        "the replacement seam must use this Anvil binary and a finite typed argv"
+    );
+    assert!(replacement.contains("command.arg(\"serve\")"));
+    assert!(!replacement.contains("args_os"));
+}
+
+#[test]
+fn launcher_and_path_aliases_stay_outside_the_replacement_capability() {
+    let exec = anvil::source_scan::without_commentary(&module_source("src/exec", &repo()));
+    assert!(
+        function_shape(&exec, "spawn_replacement_binary")
+            .1
+            .is_empty(),
+        "crate callers regained a generic replacement program or argv capability"
+    );
+
+    for source in [
+        r#"fn bypass() { let _ = std::process::Command::new("/usr/bin/env").arg("agy").spawn(); }"#,
+        r#"fn bypass() { let _ = std::process::Command::new("/bin/sh").args(["-c", "agy"]).spawn(); }"#,
+        r#"fn bypass() { use std::process::Command as Launcher; let _ = Launcher::new("agy").spawn(); }"#,
+    ] {
+        assert!(
+            contains_process_execution_syntax(source),
+            "launcher/provider alias escaped the all-configuration source census: {source}"
+        );
+    }
 }
 
 #[test]
@@ -4453,6 +6656,299 @@ fn associated_function_alias_seed_defeats_spelling_census_but_is_configured() {
     assert!(
         contains_process_execution_syntax(seeded_bypass),
         "the all-configuration token/AST census missed the associated-function alias"
+    );
+}
+
+#[test]
+fn transitive_process_type_and_import_aliases_are_order_independent() {
+    let seeded_bypass = r#"
+        #[cfg(windows)]
+        fn bypass(mut command: Runner) {
+            let invoke = Runner::output;
+            let _result = invoke(&mut command);
+        }
+
+        use self::Middle as Runner;
+        type Middle = Process;
+        type Process = std::process::Command;
+    "#;
+    let (sites, _, _) = process_scan_with_context(seeded_bypass, None, None);
+    assert_eq!(
+        sites
+            .iter()
+            .filter(|site| site.method == "associated-reference:output")
+            .count(),
+        1,
+        "the transitive alias chain must produce one execution finding: {sites:?}"
+    );
+
+    let file = syn::parse_file(
+        r#"
+            mod other { pub struct Command; }
+            use self::other::Command as Runner;
+        "#,
+    )
+    .expect("compile-shaped unrelated alias");
+    assert!(
+        !precomputed_process_type_names(&file).contains("Runner"),
+        "an unrelated qualified type named Command inherited process provenance"
+    );
+}
+
+#[test]
+fn qualified_relative_and_extern_process_aliases_keep_provenance() {
+    for source in [
+        r#"
+            mod aliases { pub type Process = std::process::Command; }
+            use crate::aliases::Process as Runner;
+            #[cfg(windows)] fn bypass(mut command: Runner) {
+                let invoke = Runner::output;
+                let _ = invoke(&mut command);
+            }
+        "#,
+        r#"
+            extern crate std as platform;
+            use platform::process::Command as Runner;
+            #[cfg(windows)] fn bypass(mut command: Runner) {
+                let invoke = Runner::output;
+                let _ = invoke(&mut command);
+            }
+        "#,
+        r#"
+            type Process = std::process::Command;
+            mod aliases {
+                use super::Process as Runner;
+                #[cfg(windows)] fn bypass(mut command: Runner) {
+                    let invoke = Runner::output;
+                    let _ = invoke(&mut command);
+                }
+            }
+        "#,
+        r#"
+            #[cfg(windows)] fn bypass(mut command: std::process::Command) {
+                use std::{process as platform};
+                use platform::{Command as Runner};
+                let invoke = Runner::output;
+                let _ = invoke(&mut command);
+            }
+        "#,
+    ] {
+        let (sites, _, _) = process_scan_with_context(source, None, None);
+        assert!(
+            sites
+                .iter()
+                .any(|site| site.method == "associated-reference:output"),
+            "process provenance was lost: {source}\n{sites:?}"
+        );
+    }
+}
+
+#[test]
+fn external_modules_inherit_process_aliases_from_their_declared_ancestors() {
+    let fixture = tempfile::Builder::new()
+        .prefix("anvil-process-module-context-")
+        .tempdir()
+        .expect("fixture repository");
+    let src = fixture.path().join("src");
+    fs::create_dir_all(&src).expect("fixture source directory");
+    let root = src.join("lib.rs");
+    let child = src.join("child.rs");
+    let platform_child = src.join("platform_child.rs");
+    fs::write(
+        &root,
+        "type Process = std::process::Command;\nextern crate std as platform;\nmod child;\nmod platform_child;\n",
+    )
+    .expect("fixture crate root");
+    fs::write(
+        &child,
+        r#"
+            use super::Process as Runner;
+            #[cfg(windows)] fn inherited(mut command: Runner) {
+                let invoke = Runner::output;
+                let _ = invoke(&mut command);
+            }
+        "#,
+    )
+    .expect("relative alias child");
+    fs::write(
+        &platform_child,
+        r#"
+            use super::platform::process::Command as Runner;
+            #[cfg(windows)] fn inherited_extern(mut command: Runner) {
+                let invoke = Runner::output;
+                let _ = invoke(&mut command);
+            }
+        "#,
+    )
+    .expect("extern alias child");
+
+    let source_paths = vec![root.clone(), child.clone(), platform_child.clone()];
+    let (sites, _, _) = process_census_from_paths(fixture.path(), &source_paths, &[root]);
+    let inherited = sites
+        .iter()
+        .filter(|(_, _, method)| method == "associated-reference:output")
+        .map(|(path, owner, _)| (path.as_str(), owner.as_str()))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        inherited,
+        BTreeSet::from([
+            ("src/child.rs", "inherited"),
+            ("src/platform_child.rs", "inherited_extern"),
+        ]),
+        "external module files lost ancestor process provenance"
+    );
+}
+
+#[test]
+fn unrelated_command_shadow_does_not_blind_fully_qualified_process_paths() {
+    let source = r#"
+        mod other { pub struct Command; }
+        use self::other::Command;
+        #[cfg(windows)] fn bypass(mut command: std::process::Command) {
+            let invoke = std::process::Command::output;
+            let _ = invoke(&mut command);
+        }
+    "#;
+    let (sites, _, _) = process_scan_with_context(source, None, None);
+    assert!(
+        sites
+            .iter()
+            .any(|site| site.method == "associated-reference:output"),
+        "a bare local Command shadow suppressed a canonical process path: {sites:?}"
+    );
+}
+
+#[test]
+fn imported_and_namespaced_task_spawns_are_canonicalized() {
+    for (source, expected) in [
+        (
+            "use tokio::spawn as launch; fn run() { launch(async {}); }",
+            "tokio::spawn",
+        ),
+        (
+            "use tokio as runtime; fn run() { runtime::spawn(async {}); }",
+            "tokio::spawn",
+        ),
+        ("fn run() { tokio::task::spawn(async {}); }", "tokio::spawn"),
+        (
+            "use std::thread::spawn as launch; fn run() { launch(|| {}); }",
+            "std::thread::spawn",
+        ),
+    ] {
+        let (sites, spawns, _) = process_scan_with_context(source, None, None);
+        assert!(
+            sites.is_empty(),
+            "direct safe spawn became raw execution: {sites:?}"
+        );
+        assert_eq!(spawns.len(), 1, "safe spawn was omitted: {source}");
+        assert_eq!(spawns[0].path, expected);
+    }
+}
+
+#[test]
+fn cfg_attr_that_installs_cfg_test_prunes_the_process_subtree() {
+    let source = r#"
+        #[cfg_attr(not(test), cfg(test))]
+        fn fixture(mut command: std::process::Command) {
+            let invoke = std::process::Command::output;
+            let _ = invoke(&mut command);
+        }
+    "#;
+    assert!(!contains_process_execution_syntax(source));
+}
+
+#[test]
+fn mutually_exclusive_block_process_aliases_are_all_retained() {
+    let source = r#"
+        #[cfg(windows)]
+        fn bypass(mut command: std::process::Command) {
+            #[cfg(windows)]
+            use std::process::Command as Runner;
+            #[cfg(not(windows))]
+            use missing::Runner;
+            let invoke = Runner::output;
+            let _ = invoke(&mut command);
+        }
+    "#;
+    let (sites, _, _) = process_scan_with_context(source, None, None);
+    assert!(
+        sites
+            .iter()
+            .any(|site| site.method == "associated-reference:output"),
+        "a mutually exclusive alias overwrote process provenance: {sites:?}"
+    );
+}
+
+#[test]
+fn cfg_local_shadow_does_not_erase_inherited_process_alias_in_other_configuration() {
+    let source = r#"
+        use std::process::Command as Runner;
+        #[cfg(not(windows))]
+        fn bypass(mut command: Runner) {
+            #[cfg(windows)]
+            use missing::Runner;
+            let invoke = Runner::output;
+            let _ = invoke(&mut command);
+        }
+    "#;
+    let (sites, _, _) = process_scan_with_context(source, None, None);
+    assert!(
+        sites
+            .iter()
+            .any(|site| site.method == "associated-reference:output"),
+        "a cfg-inactive local shadow erased inherited process provenance: {sites:?}"
+    );
+}
+
+#[test]
+fn local_binding_named_tokio_wins_over_the_external_prelude_in_process_resolution() {
+    let source = r#"
+        #[cfg(windows)]
+        fn bypass(mut command: std::process::Command) {
+            use std::process as tokio;
+            let _ = tokio::Command::new("attacker");
+            let invoke = tokio::Command::output;
+            let _ = invoke(&mut command);
+        }
+    "#;
+    let (sites, spawns, _) = process_scan_with_context(source, None, None);
+    assert!(
+        sites
+            .iter()
+            .any(|site| site.method == "associated-reference:output"),
+        "a local binding named tokio hid std::process provenance: {sites:?}"
+    );
+    assert!(
+        spawns.is_empty(),
+        "the local std alias became a Tokio spawn"
+    );
+}
+
+#[test]
+fn an_unrelated_bare_command_import_does_not_seed_alias_provenance() {
+    let source = r#"
+        mod other {
+            pub struct Command;
+            impl Command { pub fn output(&mut self) {} }
+        }
+        use self::other::Command;
+        type Local = Command;
+        fn unrelated(mut command: Local) {
+            let invoke = Local::output;
+            invoke(&mut command);
+        }
+    "#;
+    let file = syn::parse_file(source).expect("compile-valid unrelated Command alias chain");
+    assert!(
+        !precomputed_process_type_names(&file).contains("Local"),
+        "a shadowing local Command must not grant process provenance"
+    );
+    let (sites, _, _) = process_scan_with_context(source, None, None);
+    assert!(
+        sites
+            .iter()
+            .all(|site| site.method != "associated-reference:output"),
+        "an unrelated Command method became a process finding: {sites:?}"
     );
 }
 
@@ -5181,7 +7677,6 @@ fn module_sources_cannot_escape_the_production_census() {
         "#[cfg(windows)] #[path = \"hidden.inc\"] mod hidden;",
         "#[cfg(windows)] #[path = \"../hidden.rs\"] mod hidden;",
         "#[cfg(windows)] #[cfg_attr(windows, path = \"hidden.rs\")] mod hidden;",
-        "#[cfg(windows)] mod tests;",
         "#[cfg(windows)] mod examples;",
         "#[cfg(windows)] mod benches;",
         "#[cfg(windows)] mod target;",
@@ -5195,6 +7690,15 @@ fn module_sources_cannot_escape_the_production_census() {
             "unscanned module source was accepted: {source}"
         );
     }
+
+    assert!(
+        !contains_process_execution_syntax("#[cfg(windows)] mod tests;"),
+        "a module named tests can ship and is covered by the production source census"
+    );
+    assert!(
+        !contains_process_execution_syntax("#[cfg(test)] mod fixtures;"),
+        "an exact cfg(test) declaration is intentionally outside the production census"
+    );
 
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("root.rs");
@@ -5224,6 +7728,7 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
     let build_helper = repository.join("build_helper.rs");
     let nested_target_source = repository.join("src/target/hidden.rs");
     let excluded_test = repository.join("tests/fixture.rs");
+    let production_included_test = repository.join("tests/shipping.rs");
     let excluded_example = repository.join("examples/demo.rs");
     let excluded_target = repository.join("target/debug/build/generated.rs");
     for path in [
@@ -5233,12 +7738,21 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
         &build_helper,
         &nested_target_source,
         &excluded_test,
+        &production_included_test,
         &excluded_example,
         &excluded_target,
     ] {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "// fixture\n").unwrap();
     }
+    fs::write(&custom_lib, "include!(\"../tests/shipping.rs\");\n").unwrap();
+    fs::write(
+        &production_included_test,
+        "#[cfg(windows)] fn shipping(mut command: std::process::Command) {\n\
+         let invoke = std::process::Command::output;\n\
+         let _ = invoke(&mut command);\n}\n",
+    )
+    .unwrap();
     fs::write(&build_script, "#[cfg(windows)] mod build_helper;\n").unwrap();
     fs::write(
         &build_helper,
@@ -5294,10 +7808,35 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
             build_script,
             build_helper.clone(),
             member_bin,
-            custom_lib,
+            custom_lib.clone(),
             nested_target_source,
+            production_included_test.clone(),
         ],
-        "the filesystem census includes build helpers and nested production `target` modules while excluding Cargo's root tests, examples and target layouts"
+        "the filesystem census includes production includes regardless of layout while excluding Cargo's independent root tests, examples and target layouts"
+    );
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let compiled = std::process::Command::new(rustc)
+        .args(["--crate-type=lib", "--emit=metadata"])
+        .arg(&custom_lib)
+        .arg("-o")
+        .arg(repository.join("shipping.rmeta"))
+        .output()
+        .expect("compile the production-include fixture");
+    assert!(
+        compiled.status.success(),
+        "production-include fixture must be valid Rust: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let included_sites = process_execution_sites_with_context(
+        &fs::read_to_string(&production_included_test).unwrap(),
+        Some(&production_included_test),
+        None,
+    );
+    assert!(
+        included_sites
+            .iter()
+            .any(|site| site.method == "associated-reference:output"),
+        "a production include under tests/ was retained but its process bypass was not charged"
     );
     assert!(contains_process_execution_syntax(
         &fs::read_to_string(repository.join("build_helper.rs")).unwrap()
@@ -5312,10 +7851,27 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
             }],
         }],
     });
-    assert!(
-        std::panic::catch_unwind(|| targets_from_metadata(&hidden_target, &repository)).is_err(),
-        "an explicit production target was discarded as though Cargo had classified it as a test"
+    assert_eq!(
+        targets_from_metadata(&hidden_target, &repository),
+        [ProductionTarget {
+            path: repository.join("tests/shipped.rs"),
+            custom_build: false,
+        }],
+        "Cargo target kind must override a test-looking directory name"
     );
+    fs::write(
+        repository.join("tests/shipped.rs"),
+        "mod shipped_helper;\nfn main() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        repository.join("tests/shipped_helper.rs"),
+        "pub fn production_helper() {}\n",
+    )
+    .unwrap();
+    let hidden_sources = source_paths_from_metadata(&hidden_target, &repository);
+    assert!(hidden_sources.contains(&repository.join("tests/shipped.rs")));
+    assert!(hidden_sources.contains(&repository.join("tests/shipped_helper.rs")));
 
     let target_fixture = tempfile::tempdir().unwrap();
     let target_repository = target_fixture.path().to_path_buf();
@@ -5428,6 +7984,122 @@ fn cargo_metadata_census_includes_custom_workspace_and_build_roots() {
     assert!(
         result.is_err(),
         "a case-folding Rust extension escaped the host-platform census"
+    );
+}
+
+#[test]
+fn every_cargo_production_target_forbids_unsafe_ffi_escape_hatches() {
+    for target in production_targets() {
+        let source = fs::read_to_string(&target.path).unwrap_or_else(|error| {
+            panic!(
+                "cannot read production target {}: {error}",
+                target.path.display()
+            )
+        });
+        let file = syn::parse_file(&source).unwrap_or_else(|error| {
+            panic!(
+                "cannot parse production target {}: {error}",
+                target.path.display()
+            )
+        });
+        assert!(
+            file.attrs.iter().any(|attribute| {
+                syn_path_is(attribute.path(), "forbid")
+                    && attribute.meta.require_list().is_ok_and(|list| {
+                        lint_names(list.tokens.clone())
+                            .iter()
+                            .any(|lint| lint == "unsafe_code")
+                    })
+            }),
+            "production target {} can declare a raw FFI process launcher; add #![forbid(unsafe_code)]",
+            target.path.display()
+        );
+    }
+    assert_eq!(
+        cargo_config_cap_lints(&repo()),
+        None,
+        "repository Cargo configuration can cap away production safety/process lints"
+    );
+}
+
+fn cargo_config_cap_lints(repository: &Path) -> Option<String> {
+    fn strings(value: &toml::Value, under_flags: bool, found: &mut Vec<String>) {
+        match value {
+            toml::Value::String(value) if under_flags => {
+                found.extend(value.split_whitespace().map(str::to_owned));
+            }
+            toml::Value::Array(values) => {
+                for value in values {
+                    strings(value, under_flags, found);
+                }
+            }
+            toml::Value::Table(table) => {
+                for (key, value) in table {
+                    strings(
+                        value,
+                        under_flags
+                            || key.eq_ignore_ascii_case("rustflags")
+                            || key.eq_ignore_ascii_case("rustdocflags"),
+                        found,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for name in ["config.toml", "config"] {
+        let path = repository.join(".cargo").join(name);
+        let Ok(source) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let value = source.parse::<toml::Value>().ok()?;
+        let mut flags = Vec::new();
+        strings(&value, false, &mut flags);
+        if flags
+            .iter()
+            .any(|flag| flag == "--cap-lints" || flag.starts_with("--cap-lints="))
+        {
+            return Some(relative_to(&path, repository));
+        }
+    }
+    None
+}
+
+fn relative_to(path: &Path, repository: &Path) -> String {
+    path.strip_prefix(repository)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+#[test]
+fn unsafe_ffi_process_escape_is_in_the_source_census_even_when_lints_are_capped() {
+    let source = r#"
+        unsafe extern "C" { fn system(command: *const i8) -> i32; }
+        pub fn bypass() {
+            unsafe { system(c"agy".as_ptr()); }
+        }
+    "#;
+    let (sites, _, _) = process_scan_with_context(source, None, None);
+    assert!(
+        sites.iter().any(|site| site.method.starts_with("unsafe")),
+        "raw FFI/unsafe syntax escaped the process-independent source census: {sites:?}"
+    );
+}
+
+#[test]
+fn contributor_cargo_config_cannot_cap_the_safety_lints() {
+    let fixture = tempfile::tempdir().expect("Cargo configuration fixture");
+    fs::create_dir_all(fixture.path().join(".cargo")).expect("Cargo config directory");
+    fs::write(
+        fixture.path().join(".cargo/config.toml"),
+        "[build]\nrustflags = [\"--cap-lints\", \"allow\"]\n",
+    )
+    .expect("hostile Cargo config");
+    assert_eq!(
+        cargo_config_cap_lints(fixture.path()),
+        Some(".cargo/config.toml".to_owned())
     );
 }
 

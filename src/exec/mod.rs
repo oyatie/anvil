@@ -12,21 +12,37 @@
 //!     cancelled work left orphaned `agy`, `gh` and `cargo` processes behind.
 //!
 //! Invariant I5: every subprocess has a timeout AND `kill_on_drop(true)`.
+//!
+//! The network seam is not a generic direct-HTTP capability. A library user
+//! cannot select a model-provider endpoint or send an arbitrary prompt through
+//! Anvil's OSV transport:
+//!
+//! ```compile_fail
+//! let _ = anvil::exec::net("curl");
+//! ```
+//!
+//! ```compile_fail
+//! let _ = anvil::supply_chain_guard::osv_stream::post_json(
+//!     "curl",
+//!     "https://api.openai.com/v1/responses",
+//!     "raw contributor prompt",
+//!     std::time::Duration::from_secs(30),
+//! );
+//! ```
 
 pub mod agent;
 pub mod build_env;
 pub mod gh;
 pub mod inherited;
-pub mod net;
 mod non_model;
 mod replacement;
 pub mod turn;
 pub use agent::{
-    AgentCommand, Posture, agy_agent, claude_agent, codex_agent, cursor_agent, grok_agent,
+    AgentCommand, Posture, ProviderCredential, agy_agent, claude_agent, codex_agent, cursor_agent,
+    grok_agent,
 };
 pub use gh::command as gh;
 pub use inherited::INHERITED;
-pub use net::command as net;
 
 use anyhow::{Result, bail};
 use std::process::Output;
@@ -34,6 +50,19 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::model_prompt::ModelPrompt;
+
+/// Executes the one finite non-forge HTTP request authored by Anvil.
+///
+/// The executable, destination, method, headers, curl limits, and process
+/// budget are sealed in `exec::net`; a crate caller supplies only typed locked
+/// package records, which this boundary serializes as an OSV batch. In
+/// particular, this is not a generic URL, body, or raw network-command
+/// capability that could become a second direct model transport.
+pub(crate) async fn post_osv_batch(
+    packages: &[crate::supply_chain_guard::LockedPackage],
+) -> Result<Output> {
+    non_model::post_osv_batch(packages).await
+}
 
 /// How long a class of subprocess may run before it is killed.
 ///
@@ -177,11 +206,8 @@ pub(crate) fn run_sync_bounded(
 
 /// Starts the one detached process that replaces the running Anvil binary.
 /// The underlying `Command` remains inside a purpose-specific private seam.
-pub(crate) fn spawn_replacement_binary(
-    path: &std::path::Path,
-    args: &[String],
-) -> Result<tokio::process::Child> {
-    replacement::spawn(path, args)
+pub(crate) fn spawn_replacement_binary() -> Result<tokio::process::Child> {
+    replacement::spawn()
 }
 
 /// Same bound, plus delivery of a payload on the child's STDIN.

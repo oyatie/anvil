@@ -43,13 +43,13 @@ pub(super) fn build_issue_body(repo: &str, run_id: u64, markdown: &str) -> Resul
     Ok(body)
 }
 
-/// Adds the finite issue-create argv and delivers the bounded body on STDIN.
-pub(super) async fn create_issue(
+/// Builds the finite issue-create argv and the bounded body kept off argv.
+pub(super) fn prepare_issue(
     mut cmd: Command,
     repo: &str,
     run_id: u64,
     markdown: &str,
-) -> Result<Output> {
+) -> Result<(Command, String)> {
     let title = format!("🚨 Trunk CI Failure: Run #{run_id}");
     let body = build_issue_body(repo, run_id, markdown)?;
     cmd.args([
@@ -62,6 +62,16 @@ pub(super) async fn create_issue(
         "--body-file",
         "-",
     ]);
+    Ok((cmd, body))
+}
+
+pub(super) async fn create_issue(
+    cmd: Command,
+    repo: &str,
+    run_id: u64,
+    markdown: &str,
+) -> Result<Output> {
+    let (cmd, body) = prepare_issue(cmd, repo, run_id, markdown)?;
     crate::exec::run_bounded_with_stdin(
         cmd,
         &body,

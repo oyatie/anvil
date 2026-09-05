@@ -13,88 +13,11 @@
 //! known seams are cut would block ordinary work for a problem already
 //! recorded.
 
-use anvil::migration::{Verdict, check_edge, edge_is_allowed, verdict_for};
-use std::collections::BTreeSet;
-use std::fs;
-use std::path::Path;
+use anvil::git_manager::{SubjectRoot, Uncloned};
+use anvil::migration::{Verdict, check_edge, edge_is_allowed, live_tree_violations, verdict_for};
 
 /// Violations present when this gate was written. It may fall; it must not rise.
 const KNOWN_VIOLATION_CEILING: usize = 0;
-
-fn module_paths() -> Vec<String> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir("src").expect("src/").flatten() {
-        let p = entry.path();
-        let Some(name) = p.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if name == "main" || name == "lib" {
-            continue;
-        }
-        if p.is_dir() || p.extension().is_some_and(|e| e == "rs") {
-            out.push(name.to_string());
-        }
-    }
-    out.sort();
-    out
-}
-
-/// `crate::x` imports, ignoring comments so a doc example cannot fabricate an edge.
-fn imports_of(module: &str) -> BTreeSet<String> {
-    let dir = Path::new("src").join(module);
-    let file = Path::new("src").join(format!("{module}.rs"));
-    let mut text = String::new();
-    if dir.is_dir() {
-        let mut stack = vec![dir];
-        while let Some(d) = stack.pop() {
-            for e in fs::read_dir(&d).into_iter().flatten().flatten() {
-                let p = e.path();
-                if p.is_dir() {
-                    stack.push(p);
-                } else if p.extension().is_some_and(|x| x == "rs") {
-                    text.push_str(&fs::read_to_string(&p).unwrap_or_default());
-                }
-            }
-        }
-    } else if file.is_file() {
-        text = fs::read_to_string(&file).unwrap_or_default();
-    }
-
-    let code: String = text
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let mut out = BTreeSet::new();
-    for (i, _) in code.match_indices("crate::") {
-        let rest = &code[i + 7..];
-        let first: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
-            .collect();
-        if first.is_empty() {
-            continue;
-        }
-        // Capture a second segment too: `crate::pre_merge_guard::report` must
-        // resolve to the split-out `pre_merge_guard/report` entry, not to its
-        // parent. Only lowercase segments are module paths; a capitalised one
-        // is a type.
-        let after = &rest[first.len()..];
-        if let Some(tail) = after.strip_prefix("::") {
-            let second: String = tail
-                .chars()
-                .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
-                .collect();
-            if !second.is_empty() {
-                out.insert(format!("{first}/{second}"));
-                continue;
-            }
-        }
-        out.insert(first);
-    }
-    out
-}
 
 #[test]
 fn the_rule_is_strict_only_where_it_must_be() {
@@ -131,14 +54,11 @@ fn check_edge_ignores_self_dependency() {
 #[test]
 #[allow(clippy::absurd_extreme_comparisons)]
 fn live_tree_violations_do_not_exceed_the_ratchet() {
-    let mut violations = Vec::new();
-    for module in module_paths() {
-        for dep in imports_of(&module) {
-            if let Some(v) = check_edge(&module, &dep) {
-                violations.push(v);
-            }
-        }
-    }
+    let subject = SubjectRoot::asserted(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        Uncloned::SelfMeasurement,
+    );
+    let violations = live_tree_violations(&subject).expect("the live source tree is readable");
 
     let rendered: Vec<String> = violations.iter().map(|v| v.explain()).collect();
     // The ceiling is a ratchet that happens to stand at zero today, having come

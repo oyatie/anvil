@@ -133,16 +133,14 @@ impl CiTriager {
         .await
         .context("Failed to execute gh run view --log-failed")?;
 
-        let logs = if output.status.success() {
-            String::from_utf8_lossy(&output.stdout).to_string()
-        } else {
-            String::from_utf8_lossy(&output.stderr).to_string()
-        };
-
         // `Untrusted::CiLogs` owns the sole cap and deliberately keeps the
         // diagnostic tail. Returning the full source here preserves the real
         // measured length in its truncation declaration.
-        Ok(logs)
+        decode_failed_logs(
+            output.status.success(),
+            output.stdout,
+            output.stderr.as_slice(),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -218,6 +216,17 @@ impl CiTriager {
 
         turn.into_result()
     }
+}
+
+fn decode_failed_logs(success: bool, stdout: Vec<u8>, stderr: &[u8]) -> Result<String> {
+    if !success {
+        anyhow::bail!(
+            "gh run view --log-failed returned no CI-log evidence: {}",
+            String::from_utf8_lossy(stderr).trim()
+        );
+    }
+    String::from_utf8(stdout)
+        .context("gh run view --log-failed returned non-UTF-8 evidence; refusing lossy logs")
 }
 
 fn build_ci_triage_prompt(

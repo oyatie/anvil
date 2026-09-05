@@ -34,6 +34,7 @@
 //! Grants land when the discovery path is known.
 
 use super::inherited::INHERITED;
+use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
@@ -81,6 +82,55 @@ use tokio::process::Command;
 pub struct AgentCommand {
     command: Command,
     framing: Framing,
+}
+
+/// Finite environment slots that a leased provider account may override.
+///
+/// Process authority (`PATH`, `HOME`, loader variables), forge authority, and
+/// boundary-owned `GH_CONFIG_DIR` are not representable here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderCredential {
+    ClaudeConfigDir,
+    ClaudeCodeOauthToken,
+    AnthropicAuthToken,
+    AnthropicApiKey,
+    CodexHome,
+    OpenAiAuthToken,
+    CodexAuthToken,
+    OpenAiApiKey,
+    CursorConfigDir,
+    CursorAuthToken,
+    GrokConfigDir,
+    GrokAuthToken,
+    XAiApiKey,
+    AntigravityConfigDir,
+    GeminiCliConfigDir,
+    AntigravityAuthToken,
+    GeminiApiKey,
+}
+
+impl ProviderCredential {
+    const fn environment_name(self) -> &'static str {
+        match self {
+            Self::ClaudeConfigDir => "CLAUDE_CONFIG_DIR",
+            Self::ClaudeCodeOauthToken => "CLAUDE_CODE_OAUTH_TOKEN",
+            Self::AnthropicAuthToken => "ANTHROPIC_AUTH_TOKEN",
+            Self::AnthropicApiKey => "ANTHROPIC_API_KEY",
+            Self::CodexHome => "CODEX_HOME",
+            Self::OpenAiAuthToken => "OPENAI_AUTH_TOKEN",
+            Self::CodexAuthToken => "CODEX_AUTH_TOKEN",
+            Self::OpenAiApiKey => "OPENAI_API_KEY",
+            Self::CursorConfigDir => "CURSOR_CONFIG_DIR",
+            Self::CursorAuthToken => "CURSOR_AUTH_TOKEN",
+            Self::GrokConfigDir => "GROK_CONFIG_DIR",
+            Self::GrokAuthToken => "GROK_AUTH_TOKEN",
+            Self::XAiApiKey => "XAI_API_KEY",
+            Self::AntigravityConfigDir => "ANTIGRAVITY_CONFIG_DIR",
+            Self::GeminiCliConfigDir => "GEMINI_CLI_CONFIG_DIR",
+            Self::AntigravityAuthToken => "ANTIGRAVITY_AUTH_TOKEN",
+            Self::GeminiApiKey => "GEMINI_API_KEY",
+        }
+    }
 }
 
 /// A provider presence probe with a complete, finite argv. Unlike a model
@@ -136,7 +186,7 @@ pub(super) async fn deliver(
 /// report. No raw `Command` or provider argv leaves the finite provider seam.
 pub(crate) async fn probe_agy_help() -> anyhow::Result<std::process::Output> {
     transport::probe(
-        provider::agy_help_probe(),
+        provider::agy_help_probe()?,
         crate::exec::ExecClass::Quick.timeout(),
         "agy --help",
     )
@@ -170,8 +220,13 @@ impl Posture {
     /// This is how the account pool hands a leased token to the turn it leased
     /// it for, without that token being present for every other turn.
     #[must_use]
-    pub fn with_credential(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.credentials.push((name.into(), value.into()));
+    pub fn with_credential(
+        mut self,
+        credential: ProviderCredential,
+        value: impl Into<String>,
+    ) -> Self {
+        self.credentials
+            .push((credential.environment_name().to_owned(), value.into()));
         self
     }
 
@@ -225,16 +280,33 @@ impl Posture {
 
 /// Applies the model-turn posture to a command chosen by the finite provider
 /// seam in the private `exec::agent::provider` child module.
-fn command(tool: &str, posture: &Posture, framing: Framing) -> AgentCommand {
+fn command(tool: &str, posture: &Posture, framing: Framing) -> Result<AgentCommand> {
     command_in(tool, posture, framing, std::env::vars())
 }
 
 /// [`command`], against a stated environment. Used by posture unit tests.
-fn command_in<I>(tool: &str, posture: &Posture, framing: Framing, environment: I) -> AgentCommand
+fn command_in<I>(
+    tool: &str,
+    posture: &Posture,
+    framing: Framing,
+    environment: I,
+) -> Result<AgentCommand>
 where
     I: IntoIterator<Item = (String, String)>,
 {
-    let mut cmd = Command::new(tool);
+    let cmd = trusted_provider_command(tool)?;
+    Ok(prepare_command(cmd, posture, framing, environment))
+}
+
+fn prepare_command<I>(
+    mut cmd: Command,
+    posture: &Posture,
+    framing: Framing,
+    environment: I,
+) -> AgentCommand
+where
+    I: IntoIterator<Item = (String, String)>,
+{
     posture.apply_from(&mut cmd, environment);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -242,6 +314,42 @@ where
         command: cmd,
         framing,
     }
+}
+
+fn trusted_provider_command(tool: &str) -> Result<Command> {
+    if !provider::is_provider_program(std::ffi::OsStr::new(tool)) {
+        bail!("{tool:?} is outside the finite provider executable registry");
+    }
+    let search_path = std::env::var_os("PATH")
+        .ok_or_else(|| anyhow::anyhow!("service PATH is absent while resolving provider {tool}"))?;
+    trusted_provider_command_from(tool, &search_path)
+}
+
+/// Resolves and binds the provider using one captured service-PATH value.
+///
+/// The resulting absolute pathname is the deployment's trust boundary. This
+/// seam does not claim to stop the service owner from replacing that installed
+/// file after resolution and before the OS opens it; filesystem containment is
+/// explicitly outside the direct-turn contract.
+fn trusted_provider_command_from(tool: &str, search_path: &std::ffi::OsStr) -> Result<Command> {
+    if std::env::split_paths(search_path).any(|directory| !directory.is_absolute()) {
+        bail!("service PATH contains a relative entry; provider identity is not trustworthy");
+    }
+    let mut requested = std::process::Command::new(tool);
+    requested.env_clear().env("PATH", search_path);
+    let canonical = crate::exec::non_model::resolution::resolve_canonical_executable(&requested)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider executable {tool:?} is unavailable on the trusted service PATH"
+            )
+        })?;
+    let mut bound = std::process::Command::new(canonical);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        bound.arg0(tool);
+    }
+    Ok(Command::from(bound))
 }
 
 #[cfg(test)]

@@ -33,6 +33,23 @@ fn ci_prompt_still_rejects_a_malformed_nonempty_commit_sha() {
 }
 
 #[test]
+fn failed_gh_output_is_not_relabelled_as_ci_logs() {
+    let error = decode_failed_logs(false, Vec::new(), b"HTTP 503 from API")
+        .expect_err("CLI failure is absent CI evidence");
+    assert!(
+        error.to_string().contains("no CI-log evidence"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn ci_logs_must_be_lossless_utf8() {
+    let error = decode_failed_logs(true, vec![0xff], b"")
+        .expect_err("lossy logs cannot become the triage corpus");
+    assert!(error.to_string().contains("non-UTF-8"), "{error:#}");
+}
+
+#[test]
 fn test_parse_ci_triage_diagnosis() {
     let raw = r#####"```json
 {
@@ -91,29 +108,19 @@ fn final_issue_body_caps_model_markdown_and_preserves_trusted_suffix() {
     assert!(body.contains("https://github.com/oyatie/console/actions/runs/42"));
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn issue_body_is_exact_on_stdin_and_absent_from_argv() {
-    use std::os::unix::fs::PermissionsExt;
-
+#[test]
+fn issue_body_is_exact_on_stdin_and_absent_from_argv() {
     let markdown = "MODEL_BODY_SENTINEL";
     let expected = publication::build_issue_body("oyatie/console", 42, markdown).unwrap();
-    let scratch = tempfile::tempdir().expect("capture directory");
-    let executable = scratch.path().join("gh");
-    std::fs::write(
-        &executable,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" >&2\nexec /bin/cat\n",
-    )
-    .expect("capture executable");
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
-        .expect("capture executable permissions");
-    let capture = tokio::process::Command::new(executable);
-    let output = publication::create_issue(capture, "oyatie/console", 42, markdown)
-        .await
-        .expect("capture transport runs");
-    assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
-    let argv = String::from_utf8(output.stderr).unwrap();
-    assert!(argv.contains("--body-file\n-\n"));
-    assert!(!argv.contains("MODEL_BODY_SENTINEL"));
+    let command = crate::exec::gh();
+    let (command, stdin) =
+        publication::prepare_issue(command, "oyatie/console", 42, markdown).unwrap();
+    assert_eq!(stdin, expected);
+    let argv = command
+        .as_std()
+        .get_args()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(argv.windows(2).any(|args| args == ["--body-file", "-"]));
+    assert!(!argv.iter().any(|argument| argument.contains(markdown)));
 }

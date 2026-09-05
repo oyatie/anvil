@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewFeedbackItem {
@@ -78,29 +77,50 @@ pub async fn evaluate_feedback_items(
     let output = run_agy(agy_effort, &prompt, repo_dir).await?;
     let json_candidate = extract_json_block(&output);
 
-    match serde_json::from_str::<EvaluationResult>(&json_candidate) {
-        Ok(res) => Ok(res),
-        Err(e) => {
-            warn!(
-                "Failed to parse evaluation JSON: {}. Defaulting all items to valid.",
-                e
-            );
-            let default_evals = feedback_items
-                .iter()
-                .enumerate()
-                .map(|(i, it)| ItemEvaluation {
-                    item_index: i,
-                    is_valid: true,
-                    rationale: format!("Addressed feedback: {}", it.body),
-                    files_to_edit: it.file_path.clone().into_iter().collect(),
-                    proposed_fix: None,
-                })
-                .collect();
-            Ok(EvaluationResult {
-                evaluations: default_evals,
-            })
+    evaluation_result(&json_candidate, feedback_items.len()).map_err(|reason| {
+        anyhow::anyhow!(
+            "invalid evaluation JSON: {reason}; no review feedback was authorized for editing"
+        )
+    })
+}
+
+fn evaluation_result(json: &str, expected: usize) -> std::result::Result<EvaluationResult, String> {
+    serde_json::from_str::<EvaluationResult>(json)
+        .map_err(|error| error.to_string())
+        .and_then(|result| validate_total_evaluation(result, expected))
+}
+
+fn validate_total_evaluation(
+    mut result: EvaluationResult,
+    expected: usize,
+) -> std::result::Result<EvaluationResult, String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for evaluation in &result.evaluations {
+        if evaluation.item_index >= expected {
+            return Err(format!(
+                "evaluation index {} is outside 0..{expected}",
+                evaluation.item_index
+            ));
+        }
+        if !seen.insert(evaluation.item_index) {
+            return Err(format!(
+                "evaluation index {} occurs more than once",
+                evaluation.item_index
+            ));
         }
     }
+    if seen.len() != expected {
+        let missing = (0..expected)
+            .filter(|index| !seen.contains(index))
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!("evaluation omitted item indices: {missing}"));
+    }
+    result
+        .evaluations
+        .sort_by_key(|evaluation| evaluation.item_index);
+    Ok(result)
 }
 
 pub fn extract_json_block(text: &str) -> String {
@@ -131,15 +151,14 @@ async fn run_agy(effort: &str, prompt: &ModelPrompt, working_dir: &Path) -> Resu
     let turn = crate::exec::turn::run(cmd, prompt, budget, "agy evaluation")
         .await
         .context("Failed to run agy")?;
-    // `into_result` and not `turn.response`. A failed or timed-out turn has an
-    // empty response, and the caller's parse-failure arm reads an unparseable
-    // evaluation as "the finding is valid" -- so discarding the status turns a
-    // turn that never ran into a fabricated verdict on every review comment.
+    // `into_result` and not `turn.response`: preserve a failed or timed-out
+    // turn as an error rather than losing its status and trying to parse its
+    // empty response. Historically that parse failure fabricated a valid
+    // verdict for every review comment; invalid evaluations are now rejected.
     let response = turn.into_result()?;
-    // An empty answer from a turn that exited zero is still no answer, and the
-    // caller's parse-failure arm reads an unparseable evaluation as "every
-    // finding is valid" -- fabricating a verdict on review comments nothing
-    // judged. Absent evidence must not be mistaken for a measurement (I1).
+    // An empty answer from a turn that exited zero is still no judgment. Reject
+    // it explicitly so absent evidence cannot be mistaken for a measurement
+    // or authorize edits (I1).
     if response.trim().is_empty() {
         anyhow::bail!(
             "agy evaluation returned no output, so nothing judged these review \
@@ -181,5 +200,29 @@ mod tests {
         assert!(!parsed.evaluations[0].is_valid);
         assert!(parsed.evaluations[1].is_valid);
         assert_eq!(parsed.evaluations[1].files_to_edit, vec!["src/server.rs"]);
+    }
+
+    #[test]
+    fn malformed_or_incomplete_model_evaluations_authorize_nothing() {
+        for json in [
+            "not json",
+            r#"{"evaluations":[]}"#,
+            r#"{"evaluations":[{"item_index":0,"is_valid":false,"rationale":"only one"}]}"#,
+            r#"{"evaluations":[{"item_index":0,"is_valid":false,"rationale":"first"},{"item_index":0,"is_valid":false,"rationale":"duplicate"}]}"#,
+            r#"{"evaluations":[{"item_index":0,"is_valid":false,"rationale":"first"},{"item_index":9,"is_valid":false,"rationale":"extra"}]}"#,
+        ] {
+            evaluation_result(json, 2)
+                .expect_err("invalid model output must not fabricate edit authorization");
+        }
+    }
+
+    #[test]
+    fn total_evaluation_is_sorted_and_preserved() {
+        let json = r#"{"evaluations":[{"item_index":1,"is_valid":false,"rationale":"second"},{"item_index":0,"is_valid":true,"rationale":"first"}]}"#;
+        let result = evaluation_result(json, 2).expect("total response must remain accepted");
+        assert_eq!(result.evaluations[0].item_index, 0);
+        assert_eq!(result.evaluations[1].item_index, 1);
+        assert!(result.evaluations[0].is_valid);
+        assert!(!result.evaluations[1].is_valid);
     }
 }

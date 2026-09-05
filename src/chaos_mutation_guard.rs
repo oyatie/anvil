@@ -78,7 +78,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::process::Command;
 use tracing::info;
 
 use crate::exec::run_bounded_for;
@@ -301,7 +300,7 @@ impl ChaosMutationGuard {
         }
         let out_dir = scratch.path().join("out");
 
-        let mut cmd = Command::new("cargo");
+        let mut cmd = crate::exec::build_env::command("cargo");
         cmd.current_dir(repo_dir)
             .arg("mutants")
             .arg("--in-diff")

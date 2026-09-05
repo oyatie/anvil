@@ -81,7 +81,7 @@ impl FixEngine {
         // 1. Rust project (Cargo.toml)
         if repo_dir.join("Cargo.toml").exists() {
             info!("Detected Rust crate; running `cargo check` and `cargo test`...");
-            let mut check_cmd = Command::new("cargo");
+            let mut check_cmd = crate::exec::build_env::command("cargo");
             check_cmd.current_dir(repo_dir).arg("check");
             let check_out = crate::exec::run_bounded(
                 check_cmd,
@@ -105,7 +105,7 @@ impl FixEngine {
                 }
             }
 
-            let mut test_cmd = Command::new("cargo");
+            let mut test_cmd = crate::exec::build_env::command("cargo");
             test_cmd
                 .current_dir(repo_dir)
                 .args(["test", "--no-fail-fast"]);
@@ -133,7 +133,7 @@ impl FixEngine {
         // 2. Node/TypeScript project (package.json)
         if repo_dir.join("package.json").exists() {
             info!("Detected Node/TypeScript project; running tests...");
-            let mut npm_cmd = Command::new("npm");
+            let mut npm_cmd = crate::exec::build_env::command("npm");
             npm_cmd
                 .current_dir(repo_dir)
                 .args(["test", "--", "--passWithNoTests"]);
@@ -162,7 +162,7 @@ impl FixEngine {
         // 3. Go project (go.mod)
         if repo_dir.join("go.mod").exists() {
             info!("Detected Go project; running `go test ./...`...");
-            let mut go_cmd = Command::new("go");
+            let mut go_cmd = crate::exec::build_env::command("go");
             go_cmd.current_dir(repo_dir).args(["test", "./..."]);
             let go_test = crate::exec::run_bounded(
                 go_cmd,

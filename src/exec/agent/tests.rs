@@ -30,7 +30,12 @@ fn explicit_environment(command: &AgentCommand) -> std::collections::BTreeMap<St
 #[test]
 fn a_daemon_secret_does_not_reach_a_model_turn() {
     let posture = Posture::in_workspace(std::env::temp_dir());
-    let cmd = command_in("claude", &posture, Framing::Plain, daemon_environment());
+    let cmd = prepare_command(
+        Command::new("/bin/echo"),
+        &posture,
+        Framing::Plain,
+        daemon_environment(),
+    );
     let seen = explicit_environment(&cmd);
 
     assert!(seen.contains_key("GH_CONFIG_DIR"));
@@ -69,8 +74,13 @@ fn a_daemon_secret_does_not_reach_a_model_turn() {
 #[test]
 fn a_leased_credential_reaches_only_its_turn() {
     let posture = Posture::in_workspace(std::env::temp_dir())
-        .with_credential("GEMINI_API_KEY", "leased-for-this-turn");
-    let cmd = command("claude", &posture, Framing::Plain);
+        .with_credential(ProviderCredential::GeminiApiKey, "leased-for-this-turn");
+    let cmd = prepare_command(
+        Command::new("/bin/echo"),
+        &posture,
+        Framing::Plain,
+        daemon_environment(),
+    );
     assert_eq!(
         explicit_environment(&cmd).get("GEMINI_API_KEY"),
         Some(&"leased-for-this-turn".to_string())
@@ -81,6 +91,50 @@ fn a_leased_credential_reaches_only_its_turn() {
 fn the_turn_runs_in_the_selected_workspace() {
     let dir = std::env::temp_dir().join("anvil-posture-cwd");
     std::fs::create_dir_all(&dir).expect("scratch dir");
-    let cmd = command("claude", &Posture::in_workspace(&dir), Framing::Plain);
+    let cmd = prepare_command(
+        Command::new("/bin/echo"),
+        &Posture::in_workspace(&dir),
+        Framing::Plain,
+        daemon_environment(),
+    );
     assert_eq!(cmd.as_std().get_current_dir(), Some(dir.as_path()));
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_identity_uses_one_absolute_service_path_snapshot() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let trusted = tempfile::tempdir().expect("trusted provider directory");
+    let hostile = tempfile::tempdir().expect("hostile provider directory");
+    for directory in [trusted.path(), hostile.path()] {
+        let executable = directory.join("claude");
+        std::fs::write(&executable, "#!/bin/sh\nexit 0\n").expect("provider fixture");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("executable provider fixture");
+    }
+    let search = std::env::join_paths([trusted.path()]).expect("trusted PATH");
+    let bound = trusted_provider_command_from("claude", &search).expect("trusted provider");
+    assert_eq!(
+        bound.as_std().get_program(),
+        trusted
+            .path()
+            .join("claude")
+            .canonicalize()
+            .expect("canonical trusted provider")
+    );
+    assert_ne!(
+        bound.as_std().get_program(),
+        hostile
+            .path()
+            .join("claude")
+            .canonicalize()
+            .expect("canonical hostile provider")
+    );
+    assert!(
+        trusted_provider_command_from("claude", std::ffi::OsStr::new(":"))
+            .expect_err("empty/relative PATH entries are not trusted")
+            .to_string()
+            .contains("relative entry")
+    );
 }

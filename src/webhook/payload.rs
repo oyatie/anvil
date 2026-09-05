@@ -24,6 +24,14 @@ pub struct WebhookPullRequest {
     pub number: u64,
     pub title: String,
     pub body: Option<String>,
+    /// Whether the pull request is still a draft.
+    ///
+    /// `#[serde(default)]` makes an absent field `false`, and that default is
+    /// the safe direction only because the action list is the real gate: a
+    /// payload that omits `draft` is treated as ready, which matches every
+    /// non-`pull_request` event that never carries the field.
+    #[serde(default)]
+    pub draft: bool,
     pub head: WebhookCommitRef,
     pub base: WebhookCommitRef,
 }

@@ -1,0 +1,27 @@
+{
+  "name": "Oyatie Anvil",
+  "url": "https://github.com/oyatie/anvil",
+  "description": "Anvil's own principal. Reviews, certifies, fixes and enlists pull requests on the repositories it watches, so that what Anvil does is attributable to Anvil and not to the human who reviews it. Permission derivation: docs/plan/h1-6-machine-identity/README.md, Appendix A.",
+  "public": false,
+  "redirect_url": "http://127.0.0.1:8721/",
+  "request_oauth_on_install": false,
+  "setup_on_update": false,
+  "default_permissions": {
+    "metadata": "read",
+    "contents": "write",
+    "pull_requests": "write",
+    "issues": "write",
+    "actions": "read",
+    "merge_queues": "read",
+    "repository_hooks": "write"
+  },
+  "default_events": [
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "issues",
+    "issue_comment",
+    "workflow_run",
+    "merge_group"
+  ]
+}

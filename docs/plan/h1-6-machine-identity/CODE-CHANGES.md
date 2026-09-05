@@ -356,20 +356,24 @@ YAML-parsed `github-script` body and separately inventories its three reviewed c
 fingerprint in review; the inventory remains explanatory rather than pretending to attenuate
 the credential.
 
-### 7b. Same defect, not yet observed: `.github/workflows/toolchain-weekly.yml`
+### 7b. Implemented App authentication: `.github/workflows/toolchain-weekly.yml`
 
-`:60` sets `GH_TOKEN: ${{ github.token }}` and `:76` runs `gh pr create`. That is the same
-403 waiting to happen, on the same org setting:
+The earlier diagnosis below is historical, not the current workflow: `:60` formerly set
+`GH_TOKEN: ${{ github.token }}` and `:76` ran `gh pr create`, a 403 waiting to happen on
+the same org setting:
 
 ```console
 $ gh api repos/oyatie/anvil/actions/permissions/workflow
 {"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}
 ```
 
-It has never fired — no `chore/toolchain-*` branch or pull request has ever existed
-(`git ls-remote --heads origin 'chore/toolchain-*'` → empty) — so there is no failing run
-to point at, only the same shape. Apply the same App-token step. Fixing 7a alone leaves
-the sibling, which is the instance-not-class pattern this plan is about.
+That console observation is historical too: it was recorded before this lane was exercised,
+so it described no failing run. The implemented workflow now mints a repository-scoped App
+token. The App token is passed to checkout; its contents access permits checkout, and the
+`contents: write` level is required to push the bump branch. `pull-requests: write` is used by
+`gh pr create`.
+There is no Actions-token or human-token fallback. Unlike promotion opener 7a, this lane
+needs `contents: write` because it pushes the branch; the grants are not identical.
 
 ---
 

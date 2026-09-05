@@ -89,15 +89,52 @@ fn repo_root() -> Result<PathBuf, String> {
         .map_err(|e| format!("the repository root is unreadable ({e})"))
 }
 
-/// Whether `p` resolves inside `root`. The single containment predicate: an
-/// earlier revision had one of these in `expand` and none in the corpus walk,
-/// so a symlink under `docs/plan/` read outside the tree and echoed what it
-/// found into the failure message. Containment added to one of two paths is
-/// the instance, not the class.
-fn inside(root: &Path, p: &Path) -> bool {
-    p.canonicalize()
+/// The single gate. Every path -- walked directory, directory entry, or glob
+/// target -- passes through this BEFORE any filesystem probe touches it.
+///
+/// Three revisions got this wrong in the same shape, each a level below the
+/// last: containment in `expand` and none in the corpus walk; then containment
+/// on every directory *entry* and none on the directory about to be read, so a
+/// symlink at `docs/plan` was `read_dir`'d and one of its entry names reached
+/// the failure message; then `expand`'s non-glob branch calling `is_file()`
+/// before the check, which answers "does this exist" for anything the runner
+/// can stat.
+///
+/// The ordering is the property: **check, then touch**. A predicate that runs
+/// after the probe has already leaked whatever the probe observed. And the
+/// message names only the caller's own string -- the earlier leak was not the
+/// check failing, it was the error printing a path component read from outside
+/// the repository.
+fn gate(root: &Path, p: &Path, shown: &str) -> Result<(), String> {
+    let refuse = || {
+        Err(format!(
+            "`{shown}` is not a readable path inside the repository"
+        ))
+    };
+    // symlink_metadata does not follow the link, so this observes the link
+    // itself rather than whatever it points at.
+    match std::fs::symlink_metadata(p) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(format!(
+                "`{shown}` is a symlink. Nothing in the corpus may be one: following it \
+                 reads outside the repository."
+            ));
+        }
+        Ok(_) => {}
+        // Absent and unreadable collapse into the same message as
+        // outside-the-repo, so the pair cannot be told apart. Two
+        // distinguishable errors are one bit of existence per claim, for any
+        // path the runner can stat.
+        Err(_) => return refuse(),
+    }
+    if p.canonicalize()
         .map(|c| c.starts_with(root))
         .unwrap_or(false)
+    {
+        Ok(())
+    } else {
+        refuse()
+    }
 }
 
 /// `.md` files under `dir`, refusing anything that leaves `root`.
@@ -110,24 +147,20 @@ fn md_files_under(root: &Path, dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
+        // The walk root is gated too. It was not, so `docs/plan -> /etc` was
+        // read before any check existed and an entry of /etc was named.
+        let shown_dir = d.strip_prefix(root).unwrap_or(&d).display().to_string();
+        gate(root, &d, &shown_dir)?;
         let entries = std::fs::read_dir(&d)
             .map_err(|e| format!("`{}` cannot be listed ({e})", d.display()))?;
         for entry in entries {
             let p = entry
                 .map_err(|e| format!("`{}` cannot be listed ({e})", d.display()))?
                 .path();
+            let shown = p.strip_prefix(root).unwrap_or(&p).display().to_string();
+            gate(root, &p, &shown)?;
             let meta = std::fs::symlink_metadata(&p)
-                .map_err(|e| format!("`{}` cannot be inspected ({e})", p.display()))?;
-            if meta.file_type().is_symlink() {
-                return Err(format!(
-                    "`{}` is a symlink. Nothing under the corpus may be one: following it \
-                     reads outside the repository.",
-                    p.display()
-                ));
-            }
-            if !inside(root, &p) {
-                return Err(format!("`{}` resolves outside the repository", p.display()));
-            }
+                .map_err(|_| format!("`{shown}` is not a readable path inside the repository"))?;
             if meta.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")) {
@@ -210,19 +243,20 @@ fn expand(glob: &str) -> Result<Vec<PathBuf>, String> {
     // failure message printed the count -- one measured bit per claim of
     // anything the CI runner can read.
     let Some((prefix, suffix)) = file.split_once('*') else {
+        // Gated BEFORE is_file(). The probe used to run first, so a
+        // nonexistent path and an existing-but-outside one gave different
+        // messages -- one bit of existence per claim.
         let p = root.join(glob);
+        gate(&root, &p, glob)?;
         if !p.is_file() {
-            return Ok(Vec::new());
-        }
-        if !inside(&root, &p) {
-            return Err(format!("`{glob}` resolves outside the repository"));
+            return Err(format!(
+                "`{glob}` is not a readable path inside the repository"
+            ));
         }
         return Ok(vec![p]);
     };
     let base = root.join(dir);
-    if !inside(&root, &base) {
-        return Err(format!("`{glob}` resolves outside the repository"));
-    }
+    gate(&root, &base, glob)?;
     let entries = std::fs::read_dir(&base)
         .map_err(|e| format!("`{}` cannot be listed ({e})", base.display()))?;
     let mut hits = Vec::new();
@@ -237,8 +271,12 @@ fn expand(glob: &str) -> Result<Vec<PathBuf>, String> {
         if n.len() < prefix.len() + suffix.len() {
             continue;
         }
+        // Refused rather than skipped: the walk errors on an out-of-repo
+        // entry, and a glob silently excluding one had the two paths answering
+        // the same question differently.
         let p = entry.path();
-        if p.is_file() && inside(&root, &p) {
+        gate(&root, &p, glob)?;
+        if p.is_file() {
             hits.push(p);
         }
     }

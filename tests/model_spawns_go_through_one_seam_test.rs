@@ -6551,6 +6551,10 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
         "replacement seam unexpectedly changed visibility shape"
     );
     assert!(replacement_parameters.is_empty());
+    let (constructor_is_private, constructor_parameters) =
+        function_shape(&replacement, "replacement_command");
+    assert!(constructor_is_private);
+    assert!(constructor_parameters.is_empty());
     assert_eq!(
         boundary_events(&replacement),
         [
@@ -6588,7 +6592,7 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
         ["bind:command", "tuple-bind:SyncNonModelCommand:command"]
     );
     assert_eq!(
-        command_flow(&replacement, "spawn"),
+        command_flow(&replacement, "replacement_command"),
         [
             "bind:command",
             "command-new:tokio::process::Command::new:replacement_binary",
@@ -6596,8 +6600,9 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
         "replacement execution must use the path that passed provider validation"
     );
     assert_eq!(
-        call_paths_in_function(&replacement, "spawn"),
+        call_paths_in_function(&replacement, "replacement_command"),
         [
+            "Ok".to_owned(),
             "installed_anvil".to_owned(),
             "std::env::current_exe".to_owned(),
             "tokio::process::Command::new".to_owned(),
@@ -6606,7 +6611,43 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
         .collect(),
         "the replacement seam must use this Anvil binary and a finite typed argv"
     );
-    assert!(replacement.contains("command.arg(\"serve\")"));
+    // Compare complete parsed bodies, not call-name presence: the validated
+    // path must construct the returned command, and that exact command must
+    // reach spawn without intervening replacement or argv mutation. This
+    // deliberately pins even harmless body changes for structural re-review.
+    let replacement_ast = syn::parse_file(&replacement).expect("parse replacement seam");
+    for (function, expected_body) in [
+        (
+            "replacement_command",
+            r#"{
+                let running = std::env::current_exe()
+                    .map_err(|error| anyhow::anyhow!("cannot identify the running Anvil binary: {error}"))?;
+                let replacement_binary = installed_anvil(&running)?;
+                let mut command = tokio::process::Command::new(replacement_binary);
+                command.arg("serve");
+                #[cfg(unix)]
+                command.process_group(0);
+                Ok(command)
+            }"#,
+        ),
+        (
+            "spawn",
+            r#"{
+                let mut command = replacement_command()?;
+                command
+                    .spawn()
+                    .map_err(|error| anyhow::anyhow!("failed to spawn replacement binary: {error}"))
+            }"#,
+        ),
+    ] {
+        let expected_body: syn::Block = syn::parse_str(expected_body).expect("parse expected body");
+        let actual_body = &top_level_function(&replacement_ast, function).block;
+        assert_eq!(
+            quote::quote!(#actual_body).to_string(),
+            quote::quote!(#expected_body).to_string(),
+            "{function} must preserve finite replacement construction and handoff"
+        );
+    }
     assert!(!replacement.contains("args_os"));
 }
 

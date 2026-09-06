@@ -46,32 +46,41 @@ const WHOLE_DIFF_LINE_SCANS: usize = 19;
 
 fn production_sources() -> Vec<(PathBuf, String)> {
     let mut out = Vec::new();
-    collect(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src").as_path(),
-        &mut out,
-    );
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let test_modules = anvil::source_scan::paths::declared_test_module_files(repository)
+        .expect("classify declared test modules once");
+    collect(repository.join("src").as_path(), &test_modules, &mut out);
     out
 }
 
-fn collect(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for e in entries.flatten() {
+fn collect(
+    dir: &Path,
+    test_modules: &std::collections::BTreeSet<PathBuf>,
+    out: &mut Vec<(PathBuf, String)>,
+) {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("read Rust source directory {}: {error}", dir.display()));
+    for e in entries {
+        let e = e.unwrap_or_else(|error| {
+            panic!(
+                "read entry in Rust source directory {}: {error}",
+                dir.display()
+            )
+        });
         let p = e.path();
         if p.is_dir() {
-            collect(&p, out);
+            collect(&p, test_modules, out);
         } else if p.extension().is_some_and(|x| x == "rs") {
-            let Ok(raw) = fs::read_to_string(&p) else {
-                continue;
-            };
+            let raw = fs::read_to_string(&p)
+                .unwrap_or_else(|error| panic!("read Rust source {}: {error}", p.display()));
             // Test modules are stripped two ways: an inline `#[cfg(test)] mod`,
             // and a whole file that its parent declares under `#[cfg(test)]`.
             // A fixture is allowed to spell anything.
-            if anvil::source_scan::is_cfg_test_module_file(&p) {
+            if test_modules.contains(&p) {
                 continue;
             }
-            let prod = anvil::source_scan::without_test_modules(&raw);
+            let prod = anvil::source_scan::try_without_test_modules(&raw)
+                .unwrap_or_else(|error| panic!("classify Rust source {}: {error}", p.display()));
             // Commentary and string literals are not code. This module's own
             // Commentary and string literals are not code. This module's own
             // doc comment names the forbidden shape repeatedly; reading prose

@@ -132,11 +132,14 @@ fn is_executable(p: &Path) -> bool {
 }
 
 fn git_out(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .ok()?;
+    let mut command = Command::new("git");
+    command.args(args).current_dir(repo);
+    let out = crate::exec::run_sync_bounded(
+        command,
+        crate::exec::ExecClass::Quick.timeout(),
+        "git hook liveness query",
+    )
+    .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())

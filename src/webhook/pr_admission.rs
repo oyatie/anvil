@@ -9,8 +9,8 @@
 //!
 //! - `ready_for_review` is a reviewable action. GitHub sends it when a draft
 //!   becomes ready, which is the moment the work becomes anvil's.
-//! - A draft is never reviewed, on any action. `opened` and `synchronize` fire
-//!   while a pull request is still a draft.
+//! - A draft or unknown draft status is never admitted on any action. `opened`
+//!   and `synchronize` fire while a pull request is still a draft.
 //!
 //! These do not conflict: GitHub clears `draft` before sending
 //! `ready_for_review`, so refusing drafts does not refuse the transition out of
@@ -33,6 +33,8 @@ pub enum SkipReason {
     /// Still a draft. `ready_for_review` clears the flag before the event is
     /// sent, so refusing drafts does not refuse the transition out of one.
     Draft,
+    /// Missing or null status is not affirmative evidence that a PR is ready.
+    UnknownDraftStatus,
     /// anvil's own governance sync, marked so the loop terminates.
     AutomatedPr,
 }
@@ -42,6 +44,7 @@ impl SkipReason {
         match self {
             SkipReason::UnsupportedAction => "unsupported action",
             SkipReason::Draft => "draft",
+            SkipReason::UnknownDraftStatus => "unknown draft status",
             SkipReason::AutomatedPr => "automated PR",
         }
     }
@@ -53,12 +56,14 @@ impl SkipReason {
 const REVIEWABLE_ACTIONS: &[&str] = &["opened", "synchronize", "reopened", "ready_for_review"];
 
 /// Pure, so the decision can be exercised without a server.
-pub fn admit(action: &str, draft: bool, title: &str) -> PrAdmission {
+pub fn admit(action: &str, draft: Option<bool>, title: &str) -> PrAdmission {
     if !REVIEWABLE_ACTIONS.contains(&action) {
         return PrAdmission::Skip(SkipReason::UnsupportedAction);
     }
-    if draft {
-        return PrAdmission::Skip(SkipReason::Draft);
+    match draft {
+        Some(true) => return PrAdmission::Skip(SkipReason::Draft),
+        None => return PrAdmission::Skip(SkipReason::UnknownDraftStatus),
+        Some(false) => {}
     }
     if title.contains("[skip review]") {
         return PrAdmission::Skip(SkipReason::AutomatedPr);
@@ -75,7 +80,7 @@ mod tests {
         // GitHub clears `draft` before it sends `ready_for_review`, so the
         // payload arrives ready and the draft rule does not catch it.
         assert_eq!(
-            admit("ready_for_review", false, "a title"),
+            admit("ready_for_review", Some(false), "a title"),
             PrAdmission::Review
         );
     }
@@ -84,9 +89,9 @@ mod tests {
     fn a_draft_is_not_reviewed_on_any_action_that_carries_one() {
         // These actions fire while a pull request is still a draft, so the
         // draft rule -- not the action list -- is what refuses them.
-        for action in ["opened", "synchronize", "reopened"] {
+        for action in ["opened", "synchronize", "reopened", "ready_for_review"] {
             assert_eq!(
-                admit(action, true, "a title"),
+                admit(action, Some(true), "a title"),
                 PrAdmission::Skip(SkipReason::Draft),
                 "a draft was admitted on `{action}`"
             );
@@ -96,7 +101,7 @@ mod tests {
     #[test]
     fn the_ordinary_path_still_works() {
         for action in ["opened", "synchronize", "reopened"] {
-            assert_eq!(admit(action, false, "a title"), PrAdmission::Review);
+            assert_eq!(admit(action, Some(false), "a title"), PrAdmission::Review);
         }
     }
 
@@ -104,7 +109,7 @@ mod tests {
     fn actions_anvil_does_not_own_are_refused() {
         for action in ["closed", "labeled", "assigned", "converted_to_draft", ""] {
             assert_eq!(
-                admit(action, false, "a title"),
+                admit(action, Some(false), "a title"),
                 PrAdmission::Skip(SkipReason::UnsupportedAction),
                 "`{action}` was admitted"
             );
@@ -114,7 +119,7 @@ mod tests {
     #[test]
     fn the_governance_sync_still_terminates_its_own_loop() {
         assert_eq!(
-            admit("opened", false, "chore: sync [skip review]"),
+            admit("opened", Some(false), "chore: sync [skip review]"),
             PrAdmission::Skip(SkipReason::AutomatedPr)
         );
     }
@@ -124,8 +129,32 @@ mod tests {
         // Ordering is observable, so it is pinned: a draft whose title also
         // carries the marker reports as a draft, not as automation.
         assert_eq!(
-            admit("opened", true, "chore: sync [skip review]"),
+            admit("opened", Some(true), "chore: sync [skip review]"),
             PrAdmission::Skip(SkipReason::Draft)
+        );
+    }
+
+    #[test]
+    fn unknown_draft_status_is_refused_before_the_title() {
+        for action in ["opened", "synchronize", "reopened", "ready_for_review"] {
+            for title in ["a title", "chore: sync [skip review]"] {
+                assert_eq!(
+                    admit(action, None, title),
+                    PrAdmission::Skip(SkipReason::UnknownDraftStatus)
+                );
+            }
+        }
+        assert_eq!(
+            SkipReason::UnknownDraftStatus.as_str(),
+            "unknown draft status"
+        );
+    }
+
+    #[test]
+    fn unsupported_action_is_refused_before_unknown_draft_status() {
+        assert_eq!(
+            admit("converted_to_draft", None, "chore: sync [skip review]"),
+            PrAdmission::Skip(SkipReason::UnsupportedAction)
         );
     }
 }

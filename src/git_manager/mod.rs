@@ -134,12 +134,16 @@ impl GitManager {
     /// Native hooks live in `$(git rev-parse --git-common-dir)/hooks`.
     /// Worktrees share that directory. `core.hooksPath` stays unset.
     fn common_hooks_dir(repo_dir: &Path) -> Result<PathBuf> {
-        let out = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        command
             .args(["-C"])
             .arg(repo_dir)
-            .args(["rev-parse", "--git-common-dir"])
-            .output()
-            .context("git rev-parse --git-common-dir")?;
+            .args(["rev-parse", "--git-common-dir"]);
+        let out = crate::exec::run_sync_bounded(
+            command,
+            crate::exec::ExecClass::Quick.timeout(),
+            "git rev-parse --git-common-dir",
+        )?;
         if !out.status.success() {
             bail!(
                 "git-common-dir failed: {}",

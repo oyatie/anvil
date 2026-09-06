@@ -11,6 +11,7 @@
 //! not the change's fault.
 
 use super::MonorepoViolation;
+use anyhow::{Context, Result};
 use std::path::Path;
 
 /// What this change did to one file, as the diff reports it.
@@ -20,8 +21,6 @@ pub struct FileChange<'a> {
     /// Lines added minus lines removed. Negative means the file shrank.
     pub net_lines: i64,
 }
-
-use crate::source_scan::paths::is_test_source as is_test_path;
 
 impl FileChange<'_> {
     fn grew(&self) -> bool {
@@ -49,26 +48,27 @@ impl WholeFileExpansion {
         repo_dir: &Path,
         file_path: &str,
         change: &FileChange<'_>,
-    ) -> Vec<MonorepoViolation> {
+    ) -> Result<Vec<MonorepoViolation>> {
         let mut violations = Vec::new();
         let full_path = repo_dir.join(file_path);
 
         if !full_path.exists() || !full_path.is_file() {
-            return violations;
+            return Ok(violations);
         }
 
         // Only evaluate Rust source files and documentation
         let is_rust = file_path.ends_with(".rs");
         let is_doc = file_path.ends_with(".md") || file_path.ends_with(".yaml");
+        let is_test = is_rust
+            && crate::source_scan::is_cfg_test_module_file(repo_dir, &full_path)
+                .map_err(anyhow::Error::msg)?;
 
         if !is_rust && !is_doc {
-            return violations;
+            return Ok(violations);
         }
 
-        let content = match std::fs::read_to_string(&full_path) {
-            Ok(c) => c,
-            Err(_) => return violations,
-        };
+        let content = std::fs::read_to_string(&full_path)
+            .with_context(|| format!("cannot read changed source {}", full_path.display()))?;
 
         let lines: Vec<&str> = content.lines().collect();
         let line_count = lines.len();
@@ -83,11 +83,7 @@ impl WholeFileExpansion {
         // `attestation_guard.rs` and `predictive_test_selector/workspace_dag.rs`
         // -- both production, both already past this ceiling -- because
         // "attestation" and "predictive_test_selector" contain it.
-        if line_count > Self::MAX_WHOLE_FILE_LINES
-            && change.grew()
-            && is_rust
-            && !is_test_path(file_path)
-        {
+        if line_count > Self::MAX_WHOLE_FILE_LINES && change.grew() && is_rust && !is_test {
             violations.push(MonorepoViolation {
                 category: "OVERSIZED_WHOLE_FILE".to_string(),
                 description: format!(
@@ -139,9 +135,10 @@ impl WholeFileExpansion {
         // And a path substring test is not a test check: it skipped
         // `src/latest_state.rs` for containing "test" while scanning every
         // `#[cfg(test)]` block in every other file.
-        if is_rust && !is_test_path(file_path) {
-            let production =
-                crate::source_scan::code_only(&crate::source_scan::without_test_modules(&content));
+        if is_rust && !is_test {
+            let production = crate::source_scan::try_without_test_modules(&content)
+                .map_err(anyhow::Error::msg)?;
+            let production = crate::source_scan::code_only(&production);
             for (idx, line) in production.lines().enumerate() {
                 if line.contains(".unwrap()") && change.adds(line) {
                     violations.push(MonorepoViolation {
@@ -156,7 +153,7 @@ impl WholeFileExpansion {
             }
         }
 
-        violations
+        Ok(violations)
     }
 }
 
@@ -187,7 +184,8 @@ mod tests {
             dir.path(),
             "billing/core/src/order.rs",
             &change,
-        );
+        )
+        .expect("evaluate source");
         assert!(
             violations
                 .iter()
@@ -197,6 +195,42 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.category == "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION")
+        );
+    }
+
+    #[test]
+    fn production_include_under_tests_is_not_exempt_from_whole_file_policy() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname='shipping-role'\nversion='0.0.0'\nedition='2024'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "include!(\"../tests/shipping.rs\");\n",
+        )
+        .unwrap();
+        let source = (0..=WholeFileExpansion::MAX_WHOLE_FILE_LINES)
+            .map(|index| format!("pub fn shipping_{index}() {{}}\n"))
+            .collect::<String>();
+        std::fs::write(dir.path().join("tests/shipping.rs"), &source).unwrap();
+        let violations = WholeFileExpansion::evaluate_whole_file(
+            dir.path(),
+            "tests/shipping.rs",
+            &FileChange {
+                added: &source,
+                net_lines: source.lines().count() as i64,
+            },
+        )
+        .unwrap();
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.category == "OVERSIZED_WHOLE_FILE"),
+            "production role must override the tests/ directory name"
         );
     }
 }

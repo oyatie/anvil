@@ -1,7 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,39 +34,61 @@ impl DocsAsCodeGuard {
 
         let mut missing_docstrings = Vec::new();
         let mut rust_files_modified = false;
+        let mut test_sources = None;
 
         for file in changed_files {
-            if file.ends_with(".rs") && !file.contains("tests/") && !file.contains("fixtures/") {
-                rust_files_modified = true;
-                let full_path = repo_dir.join(file);
+            if !file.ends_with(".rs") {
+                continue;
+            }
+            let full_path = repo_dir.join(file);
+            // A deleted Rust path has no head-revision documentation surface.
+            if !full_path.is_file() {
+                continue;
+            }
+            if test_sources.is_none() {
+                test_sources = Some(
+                    crate::source_scan::paths::TestSourceClassifier::new(repo_dir)
+                        .map_err(anyhow::Error::msg)?,
+                );
+            }
+            if test_sources
+                .as_ref()
+                .expect("initialized Rust test-source classifier")
+                .classify(&full_path)
+                .map_err(anyhow::Error::msg)?
+            {
+                continue;
+            }
+            rust_files_modified = true;
+            let content = std::fs::read_to_string(&full_path).with_context(|| {
+                format!("cannot read changed Rust source {}", full_path.display())
+            })?;
+            let production = crate::source_scan::try_without_test_modules(&content)
+                .map_err(anyhow::Error::msg)?;
+            let lines: Vec<&str> = production.lines().collect();
 
-                if let Ok(content) = std::fs::read_to_string(&full_path) {
-                    let lines: Vec<&str> = content.lines().collect();
+            for (idx, line) in lines.iter().enumerate() {
+                let trimmed = line.trim_start();
+                if (trimmed.starts_with("pub struct ")
+                    || trimmed.starts_with("pub enum ")
+                    || trimmed.starts_with("pub trait "))
+                    && !trimmed.starts_with("pub struct $")
+                {
+                    // Check if preceding line is a doc comment
+                    let has_doc = if idx > 0 {
+                        lines[idx - 1].trim_start().starts_with("///")
+                            || lines[idx - 1].trim_start().starts_with("#[doc =")
+                    } else {
+                        false
+                    };
 
-                    for (idx, line) in lines.iter().enumerate() {
-                        let trimmed = line.trim_start();
-                        if (trimmed.starts_with("pub struct ")
-                            || trimmed.starts_with("pub enum ")
-                            || trimmed.starts_with("pub trait "))
-                            && !trimmed.starts_with("pub struct $")
-                        {
-                            // Check if preceding line is a doc comment
-                            let has_doc = if idx > 0 {
-                                lines[idx - 1].trim_start().starts_with("///")
-                                    || lines[idx - 1].trim_start().starts_with("#[doc =")
-                            } else {
-                                false
-                            };
-
-                            if !has_doc {
-                                missing_docstrings.push(format!(
-                                    "{}: line {} ({})",
-                                    file,
-                                    idx + 1,
-                                    trimmed
-                                ));
-                            }
-                        }
+                    if !has_doc {
+                        missing_docstrings.push(format!(
+                            "{}: line {} ({})",
+                            file,
+                            idx + 1,
+                            trimmed
+                        ));
                     }
                 }
             }
@@ -76,7 +97,7 @@ impl DocsAsCodeGuard {
         // Run cargo test --doc if Rust files were modified and Cargo.toml exists
         let mut doctest_success = true;
         if rust_files_modified && repo_dir.join("Cargo.toml").exists() {
-            let mut doctest_cmd = Command::new("cargo");
+            let mut doctest_cmd = crate::exec::build_env::command("cargo");
             doctest_cmd
                 .current_dir(repo_dir)
                 .args(["test", "--doc", "--workspace"]);
@@ -162,5 +183,53 @@ mod tests {
             .unwrap();
 
         assert!(report.is_compliant);
+    }
+
+    #[tokio::test]
+    async fn declaration_not_a_tests_or_fixtures_spelling_decides_docs_scope() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(src.join("widget/tests")).unwrap();
+        std::fs::create_dir_all(src.join("widget")).unwrap();
+        std::fs::write(
+            src.join("lib.rs"),
+            "mod widget;\n#[cfg(test)] mod arbitrary_fixture;\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("widget.rs"), "mod tests;\nmod fixtures;\n").unwrap();
+        std::fs::write(
+            src.join("widget/tests.rs"),
+            "pub struct UndocumentedShippingTests;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("widget/fixtures.rs"),
+            "pub struct UndocumentedShippingFixtures;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("arbitrary_fixture.rs"),
+            "pub struct UndocumentedTestOnly;\n",
+        )
+        .unwrap();
+
+        let report = DocsAsCodeGuard::new()
+            .evaluate_docs_as_code(
+                dir.path(),
+                &[
+                    "src/widget/tests.rs".to_owned(),
+                    "src/widget/fixtures.rs".to_owned(),
+                    "src/arbitrary_fixture.rs".to_owned(),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(report.missing_docstrings.len(), 2, "{report:?}");
+        assert!(
+            report
+                .missing_docstrings
+                .iter()
+                .all(|finding| !finding.contains("arbitrary_fixture"))
+        );
     }
 }

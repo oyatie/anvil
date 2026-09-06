@@ -19,10 +19,15 @@ fn test_whole_file_expansion_catches_dark_code_violations() {
     // A change that CREATES the file owns everything in it: every line is
     // added and the net growth is the whole file. Both findings are this
     // change's, which is what the gate is for.
-    let change = FileChange {
-        added: &file_content,
-        net_lines: file_content.lines().count() as i64,
-    };
+    let body = file_content
+        .lines()
+        .map(|line| format!("+{line}\n"))
+        .collect::<String>();
+    let files = anvil::git_manager::diff_context::diffs_by_path(&format!(
+        "diff --git a/finance/core/src/account.rs b/finance/core/src/account.rs\nnew file mode 100644\n--- /dev/null\n+++ b/finance/core/src/account.rs\n@@ -0,0 +1,{} @@\n{body}",
+        file_content.lines().count()
+    ));
+    let change = FileChange::from_diff(&files[0]);
     let violations =
         WholeFileExpansion::evaluate_whole_file(dir.path(), "finance/core/src/account.rs", &change)
             .expect("evaluate fixture");

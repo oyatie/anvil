@@ -8,6 +8,8 @@ pub enum ModelProvider {
     CursorAgent,
     XAiGrok,
     Antigravity,
+    /// `muse`, fronting Meta's Muse Spark models.
+    Muse,
     SubscriptionEnsemble,
 }
 
@@ -36,6 +38,7 @@ impl ModelProvider {
             ModelProvider::OpenAiCodex => "gpt-5.6-sol",
             ModelProvider::XAiGrok => "grok-4.6",
             ModelProvider::Antigravity => "gemini-3.8-flash",
+            ModelProvider::Muse => "muse-spark-1.3",
             ModelProvider::CursorAgent => "gpt-5.6-sol",
             ModelProvider::SubscriptionEnsemble => "claude-opus-5",
         }
@@ -55,6 +58,7 @@ impl ModelProvider {
                 "Cursor Agent Subscription (Multi-Model Native - High Effort)"
             }
             ModelProvider::XAiGrok => "xAI Grok Subscription (Grok 4.6 - High Effort)",
+            ModelProvider::Muse => "Muse (Meta Muse Spark 1.3)",
             ModelProvider::Antigravity => "Google Antigravity Subscription (High Effort)",
             ModelProvider::SubscriptionEnsemble => "Subscription Ensemble (Claude route)",
         }

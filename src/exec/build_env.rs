@@ -67,7 +67,7 @@ pub const NEVER_HANDED_OVER: &[&str] = &[
 /// A command that carries only what a toolchain needs.
 ///
 /// A constructor rather than a scrub applied afterwards, for the reason
-/// `ARCHITECTURE.md` gives for `exec::gh()` and `exec::agent()`: a call site
+/// `ARCHITECTURE.md` gives for `exec::gh()` and the finite provider constructors: a call site
 /// that has to remember to scrub is a call site that can forget, and the next
 /// build spawned here would inherit the daemon's environment in full.
 pub fn command(program: &str) -> tokio::process::Command {
@@ -78,7 +78,7 @@ pub fn command(program: &str) -> tokio::process::Command {
 
 /// Clear the environment and hand back only what a toolchain needs.
 pub fn apply(cmd: &mut tokio::process::Command) {
-    cmd.env_clear();
+    super::non_model::clear_environment(cmd);
     for name in BUILD_INHERITED {
         if let Ok(value) = std::env::var(name) {
             cmd.env(name, value);

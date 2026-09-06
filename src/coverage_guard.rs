@@ -32,13 +32,15 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Stdio;
-use tokio::process::Command;
 use tracing::info;
 
 use crate::exec::{ExecClass, run_bounded};
 use crate::git_manager::PrDiffContext;
 use crate::pre_merge_guard::report::GateStatus;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod source_partition;
+use source_partition::partition_added_lines;
 
 pub const MIN_COVERAGE_THRESHOLD_PERCENT: f64 = 85.0;
 
@@ -208,11 +210,11 @@ impl CoverageGuard {
     /// returning `NotMeasured`, which is enforced by test, not by attribute.
     pub fn evaluate_diff_coverage(
         &self,
-        _repo_dir: &Path,
+        repo_dir: &Path,
         diff_ctx: &PrDiffContext,
     ) -> Result<CoverageReport> {
         let added = added_lines_by_file(&diff_ctx.diff_content);
-        let (coverable, test_lines_added) = partition_added_lines(&added);
+        let (coverable, test_lines_added) = partition_added_lines(&added, repo_dir)?;
         let executable_lines_added: usize = coverable.values().map(|s| s.len()).sum();
         if executable_lines_added == 0 {
             return Ok(CoverageReport::nothing_to_measure(test_lines_added));
@@ -242,7 +244,7 @@ impl CoverageGuard {
             ));
         }
 
-        let mut cmd = Command::new("cargo");
+        let mut cmd = crate::exec::build_env::command("cargo");
         cmd.current_dir(repo_dir)
             .arg("llvm-cov")
             .arg("--workspace")
@@ -275,7 +277,16 @@ impl CoverageGuard {
         diff_ctx: &PrDiffContext,
     ) -> CoverageReport {
         let added = added_lines_by_file(&diff_ctx.diff_content);
-        let (coverable, test_lines_added) = partition_added_lines(&added);
+        let (coverable, test_lines_added) = match partition_added_lines(&added, repo_dir) {
+            Ok(partition) => partition,
+            Err(error) => {
+                return CoverageReport::not_measured(
+                    format!("changed-source test classification failed: {error}"),
+                    0,
+                    0,
+                );
+            }
+        };
         let executable_lines_added: usize = coverable.values().map(|s| s.len()).sum();
 
         // Decided before the tool output is consulted: a PR that adds no
@@ -473,86 +484,6 @@ fn parse_hunk_new_start(header: &str) -> Option<u32> {
         return None;
     }
     digits.parse().ok()
-}
-
-/// Splits the added lines into the coverable source files and a count of added
-/// test-file lines.
-///
-/// Added test lines are counted and reported, never divided by: a PR that adds
-/// a thousand lines of test file and one unexecuted production line is at 0%,
-/// which is the whole point.
-fn partition_added_lines(added: &AddedLines) -> (AddedLines, usize) {
-    let mut coverable = AddedLines::new();
-    let mut test_lines = 0usize;
-    for (path, lines) in added {
-        if lines.is_empty() {
-            continue;
-        }
-        if is_test_path(path) {
-            test_lines += lines.len();
-        } else if is_coverable_source(path) {
-            coverable.insert(path.clone(), lines.clone());
-        }
-    }
-    (coverable, test_lines)
-}
-
-/// Whether a coverage tool could plausibly report on this file.
-///
-/// Extension-based on purpose: a Markdown or TOML change has no executable
-/// lines, so demanding coverage of it is a false red, and a gate that cannot be
-/// satisfied gets bypassed.
-fn is_coverable_source(path: &str) -> bool {
-    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "rs" | "ts"
-            | "tsx"
-            | "js"
-            | "jsx"
-            | "mjs"
-            | "cjs"
-            | "go"
-            | "py"
-            | "c"
-            | "cc"
-            | "cpp"
-            | "cxx"
-            | "h"
-            | "hh"
-            | "hpp"
-            | "java"
-            | "kt"
-            | "rb"
-            | "cs"
-            | "swift"
-            | "scala"
-    ) && path.contains('.')
-}
-
-/// Whether this path is test code.
-///
-/// Matched on whole path components and on the file name, never as a bare
-/// substring: `src/latest_state.rs` contains the letters `test` and is not a
-/// test file, and silently dropping it from the denominator would be a hole
-/// wide enough to drive a PR through.
-fn is_test_path(path: &str) -> bool {
-    for part in path.split('/') {
-        if matches!(
-            part,
-            "tests" | "test" | "__tests__" | "spec" | "specs" | "testdata"
-        ) {
-            return true;
-        }
-    }
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let stem = name.split('.').next().unwrap_or(name);
-    stem.starts_with("test_")
-        || stem.ends_with("_test")
-        || stem.ends_with("_tests")
-        || stem.ends_with("_spec")
-        || name.contains(".test.")
-        || name.contains(".spec.")
 }
 
 /// Parses an LCOV report into per-file, per-line execution counts.
@@ -770,6 +701,45 @@ mod tests {
             "{ctx}"
         );
         assert!(!status.is_measured(), "{ctx}");
+    }
+
+    #[test]
+    fn rust_test_lines_follow_declarations_not_test_shaped_names() {
+        let root = tempfile::tempdir().expect("coverage fixture");
+        let src = root.path().join("src");
+        std::fs::create_dir_all(src.join("widget/tests")).expect("module directory");
+        std::fs::write(
+            src.join("lib.rs"),
+            "mod widget;\n#[cfg(test)] mod arbitrary_fixture;\n",
+        )
+        .expect("crate root");
+        std::fs::write(src.join("widget.rs"), "mod shipping_test;\nmod tests;\n")
+            .expect("production module");
+        std::fs::write(src.join("widget/shipping_test.rs"), "pub fn ships() {}\n")
+            .expect("test-suffixed production");
+        std::fs::write(src.join("widget/tests.rs"), "pub fn ships_too() {}\n")
+            .expect("tests-basename production");
+        std::fs::write(src.join("arbitrary_fixture.rs"), "fn fixture() {}\n")
+            .expect("declared test module");
+
+        let added = BTreeMap::from([
+            (
+                "src/widget/shipping_test.rs".to_owned(),
+                BTreeSet::from([1]),
+            ),
+            ("src/widget/tests.rs".to_owned(), BTreeSet::from([1])),
+            ("src/arbitrary_fixture.rs".to_owned(), BTreeSet::from([1])),
+        ]);
+        let (production, test_lines) =
+            partition_added_lines(&added, root.path()).expect("classify added Rust");
+        assert_eq!(test_lines, 1);
+        assert_eq!(
+            production.keys().cloned().collect::<Vec<_>>(),
+            [
+                "src/widget/shipping_test.rs".to_owned(),
+                "src/widget/tests.rs".to_owned(),
+            ]
+        );
     }
 
     /// Percentages are compared with a tolerance: 849/1000 is 84.9% but is not

@@ -25,6 +25,7 @@ fn findings(dir: &std::path::Path, rel: &str, added: &str, net: i64) -> Vec<Stri
             net_lines: net,
         },
     )
+    .expect("evaluate fixture")
     .into_iter()
     .map(|v| v.category)
     .collect()

@@ -279,16 +279,16 @@ impl SubscriptionExecutor {
             Err(_) => "grok-default".to_string(),
         };
 
-        let cmd = crate::exec::grok_agent(&posture, model)?;
-
-        match run_with_prompt_on_stdin(
-            cmd,
-            prompt,
-            std::time::Duration::from_secs(config.print_timeout_secs),
-            "provider CLI",
-        )
+        match async {
+            run_with_prompt_on_stdin(
+                crate::exec::grok_agent(&posture, model)?,
+                prompt,
+                std::time::Duration::from_secs(config.print_timeout_secs),
+                "provider CLI",
+            )
+            .await
+        }
         .await
-        .map_err(|e| std::io::Error::other(e.to_string()))
         {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();

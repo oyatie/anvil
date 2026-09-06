@@ -26,10 +26,11 @@ fn unavailable_primary_providers_select_the_independently_checked_agy_fallback()
 
     let working_dir = std::env::temp_dir();
     let posture = crate::exec::Posture::in_workspace(&working_dir);
-    // Before entering either real route, prove every finite constructor
+    // Before entering any tested route, prove each primary constructor
     // is unavailable. No provider can run, including the selected fallback.
     assert!(crate::exec::claude_agent(&posture, "opus5").is_err());
     assert!(crate::exec::codex_agent(&posture, "gpt-5.6-sol").is_err());
+    assert!(crate::exec::grok_agent(&posture, "grok-4.6").is_err());
     assert!(crate::exec::agy_agent(&posture, "low", Duration::from_secs(1), None).is_err());
     let mut builder = ModelPrompt::builder();
     builder.push_harness(crate::model_prompt::HarnessText::ReviewerResponseFormat);
@@ -43,6 +44,7 @@ fn unavailable_primary_providers_select_the_independently_checked_agy_fallback()
         for provider in [
             ModelProvider::AnthropicClaudeCode,
             ModelProvider::OpenAiCodex,
+            ModelProvider::XAiGrok,
         ] {
             let config = ModelExecutionConfig {
                 provider,

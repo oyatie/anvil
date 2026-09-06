@@ -43,7 +43,8 @@ shape report plus WS-14's ADR-INDEX watch, from H2-10 via the full conformance e
 discrepancies auto-open tickets. **Owner:** Architecture files; Human ticket queue tracks upstream
 acceptance (anvil cannot close oyatie's findings for it).
 
-**Filed 2026-08-31** (each re-verified at oyatie dev `1119e99` before filing):
+**Initial filing record, 2026-08-31** (recorded against oyatie dev `1119e99`;
+the face-census and k8s dispositions below were subsequently corrected):
 - [oyatie#2339](https://github.com/oyatie/oyatie/issues/2339) — registry gone from `governance/`
   with no disposition; live home appears to be `intelligence/core/capability-registry-{app,domain}`.
 - [oyatie#2340](https://github.com/oyatie/oyatie/issues/2340) — `intelligence/` cap-root
@@ -55,12 +56,21 @@ acceptance (anvil cannot close oyatie's findings for it).
 - [anvil#198](https://github.com/oyatie/anvil/issues/198) — anvil-side tracking: ADR-0006's dead
   citation, designated as the seed for WS-14's pointer-liveness check.
 
-Not filed, with reasons: the 119-file markdown inventory and `branch-protection.yaml` drift are
+The initial not-filed record: the 119-file markdown inventory and `branch-protection.yaml` drift are
 already self-recorded in oyatie's own files (AGENTS.md's "frozen migration inventory"; the yaml's
 own header) — re-filing self-recorded state duplicates a surface; the weekly watch raises them only
 if their self-record disappears. `intelligence/` cap-root `k8s/` was **not** included in #2340:
 only `contracts/` is verifiably named by the D-8 restatement read this session; claiming more than
 the measurement would be the exact defect this plan schedules out.
+
+**Superseding recorded correction:** roadmap §1.4 and its 2026-08-31 external-review
+log record the strict census at `1119e99` as 9/21 full quartets and 12/21 partial,
+not 8/24. They identify D-8's closed-children table as the applicable predicate
+and record the correction to #2341. The same log records cap-root `k8s/` measured
+against that table and added by comment to #2340, superseding its initial
+exclusion above. The markdown-inventory and branch-protection non-filing reasons
+remain unchanged. This reconciles the local historical records; it is not a new
+upstream measurement, a current issue-status check, or a claim of resolution.
 
 ## Ratchets
 

@@ -66,12 +66,55 @@ fn unavailable_primary_providers_select_the_independently_checked_agy_fallback()
 
 #[test]
 fn test_frontier_defaults() {
+    for (provider, expected) in [
+        (ModelProvider::AnthropicClaudeCode, "claude-opus-5"),
+        (ModelProvider::OpenAiCodex, "gpt-5.6-sol"),
+        (ModelProvider::CursorAgent, "gpt-5.6-sol"),
+        (ModelProvider::XAiGrok, "grok-4.6"),
+        (ModelProvider::Antigravity, "gemini-3.8-flash"),
+        (ModelProvider::SubscriptionEnsemble, "claude-opus-5"),
+    ] {
+        assert_eq!(provider.default_frontier_model(), expected);
+        let mut config = ModelExecutionConfig {
+            provider,
+            specific_model: None,
+            reasoning_effort: "high".to_owned(),
+            print_timeout_secs: 1,
+        };
+        assert_eq!(config.resolved_model(), expected);
+        config.specific_model = Some("explicit-model-override".to_owned());
+        assert_eq!(config.resolved_model(), "explicit-model-override");
+    }
+    let default = ModelExecutionConfig::default();
+    assert_eq!(default.provider, ModelProvider::AnthropicClaudeCode);
+    assert_eq!(default.resolved_model(), "claude-opus-5");
+}
+
+#[test]
+fn gemini_aliases_select_the_antigravity_provider() {
+    for alias in [
+        "gemini",
+        "gemini3.7",
+        "gemini-3.7-flash",
+        "gemini3.8",
+        "gemini-3.8-flash",
+        "GEMINI-3.8-FLASH",
+    ] {
+        assert_eq!(
+            ModelProvider::from_str_name(alias),
+            ModelProvider::Antigravity
+        );
+    }
+}
+
+#[test]
+fn provider_labels_do_not_claim_a_fixed_gemini_model() {
     assert_eq!(
-        ModelProvider::AnthropicClaudeCode.default_frontier_model(),
-        "opus5"
+        ModelProvider::Antigravity.display_name(),
+        "Google Antigravity Subscription (High Effort)"
     );
     assert_eq!(
-        ModelProvider::OpenAiCodex.default_frontier_model(),
-        "gpt-5.6-sol"
+        ModelProvider::SubscriptionEnsemble.display_name(),
+        "Subscription Ensemble (Claude route)"
     );
 }

@@ -28,7 +28,11 @@ impl PackageManifest {
                         dependency.package == package
                             && dependency.default_registry
                             && dependency.audited_macro_surface_enabled()
-                            && self.audited_registry.contains(package)
+                            && self.audited_registry.contains(&(
+                                dependency.key.clone(),
+                                dependency.kind,
+                                dependency.target.clone(),
+                            ))
                             && matches!(
                                 package,
                                 "serde"

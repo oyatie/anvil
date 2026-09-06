@@ -15,6 +15,9 @@ mod modules;
 
 type Seen = (PathBuf, bool, Vec<String>, PathBuf, String);
 
+#[cfg(test)]
+mod tests;
+
 pub(super) fn module_roles_from_roots(
     repo_root: &Path,
     roots: &[PathBuf],
@@ -25,27 +28,53 @@ pub(super) fn module_roles_from_roots(
             repo_root.display()
         )
     })?;
+    let contexts =
+        crate::source_scan::paths::module_graph::roots::crate_roots_with_context(&canonical_repo)?;
+    roles_with_contexts(&canonical_repo, roots, &contexts)
+}
+
+fn roles_with_contexts(
+    canonical_repo: &Path,
+    roots: &[PathBuf],
+    contexts: &[crate::source_scan::paths::module_graph::roots::CrateRoot],
+) -> Result<RoleMap, String> {
     let mut roles = BTreeMap::new();
     let mut complete = true;
     for root in roots {
-        let canonical_root = contained(root, &canonical_repo, "crate root")?;
-        let (symbols, root_complete) =
-            symbols_for_classification(&canonical_root, &canonical_repo)?;
-        complete &= root_complete;
-        let mut seen = BTreeSet::new();
-        let mut active = BTreeSet::new();
-        visit_file(
-            &canonical_root,
-            &canonical_repo,
-            false,
-            true,
-            &[],
-            LexicalContext::default(),
-            &symbols,
-            &mut seen,
-            &mut active,
-            &mut roles,
-        )?;
+        let canonical_root = contained(root, canonical_repo, "crate root")?;
+        let mut matching = contexts
+            .iter()
+            .filter(|context| context.path == canonical_root)
+            .map(Some)
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            matching.push(None);
+        }
+        for context in matching {
+            let empty_aliases = BTreeSet::new();
+            let empty_audited = BTreeMap::new();
+            let (symbols, root_complete) = symbols_for_classification(
+                &canonical_root,
+                canonical_repo,
+                context.map_or(&empty_aliases, |context| &context.aliases),
+                context.map_or(&empty_audited, |context| &context.audited_derive_crates),
+            )?;
+            complete &= root_complete;
+            let mut seen = BTreeSet::new();
+            let mut active = BTreeSet::new();
+            visit_file(
+                &canonical_root,
+                canonical_repo,
+                false,
+                true,
+                &[],
+                LexicalContext::default(),
+                &symbols,
+                &mut seen,
+                &mut active,
+                &mut roles,
+            )?;
+        }
     }
     Ok(RoleMap { roles, complete })
 }

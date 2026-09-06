@@ -47,6 +47,24 @@ fn a_more_specific_ledger_entry_beats_a_broader_one() {
 }
 
 #[test]
+fn extracted_gate_status_keeps_the_existing_vocabulary_custody() {
+    for component in ["pre_merge_guard/status", "pre_merge_guard/report"] {
+        assert_eq!(
+            verdict_for(component),
+            Some(Verdict::Migrating),
+            "{component}"
+        );
+    }
+    for component in ["pre_merge_guard", "pre_merge_guard/evaluator"] {
+        assert_eq!(
+            verdict_for(component),
+            Some(Verdict::Superseded),
+            "{component}"
+        );
+    }
+}
+
+#[test]
 fn check_edge_ignores_self_dependency() {
     assert!(check_edge("publish", "publish").is_none());
 }

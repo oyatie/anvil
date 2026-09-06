@@ -180,6 +180,27 @@ mod tests {
     }
 
     #[test]
+    fn default_agy_argv_carries_empty_print_stream_formats_and_bounded_timeout() {
+        let args = agy_args("low", Duration::from_secs(600), None).expect("valid fixed options");
+        assert_eq!(
+            args,
+            [
+                "--print",
+                "",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--effort",
+                "low",
+                "--print-timeout",
+                "570s",
+                "--dangerously-skip-permissions",
+            ]
+        );
+    }
+
+    #[test]
     fn every_provider_argv_keeps_prompt_on_stdin_and_metadata_in_its_exact_slot() {
         let model = "sentinel-model";
 

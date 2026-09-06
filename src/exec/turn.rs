@@ -135,29 +135,4 @@ mod tests {
         let err = agy_stream_response(stream).expect_err("a failed turn is an error");
         assert!(err.to_string().contains("quota exhausted"), "{err}");
     }
-
-    /// The argv must carry no prompt: that is the whole point of this module.
-    #[test]
-    fn the_argv_carries_an_empty_print_and_the_stream_formats() {
-        let cmd = crate::exec::agy_agent(
-            &crate::exec::Posture::in_workspace(std::env::temp_dir()),
-            "low",
-            Duration::from_secs(600),
-            None,
-        )
-        .expect("valid fixed options");
-        let args: Vec<String> = cmd
-            .as_std()
-            .get_args()
-            .map(|a| a.to_string_lossy().to_string())
-            .collect();
-        let print = args.iter().position(|a| a == "--print").expect("--print");
-        assert_eq!(
-            args[print + 1],
-            "",
-            "the prompt must not be an argv value: {args:?}"
-        );
-        assert!(args.contains(&"stream-json".to_string()));
-        assert!(args.contains(&"570s".to_string()), "{args:?}");
-    }
 }

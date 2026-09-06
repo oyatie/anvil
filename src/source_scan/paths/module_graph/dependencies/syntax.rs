@@ -6,6 +6,9 @@ use syn::ItemUse;
 use super::imports::{Import, collect_imports, ident_name};
 use super::symbols::Symbols;
 
+#[cfg(test)]
+mod audited_tests;
+mod macro_contract;
 mod scope;
 mod visitor;
 
@@ -245,6 +248,23 @@ impl<'symbols> Syntax<'symbols> {
                             self.record_reachable_macro_body(body);
                         }
                     }
+                    if self
+                        .symbols
+                        .audited_function_macro(
+                            &invocation.path,
+                            &self.logical_module,
+                            &self.lexical.aliases,
+                            &self.lexical.macros,
+                        )
+                        .is_some_and(|(package, symbol)| {
+                            macro_contract::public_function_tokens(
+                                (&package, &symbol),
+                                invocation.tokens.clone(),
+                            )
+                        })
+                    {
+                        locally_measured = true;
+                    }
                     if !locally_measured
                         && !visitor::known_unshadowed_builtin_macro(self, &invocation.path)
                     {
@@ -253,6 +273,7 @@ impl<'symbols> Syntax<'symbols> {
                             invocation.path.join("::")
                         ));
                     }
+                    self.record_reachable_macro_body(invocation.tokens);
                 }
             }
         }

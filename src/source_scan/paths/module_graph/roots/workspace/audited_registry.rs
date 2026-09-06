@@ -1,150 +1,158 @@
-//! Exact lockfile evidence for the small reviewed proc-macro surface.
-
-use std::collections::BTreeSet;
+// Archive-backed source identity for the finite reviewed macro/support closure.
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-struct Evidence {
-    package: &'static str,
-    version: &'static str,
-    checksum: &'static str,
-}
+use super::authority::metadata::Metadata;
+mod pins;
+#[cfg(test)]
+mod tests;
 
-const SERDE: &[Evidence] = &[
-    Evidence {
-        package: "serde",
-        version: "1.0.229",
-        checksum: "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba",
-    },
-    Evidence {
-        package: "serde_derive",
-        version: "1.0.229",
-        checksum: "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348",
-    },
-];
-const CLAP: &[Evidence] = &[
-    Evidence {
-        package: "clap",
-        version: "4.6.6",
-        checksum: "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca",
-    },
-    Evidence {
-        package: "clap_derive",
-        version: "4.6.4",
-        checksum: "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061",
-    },
-];
-const ASYNC_TRAIT: &[Evidence] = &[Evidence {
-    package: "async-trait",
-    version: "0.1.92",
-    checksum: "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667",
-}];
-const TOKIO: &[Evidence] = &[
-    Evidence {
-        package: "tokio",
-        version: "1.53.1",
-        checksum: "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed",
-    },
-    Evidence {
-        package: "tokio-macros",
-        version: "2.7.2",
-        checksum: "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e",
-    },
-];
-const TRACING: &[Evidence] = &[Evidence {
-    package: "tracing",
-    version: "0.1.44",
-    checksum: "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100",
-}];
-const ANYHOW: &[Evidence] = &[Evidence {
-    package: "anyhow",
-    version: "1.0.104",
-    checksum: "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470",
-}];
-const SERDE_JSON: &[Evidence] = &[Evidence {
-    package: "serde_json",
-    version: "1.0.151",
-    checksum: "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
-}];
+const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
-pub(super) fn packages(root: &Path) -> Result<BTreeSet<String>, String> {
-    let cargo = root.join(".cargo");
-    match fs::symlink_metadata(&cargo) {
-        Ok(metadata) if !metadata.file_type().is_dir() => {
-            return Err(format!(
-                "Cargo authority {} is not a directory",
-                cargo.display()
-            ));
-        }
-        Ok(_) => {
-            for name in ["config", "config.toml"] {
-                let path = cargo.join(name);
-                match fs::symlink_metadata(&path) {
-                    Ok(_) => return Ok(BTreeSet::new()),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        return Err(format!("cannot inspect {}: {error}", path.display()));
-                    }
-                }
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("cannot inspect {}: {error}", cargo.display())),
-    }
-    let path = root.join("Cargo.lock");
-    if !path.exists() {
-        return Ok(BTreeSet::new());
-    }
-    let canonical = fs::canonicalize(&path)
-        .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
-    if !canonical.starts_with(root) || !canonical.is_file() {
-        return Err(format!(
-            "lockfile {} escapes the repository",
-            path.display()
-        ));
-    }
-    let bytes =
-        fs::read(&canonical).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    let text = String::from_utf8(bytes)
-        .map_err(|error| format!("{} is not UTF-8: {error}", path.display()))?;
-    let lock = text
-        .parse::<toml::Value>()
-        .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
-    let entries = lock
-        .get("package")
-        .and_then(toml::Value::as_array)
-        .ok_or_else(|| format!("{} has no package records", path.display()))?;
-
-    let mut audited = BTreeSet::new();
-    for (package, evidence) in [
-        ("serde", SERDE),
-        ("clap", CLAP),
-        ("async-trait", ASYNC_TRAIT),
-        ("tokio", TOKIO),
-        ("tracing", TRACING),
-        ("anyhow", ANYHOW),
-        ("serde_json", SERDE_JSON),
-    ] {
-        if evidence
+pub(super) fn selected(
+    metadata: &Metadata,
+    lock: &str,
+    cargo_home: &Path,
+) -> Option<BTreeMap<String, String>> {
+    let lock: toml::Value = lock.parse().ok()?;
+    let records = lock.get("package")?.as_array()?;
+    let source_base = fs::canonicalize(cargo_home.join("registry/src")).ok()?;
+    let mut admitted = BTreeMap::new();
+    for &(name, version, archive, fingerprint) in pins::PACKAGES {
+        let matching = metadata
+            .packages
             .iter()
-            .all(|expected| uniquely_present(entries, expected))
+            .filter(|package| package.name == name && package.version == version)
+            .collect::<Vec<_>>();
+        let [package] = matching.as_slice() else {
+            return None;
+        };
+        if package.source.as_deref() != Some(REGISTRY) {
+            return None;
+        }
+        let locked = records
+            .iter()
+            .filter(|record| {
+                record.get("name").and_then(toml::Value::as_str) == Some(name)
+                    && record.get("version").and_then(toml::Value::as_str) == Some(version)
+            })
+            .collect::<Vec<_>>();
+        let [locked] = locked.as_slice() else {
+            return None;
+        };
+        if locked.get("source").and_then(toml::Value::as_str) != Some(REGISTRY)
+            || locked.get("checksum").and_then(toml::Value::as_str) != Some(archive)
         {
-            audited.insert(package.to_owned());
+            return None;
+        }
+        let manifest = canonical_manifest(&package.manifest_path, &source_base)?;
+        let directory = manifest.parent()?;
+        if !directory.starts_with(&source_base) || source_fingerprint(directory)? != fingerprint {
+            return None;
+        }
+        let node = metadata.node(&package.id)?;
+        if matches!(name, "clap" | "clap_builder" | "clap_derive")
+            && node
+                .features
+                .iter()
+                .any(|feature| feature == "unstable-markdown")
+        {
+            return None;
+        }
+        admitted.insert(name.to_owned(), package.id.clone());
+    }
+    // The selected support edges, not just coexisting package names, must use
+    // the reviewed implementations. Runtime-only dependencies are not macro grants.
+    for id in admitted.values() {
+        if !metadata
+            .node(id)?
+            .reviewed_edges_match(&admitted, &metadata.packages)
+        {
+            return None;
         }
     }
-    Ok(audited)
+    Some(admitted)
 }
 
-fn uniquely_present(entries: &[toml::Value], expected: &Evidence) -> bool {
-    let matching_name = entries
-        .iter()
-        .filter(|entry| entry.get("name").and_then(toml::Value::as_str) == Some(expected.package))
-        .collect::<Vec<_>>();
-    let [entry] = matching_name.as_slice() else {
-        return false;
-    };
-    entry.get("version").and_then(toml::Value::as_str) == Some(expected.version)
-        && entry.get("checksum").and_then(toml::Value::as_str) == Some(expected.checksum)
-        && entry.get("source").and_then(toml::Value::as_str)
-            == Some("registry+https://github.com/rust-lang/crates.io-index")
+fn canonical_manifest(path: &Path, cache: &Path) -> Option<PathBuf> {
+    if !path.is_absolute() || path.file_name()? != "Cargo.toml" {
+        return None;
+    }
+    // Cargo's native Windows paths need not carry canonicalize's verbatim
+    // prefix. Compare canonical identity, while rejecting actual link entries.
+    for ancestor in path.ancestors() {
+        if fs::symlink_metadata(ancestor)
+            .ok()?
+            .file_type()
+            .is_symlink()
+        {
+            return None;
+        }
+    }
+    let canonical = fs::canonicalize(path).ok()?;
+    (canonical.starts_with(cache) && canonical.is_file()).then_some(canonical)
+}
+
+fn source_fingerprint(root: &Path) -> Option<String> {
+    let canonical = fs::canonicalize(root).ok()?;
+    if canonical != root || fs::symlink_metadata(root).ok()?.file_type().is_symlink() {
+        return None;
+    }
+    let mut files = BTreeMap::new();
+    collect_files(root, root, &mut files)?;
+    let mut digest = Sha256::new();
+    for (relative, file_digest) in files {
+        digest.update(relative.as_bytes());
+        digest.update(b"\0");
+        digest.update(file_digest.as_bytes());
+        digest.update(b"\n");
+    }
+    Some(hex::encode(digest.finalize()))
+}
+
+fn collect_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> Option<()> {
+    for entry in fs::read_dir(directory).ok()? {
+        let path: PathBuf = entry.ok()?.path();
+        let kind = fs::symlink_metadata(&path).ok()?.file_type();
+        if kind.is_symlink() {
+            return None;
+        }
+        let canonical = fs::canonicalize(&path).ok()?;
+        if !canonical.starts_with(root) || canonical != path {
+            return None;
+        }
+        if kind.is_dir() {
+            collect_files(root, &path, files)?;
+        } else if kind.is_file() {
+            if path == root.join(".cargo-ok") {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .ok()?
+                .components()
+                .map(|component| {
+                    let std::path::Component::Normal(name) = component else {
+                        return None;
+                    };
+                    let name = name.to_str()?;
+                    (!name.contains(['/', '\\'])).then_some(name)
+                })
+                .collect::<Option<Vec<_>>>()?
+                .join("/");
+            let hash = hex::encode(Sha256::digest(fs::read(&path).ok()?));
+            if files.insert(relative, hash).is_some() {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    Some(())
 }

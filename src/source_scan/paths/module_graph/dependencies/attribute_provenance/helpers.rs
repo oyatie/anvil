@@ -42,11 +42,32 @@ fn collect(
     tokens: &mut Vec<proc_macro2::TokenStream>,
 ) -> Result<(), String> {
     match option {
+        Meta::NameValue(value)
+            if matches!(kind, Kind::Serde | Kind::Tokio) && value.path.is_ident("crate") =>
+        {
+            Err("custom macro crate redirects have no admitted source identity".to_owned())
+        }
         Meta::Path(path) if matches!(kind, Kind::Tokio) => Err(format!(
             "tokio attribute option `{}` has no audited expansion",
             path_name(path)
         )),
         Meta::Path(_) => Ok(()),
+        Meta::NameValue(value)
+            if matches!(kind, Kind::Tokio)
+                && safe_data_key(kind, parent, &path_name(&value.path)) =>
+        {
+            let valid = match (&value.value, path_name(&value.path).as_str()) {
+                (Expr::Lit(literal), "worker_threads") => matches!(literal.lit, syn::Lit::Int(_)),
+                (Expr::Lit(literal), "start_paused") => matches!(literal.lit, syn::Lit::Bool(_)),
+                (Expr::Lit(literal), "flavor" | "unhandled_panic") => {
+                    matches!(literal.lit, syn::Lit::Str(_))
+                }
+                _ => false,
+            };
+            valid
+                .then_some(())
+                .ok_or_else(|| "Tokio runtime knobs must be scalar literals".to_owned())
+        }
         Meta::NameValue(value) if safe_data_key(kind, parent, &path_name(&value.path)) => Ok(()),
         Meta::NameValue(value) if matches!(kind, Kind::Tokio) && !value.path.is_ident("crate") => {
             Err(format!(
@@ -76,6 +97,15 @@ fn collect(
             Ok(())
         }
         Meta::List(list) => {
+            if matches!(kind, Kind::Clap) {
+                let expressions = list
+                    .parse_args_with(Punctuated::<Expr, syn::token::Comma>::parse_terminated)
+                    .map_err(|error| {
+                        format!("Clap method arguments cannot be measured: {error}")
+                    })?;
+                tokens.extend(expressions.iter().map(ToTokens::to_token_stream));
+                return Ok(());
+            }
             if matches!(kind, Kind::Tokio) {
                 return Err(format!(
                     "nested tokio attribute option `{}` has no audited expansion",
@@ -123,4 +153,43 @@ fn path_name(path: &syn::Path) -> String {
         .map(|segment| segment.ident.to_string())
         .collect::<Vec<_>>()
         .join("::")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_crate_redirects_and_non_scalar_tokio_knobs_are_not_admitted() {
+        for (source, kind) in [
+            ("serde(crate = \"other\")", Kind::Serde),
+            ("tokio::main(crate = \"other\")", Kind::Tokio),
+            ("tokio::main(worker_threads = threads())", Kind::Tokio),
+        ] {
+            assert!(
+                analyze(&syn::parse_str(source).unwrap(), kind).is_err(),
+                "{source}"
+            );
+        }
+        assert!(
+            analyze(
+                &syn::parse_str("tokio::main(flavor = \"current_thread\")").unwrap(),
+                Kind::Tokio
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn clap_method_arguments_remain_traversable_rust_expressions() {
+        let tokens = analyze(
+            &syn::parse_str("arg(value_parser(factory()), num_args(1..=3))").unwrap(),
+            Kind::Clap,
+        )
+        .unwrap();
+        assert_eq!(
+            tokens.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["factory ()", "1 ..= 3"]
+        );
+    }
 }

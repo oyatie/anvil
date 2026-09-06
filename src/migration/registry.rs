@@ -85,6 +85,19 @@ impl MigrationEntry {
 /// oyatie tree; see PLAN.md section 38 for method and honest limits.
 pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
     MigrationEntry {
+        component: "pre_merge_guard/status",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "",
+        counterpart_loc: 0,
+        evidence: "GateStatus was extracted from report.rs into status.rs on dev at c937591; \
+                   report.rs reexports the same enum. This preserves the existing report entry's \
+                   admission-vocabulary custody at its actual owner, rather than granting a new \
+                   verdict to the surrounding evaluator. The enum distinguishes failure, inability \
+                   to measure, and measured absence. No fresh upstream comparison is claimed; \
+                   the original report entry records that evidence.",
+    },
+    MigrationEntry {
         component: "pre_merge_guard/report",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
@@ -92,7 +105,8 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         counterpart_loc: 0,
         evidence: "Split out from the pre_merge_guard entry after the migration-boundary gate found \
                    seven Migrating modules depending on it. Every one of those imports exactly \
-                   `GateStatus` and nothing else. report.rs owns the admission vocabulary -- \
+                   `GateStatus` and nothing else. report.rs retains the report and reexports the \
+                   admission vocabulary now owned by status.rs -- \
                    Errored, NotMeasured, is_admissible -- and a search of oyatie's \
                    governance/check/honest-claims (1878 lines) and aspirational-enforcement (692) \
                    found aspiration tracking but ZERO not-measured, unmeasured, or abstain \

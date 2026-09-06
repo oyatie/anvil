@@ -14,6 +14,8 @@ use super::{ApiResponse, AppState};
 use crate::fixer::ReviewFeedbackItem;
 use crate::queue_healer::QueueHealer;
 
+mod fix_entry;
+
 pub async fn webhook_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -289,23 +291,16 @@ pub async fn webhook_handler(
             if state_clone.pause.holds(&repo_clone, pr_number, "fixing") {
                 return;
             }
-            // The review pipeline's per-PR lock; both work in one clone.
-            let lock = state_clone
-                .state_mgr
-                .acquire_pr_lock(&repo_clone, pr_number)
-                .await;
-            let _guard = lock.lock().await;
-            let _ = state_clone
-                .fixer
-                .resolve_and_fix(
-                    &repo_clone,
-                    pr_number,
-                    &head_branch,
-                    &head_sha,
-                    is_cross_repository,
-                    &[feedback_item],
-                )
-                .await;
+            fix_entry::run(
+                state_clone,
+                repo_clone,
+                pr_number,
+                head_branch,
+                head_sha,
+                is_cross_repository,
+                feedback_item,
+            )
+            .await;
         });
 
         return (

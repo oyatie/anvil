@@ -93,6 +93,72 @@ fn occupancy_is_a_job_of_its_own() {
 }
 
 #[test]
+fn native_dependencies_are_complete_locked_and_required_before_compilation() {
+    let native = steps("windows-capture");
+    let dependencies = native
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| step["id"].as_str() == Some("native-dependencies"))
+        .collect::<Vec<_>>();
+    assert_eq!(dependencies.len(), 1, "one complete-cache prerequisite");
+    let (index, dependency) = dependencies[0];
+    assert_eq!(dependency["run"].as_str(), Some("cargo fetch --locked"));
+    assert!(dependency["if"].is_null());
+    assert!(dependency["continue-on-error"].is_null());
+    assert!(index > 0);
+    assert_eq!(
+        native[index - 1]["uses"].as_str(),
+        Some("dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17")
+    );
+    assert_eq!(
+        native[index - 1]["with"]["toolchain"].as_str(),
+        Some("1.98.0")
+    );
+    assert_eq!(native[index + 1]["id"].as_str(), Some("native-check"));
+    assert!(native[index + 1]["if"].is_null());
+    assert!(native[index + 1]["continue-on-error"].is_null());
+    assert_eq!(lane()["permissions"]["contents"].as_str(), Some("read"));
+    assert!(job("windows-capture")["permissions"].is_null());
+}
+
+#[test]
+fn native_tests_collect_independent_failures_only_after_compilation() {
+    let native = steps("windows-capture");
+    let check = native
+        .iter()
+        .position(|step| step["id"].as_str() == Some("native-check"))
+        .expect("native compilation has an explicit prerequisite identity");
+    assert_eq!(
+        native[check]["run"].as_str(),
+        Some("cargo check --lib --locked")
+    );
+    assert!(native[check]["if"].is_null());
+    let tests = &native[check + 1..];
+    assert_eq!(
+        tests.len(),
+        9,
+        "the complete independent native inventory remains explicit"
+    );
+    for step in tests {
+        assert_eq!(
+            step["if"].as_str(),
+            Some("${{ !cancelled() && steps.native-check.outcome == 'success' }}")
+        );
+        assert!(
+            step["run"]
+                .as_str()
+                .is_some_and(|run| run.starts_with("cargo test "))
+        );
+    }
+    assert!(
+        native
+            .iter()
+            .all(|step| step["continue-on-error"].is_null())
+    );
+    assert!(job("windows-capture")["continue-on-error"].is_null());
+}
+
+#[test]
 fn occupancy_runs_on_pull_request_and_skips_merge_group() {
     let cond = job("occupancy")["if"]
         .as_str()

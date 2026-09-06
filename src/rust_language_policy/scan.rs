@@ -69,6 +69,7 @@ impl RustQualityEngine {
         // `None` until the diff names a file. See the module docs.
         let mut current_file: Option<String> = None;
         let mut is_test_file = false;
+        let mut test_sources = None;
         let mut prev_line = String::new();
         // Whether this line sits inside an async item. See the module docs.
         let mut in_async = false;
@@ -89,11 +90,25 @@ impl RustQualityEngine {
                 // `path.contains("test")` spared `src/latest_state.rs` and
                 // `src/attestation_guard.rs` while charging every production
                 // file that merely says the word. Cargo's layout is the rule.
-                is_test_file = crate::source_scan::paths::is_test_source(&path)
-                    || path.contains("/benches/")
-                    || path.ends_with("_bench.rs")
-                    || path.contains("/mocks/")
-                    || path.ends_with("_mock.rs");
+                let full_path = diff_ctx.repo_working_dir.join(&path);
+                let graph_classification = if path.ends_with(".rs") && full_path.is_file() {
+                    if test_sources.is_none() {
+                        test_sources = Some(
+                            crate::source_scan::paths::TestSourceClassifier::new(
+                                &diff_ctx.repo_working_dir,
+                            )
+                            .map_err(anyhow::Error::msg)?,
+                        );
+                    }
+                    test_sources
+                        .as_ref()
+                        .expect("initialized Rust test-source classifier")
+                        .classify(std::path::Path::new(&path))
+                        .map_err(anyhow::Error::msg)?
+                } else {
+                    crate::source_scan::paths::is_test_source(&path)
+                };
+                is_test_file = graph_classification;
                 current_file = Some(path);
                 prev_line.clear();
                 continue;

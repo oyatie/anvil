@@ -160,8 +160,16 @@ async fn test_multi_model_cascading_outage_cooldown_and_fallback() {
         print_timeout_secs: 60,
     };
 
+    let mut prompt = anvil::model_prompt::ModelPrompt::builder();
+    prompt.push_untrusted(anvil::reviewer::untrusted::Untrusted::new(
+        anvil::reviewer::untrusted::UntrustedLabel::ReviewComment,
+        "Return the word HELLO_RESILIENCE",
+    ));
+    let prompt = prompt
+        .finish_for(anvil::model_prompt::ModelPromptPurpose::SubscriptionProbe)
+        .expect("non-empty bounded prompt");
     let result = executor
-        .execute_prompt("Return the word HELLO_RESILIENCE", Path::new("."), &config)
+        .execute_prompt(&prompt, Path::new("."), &config)
         .await;
 
     assert!(result.is_ok());

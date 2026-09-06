@@ -4,6 +4,14 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::git_manager::diff_context::{FileChangeKind, diffs_by_path};
+
+fn prohibited_tool_path(file: &str) -> bool {
+    (file.starts_with("scripts/") || file.starts_with("tools/"))
+        && [".sh", ".py", ".mjs", ".js"]
+            .iter()
+            .any(|suffix| file.ends_with(suffix))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudNativeViolation {
@@ -64,6 +72,30 @@ impl CloudNativeGuard {
         );
 
         let mut violations = Vec::new();
+        let files = diffs_by_path(&diff_ctx.diff_content);
+        // The name list can reveal missing observation, never prove creation.
+        for path in diff_ctx
+            .changed_files
+            .iter()
+            .filter(|p| prohibited_tool_path(p))
+        {
+            let direct = files.iter().any(|file| file.path == *path);
+            let matches: Vec<_> = files
+                .iter()
+                .filter(|file| {
+                    if direct {
+                        file.path == *path
+                    } else {
+                        file.previous_path() == Some(path.as_str())
+                    }
+                })
+                .collect();
+            if matches.len() != 1 || matches[0].change_kind().is_none() {
+                return Err(anyhow::anyhow!(
+                    "non-Rust tooling change kind is not observable for {path}"
+                ));
+            }
+        }
 
         // 1. Check for proprietary cloud SDKs in Domain Core
         let proprietary_sdks = [
@@ -81,7 +113,7 @@ impl CloudNativeGuard {
         // `diffs_by_path` already attributes hunks to paths and is the parser
         // this repository requires; hand-rolling a second one is what the
         // diff-parsing ratchet forbids.
-        for fd in crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content) {
+        for fd in &files {
             let is_core = fd.path.contains("/core/") || fd.path.contains("-domain/");
             if !is_core {
                 continue;
@@ -130,13 +162,22 @@ impl CloudNativeGuard {
         }
 
         // 3. Check for new non-Rust scripts in scripts/ or tools/
-        for file in &diff_ctx.changed_files {
-            if (file.starts_with("scripts/") || file.starts_with("tools/"))
-                && (file.ends_with(".sh")
-                    || file.ends_with(".py")
-                    || file.ends_with(".mjs")
-                    || file.ends_with(".js"))
-            {
+        for fd in files.iter().filter(|fd| prohibited_tool_path(&fd.path)) {
+            let introduced = match fd.change_kind() {
+                Some(FileChangeKind::Added | FileChangeKind::Copied) => true,
+                Some(FileChangeKind::Renamed) => {
+                    !prohibited_tool_path(fd.previous_path().ok_or_else(|| {
+                        anyhow::anyhow!("tooling rename source is not observable")
+                    })?)
+                }
+                Some(FileChangeKind::Modified | FileChangeKind::Deleted) => false,
+                None => anyhow::bail!(
+                    "non-Rust tooling change kind is not observable for {}",
+                    fd.path
+                ),
+            };
+            if introduced {
+                let file = &fd.path;
                 violations.push(CloudNativeViolation {
                     category: "NON_RUST_SCRIPT_TOOLING".to_string(),
                     description: format!(

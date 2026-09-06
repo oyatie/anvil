@@ -4,6 +4,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::git_manager::diff_context::diffs_by_path;
 
 pub mod orphan_sweeper;
 pub use orphan_sweeper::{OrphanManifestFinding, OrphanSweeper};
@@ -51,6 +52,31 @@ impl GitOpsDriftReconciler {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
+        let files = diffs_by_path(&diff_ctx.diff_content);
+        let scoped = diff_ctx
+            .changed_files
+            .iter()
+            .map(String::as_str)
+            .filter(|path| OrphanSweeper::is_gitops_manifest(path))
+            .collect::<std::collections::BTreeSet<_>>();
+        for path in &scoped {
+            let direct = files.iter().any(|file| file.path == **path);
+            let matches: Vec<_> = files
+                .iter()
+                .filter(|file| {
+                    if direct {
+                        file.path == **path
+                    } else {
+                        file.previous_path() == Some(*path)
+                    }
+                })
+                .collect();
+            if matches.len() != 1 || matches[0].change_kind().is_none() {
+                return Err(anyhow::anyhow!(
+                    "GitOps manifest change kind is not observable for {path}"
+                ));
+            }
+        }
         let orphan_findings = self
             .sweeper
             .scan_orphan_risk(&diff_ctx.changed_files, &diff_ctx.diff_content);
@@ -72,11 +98,7 @@ impl GitOpsDriftReconciler {
         // explicitly. That is the shape here. `NotMeasured` is
         // `is_acceptable()`, so the badge does not accuse the pull request of a
         // defect; `admission_refusal` withholds the merge.
-        if !diff_ctx
-            .changed_files
-            .iter()
-            .any(|f| OrphanSweeper::is_gitops_manifest(f))
-        {
+        if scoped.is_empty() {
             return Ok(GitOpsDriftReport {
                 status: GateStatus::NotMeasured {
                     gate_id: GATE_ID.to_string(),

@@ -39,7 +39,7 @@ fn test_cloud_native_guard_violations() {
         base_branch: "dev".to_string(),
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
-        diff_content: "+ print('hello')".to_string(),
+        diff_content: "diff --git a/scripts/deploy.py b/scripts/deploy.py\nnew file mode 100644\n--- /dev/null\n+++ b/scripts/deploy.py\n@@ -0,0 +1 @@\n+print('hello')\n".to_string(),
         changed_files: vec!["scripts/deploy.py".to_string()],
         repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
             std::path::PathBuf::from("/tmp"),

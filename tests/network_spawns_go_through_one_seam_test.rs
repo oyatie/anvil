@@ -507,6 +507,31 @@ fn is_seam(rel: &str) -> bool {
     rel == format!("{SEAM}.rs") || rel.starts_with(&format!("{SEAM}/"))
 }
 
+fn is_declared_test_file(path: &Path, declared: &BTreeSet<PathBuf>) -> bool {
+    let canonical = fs::canonicalize(path)
+        .unwrap_or_else(|error| panic!("canonical source identity {}: {error}", path.display()));
+    declared.contains(&canonical)
+}
+
+#[test]
+fn declared_test_membership_uses_existing_canonical_file_identity() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    let path = root.path().join("source.rs");
+    fs::write(&path, "").expect("ordinary source file");
+    let canonical = fs::canonicalize(&path).expect("canonical fixture identity");
+    let declared = [canonical.clone()].into_iter().collect();
+    assert!(is_declared_test_file(&path, &declared));
+    assert!(is_declared_test_file(&canonical, &declared));
+    assert!(!is_declared_test_file(&path, &BTreeSet::new()));
+}
+
+#[test]
+#[should_panic(expected = "canonical source identity")]
+fn declared_test_membership_does_not_excuse_a_missing_file() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    is_declared_test_file(&root.path().join("missing.rs"), &BTreeSet::new());
+}
+
 /// Network-tool spawns outside the seam, as `path: argument`.
 fn offenders() -> Vec<String> {
     let test_modules = anvil::source_scan::paths::declared_test_module_files(&repo())
@@ -521,7 +546,7 @@ fn offenders() -> Vec<String> {
             .unwrap_or(&p)
             .to_string_lossy()
             .replace('\\', "/");
-        if is_test_source(&rel) || test_modules.contains(&p) || is_seam(&rel) {
+        if is_test_source(&rel) || is_declared_test_file(&p, &test_modules) || is_seam(&rel) {
             continue;
         }
         let raw = fs::read_to_string(&p)
@@ -3437,7 +3462,9 @@ fn network_capability_census() -> Vec<(String, String, String)> {
     let mut parsed = Vec::new();
     for path in files {
         let relative = path.strip_prefix(repo()).unwrap_or(&path);
-        if is_test_source(&relative.to_string_lossy()) || test_modules.contains(&path) {
+        if is_test_source(&relative.to_string_lossy())
+            || is_declared_test_file(&path, &test_modules)
+        {
             continue;
         }
         let source = fs::read_to_string(&path).expect("read production network source");

@@ -155,7 +155,7 @@ fn rust_sources() -> Vec<PathBuf> {
                 // "hand-rolled diff parsers" here. The answer lives in
                 // `source_scan` because twelve scanners in this tree strip
                 // test code the same way and share the same blind spot.
-                && !test_modules.contains(&repository.join(&p))
+                && !is_declared_test_file(&repository.join(&p), &test_modules)
             {
                 out.push(p);
             }
@@ -163,6 +163,31 @@ fn rust_sources() -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+fn is_declared_test_file(path: &Path, declared: &BTreeSet<PathBuf>) -> bool {
+    let canonical = fs::canonicalize(path)
+        .unwrap_or_else(|error| panic!("canonical source identity {}: {error}", path.display()));
+    declared.contains(&canonical)
+}
+
+#[test]
+fn declared_test_membership_uses_existing_canonical_file_identity() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    let path = root.path().join("source.rs");
+    fs::write(&path, "").expect("ordinary source file");
+    let canonical = fs::canonicalize(&path).expect("canonical fixture identity");
+    let declared = [canonical.clone()].into_iter().collect();
+    assert!(is_declared_test_file(&path, &declared));
+    assert!(is_declared_test_file(&canonical, &declared));
+    assert!(!is_declared_test_file(&path, &BTreeSet::new()));
+}
+
+#[test]
+#[should_panic(expected = "canonical source identity")]
+fn declared_test_membership_does_not_excuse_a_missing_file() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    is_declared_test_file(&root.path().join("missing.rs"), &BTreeSet::new());
 }
 
 /// A path written with `/` on every platform.

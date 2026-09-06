@@ -178,6 +178,14 @@ fn insecure_transport_in(code: &str, original: &str) -> Option<&'static str> {
         rest = after;
     }
 
+    // A complete standalone string literal is data, not a call. This narrow
+    // distinction uses the original line, never an incomplete comment prefix,
+    // and applies only here: endpoint literals above are still scanned.
+    let value = original.trim_end();
+    if syn::parse_str::<syn::LitStr>(value.strip_suffix(',').unwrap_or(value)).is_ok() {
+        return None;
+    }
+
     // An explicit opt-out of transport security, named as a call. Requiring the
     // open paren is what keeps this file -- which names both identifiers as
     // string data below -- from being a finding against itself.

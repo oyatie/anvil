@@ -4,6 +4,7 @@
 //! characterise what it does today so a rewrite can be shown to preserve it —
 //! a redesign with nothing to compare against is a rewrite done blind.
 
+use anvil::change_delivery::core::OwnerMap;
 use anvil::change_delivery::core::owners::codeowners_matches as m;
 
 #[test]
@@ -59,4 +60,48 @@ fn a_non_matching_pattern_is_refused() {
 fn an_extension_pattern_matches_by_basename_anywhere() {
     assert!(m("*.md", "README.md"));
     assert!(m("*.md", "docs/adr/0001.md"));
+}
+
+#[test]
+fn an_anchored_basename_matches_only_the_root_file() {
+    assert!(m("/README.md", "README.md"));
+    assert!(!m("/README.md", "docs/README.md"));
+    assert!(!m("/README.md", "a/b/README.md"));
+    assert!(m("README.md", "a/b/README.md"));
+}
+
+#[test]
+fn an_anchored_directory_requires_contents_at_the_root() {
+    for path in ["docs/file.md", "docs/nested/file.md"] {
+        assert!(m("/docs/", path), "{path}");
+    }
+    for path in ["docs", "x/docs", "nested/docs/file.md"] {
+        assert!(!m("/docs/", path), "{path}");
+    }
+    assert!(m("docs/", "nested/docs/file.md"));
+    assert!(m("/src/docs/", "src/docs/file.md"));
+    assert!(!m("/src/docs/", "src/docs"));
+    assert!(!m("/src/docs/", "nested/src/docs/file.md"));
+}
+
+#[test]
+fn anchored_unicode_and_recursive_patterns_keep_segment_boundaries() {
+    assert!(m("/文档/**/*.md", "文档/说明.md"));
+    assert!(m("/文档/**/*.md", "文档/深/说明.md"));
+    assert!(!m("/文档/**/*.md", "nested/文档/说明.md"));
+    assert!(m("/文档/", "文档/说明.md"));
+    assert!(!m("/文档/", "文档"));
+    assert!(m("/文*档/", "文书档/说明.md"));
+}
+
+#[test]
+fn the_last_specific_rule_wins_only_where_its_anchor_matches() {
+    let owners = OwnerMap::from_codeowners("docs/ @docs\n/README.md @root\n");
+    assert_eq!(owners.owners_of("README.md"), ["@root".into()].into());
+    assert_eq!(owners.owners_of("docs/README.md"), ["@docs".into()].into());
+    let unanchored = OwnerMap::from_codeowners("docs/ @docs\nREADME.md @readme\n");
+    assert_eq!(
+        unanchored.owners_of("docs/README.md"),
+        ["@readme".into()].into()
+    );
 }

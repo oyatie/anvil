@@ -1,0 +1,109 @@
+name: build-and-test
+
+# The lane presubmit and postsubmit share. Neither owns it, so a change to how
+# this repository is compiled or tested lands once and both rungs move together.
+
+on:
+  workflow_call:
+
+# A called workflow may not exceed its caller's grant; both callers give
+# `contents: read`, and compiling needs nothing beyond it.
+permissions:
+  contents: read
+
+jobs:
+
+  fmt:
+    name: fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.98.0"
+          components: rustfmt
+      - name: Format Check
+        run: cargo fmt --all -- --check
+
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # Full history. `neither_gate_fires_on_this_repositorys_own_history`
+      # scans the last 20 commits and refuses to run on a shallow checkout,
+      # where `git show` on the single grafted commit is the whole tree rather
+      # than a commit's diff.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.98.0"
+          components: rustfmt, clippy
+      - name: Install nextest
+        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532
+        with:
+          tool: nextest
+      - name: Rust Cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: anvil-test
+          cache-workspace-crates: "true"
+      - name: Clippy Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo nextest run --all-targets --locked --profile ci
+
+  windows-capture:
+    name: windows-capture
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.98.0"
+      # Fixed offline metadata needs the complete cross-platform source cache.
+      - name: Prepare complete locked dependency cache
+        id: native-dependencies
+        run: cargo fetch --locked
+      - name: Check native library
+        id: native-check
+        run: cargo check --lib --locked
+      - name: Test owned capture and deadline contracts
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --lib --locked exec::non_model::transport
+      - name: Test provider-free argv contracts
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --lib --locked exec::agent::provider::tests
+      - name: Test unavailable-primary fallback selection
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --lib --locked ai_driver::router::tests
+      - name: Test turn parsing without providers
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --lib --locked exec::turn::tests
+      - name: Test checked execution ownership
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --locked --test model_spawns_go_through_one_seam_test every_execution_site_is_downstream_of_its_typed_capability -- --exact
+      - name: Test native source classification and workspace contracts
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --lib --locked source_scan
+      - name: Test exact native production process census
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --locked --test model_spawns_go_through_one_seam_test current_process_execution_call_sites_are_the_private_exec_seams -- --exact
+      - name: Test native zero-network-spawn census
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --locked --test network_spawns_go_through_one_seam_test no_network_tool_is_spawned_outside_the_seam -- --exact
+      - name: Test native diff-parser classification ratchet
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
+        run: cargo test --locked --test diff_parsing_ratchet_test
+
+  # The caller's `fast-checks` fan-in includes every job in this reusable lane.

@@ -18,6 +18,12 @@ pub struct DigestPinFinding {
 
 pub struct DigestPinner;
 
+impl Default for DigestPinner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DigestPinner {
     pub fn new() -> Self {
         Self

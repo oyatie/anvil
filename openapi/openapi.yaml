@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Anvil Autonomous Delivery Fabric API
   version: 1.0.0
-  description: HTTP webhook and manual on-demand triggers for Anvil 60-Gate Delivery Engine.
+  description: HTTP webhook and manual on-demand triggers for the Anvil pre-merge certification fabric. The gate count is TOTAL_GATES, not a number written on this page.
 paths:
   /healthz:
     get:
@@ -64,7 +64,7 @@ paths:
           description: Fix pipeline queued
   /api/certify:
     post:
-      summary: Trigger 60-Gate Pre-Merge Certification
+      summary: Trigger pre-merge certification
       requestBody:
         required: true
         content:

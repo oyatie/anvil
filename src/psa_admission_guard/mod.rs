@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::diffs_by_path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -19,6 +20,12 @@ pub struct PsaAdmissionGuard {
     rules: PsaAdmissionRules,
 }
 
+impl Default for PsaAdmissionGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PsaAdmissionGuard {
     pub fn new() -> Self {
         let rules = PsaAdmissionRules::new();
@@ -38,16 +45,18 @@ impl PsaAdmissionGuard {
 
         let mut findings = Vec::new();
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "infra/ns.yaml".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
-            }
+        for file in diffs_by_path(&diff_ctx.diff_content) {
+            // The path is the one the diff states. It used to default to the
+            // literal "infra/ns.yaml", a plausible path this gate published
+            // as the location of a finding that was not found there.
+            //
+            // `all` -- additions plus the context they sit in, removals excluded. The
+            // rule asks what the file says after this change, and a line the
+            // change DELETES is not part of that.
 
-            let file_findings = self.rules.evaluate_psa_manifest(&current_file, file_diff);
+            let file_findings = self
+                .rules
+                .evaluate_psa_manifest(&file.path, file.after_change());
             findings.extend(file_findings);
         }
 
@@ -84,7 +93,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ pod-security.kubernetes.io/enforce: restricted".to_string(),
             changed_files: vec!["infra/ns.yaml".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

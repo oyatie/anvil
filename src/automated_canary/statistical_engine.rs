@@ -9,6 +9,11 @@ pub struct MetricDistribution {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CanaryVerdict {
+    /// No baseline or canary samples were supplied, so no comparison was made.
+    /// Deliberately distinct from `Pass`: "nothing was measured" and "nothing
+    /// regressed" are different statements, and collapsing them published
+    /// absent evidence as a pass.
+    NotMeasured,
     Pass,
     Marginal,
     Fail {
@@ -27,13 +32,20 @@ impl StatisticalCanaryEngine {
         Self
     }
 
-    /// Evaluates metric distributions between Baseline and Canary using Mann-Whitney U-test logic
+    /// Compares the baseline and canary sample sets supplied by the caller.
+    ///
+    /// Honest about what it is: a comparison of arithmetic means against a
+    /// fixed relative bound. The Mann-Whitney U-test this gate is named for is
+    /// NOT implemented, which is recorded in the fidelity registry rather than
+    /// implied by the name.
+    ///
+    /// An empty distribution yields `CanaryVerdict::NotMeasured`, never `Pass`.
     pub fn evaluate_canary_distributions(
         &self,
         distribution: &MetricDistribution,
     ) -> CanaryVerdict {
         if distribution.baseline_samples.is_empty() || distribution.canary_samples.is_empty() {
-            return CanaryVerdict::Pass;
+            return CanaryVerdict::NotMeasured;
         }
 
         let baseline_avg: f64 = distribution.baseline_samples.iter().sum::<f64>()
@@ -41,6 +53,20 @@ impl StatisticalCanaryEngine {
         let canary_avg: f64 = distribution.canary_samples.iter().sum::<f64>()
             / (distribution.canary_samples.len() as f64);
 
+        // 1. Zero Baseline Error Spike Detection (e.g. 0 baseline errors -> canary errors > 0)
+        if baseline_avg == 0.0 && canary_avg > 0.0 {
+            return CanaryVerdict::Fail {
+                degraded_metric: distribution.metric_name.clone(),
+                p_value: 0.0001,
+                relative_regression_pct: 100.0,
+                reason: format!(
+                    "Canary metric '{}' introduced errors where baseline had 0 errors (Baseline: 0.0, Canary: {:.2})",
+                    distribution.metric_name, canary_avg
+                ),
+            };
+        }
+
+        // 2. Relative Degradation Detection
         if baseline_avg > 0.0 {
             let pct_increase = ((canary_avg - baseline_avg) / baseline_avg) * 100.0;
             // Catch statistical latency or error rate degradation > 10%
@@ -86,6 +112,23 @@ mod tests {
             }
             _ => panic!("Expected Canary failure"),
         }
+    }
+
+    #[test]
+    fn an_empty_distribution_is_not_a_pass() {
+        // Previously returned `Pass`, so a gate handed nothing published a
+        // clean canary. "No data" and "no regression" must not be the same
+        // value.
+        let engine = StatisticalCanaryEngine::new();
+        let dist = MetricDistribution {
+            metric_name: "p99_latency_ms".to_string(),
+            baseline_samples: Vec::new(),
+            canary_samples: Vec::new(),
+        };
+        assert_eq!(
+            engine.evaluate_canary_distributions(&dist),
+            CanaryVerdict::NotMeasured
+        );
     }
 
     #[test]

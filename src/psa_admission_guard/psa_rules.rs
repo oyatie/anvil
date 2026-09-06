@@ -10,6 +10,12 @@ pub struct PsaPolicyFinding {
 
 pub struct PsaAdmissionRules;
 
+impl Default for PsaAdmissionRules {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PsaAdmissionRules {
     pub fn new() -> Self {
         Self
@@ -24,18 +30,17 @@ impl PsaAdmissionRules {
         }
 
         // Native Kubernetes PSA check: kind: Namespace must carry pod-security.kubernetes.io/enforce: restricted or be registered
-        if content.contains("kind: Namespace") {
-            if !content.contains("pod-security.kubernetes.io/enforce:")
-                && !file_path.contains("local-path-storage")
-                && !file_path.contains("ci-workspace-storage")
-            {
-                findings.push(PsaPolicyFinding {
+        if content.contains("kind: Namespace")
+            && !content.contains("pod-security.kubernetes.io/enforce:")
+            && !file_path.contains("local-path-storage")
+            && !file_path.contains("ci-workspace-storage")
+        {
+            findings.push(PsaPolicyFinding {
                     file_path: file_path.to_string(),
                     namespace: "unlabelled".to_string(),
                     violation_type: "PSA_LABEL_MISSING".to_string(),
                     details: "Namespace declared without native `pod-security.kubernetes.io/enforce: restricted` label or ADR-0710 D-1 exception entry.".to_string(),
                 });
-            }
         }
 
         findings

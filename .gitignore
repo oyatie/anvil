@@ -1,7 +1,7 @@
 /target
 /repos
-/data/*.json
-/data/rust-skills
+/data
 .DS_Store
 *.log
 .env
+/.anvil/run-scope

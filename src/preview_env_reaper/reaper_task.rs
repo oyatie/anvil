@@ -10,6 +10,12 @@ pub struct PreviewEnvironmentInfo {
 
 pub struct PreviewReaperEngine;
 
+impl Default for PreviewReaperEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PreviewReaperEngine {
     pub fn new() -> Self {
         Self

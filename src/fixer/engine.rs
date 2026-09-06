@@ -145,11 +145,13 @@ impl FixEngine {
             .await;
 
             match npm_test {
-                Ok(out) => {
-                    if out.status.success() {
-                        info!("npm test PASSED");
-                        return Ok(true);
-                    }
+                Ok(out) if out.status.success() => {
+                    info!("npm test PASSED");
+                    return Ok(true);
+                }
+                Ok(_) => {
+                    warn!("npm test failed during verification gate");
+                    return Ok(false);
                 }
                 // A gate that could not run (spawn failure or timeout) must not
                 // fall through to the `Ok(true)` at the end of this function.
@@ -172,11 +174,13 @@ impl FixEngine {
             .await;
 
             match go_test {
-                Ok(out) => {
-                    if out.status.success() {
-                        info!("Go test gate PASSED");
-                        return Ok(true);
-                    }
+                Ok(out) if out.status.success() => {
+                    info!("Go test gate PASSED");
+                    return Ok(true);
+                }
+                Ok(_) => {
+                    warn!("go test failed during verification gate");
+                    return Ok(false);
                 }
                 // Same rule as above: an unrunnable gate is not a passing gate.
                 Err(e) => {

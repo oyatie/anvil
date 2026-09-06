@@ -142,7 +142,9 @@ fn production_sources() -> Vec<(String, String)> {
         let Ok(body) = std::fs::read_to_string(&file) else {
             continue;
         };
-        out.push((rel, strip_cfg_test_items(&body).0));
+        let production = anvil::source_scan::try_without_test_modules(&body)
+            .unwrap_or_else(|reason| panic!("cannot classify production source {rel}: {reason}"));
+        out.push((rel, production));
     }
     out
 }
@@ -159,79 +161,6 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
-}
-
-/// Blanks every `#[cfg(test)]`-annotated item. Returns the stripped source and
-/// how many items were removed.
-///
-/// The item's extent is found by indentation: a `#[cfg(test)]` at indentation
-/// `n` is closed by the first later line whose indentation is `n` and which
-/// begins with `}`. An annotated item with no brace before its first `;` (e.g.
-/// `#[cfg(test)] use super::*;`) is a single statement and only that line goes.
-fn strip_cfg_test_items(source: &str) -> (String, usize) {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut keep = vec![true; lines.len()];
-    let mut removed = 0usize;
-
-    let mut i = 0usize;
-    while i < lines.len() {
-        let trimmed = lines[i].trim_start();
-        if !trimmed.starts_with("#[cfg(test)]") && !trimmed.starts_with("#[cfg(all(test") {
-            i += 1;
-            continue;
-        }
-        let indent = lines[i].len() - trimmed.len();
-
-        // Find where the annotated item opens a block, or ends as a statement.
-        let mut j = i;
-        let mut open_line: Option<usize> = None;
-        while j < lines.len() {
-            let body = lines[j].trim_start();
-            if body.contains('{') {
-                open_line = Some(j);
-                break;
-            }
-            if body.ends_with(';') && j > i {
-                break;
-            }
-            j += 1;
-        }
-
-        let end = match open_line {
-            None => j.min(lines.len().saturating_sub(1)),
-            Some(open) => {
-                let mut k = open + 1;
-                let mut found = open;
-                while k < lines.len() {
-                    let t = lines[k].trim_start();
-                    let ind = lines[k].len() - t.len();
-                    if ind == indent && t.starts_with('}') {
-                        found = k;
-                        break;
-                    }
-                    k += 1;
-                }
-                if found == open {
-                    lines.len() - 1
-                } else {
-                    found
-                }
-            }
-        };
-
-        for slot in keep.iter_mut().take(end + 1).skip(i) {
-            *slot = false;
-        }
-        removed += 1;
-        i = end + 1;
-    }
-
-    let out: Vec<&str> = lines
-        .iter()
-        .zip(keep.iter())
-        .map(|(l, k)| if *k { *l } else { "" })
-        .collect();
-    (out.join("\n"), removed)
 }
 
 /// Every violation the production gate finds in production source, with no
@@ -997,10 +926,11 @@ fn the_cfg_test_stripper_removes_test_modules_and_keeps_production_code() {
          result here would prove nothing"
     );
 
-    let (stripped, removed) = strip_cfg_test_items(&raw);
+    let stripped = anvil::source_scan::try_without_test_modules(&raw)
+        .expect("the shared AST/span stripper accepts valid Rust");
 
     assert!(
-        removed >= 1,
+        stripped != raw,
         "the stripper removed nothing from a file that demonstrably contains a #[cfg(test)] \
          module"
     );

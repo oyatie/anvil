@@ -280,9 +280,8 @@ impl SubscriptionExecutor {
         };
 
         match async {
-            let cmd = crate::exec::grok_agent(&posture, model)?;
             run_with_prompt_on_stdin(
-                cmd,
+                crate::exec::grok_agent(&posture, model)?,
                 prompt,
                 std::time::Duration::from_secs(config.print_timeout_secs),
                 "provider CLI",
@@ -290,7 +289,6 @@ impl SubscriptionExecutor {
             .await
         }
         .await
-        .map_err(|e| std::io::Error::other(e.to_string()))
         {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();

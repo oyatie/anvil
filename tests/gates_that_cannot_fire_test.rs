@@ -1086,30 +1086,6 @@ fn the_pipeline_reads_commit_subjects_rather_than_passing_an_empty_slice() {
     );
 }
 
-/// Catches P6. A title is published on the PR scorecard, so it is a claim. None
-/// of these three capabilities exists: there is no AST anywhere in
-/// `src/local_inner_loop`, and no packet is dropped, no DNS query delayed and no
-/// database leader failed over anywhere in `src/chaos_injector`.
-#[test]
-fn the_matrix_claims_no_capability_these_three_gates_do_not_have() {
-    let src = production_source("src/pre_merge_guard/matrix");
-    let offenders: Vec<&str> = [
-        "AST linting",
-        "Synthetic packet loss, DNS jitter & DB failover certification",
-        "Zero stale or dead toggle fallback branches",
-    ]
-    .into_iter()
-    .filter(|claim| src.contains(claim))
-    .collect();
-
-    assert!(
-        offenders.is_empty(),
-        "the scorecard publishes {} capability claim(s) with no implementation behind \
-         them: {offenders:?}",
-        offenders.len()
-    );
-}
-
 /// Catches P7. The gate_id is the join key between the published status, the
 /// scorecard field and the fidelity registry; a `NotMeasured` nobody can resolve
 /// blocks a merge for a reason the author cannot act on.

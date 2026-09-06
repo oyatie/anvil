@@ -105,8 +105,9 @@ fn actual_consumer_requires_the_record_and_retains_read_only_guard_graph() {
 
 #[test]
 fn the_private_consumer_connects_required_record_read_to_actual_verdict() {
-    let main = include_str!("../src/bin/occupancy/main.rs");
-    let inputs = include_str!("../src/bin/occupancy/inputs.rs");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let main = anvil::source_scan::paths::module_source("src/bin/occupancy/main", root);
+    let inputs = anvil::source_scan::paths::module_source("src/bin/occupancy/inputs", root);
     assert!(main.contains("evaluate(collect(args))"));
     assert!(inputs.contains("let evidence_path = freshness_flag(args)?;"));
     assert!(inputs.contains("let freshness = read_record(evidence)?;"));

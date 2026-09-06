@@ -42,8 +42,17 @@ const TRANSPORT: &str = "src/supply_chain_guard";
 /// admission, or response handling require an explicit whole-chain review.
 const REVIEWED_NETWORK_BOUNDARY: &[(&str, &str)] = &[
     (
+        // Reviewed for #216. The only change to this file is `muse_agent` joining
+        // the provider re-export list. Nothing in the OSV request chain -- the
+        // permitted command, destination, payload derivation, admission or
+        // response handling -- is touched.
+        //
+        // That a one-word export change demands a whole-chain re-review is worth
+        // recording: this fingerprint covers the entire file, which holds both
+        // the network seam and the provider re-exports. A check that fires on
+        // unrelated edits is one that eventually gets updated without being read.
         "src/exec/mod.rs",
-        "bd6fc1b9031cafa9334867afe8b9e9d861adde5d30493ca1b3898696a8fc9324",
+        "82a0f9877c9c13adb74eadab816e465c0c4c8c43c69622e53a807f97de326ba7",
     ),
     (
         "src/exec/net.rs",
@@ -688,13 +697,35 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // review-body file flush, DelimSpan::close, and a `close` variable in format!.
     // Declaration classification excludes the model_prompt external test
     // occurrence. The stale git_manager/evidence_objects/tests.rs expectation
-    // names an absent file, not a newly classified test. These five production
+    // names an absent file, not a newly classified test. These eight production
     // occurrences remain exact.
     let added_method_events = [
         (
             "src/clean_architecture_guard/scan.rs",
             "expand_use_groups",
             "network-macro-outbound-method:close:4e733b3c4cbaab79203a65a3be872e700366f3a8da84b24ca93aa63449a89e67",
+        ),
+        // Reviewed for #216. All three are `PromptFile::write`, and the receiver
+        // is a `std::fs::File` / `OpenOptions` in every case: `opts.write(true)`
+        // selects the open mode, `write_all` puts the rendered prompt in the
+        // file, `flush` closes the write out before the path is handed to the
+        // provider. No socket is constructed, imported or named anywhere in that
+        // module -- which is why it is a module of its own and not part of the
+        // transport.
+        (
+            "src/exec/agent/prompt_file.rs",
+            "write",
+            "network-instance-method:flush",
+        ),
+        (
+            "src/exec/agent/prompt_file.rs",
+            "write",
+            "network-instance-method:write",
+        ),
+        (
+            "src/exec/agent/prompt_file.rs",
+            "write",
+            "network-instance-method:write_all",
         ),
         (
             "src/exec/agent/transport.rs",
@@ -741,11 +772,13 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // separate exact set instead of weakening the outbound-method policy.
     assert_eq!(
         conservative_method_events.len(),
-        39,
+        42,
         "{conservative_method_events:#?}"
     );
     // This complete current set was reviewed by owner and source expression:
-    // 39 occurrences = the five explicit production records above + 34 below.
+    // 42 occurrences = the eight explicit production records above + 34 below.
+    // The 34 and their digest are unchanged: newly reviewed occurrences go in
+    // the explicit list, so adding one cannot perturb the historical set.
     // The former historical 38-entry digest could not be reproduced, so this
     // is a current-set binding, not a claimed historical subtraction. Duplicate
     // lock/file occurrences remain significant; Windows pair connect/write

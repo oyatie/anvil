@@ -116,7 +116,7 @@ impl StackWhitelistGuard {
     /// which does not depend on authorship, still runs.
     pub fn evaluate_stack_whitelist(
         &self,
-        _repo_dir: &Path,
+        repo_dir: &Path,
         diff_ctx: &PrDiffContext,
         is_human_author: bool,
     ) -> Result<StackWhitelistReport> {
@@ -146,6 +146,7 @@ impl StackWhitelistGuard {
 
         // 2. Unapproved stack scanner. See the module docs.
         let files = crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content);
+        let mut test_sources = None;
         if files.is_empty() && !diff_ctx.diff_content.trim().is_empty() {
             // A diff with no `diff --git` headers. Nothing can be attributed to
             // a path, so nothing can be excluded by one either -- and reporting
@@ -172,7 +173,23 @@ impl StackWhitelistGuard {
             }
         } else {
             for fd in files {
-                if crate::source_scan::paths::is_test_source(&fd.path) {
+                let full_path = repo_dir.join(&fd.path);
+                let rust_test_source = if fd.path.ends_with(".rs") && full_path.is_file() {
+                    if test_sources.is_none() {
+                        test_sources = Some(
+                            crate::source_scan::paths::TestSourceClassifier::new(repo_dir)
+                                .map_err(anyhow::Error::msg)?,
+                        );
+                    }
+                    test_sources
+                        .as_ref()
+                        .expect("initialized Rust test-source classifier")
+                        .classify(Path::new(&fd.path))
+                        .map_err(anyhow::Error::msg)?
+                } else {
+                    crate::source_scan::paths::is_test_source(&fd.path)
+                };
+                if rust_test_source {
                     continue;
                 }
                 // `code_only` preserves line count and offsets, so its output

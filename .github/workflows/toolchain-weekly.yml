@@ -25,6 +25,9 @@ jobs:
     name: channel
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: toolchain-channel
+      cancel-in-progress: false
     steps:
       # With no owner input, the action scopes the installation token to this
       # repository. Missing credentials fail this job; there is no Actions-token
@@ -66,9 +69,9 @@ jobs:
           echo "channel=${channel}" >> "$GITHUB_OUTPUT"
           [ "${channel}" = "${latest}" ] && echo "behind=no" >> "$GITHUB_OUTPUT" || echo "behind=yes" >> "$GITHUB_OUTPUT"
 
-      # The bump is applied by the same code that reports the drift, so the
-      # report and the edit cannot disagree. It lands as a pull request and is
-      # proven by presubmit like any change -- never pushed to the trunk.
+      # New bumps use the existing probe/apply owner. An existing exact proposal
+      # can be recovered without claiming a probe in this run. Both require
+      # ordinary presubmit/review and never push to the trunk.
       - name: Open the bump
         if: steps.compare.outputs.behind == 'yes'
         env:
@@ -76,23 +79,128 @@ jobs:
           LATEST: ${{ steps.compare.outputs.latest }}
           CHANNEL: ${{ steps.compare.outputs.channel }}
         run: |
-          set -eu
+          set -euo pipefail
+          command -v python3 >/dev/null
+          command -v jq >/dev/null
+          [ "$GITHUB_SERVER_URL" = https://github.com ]
+          origin_url=$(git remote get-url origin)
+          case "$origin_url" in
+            "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"|"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git") ;;
+            *) echo "Unsupported checkout repository" >&2; exit 1 ;;
+          esac
+          [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$CHANNEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           branch="chore/toolchain-${LATEST}"
-          git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1 && {
-            echo "${branch} already open; nothing to raise"
-            exit 0
+          source_sha=$(git rev-parse HEAD)
+          local_commit=""
+          scratch=$(mktemp -d)
+          trap 'rm -f "$scratch/base.json" "$scratch/prs.json" "$scratch/ref" "$scratch/before" "$scratch/after" "$scratch/base-entry" "$scratch/head-entry" "$scratch/changes" "$scratch/input.json" "$scratch/decision.json"; rmdir "$scratch"' EXIT
+
+          # Reads only. The helper decides from complete JSON and immutable objects;
+          # no branch name, failed API call or partial page is completion evidence.
+          observe() {
+            phase=$1
+            gh api --hostname github.com "repos/${GITHUB_REPOSITORY}/git/ref/heads/dev" > "$scratch/base.json"
+            gh api --hostname github.com --method GET --paginate --slurp "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=all -f "head=${GITHUB_REPOSITORY%%/*}:${branch}" -f per_page=100 > "$scratch/prs.json"
+            remote_status=0
+            git ls-remote --exit-code --heads origin "refs/heads/${branch}" > "$scratch/ref" || remote_status=$?
+            case "$remote_status" in 0|2) ;; *) echo "Branch lookup failed" >&2; exit 1 ;; esac
+            base_sha=$(jq -er '.object.sha | select(type == "string")' "$scratch/base.json")
+            [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+            head=""
+            if [ "$phase" = prepared ]; then
+              head=$local_commit
+            elif [ "$remote_status" -eq 0 ]; then
+              git fetch --no-tags --depth=2 origin "refs/heads/${branch}"
+              head=$(git rev-parse --verify FETCH_HEAD)
+            fi
+            git show "${base_sha}:rust-toolchain.toml" > "$scratch/before"
+            git ls-tree "$base_sha" -- rust-toolchain.toml > "$scratch/base-entry"
+            parents=""
+            : > "$scratch/after"
+            : > "$scratch/head-entry"
+            : > "$scratch/changes"
+            if [ -n "$head" ]; then
+              parents=$(git rev-list --parents -n 1 "$head")
+              git show "${head}:rust-toolchain.toml" > "$scratch/after"
+              git ls-tree "$head" -- rust-toolchain.toml > "$scratch/head-entry"
+              git diff-tree --no-commit-id --name-status -r --no-renames "$base_sha" "$head" -- > "$scratch/changes"
+            fi
+            dirty=$(git status --porcelain)
+            before_hex=$(od -An -v -tx1 "$scratch/before" | tr -d ' \n')
+            after_hex=$(od -An -v -tx1 "$scratch/after" | tr -d ' \n')
+            jq -n --arg phase "$phase" --arg repo "$GITHUB_REPOSITORY" \
+              --arg latest "$LATEST" --arg channel "$CHANNEL" --arg checkout "$source_sha" \
+              --arg dirty "$dirty" --slurpfile base "$scratch/base.json" \
+              --slurpfile pages "$scratch/prs.json" --argjson remote_status "$remote_status" \
+              --rawfile remote_ref "$scratch/ref" --arg fetched "$head" --arg parents "$parents" \
+              --rawfile changes "$scratch/changes" --rawfile base_entry "$scratch/base-entry" \
+              --rawfile head_entry "$scratch/head-entry" \
+              --arg before_hex "$before_hex" --arg after_hex "$after_hex" \
+              '{phase:$phase,repo:$repo,latest:$latest,channel:$channel,checkout:$checkout,dirty:$dirty,
+                base:$base[0],pages:$pages[0],remote_status:$remote_status,remote_ref:$remote_ref,
+                fetched:$fetched,parents:$parents,changes:$changes,base_entry:$base_entry,
+                head_entry:$head_entry,before_hex:$before_hex,after_hex:$after_hex}' > "$scratch/input.json"
+            python3 .github/scripts/toolchain-proposal.py < "$scratch/input.json" > "$scratch/decision.json"
           }
-          cargo run --quiet --bin anvil -- toolchain --repo-dir . --to "${LATEST}" --apply
-          git config user.name  "anvil"
-          git config user.email "anvil@users.noreply.github.com"
-          git checkout -b "${branch}"
-          git commit -qam "chore(toolchain): move the channel from ${CHANNEL} to ${LATEST}"
-          git push -q origin "${branch}"
-          gh pr create --base dev --head "${branch}" \
+          action() { jq -er '.action' "$scratch/decision.json"; }
+          acknowledge() {
+            number=$(jq -er '.number' "$scratch/decision.json")
+            echo "Validated open proposal #${number}"
+          }
+
+          observe observe
+          initial=$(action)
+          if [ "$initial" = open ]; then acknowledge; exit 0; fi
+          if [ "$initial" = new ]; then
+            cargo run --quiet --bin anvil -- toolchain --repo-dir . --to "${LATEST}" --apply
+            # The CLI can decline a bump with status zero. Require its real edit.
+            dirty=$(git status --porcelain)
+            changed=$(git diff --name-status)
+            summary=$(git diff --summary)
+            [ "$dirty" = ' M rust-toolchain.toml' ]
+            [ "$changed" = $'M\trust-toolchain.toml' ]
+            [ -z "$summary" ]
+            [ -f rust-toolchain.toml ] && [ ! -L rust-toolchain.toml ]
+            git config user.name  "anvil"
+            git config user.email "anvil@users.noreply.github.com"
+            git checkout -b "${branch}"
+            git commit -qam "chore(toolchain): move the channel from ${CHANNEL} to ${LATEST}"
+            local_commit=$(git rev-parse HEAD)
+            # Prove the actual disposable commit's bytes before any remote write.
+            observe prepared
+            [ "$(action)" = push ]
+            expected_head=$local_commit
+            git push -q origin "${branch}"
+          elif [ "$initial" = recover ]; then
+            expected_head=$(jq -er '.head_sha' "$scratch/decision.json")
+          else
+            echo "Unsupported initial proposal decision" >&2; exit 1
+          fi
+
+          # Re-read immediately before creation; other actors are not serialized
+          # by this workflow's concurrency group. Changed evidence is a refusal.
+          observe observe
+          [ "$(jq -er '.head_sha' "$scratch/decision.json")" = "$expected_head" ]
+          if [ "$(action)" = open ]; then acknowledge; exit 0; fi
+          [ "$(action)" = recover ]
+          if [ "$initial" = new ]; then
+            account='This run completed the existing anvil toolchain probe/apply path and verified its exact channel edit.'
+          else
+            account='This run recovered an existing narrowly validated proposal; it did not run the toolchain probe and does not attest a prior probe.'
+          fi
+          gh pr create --repo "github.com/${GITHUB_REPOSITORY}" --base dev --head "${branch}" \
             --title "chore(toolchain): move the channel from ${CHANNEL} to ${LATEST}" \
             --body "Raised by \`toolchain-weekly\`. The pinned channel was ${CHANNEL}; latest stable is ${LATEST}.
 
-          The edit is written by \`anvil toolchain --apply\`, so the report and the change come from one place. Presubmit proves it: a bump that does not compile or does not pass the suite is refused here like any other change, which is what makes the move safe rather than asserted."
+          ${account}
+
+          Only rust-toolchain.toml changes. The current producer does not update split CI workflow pins. Presubmit and ordinary review are still required; proposal creation is not proof that the bump is safe."
+          observe observe
+          [ "$(action)" = open ]
+          [ "$(jq -er '.head_sha' "$scratch/decision.json")" = "$expected_head" ]
+          acknowledge
 
   nightly:
     name: nightly-canary

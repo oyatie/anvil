@@ -24,7 +24,8 @@ fn test_whole_file_expansion_catches_dark_code_violations() {
         net_lines: file_content.lines().count() as i64,
     };
     let violations =
-        WholeFileExpansion::evaluate_whole_file(dir.path(), "finance/core/src/account.rs", &change);
+        WholeFileExpansion::evaluate_whole_file(dir.path(), "finance/core/src/account.rs", &change)
+            .expect("evaluate fixture");
     assert_eq!(violations.len(), 2);
     assert!(
         violations

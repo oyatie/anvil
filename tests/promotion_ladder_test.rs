@@ -155,6 +155,35 @@ fn dot_form_api_inventory(script: &str) -> BTreeSet<String> {
 }
 
 #[test]
+fn predecessor_lifecycle_includes_base_edits() {
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(&workflow("promotion-predecessor.yml")).unwrap();
+    let trigger = &doc["on"]["pull_request"];
+    let types = trigger["types"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        types,
+        BTreeSet::from(["opened", "reopened", "synchronize", "edited"])
+    );
+    assert_eq!(trigger["types"].as_sequence().unwrap().len(), 4);
+    assert!(doc["on"]["pull_request_target"].is_null());
+    let branches = trigger["branches"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        branches,
+        BTreeSet::from(["staging", "canary", "production"])
+    );
+}
+
+#[test]
 fn the_opener_and_the_guard_describe_the_same_ladder() {
     let next = ladder(&workflow("promotion-open-next.yml"), "next");
     let pred = ladder(&workflow("promotion-predecessor.yml"), "pred");

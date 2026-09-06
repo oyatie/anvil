@@ -122,6 +122,21 @@ fn string_map(value: &Value, context: &str) -> BTreeMap<String, String> {
 }
 
 #[test]
+fn identity_plan_banners_distinguish_implemented_workflows_from_historical_plans() {
+    for path in [
+        "docs/plan/h1-6-machine-identity/CODE-CHANGES.md",
+        "docs/plan/h1-6-machine-identity/README.md",
+    ] {
+        let body = repo_text(path);
+        let opening = body.split("\n---\n").next().unwrap();
+        assert!(opening.contains("H1-11 workflow authentication is implemented"));
+        assert!(opening.contains("daemon/setup/ruleset plan remains unapplied"));
+        assert!(!opening.contains("Nothing in this directory is applied"));
+        assert!(!opening.contains("Nothing here is"));
+    }
+}
+
+#[test]
 fn every_workflow_parses_as_yaml() {
     let found = workflows();
     assert!(!found.is_empty(), "no workflow files found");

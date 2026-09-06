@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
+use crate::merge_enlister::disarm::unless_enlisting;
 use crate::webhook::AppState;
 
 use super::record;
@@ -71,10 +72,8 @@ pub async fn execute_pr_review(
         "Submitting AI Code Review to GitHub for {}#{}...",
         repo, pr_number
     );
-    // The diff the review was formed from is the diff its comments are anchored
-    // in. Submitting without it drops every finding to the body and posts no
-    // inline comment at all, which is what this pipeline did.
-    state
+    // Preserve the anchoring diff and distinguish summary-only publication.
+    let publication = state
         .github_client
         .submit_pr_review_with_diff(
             repo,
@@ -85,6 +84,7 @@ pub async fn execute_pr_review(
         )
         .await?;
 
+    publication.report(repo, pr_number);
     state
         .state_mgr
         .update_pr_state(
@@ -95,11 +95,8 @@ pub async fn execute_pr_review(
         )
         .await?;
 
-    // The repository's own verification gate, run rather than assumed, and run
-    // against `head_sha` rather than against whatever the shared clone happens
-    // to be on. This used to be a literal `Some(true)` for a suite nothing in
-    // this pipeline ran, which the corpus turned into `test_suite_status:
-    // Passed` and the approving review published as a measured pass.
+    // Measure the repository's verification gate against this exact head;
+    // an assumed pass must never become evidence in an approving review.
     let test_suite_passed = super::local_verification::local_verification_gate(
         &state.git_mgr,
         repo,
@@ -353,8 +350,9 @@ pub async fn execute_pr_review(
     };
     let phase = crate::webhook::next_phase::next_phase(&situation);
 
-    crate::merge_enlister::disarm::unless_enlisting(&state.merge_enlister, &phase, repo, pr_number)
-        .await;
+    if let Some(outcome) = unless_enlisting(&state.merge_enlister, &phase, repo, pr_number).await {
+        outcome.report(repo, pr_number);
+    }
 
     let mut enlisted = false;
     match phase {

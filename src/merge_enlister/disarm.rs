@@ -9,17 +9,37 @@ use tracing::{info, warn};
 
 /// What disarming established.
 ///
-/// Three answers, not two. "Nothing was armed" is a measurement; "the forge
-/// could not be reached" is not, and collapsing them would let an unreachable
-/// forge read as a pull request that was safe all along.
+/// Command acceptance is not proof of previous arming. A failed command does
+/// not establish absence, even when its process completed normally.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Disarmed {
-    /// Auto-merge was on and is now off.
-    WasArmed,
-    /// The forge answered, and there was nothing to disable.
-    NothingArmed { detail: String },
-    /// The call did not complete. Whether anything is still armed is unknown.
+    /// The forge accepted the disable command; previous arming is unmeasured.
+    DisableAccepted,
+    /// The disable was not established. Whether anything is armed is unknown.
     Unknown { detail: String },
+}
+
+impl Disarmed {
+    fn from_completion(completion: anyhow::Result<std::process::Output>) -> Self {
+        match completion {
+            Ok(out) if out.status.success() => Self::DisableAccepted,
+            Ok(out) => Self::Unknown {
+                detail: format!("disable command returned {}", out.status),
+            },
+            Err(_) => Self::Unknown {
+                detail: "disable command did not complete successfully".to_string(),
+            },
+        }
+    }
+
+    pub fn report(&self, repo: &str, pr_number: u64) {
+        match self {
+            Self::DisableAccepted => info!("{repo}#{pr_number}: auto-merge disable accepted"),
+            Self::Unknown { detail } => warn!(
+                "{repo}#{pr_number}: auto-merge disarm is UNKNOWN; arming may remain: {detail}"
+            ),
+        }
+    }
 }
 
 impl super::MergeEnlister {
@@ -40,15 +60,9 @@ impl super::MergeEnlister {
     ///
     /// # Why every failure here is survivable
     ///
-    /// Disarming can only prevent a merge, never cause one, so the conservative
-    /// direction is to attempt it and continue. `gh` exits non-zero when there
-    /// is no auto-merge to disable, which is the common case -- most pull
-    /// requests were never armed -- and treating that as an error would fill
-    /// the log with failures for the normal path.
-    ///
-    /// That asymmetry is the whole reason this returns [`Disarmed`] rather than
-    /// `Result`: a caller must not be able to write `?` here and abandon the
-    /// rest of a rejection because a pull request had nothing armed.
+    /// Continue rejection after attempting disarm, but report Unknown when
+    /// the command fails. A nonzero exit is not proof that nothing was armed.
+    /// Returning [`Disarmed`] prevents `?` from abandoning the rejection.
     pub async fn disarm_auto_merge(&self, repo: &str, pr_number: u64) -> Disarmed {
         let mut cmd = crate::exec::gh();
         cmd.args([
@@ -59,31 +73,13 @@ impl super::MergeEnlister {
             repo,
             "--disable-auto",
         ]);
-        match crate::exec::run_bounded(
+        let completion = crate::exec::run_bounded(
             cmd,
             crate::exec::ExecClass::Api,
             "gh pr merge --disable-auto",
         )
-        .await
-        {
-            Ok(out) if out.status.success() => {
-                info!("{repo}#{pr_number}: auto-merge disarmed; this head did not certify.");
-                Disarmed::WasArmed
-            }
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                Disarmed::NothingArmed { detail: stderr }
-            }
-            // Not silently swallowed: the call did not complete, so whether
-            // anything is still armed is unknown, and a caller reporting this
-            // as "nothing was armed" would be stating a fact nobody measured.
-            Err(e) => {
-                warn!("{repo}#{pr_number}: could not reach the forge to disarm auto-merge: {e}");
-                Disarmed::Unknown {
-                    detail: e.to_string(),
-                }
-            }
-        }
+        .await;
+        Disarmed::from_completion(completion)
     }
 }
 
@@ -103,4 +99,41 @@ pub async fn unless_enlisting(
         return None;
     }
     Some(enlister.disarm_auto_merge(repo, pr_number).await)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::Disarmed;
+    use std::{
+        os::unix::process::ExitStatusExt,
+        process::{ExitStatus, Output},
+    };
+
+    fn output(status: i32) -> Output {
+        Output {
+            status: ExitStatus::from_raw(status),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn successful_completion_establishes_only_acceptance() {
+        assert_eq!(
+            Disarmed::from_completion(Ok(output(0))),
+            Disarmed::DisableAccepted
+        );
+    }
+
+    #[test]
+    fn completed_nonzero_and_runner_failure_are_unknown() {
+        assert!(matches!(
+            Disarmed::from_completion(Ok(output(256))),
+            Disarmed::Unknown { .. }
+        ));
+        assert!(matches!(
+            Disarmed::from_completion(Err(anyhow::anyhow!("synthetic failure"))),
+            Disarmed::Unknown { .. }
+        ));
+    }
 }

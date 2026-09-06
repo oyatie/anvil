@@ -489,13 +489,10 @@ impl MergeEnlister {
                 comments: Vec::new(),
             };
 
-            // Every refusal is fatal, including GitHub's "own pull request"
-            // and "Can not approve". Excusing those two is exactly the case
-            // that matters: on the dogfood repository Anvil is the author, so
-            // treating them as success makes the mandatory-approving-review
-            // invariant a no-op on the only repository it runs against. A
-            // review GitHub refused to record is not a review.
-            self.github_client
+            // A comment fallback is not a formal approval. Require the actual
+            // POST receipt to establish APPROVED on this exact head.
+            let receipt = self
+                .github_client
                 .submit_pr_review(repo, pr_number, &meta.head_ref_oid, &approval)
                 .await
                 .map_err(|e| {
@@ -508,6 +505,7 @@ impl MergeEnlister {
                         e
                     )
                 })?;
+            receipt.require_approved_for(&meta.head_ref_oid)?;
         }
 
         Ok(())

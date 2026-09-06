@@ -8,6 +8,8 @@ use anyhow::Result;
 use crate::cli::args::ShapeAction;
 use crate::cli::opt_read::read_opt;
 
+mod baseline_inputs;
+
 pub(super) async fn dispatch(action: ShapeAction) -> Result<()> {
     match action {
         crate::cli::args::ShapeAction::ValidateSpec { path, registry } => {
@@ -76,21 +78,17 @@ pub(super) async fn dispatch(action: ShapeAction) -> Result<()> {
             // `regen_is_monotonic` reachable: without it, `--out` simply
             // overwrites the committed baseline with whatever the tree
             // produces now, laundering every key that appeared in between.
-            use crate::ratchet::facade::{Baseline, Signoff};
-            let previous = read_opt(out.as_ref()).await.ok().flatten();
-            let previous = previous.and_then(|b| Baseline::parse(&b).ok());
-            let signoff =
-                tokio::fs::read(repo_dir.join(crate::shape::facade::baseline::SIGNOFF_PATH))
-                    .await
-                    .ok()
-                    .and_then(|b| Signoff::parse(&b).ok())
-                    .unwrap_or_default();
+            let inputs = baseline_inputs::load(
+                out.as_deref(),
+                &repo_dir.join(crate::shape::facade::baseline::SIGNOFF_PATH),
+            )
+            .await?;
             let (baseline, report) = crate::shape::facade::baseline::reseed_from_commit(
                 &repo_dir,
                 &rev,
                 spec_override.as_deref(),
-                previous.as_ref(),
-                &signoff,
+                inputs.previous.as_ref(),
+                &inputs.signoff,
             )
             .await?;
             let json = baseline.to_json();

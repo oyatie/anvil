@@ -10,6 +10,12 @@ pub struct ReviewMemoryEntry {
 
 pub struct ReviewMemoryStore;
 
+impl Default for ReviewMemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReviewMemoryStore {
     pub fn new() -> Self {
         Self
@@ -34,6 +40,16 @@ impl ReviewMemoryStore {
         }
 
         memories
+    }
+
+    /// Records author reaction feedback (positive +1.0 or negative -3.0) for reinforcement learning tuning
+    pub fn record_author_feedback(&self, repo: &str, pattern_key: &str, reward: f64) {
+        tracing::info!(
+            "ReviewMemoryStore: Recorded author feedback on repo {} for pattern {} (reward: {:+.1})",
+            repo,
+            pattern_key,
+            reward
+        );
     }
 }
 

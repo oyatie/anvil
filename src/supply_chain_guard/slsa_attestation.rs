@@ -25,6 +25,12 @@ pub struct SlsaProvenanceBundle {
 
 pub struct SlsaAttestor;
 
+impl Default for SlsaAttestor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SlsaAttestor {
     pub fn new() -> Self {
         Self

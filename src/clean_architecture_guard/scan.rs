@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::paths::unit_of;
+use crate::source_scan::paths::RootRelation;
 
 /// A unit's interior, as `.anvil/shape.json` declares it.
 ///
@@ -106,37 +107,44 @@ pub(super) struct FaceScan {
     /// exists to prevent. A same-unit reference counts: it proves faces are
     /// present and that the rule looked at one and spared it.
     pub(super) subjects: usize,
+    /// Local-looking references whose target ownership was not established.
+    pub(super) unknown: usize,
 }
 
-pub(super) fn scan_faces(line: &str, importing_file: &str, local_crates: &[String]) -> FaceScan {
+pub(super) fn scan_faces(
+    line: &str,
+    importing_file: &str,
+    resolve_root: &impl Fn(&str, &str) -> RootRelation,
+) -> FaceScan {
     let own = unit_of(importing_file);
     let mut out = FaceScan {
         bypasses: Vec::new(),
         subjects: 0,
+        unknown: 0,
     };
     let line = expand_use_groups(line);
     for c in FACE_REF.captures_iter(&line) {
         let root = &c[1];
-        // The path must be rooted in code we own. A bare `<ident>::<face>`
-        // also matched crates we do not own -- `uuid::adapter::Compact` is an
-        // ordinary third-party path, and accusing it is the same wrong answer
-        // as accusing a unit of using its own adapters. Anvil's review of this
-        // change raised it.
-        //
-        // `crate::` covers the in-crate case. A workspace member's own name
-        // covers the cross-crate one: `src/bin/occupancy.rs` reaches
-        // `anvil::change_delivery::core`, which is a real bypass spelled
-        // without `crate::`. When the member list is unknown the rule narrows
-        // to `crate::` only -- it under-reports rather than accusing.
-        if root != "crate" && !local_crates.iter().any(|c| c == root) {
-            continue;
-        }
+        // Local aliases carry a concrete target identity, not just a member
+        // name. In particular a binary and its package library are distinct
+        // crates, and equal unit names across crates confer no exemption.
+        // Unknown identity remains missing evidence, never an accusation or
+        // a measured clean reference; known foreign crates stay out of scope.
         let unit = c[2].to_string();
         if matches!(unit.as_str(), "self" | "super") {
             continue;
         }
+        let relation = resolve_root(importing_file, root);
+        match relation {
+            RootRelation::Foreign => continue,
+            RootRelation::Unknown => {
+                out.unknown += 1;
+                continue;
+            }
+            RootRelation::SameCrate | RootRelation::OtherCrate => {}
+        }
         out.subjects += 1;
-        if own.as_deref() == Some(unit.as_str()) {
+        if relation == RootRelation::SameCrate && own.as_deref() == Some(unit.as_str()) {
             continue; // a unit may reach into its own interior
         }
         let face = c[3].to_string();

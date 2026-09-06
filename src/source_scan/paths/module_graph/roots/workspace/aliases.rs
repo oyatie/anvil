@@ -1,5 +1,6 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::path::PathBuf;
 
 use super::{PackageManifest, TargetKind};
 
@@ -9,11 +10,27 @@ impl PackageManifest {
         target_kind: TargetKind,
         packages: &[PackageManifest],
     ) -> Result<BTreeSet<String>, String> {
-        let mut aliases = BTreeSet::new();
+        Ok(self
+            .local_alias_targets(target_kind, packages)?
+            .into_keys()
+            .collect())
+    }
+
+    /// Preserve each resolved destination instead of mistaking equal names
+    /// for equal crates. Multiple conditional destinations remain ambiguous.
+    pub(in crate::source_scan::paths::module_graph::roots) fn local_alias_targets(
+        &self,
+        target_kind: TargetKind,
+        packages: &[PackageManifest],
+    ) -> Result<BTreeMap<String, BTreeSet<PathBuf>>, String> {
+        let mut aliases: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
         if target_kind == TargetKind::Binary
             && let Some(name) = self.library_name()?
         {
-            aliases.insert(name);
+            aliases
+                .entry(name)
+                .or_default()
+                .insert(self.directory.clone());
         }
         for dependency in &self.dependencies {
             if !dependency.kind.visible_to(target_kind) {
@@ -51,7 +68,7 @@ impl PackageManifest {
                         )
                     })?
                 };
-                aliases.insert(alias);
+                aliases.entry(alias).or_default().insert(directory);
             }
         }
         Ok(aliases)

@@ -74,6 +74,27 @@ fn module_roles_from_roots(repo_root: &Path, roots: &[PathBuf]) -> Result<RoleMa
     walk::module_roles_from_roots(repo_root, roots)
 }
 
+/// Exact evidence for ownership. Unlike the conservative public production
+/// set, incomplete classification never substitutes every contained file.
+pub(super) fn exact_production_roles(
+    repo_root: &Path,
+    root: &Path,
+) -> Result<(BTreeSet<PathBuf>, bool), String> {
+    let measured = module_roles_from_roots(repo_root, &[root.to_path_buf()])?;
+    Ok(exact_role_evidence(measured))
+}
+
+pub(super) fn exact_role_evidence(measured: RoleMap) -> (BTreeSet<PathBuf>, bool) {
+    (
+        measured
+            .roles
+            .into_iter()
+            .filter_map(|(path, role)| role.production.then_some(path))
+            .collect(),
+        measured.complete,
+    )
+}
+
 /// One declaration graph, reused while a guard classifies many changed files.
 pub struct TestSourceClassifier {
     repo_root: PathBuf,

@@ -1,7 +1,8 @@
 //! Path occupancy. Two hops combine iff their write-sets are disjoint.
 //!
 //! A `git mv` occupies both ends. Hubs (barrels, lockfile, doctrine) are
-//! N=1 and only at trunk HEAD. `tests/*.rs` is the open set on this tree:
+//! N=1 with strict ancestry, or verified predecessor promotion tree equivalence.
+//! `tests/*.rs` is the open set on this tree:
 //! Cargo autoloads each file as its own crate, so no `lib.rs` edit.
 //!
 //! Overlap orders hops; it does not refuse them in pairs. Comparing a hop
@@ -12,6 +13,10 @@
 //! always compared against nothing, so some hop can always land.
 
 use std::collections::BTreeSet;
+
+#[path = "occupancy/freshness.rs"]
+mod freshness;
+pub use freshness::{HubBaseFreshness, admit_in_queue_with_freshness};
 
 /// Closed hub set for this repository. Editing any of these serialises.
 pub fn anvil_hubs() -> BTreeSet<String> {
@@ -67,7 +72,7 @@ pub fn hits_hub(write: &BTreeSet<String>, hubs: &BTreeSet<String>) -> bool {
 pub enum SpawnKind {
     /// Disjoint from hubs and from every in-flight write-set.
     Parallel,
-    /// Touches a hub. At most one such hop, and only at trunk HEAD.
+    /// Touches a hub. At most one such hop, with the applicable base freshness.
     Hub,
 }
 
@@ -87,13 +92,22 @@ pub fn admit_spawn(
     in_flight: &[BTreeSet<String>],
     merge_base_is_trunk: bool,
 ) -> Result<SpawnKind, SpawnRefused> {
+    admit_with_freshness(write, hubs, in_flight, merge_base_is_trunk.into())
+}
+
+fn admit_with_freshness(
+    write: &BTreeSet<String>,
+    hubs: &BTreeSet<String>,
+    in_flight: &[BTreeSet<String>],
+    freshness: HubBaseFreshness,
+) -> Result<SpawnKind, SpawnRefused> {
     for other in in_flight {
         if let Some(path) = write.intersection(other).next() {
             return Err(SpawnRefused::Overlap { path: path.clone() });
         }
     }
     if hits_hub(write, hubs) {
-        if !merge_base_is_trunk {
+        if freshness == HubBaseFreshness::Stale {
             return Err(SpawnRefused::HubOnStaleBase);
         }
         if in_flight.iter().any(|w| hits_hub(w, hubs)) {
@@ -133,11 +147,7 @@ pub fn admit_in_queue(
     open: &[Hop],
     merge_base_is_trunk: bool,
 ) -> Result<SpawnKind, SpawnRefused> {
-    let ahead: Vec<BTreeSet<String>> = ahead_of(position, open)
-        .into_iter()
-        .map(|h| h.write.clone())
-        .collect();
-    admit_spawn(write, hubs, &ahead, merge_base_is_trunk)
+    admit_in_queue_with_freshness(write, position, hubs, open, merge_base_is_trunk.into())
 }
 
 #[cfg(test)]

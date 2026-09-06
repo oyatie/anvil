@@ -11,8 +11,8 @@ pub use crate::change_delivery::core::{
 };
 
 pub use crate::change_delivery::core::shard::occupancy::{
-    Hop, SpawnKind, SpawnRefused, admit_in_queue, admit_spawn, ahead_of, anvil_hubs,
-    path_sets_disjoint,
+    Hop, HubBaseFreshness, SpawnKind, SpawnRefused, admit_in_queue, admit_in_queue_with_freshness,
+    admit_spawn, ahead_of, anvil_hubs, path_sets_disjoint,
 };
 
 use async_trait::async_trait;

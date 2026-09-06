@@ -116,13 +116,16 @@ pub const CLEAN_ARCH_STATUS: GateFidelity = GateFidelity {
     reference: "Robert C. Martin, Clean Architecture; Cockburn's ports and adapters; the four \
                 faces the tenant's shape spec declares",
     fidelity: Fidelity::Heuristic,
-    gap: "Resolves no type and builds no module graph. A file's layer is decided by substring on \
-          its own path -- `/core/`, `/ports/`, `/adapter`, `/facade/` and their single-file \
-          spellings -- so a unit whose layers are not spelled in its directory names is UNLAYERED \
-          and its edges go unjudged (clean_architecture_guard/paths.rs::classify_layer), and the \
+    gap: "Resolves no Rust type and builds no fully resolved dependency graph. Declaration and \
+          manifest evidence establish bounded crate ownership for the facade seal; incomplete \
+          ownership remains unavailable evidence, not a clean measurement. A file's layer is \
+          decided by substring on its own path -- `/core/`, `/ports/`, `/adapter`, `/facade/` and \
+          their single-file spellings -- so a unit whose layers are not spelled in its directory \
+          names is UNLAYERED and receives no layer-direction judgment \
+          (clean_architecture_guard/paths.rs::classify_layer), and the \
           `core_forbidden_imports` rules that follow are regexes over the text of lines that look \
-          like imports (clean_architecture_guard/analyze.rs::analyze_unified_diff). The facade seal \
-          is the sharper half and it is real: `expand_use_groups` flattens grouped and nested \
+          like imports (clean_architecture_guard/analyze.rs::analyze_with_inputs). The separate \
+          Rust facade seal also examines unlayered files: `expand_use_groups` flattens grouped and nested \
           paths first, the match is anchored on the identifier shape rather than on one path per \
           line, and a reference rooted in a crate this repository does not own is skipped rather \
           than accused (clean_architecture_guard/scan.rs::scan_faces). It is still text. An edge \
@@ -130,8 +133,9 @@ pub const CLEAN_ARCH_STATUS: GateFidelity = GateFidelity {
           sees, and the diff entry point reads hunks, so a dependency this change leaves alone is \
           outside the subject entirely. `FACADE_BYPASSES_IN_ANVIL` records what the tree currently \
           holds (clean_architecture_guard/mod.rs::FACADE_BYPASSES_IN_ANVIL). What the gate gets \
-          right, and most of this corpus does not, is the third state: a run that classified \
-          nothing reports no measurement rather than a pass.",
+          right is the third state: a fully observed run with no layer or facade subject reports \
+          no measurement rather than a pass; unavailable ownership evidence is an error, and a \
+          definite violation still blocks.",
     blocked_on: None,
 };
 

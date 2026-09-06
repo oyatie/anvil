@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::{FileChangeKind, diffs_by_path};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +36,8 @@ impl OrphanSweeper {
         file_path.contains("applicationset") || file_path.contains("application.yaml")
     }
 
-    /// 100% Deterministic scan for deleted desired-state resources to ensure safe cascade deletion
+    /// Findings over definite deletion observations, not proof of complete
+    /// observation. The reconciler performs the fallible relevant-path preflight.
     pub fn scan_orphan_risk(
         &self,
         changed_files: &[String],
@@ -43,34 +45,23 @@ impl OrphanSweeper {
     ) -> Vec<OrphanManifestFinding> {
         let mut findings = Vec::new();
 
-        // Everything derived from the whole diff is settled BEFORE the loop, so
-        // the loop body reads only per-file facts. This asked whether the WHOLE
-        // diff contained "deleted file" and attributed the answer to whichever
-        // manifest it was on, so deleting an unrelated shell script reported
-        // every ApplicationSet in the change as deleted -- sending the author to
-        // add a finalizer to a file nothing was removing.
-        //
-        // `diffs_by_path` keys on the `+++ b/` header, which a deletion spells
-        // `/dev/null`; a deleted file therefore has no entry, and a present
-        // entry means the file was edited rather than removed.
-        let surviving: std::collections::BTreeSet<String> =
-            crate::git_manager::diff_context::diffs_by_path(diff_content)
-                .into_iter()
-                .map(|fd| fd.path)
-                .collect();
-        let any_deletion = diff_content.contains("deleted file");
+        // OPEN separate weakness: this finalizer exception still reads the
+        // whole diff. Change-kind evidence does not establish its attribution.
         let finalizer_present = diff_content.contains("resources-finalizer");
 
-        for file in changed_files {
-            if Self::is_gitops_manifest(file) {
-                let this_file_deleted = any_deletion && !surviving.contains(file);
-                if this_file_deleted && !finalizer_present {
-                    findings.push(OrphanManifestFinding {
-                        file_path: file.clone(),
+        for file in diffs_by_path(diff_content)
+            .into_iter()
+            .filter(|file| changed_files.contains(&file.path))
+        {
+            if Self::is_gitops_manifest(&file.path)
+                && file.change_kind() == Some(FileChangeKind::Deleted)
+                && !finalizer_present
+            {
+                findings.push(OrphanManifestFinding {
+                        file_path: file.path.clone(),
                         manifest_kind: "ApplicationSet".to_string(),
                         reason: "ArgoCD ApplicationSet deletion detected without explicit cascade-deletion finalizer protection (`resources-finalizer.argocd.argoproj.io`).".to_string(),
                     });
-                }
             }
         }
 
@@ -86,7 +77,7 @@ mod tests {
     fn test_detects_unsafe_applicationset_deletion() {
         let sweeper = OrphanSweeper::new();
         let changed = vec!["iac/apps/orphan-app-applicationset.yaml".to_string()];
-        let diff = "deleted file mode 100644\n--- a/iac/apps/orphan-app-applicationset.yaml\n+++ /dev/null";
+        let diff = "diff --git a/iac/apps/orphan-app-applicationset.yaml b/iac/apps/orphan-app-applicationset.yaml\ndeleted file mode 100644\n--- a/iac/apps/orphan-app-applicationset.yaml\n+++ /dev/null";
         let findings = sweeper.scan_orphan_risk(&changed, diff);
         assert_eq!(findings.len(), 1);
     }

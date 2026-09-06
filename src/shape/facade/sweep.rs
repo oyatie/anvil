@@ -73,6 +73,14 @@ pub async fn sweep_repo(deps: &SweepDeps, repo: &str) -> Result<Swept, String> {
         .ensure_repo_cloned(repo)
         .await
         .map_err(|e| e.to_string())?;
+    sweep_acquired(deps, repo, repo_dir).await
+}
+
+async fn sweep_acquired(
+    deps: &SweepDeps,
+    repo: &str,
+    repo_dir: crate::git_manager::SubjectRoot,
+) -> Result<Swept, String> {
     let rev = trunk_rev(&repo_dir).await?;
     let report = match measure_repo(&MeasureRequest {
         repo_dir: repo_dir.clone(),
@@ -123,3 +131,6 @@ pub async fn sweep_repo(deps: &SweepDeps, repo: &str) -> Result<Swept, String> {
         report,
     })
 }
+
+#[cfg(test)]
+mod tests;

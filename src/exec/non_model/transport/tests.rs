@@ -66,7 +66,16 @@ async fn synchronous_capture_preserves_output_and_nonzero_status() {
     std::fs::write(&before, "before\n").expect("before fixture");
     std::fs::write(&after, "after\n").expect("after fixture");
     let mut command = std::process::Command::new("git");
-    command.args(["--no-pager", "diff", "--no-index", "--no-ext-diff", "--"]);
+    // This LF-only fixture owns its line-ending policy, including on Windows.
+    command.args([
+        "-c",
+        "core.autocrlf=false",
+        "--no-pager",
+        "diff",
+        "--no-index",
+        "--no-ext-diff",
+        "--",
+    ]);
     command.arg(&before).arg(&after);
     let command = SyncNonModelCommand::checked(command).expect("finite Git admission");
     let output = run_sync_bounded(command, Duration::from_secs(2), "inert sync diff")
@@ -74,7 +83,12 @@ async fn synchronous_capture_preserves_output_and_nonzero_status() {
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8(output.stdout).expect("fixture output");
     assert!(stdout.contains("-before\n+after\n"), "{stdout}");
-    assert!(output.stderr.is_empty());
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected Git stderr ({} bytes; first 512 escaped): {}",
+        output.stderr.len(),
+        String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(512)]).escape_debug()
+    );
 }
 
 #[cfg(unix)]

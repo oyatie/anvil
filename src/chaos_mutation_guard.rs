@@ -1140,7 +1140,7 @@ mod tests {
     fn the_gate_really_spawns_the_mutation_tool_and_bounds_it() {
         let code = production_code();
         assert!(
-            code.contains("Command::new(\"cargo\")") && code.contains(".arg(\"mutants\")"),
+            code.contains("letmutcmd=crate::exec::build_env::command(\"cargo\");cmd.current_dir(repo_dir).arg(\"mutants\")"),
             "a mutation gate that spawns no mutation tool measures nothing"
         );
         assert!(

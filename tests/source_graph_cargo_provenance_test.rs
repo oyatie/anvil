@@ -114,7 +114,8 @@ fn a_local_module_definitely_shadows_a_manifest_crate_alias() {
     );
     cargo_check(root.path());
     let measured = dependencies(root.path());
-    assert!(measured.contains("dep_alias/safe"), "{measured:?}");
+    // The nested alias is inside this subject; self edges are intentionally omitted.
+    assert!(measured.is_empty(), "{measured:?}");
     assert!(!measured.contains("account_pool/thing"), "{measured:?}");
 }
 

@@ -142,7 +142,8 @@ fn renamed_version_dependency_resolves_through_a_local_replace() {
         "pub fn run(){ err::account_pool::thing(); }",
     );
     legacy(root.path());
-    cargo_check(root.path());
+    // Source/manifest closure contract only: this invented registry identity is
+    // not in the offline cache. This does not claim Cargo compiled the fixture.
     assert_account_pool_edge(root.path());
 }
 

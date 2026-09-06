@@ -10,8 +10,9 @@ conformance, in this repo and in any repo it manages. That covers three artifact
    which no longer exists on oyatie dev; `tests/brand_absence_gate_test.rs:29` still says
    "68 entries in `all_statuses()`" against `TOTAL_GATES = 73`
    (`grep -rn '68 entries' tests/brand_absence_gate_test.rs`, measured 2026-08-31).
-2. **Shape conformance** — WS-02's engine, run weekly per managed repo, same entrypoints as
-   self-measurement (doctrine §5: a rule enforced outward but not inward "does not compile").
+2. **Shape conformance** — WS-02's engine, run weekly per managed repo with shared inward
+   analysis. This is the required conformance service, not a claim that startup observations
+   already enforce every rule inward (doctrine §5; WS-02 H1-13).
 3. **Harness instructions** — `CLAUDE.md`/`AGENTS.md`/`rules.md` in every managed repo carry the
    same operating law (instruction-source discipline, data-vs-instructions, prove-a-check, typed
    evidence), templated once and drift-checked, so agent behaviour is uniform across the fleet.

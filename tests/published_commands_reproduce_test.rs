@@ -1,18 +1,20 @@
 //! A number published beside a command must be what that command produces.
 //!
-//! This binary is the one that sees real corpus text: it reads `docs/plan/` and
-//! passes what it finds to the evaluator. So it is scanned, along with the
-//! evaluator module itself, by `no_source_here_reaches_a_process_or_writes`.
+//! This binary reads the live working-tree corpus under `docs/plan/`, including
+//! admitted untracked ordinary documents. Local results can therefore differ
+//! from a clean CI checkout; the reader does not query Git index membership.
 //!
-//! The adversarial fixtures live in `docs_claims_hardening_test`, which builds
-//! its own corpus in a tempdir and therefore writes files. It is deliberately
-//! not scanned: it never sees `docs/plan/`. That is the boundary -- every file
-//! that receives real corpus text is scanned; the file that fabricates a corpus
-//! is not.
+//! Both source-proxy assertions inventory regular Rust files recursively under
+//! `tests/common/` plus this explicit consumer. This lexical proxy does not
+//! resolve external module mappings, includes, generated source or all Rust
+//! compilation reachability. Historical fixtures and portable controls live in
+//! the separate hardening binary, outside that declared source inventory.
 
 mod common;
 
-use common::docs_claims::{check_corpus, evaluate, forbidden_hits, plan_docs, repo_root};
+use common::docs_claims::{
+    check_corpus, evaluate, forbidden_hits, plan_docs, proxy_sources, repo_root,
+};
 use std::path::Path;
 
 #[test]
@@ -42,24 +44,21 @@ fn no_source_here_reaches_a_process_or_writes() {
     // A PROXY, deliberately labelled as one. What carries the safety property
     // is that the evaluator has one form -- `count '<regex>' in <glob>` -- with
     // no branch that takes a program name from the document at all. This scan
-    // guards future edits to the two files that see corpus text; `include!`,
-    // `#[path]` and anything else pulled in remain holes it names but cannot
-    // close.
+    // guards the declared helper subtree and this consumer; it does not prove
+    // semantic reachability or admit externally mapped/generated source.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for rel in [
-        "tests/common/docs_claims.rs",
-        "tests/published_commands_reproduce_test.rs",
-    ] {
-        let text = std::fs::read_to_string(manifest.join(rel)).unwrap_or_else(|e| {
-            panic!("{rel} must be readable, or the scan measured nothing: {e}")
+    for path in proxy_sources(manifest).expect("declared source inventory must be readable") {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "{} must be readable, or the proxy measured nothing: {e}",
+                path.display()
+            )
         });
         let hits = forbidden_hits(&text);
         assert!(
             hits.is_empty(),
-            "{hits:?} appear in {rel}. Document text must never reach a process, \
-             the network, or a write: `sort --compress-program`, `uniq IN OUT` \
-             and `git grep --open-files-in-pager` all executed or wrote through \
-             allowlists that looked airtight."
+            "{hits:?} appear in {} within the declared lexical source proxy.",
+            path.display(),
         );
     }
 }

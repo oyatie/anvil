@@ -30,7 +30,6 @@
 //! as "no advisories".
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use tracing::info;
 
 use super::LockedPackage;
@@ -53,20 +52,6 @@ pub const OSV_ECOSYSTEM: &str = "crates.io";
 /// `parse_batch_response`. A 162-package lockfile is one request; a
 /// 1,500-package monorepo is three.
 pub const OSV_BATCH_SIZE: usize = 500;
-
-/// Anvil's kill deadline for one batch request.
-///
-/// Paired with `CURL_MAX_TIME` below the same way `agy_print_timeout_arg` pairs
-/// with `ExecClass::Model`: curl gives up first and says why, and this only
-/// fires if curl itself wedges.
-pub const OSV_BUDGET: Duration = Duration::from_secs(20);
-
-/// curl's own deadline, in seconds, five below `OSV_BUDGET`.
-const CURL_MAX_TIME: &str = "15";
-
-/// The program the transport runs. Injectable at `post_json` so the failure
-/// modes can be tested against programs that are not curl, without a network.
-const CURL: &str = "curl";
 
 #[derive(Debug, Clone, Serialize)]
 struct OsvBatchQuery {
@@ -205,7 +190,7 @@ impl OsvAdvisoryStream {
     /// Every advisory OSV holds against the locked versions in `packages`.
     ///
     /// Cost, per pull request: `ceil(len / OSV_BATCH_SIZE)` POSTs, each bounded
-    /// at `OSV_BUDGET`. Anvil's own lockfile is one. The budget is per chunk and
+    /// at the transport's fixed budget. Anvil's own lockfile is one. The budget is per chunk and
     /// there is no aggregate deadline, so a 1,500-package lockfile is three
     /// requests and up to 60s worst case added to a certification.
     pub async fn query_batch(packages: &[LockedPackage]) -> Result<Vec<VulnerablePackage>, String> {
@@ -216,56 +201,34 @@ impl OsvAdvisoryStream {
 
         let mut found = Vec::new();
         for chunk in packages.chunks(OSV_BATCH_SIZE) {
-            let payload = Self::build_batch_payload(chunk);
-            let body = post_json(CURL, OSV_BATCH_URL, &payload, OSV_BUDGET).await?;
+            let body = post_batch(chunk).await?;
             found.extend(Self::parse_batch_response(&body, chunk)?);
         }
         Ok(found)
     }
 }
 
-/// POSTs `payload` and returns the response body, or the reason there is none.
-///
-/// Built through `crate::exec::net`. `program` is a parameter so every way
-/// the subprocess can fail -- absent binary, non-zero exit, a kill on the
-/// deadline -- is reachable from a test with no network. Production passes `CURL`.
-pub async fn post_json(
-    program: &str,
-    url: &str,
-    payload: &str,
-    budget: Duration,
-) -> Result<String, String> {
-    let mut cmd = crate::exec::net(program);
-    cmd.args([
-        "-s",
-        "-X",
-        "POST",
-        url,
-        "-H",
-        "Content-Type: application/json",
-        "--max-time",
-        CURL_MAX_TIME,
-        // Appends the status line curl would otherwise swallow: `-s` hides the
-        // transport error AND the HTTP code, so a 429 arrives looking like an
-        // empty result set.
-        "-w",
-        "\n%{http_code}",
-        "-d",
-        payload,
-    ]);
-
-    let output = crate::exec::run_bounded_for(cmd, budget, "curl OSV querybatch")
+/// Executes the fixed OSV transport and returns its authenticated response
+/// body. There is intentionally no public program/URL/payload transport API.
+async fn post_batch(packages: &[LockedPackage]) -> Result<String, String> {
+    let output = crate::exec::post_osv_batch(packages)
         .await
         .map_err(|e| format!("the OSV advisory database could not be reached: {e}"))?;
 
+    decode_output(output)
+}
+
+fn decode_output(output: std::process::Output) -> Result<String, String> {
     if !output.status.success() {
         return Err(format!(
-            "the OSV advisory database could not be reached: {} exited with {}",
-            program, output.status
+            "the OSV advisory database could not be reached: curl exited with {}",
+            output.status
         ));
     }
 
-    body_of(&String::from_utf8_lossy(&output.stdout))
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("the OSV advisory database returned non-UTF-8 output: {error}"))?;
+    body_of(&stdout)
 }
 
 /// Splits curl's stdout into body and the `%{http_code}` trailer, and refuses
@@ -324,5 +287,46 @@ mod tests {
         .expect("parses");
         assert_eq!(hit.len(), 1);
         assert_eq!(hit[0].describe(), "time 0.1.44 (RUSTSEC-2020-0071)");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn response_decode_accepts_200_and_rejects_nonzero_or_non_utf8_output() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let output = |code, stdout| std::process::Output {
+            status: std::process::ExitStatus::from_raw(code),
+            stdout,
+            stderr: Vec::new(),
+        };
+        assert_eq!(
+            decode_output(output(
+                0,
+                br#"{"results":[{}]}
+200"#
+                    .to_vec()
+            ))
+            .expect("valid offline OSV response"),
+            r#"{"results":[{}]}"#
+        );
+
+        assert!(
+            decode_output(output(
+                7 << 8,
+                br#"{"results":[]}
+200"#
+                    .to_vec()
+            ))
+            .expect_err("nonzero curl status cannot become advisory evidence")
+            .contains('7')
+        );
+
+        let mut invalid = vec![0xff];
+        invalid.extend_from_slice(b"\n200");
+        assert!(
+            decode_output(output(0, invalid))
+                .expect_err("lossy OSV output cannot become advisory evidence")
+                .contains("non-UTF-8")
+        );
     }
 }

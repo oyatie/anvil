@@ -32,7 +32,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Sites present when this gate was written, counted AFTER the allowlist.
 ///
@@ -45,7 +45,14 @@ use std::path::PathBuf;
 /// `println!`, which `cargo test` captures and hides on a passing test -- anvil
 /// reviewed this gate and pointed out the note would never be seen. A number
 /// that must be updated by the change that moves it needs no reminder.
-const CEILING: usize = 19;
+// Nineteen became twenty when the test-module filter stopped treating the
+// literal `#[cfg(test)]` in this repository's own prose as an attribute and
+// brace-matching from the next unrelated `{`. The newly visible
+// `clean_architecture_guard::evaluate_source_tree` already parsed diffs before
+// this repair; recording it closes the false decrease without authorizing a
+// new parser.
+const CEILING: usize = 20;
+const TOKEN_AWARE_RECOVERED_SITE: &str = "clean_architecture_guard/mod.rs::evaluate_source_tree";
 
 /// Functions allowed to walk a diff, with the reason.
 ///
@@ -122,9 +129,21 @@ const FN_QUALIFIERS: &[&str] = &["async", "unsafe", "const", "default", "extern"
 
 fn rust_sources() -> Vec<PathBuf> {
     let mut out = Vec::new();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let test_modules = anvil::source_scan::paths::declared_test_module_files(repository)
+        .expect("classify declared test modules once");
     let mut stack = vec![PathBuf::from("src")];
     while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let entries = fs::read_dir(&dir).unwrap_or_else(|error| {
+            panic!("read Rust source directory {}: {error}", dir.display())
+        });
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|error| {
+                panic!(
+                    "read entry in Rust source directory {}: {error}",
+                    dir.display()
+                )
+            });
             let p = entry.path();
             if p.is_dir() {
                 stack.push(p);
@@ -136,7 +155,7 @@ fn rust_sources() -> Vec<PathBuf> {
                 // "hand-rolled diff parsers" here. The answer lives in
                 // `source_scan` because twelve scanners in this tree strip
                 // test code the same way and share the same blind spot.
-                && !anvil::source_scan::is_cfg_test_module_file(&p)
+                && !is_declared_test_file(&repository.join(&p), &test_modules)
             {
                 out.push(p);
             }
@@ -146,44 +165,29 @@ fn rust_sources() -> Vec<PathBuf> {
     out
 }
 
-/// Removes `#[cfg(test)]` items by matching braces.
-///
-/// The first draft truncated the file at the first occurrence of the string.
-/// Anvil's review pointed out that a doc comment, an inner module, or a string
-/// literal carrying that text near the top of a file blinds the scan to every
-/// production function below it -- a gate that silently stops looking, which is
-/// the defect this whole class is made of.
-fn without_test_modules(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(i) = rest.find("#[cfg(test)]") {
-        out.push_str(&rest[..i]);
-        let after = &rest[i..];
-        let Some(open) = after.find('{') else {
-            return out;
-        };
-        let mut depth = 0i32;
-        let mut end = None;
-        for (k, c) in after[open..].char_indices() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(open + k + 1);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        match end {
-            Some(e) => rest = &after[e..],
-            None => return out,
-        }
-    }
-    out.push_str(rest);
-    out
+fn is_declared_test_file(path: &Path, declared: &BTreeSet<PathBuf>) -> bool {
+    let canonical = fs::canonicalize(path)
+        .unwrap_or_else(|error| panic!("canonical source identity {}: {error}", path.display()));
+    declared.contains(&canonical)
+}
+
+#[test]
+fn declared_test_membership_uses_existing_canonical_file_identity() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    let path = root.path().join("source.rs");
+    fs::write(&path, "").expect("ordinary source file");
+    let canonical = fs::canonicalize(&path).expect("canonical fixture identity");
+    let declared = [canonical.clone()].into_iter().collect();
+    assert!(is_declared_test_file(&path, &declared));
+    assert!(is_declared_test_file(&canonical, &declared));
+    assert!(!is_declared_test_file(&path, &BTreeSet::new()));
+}
+
+#[test]
+#[should_panic(expected = "canonical source identity")]
+fn declared_test_membership_does_not_excuse_a_missing_file() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    is_declared_test_file(&root.path().join("missing.rs"), &BTreeSet::new());
 }
 
 /// A path written with `/` on every platform.
@@ -294,8 +298,10 @@ use anvil::source_scan::without_commentary as code_only;
 fn hand_rolled_parsers() -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     for path in rust_sources() {
-        let text = fs::read_to_string(&path).unwrap_or_default();
-        let body = without_test_modules(&text);
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read Rust source {}: {error}", path.display()));
+        let body = anvil::source_scan::try_without_test_modules(&text)
+            .unwrap_or_else(|error| panic!("classify Rust source {}: {error}", path.display()));
         let rel = posix_rel(&path);
 
         let starts = function_starts(&body);
@@ -320,6 +326,10 @@ fn hand_rolled_diff_parsing_is_exactly_what_was_recorded() {
     assert!(
         !found.is_empty(),
         "the scan found no diff parsing at all, which means it did not run"
+    );
+    assert!(
+        found.contains(TOKEN_AWARE_RECOVERED_SITE),
+        "the one pre-existing parser recovered from the old string/brace desynchronization disappeared; remove its recorded count only with the production parser"
     );
 
     let allowed: BTreeSet<&str> = ALLOWED.iter().map(|(k, _)| *k).collect();
@@ -373,11 +383,12 @@ fn every_allowlist_entry_still_exists_and_still_parses() {
 /// declared `#[cfg(test)] mod tests;` and contains no `#[cfg(test)]` itself.
 #[test]
 fn cfg_test_module_files_are_recognised_and_production_files_are_not() {
-    use std::path::Path;
     assert!(
-        anvil::source_scan::is_cfg_test_module_file(Path::new(
-            "src/clean_architecture_guard/tests.rs"
-        )),
+        anvil::source_scan::is_cfg_test_module_file(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            Path::new("src/clean_architecture_guard/tests.rs"),
+        )
+        .expect("classify test module"),
         "a file the parent declares under #[cfg(test)] was read as production code"
     );
     for production in [
@@ -386,7 +397,11 @@ fn cfg_test_module_files_are_recognised_and_production_files_are_not() {
         "src/source_scan/mod.rs",
     ] {
         assert!(
-            !anvil::source_scan::is_cfg_test_module_file(Path::new(production)),
+            !anvil::source_scan::is_cfg_test_module_file(
+                Path::new(env!("CARGO_MANIFEST_DIR")),
+                Path::new(production),
+            )
+            .expect("classify production module"),
             "{production} is production code but was skipped as a test module"
         );
     }

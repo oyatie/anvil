@@ -14,6 +14,12 @@ pub struct PostmortemEvidenceBundle {
 
 pub struct PostmortemStamper;
 
+impl Default for PostmortemStamper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PostmortemStamper {
     pub fn new() -> Self {
         Self

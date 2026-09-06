@@ -16,6 +16,7 @@ pub struct MainlineHealReport {
 }
 
 pub struct MainlineCiHealer {
+    #[allow(dead_code)]
     github_client: Arc<GitHubClient>,
     analyzer: MainlineLogAnalyzer,
 }

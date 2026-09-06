@@ -10,6 +10,12 @@ pub struct QuarantinedTestEntry {
 
 pub struct QuarantineLogManager;
 
+impl Default for QuarantineLogManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QuarantineLogManager {
     pub fn new() -> Self {
         Self

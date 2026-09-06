@@ -11,12 +11,30 @@ pub struct HeapAllocationFinding {
 
 pub struct AllocationScanner;
 
+impl Default for AllocationScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AllocationScanner {
     pub fn new() -> Self {
         Self
     }
 
     /// Scans performance-critical files for avoidable heap allocations in hotpaths
+    /// Whether a path is in the hotpath scope this scanner inspects.
+    ///
+    /// `pub` because the caller must distinguish "scanned and clean" from
+    /// "nothing was in scope"; the predicate was inline and unreachable.
+    pub fn is_hotpath(file_path: &str) -> bool {
+        file_path.contains("network/")
+            || file_path.contains("codec/")
+            || file_path.contains("engine/")
+            || file_path.contains("hotpath")
+            || file_path.contains("packet")
+    }
+
     pub fn scan_hotpath_allocations(
         &self,
         file_path: &str,
@@ -25,13 +43,7 @@ impl AllocationScanner {
         let mut findings = Vec::new();
 
         // Only enforce strict zero-copy on latency-critical modules
-        let is_hotpath = file_path.contains("network/")
-            || file_path.contains("codec/")
-            || file_path.contains("engine/")
-            || file_path.contains("hotpath")
-            || file_path.contains("packet");
-
-        if !is_hotpath {
+        if !Self::is_hotpath(file_path) {
             return findings;
         }
 

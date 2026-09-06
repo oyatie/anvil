@@ -1,0 +1,114 @@
+# Opens the next rung's promotion pull request when a rung advances.
+#
+# Ladder: dev -> staging -> canary -> production. `dev` is the trunk; feature
+# work lands there. The reviewed script proposes the next rung by opening a
+# pull request; it contains no merge, approval, or ref-write operation.
+#
+# The repository-scoped App token asks only for `contents: read` and
+# `pull-requests: write`. REST merge endpoints require `contents: write`, so
+# this token cannot push, delete refs, or REST-merge. Its pull-request grant
+# still permits PR and review mutation, and repository rules remain an external
+# defense that may change independently of this file. The executable script is
+# fingerprinted in `tests/promotion_ladder_test.rs`, so every code-path change --
+# including alternate JavaScript access syntax -- requires an explicit ratchet
+# update and review rather than slipping past a partial API-call scanner.
+#
+# Why it exists: all three promotions to date were hand-opened, and `dev` fell
+# 43 commits behind `main` inside a single session before anyone noticed. Drift
+# that surfaces as an open pull request is drift somebody sees. Drift nobody
+# opens a pull request for is discovered by reading `git rev-list` weeks later.
+#
+# The `next` map below is the exact inverse of `pred` in
+# promotion-predecessor.yml. `tests/promotion_ladder_test.rs` fails if the two
+# ever drift, because a map disagreeing with the guard would open pull requests
+# the guard is guaranteed to reject.
+name: promotion-open-next
+
+on:
+  push:
+    branches: [dev, staging, canary]
+
+# Every GitHub API call below receives the explicitly attenuated App token.
+# The ambient Actions token needs no repository authority.
+permissions: {}
+
+# Two pushes to the same rung in quick succession would otherwise race between
+# the "is one already open?" read and the create, and open the rung twice. This
+# repository already carries `promote/dev-from-main` and
+# `promote/dev-from-main-2` from exactly that class of mistake, made by hand.
+concurrency:
+  group: promotion-open-next-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  open-next:
+    name: open-next
+    runs-on: ubuntu-latest
+    steps:
+      # With no owner input, the action scopes the installation token to this
+      # repository. Missing credentials fail this job; there is no Actions-token
+      # or human-token fallback.
+      - name: Mint repository-scoped App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.ANVIL_APP_ID }}
+          private-key: ${{ secrets.ANVIL_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      - name: Open the next rung
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const next = { dev: "staging", staging: "canary", canary: "production" };
+            const head = context.ref.replace(/^refs\/heads\//, "");
+            const base = next[head];
+            if (!base) {
+              core.setFailed(
+                `no rung follows '${head}'; on.push.branches and the ladder map disagree. ` +
+                  `No promotion is attempted: guessing a rung is how a rung gets skipped.`
+              );
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+
+            const open = await github.rest.pulls.list({
+              owner, repo, base, state: "open", head: `${owner}:${head}`,
+            });
+            if (open.data.length > 0) {
+              core.notice(
+                `#${open.data[0].number} is already open for ${head} -> ${base}; nothing to do.`
+              );
+              return;
+            }
+
+            const cmp = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: `${base}...${head}`,
+            });
+            if (cmp.data.ahead_by === 0) {
+              core.notice(`${base} is level with ${head}; nothing to promote.`);
+              return;
+            }
+
+            const body = [
+              `Automated promotion: \`${head}\` -> \`${base}\`, ${cmp.data.ahead_by} commit(s) ahead.`,
+              ``,
+              `Opened by \`.github/workflows/promotion-open-next.yml\` because \`${head}\``,
+              `advanced. **This run opened the pull request; it did not approve or merge it.**`,
+              ``,
+              `Rungs run \`dev -> staging -> canary -> production\`. \`promotion-predecessor\``,
+              `checks that the head is the base's predecessor. Merge eligibility comes from`,
+              `the repository rules and required checks in force when eligibility is evaluated.`,
+            ];
+
+            const pr = await github.rest.pulls.create({
+              owner, repo, base, head,
+              title: `promote(${base}): ${cmp.data.ahead_by} commit(s) from ${head}`,
+              body: body.join("\n"),
+            });
+            core.notice(
+              `opened #${pr.data.number}: ${head} -> ${base} (${cmp.data.ahead_by} commits)`
+            );

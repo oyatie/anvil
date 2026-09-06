@@ -1,5 +1,16 @@
 use crate::ai_driver::{ModelExecutionConfig, ModelProvider};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Anvil's own repository slug: the one repository whose published documents
+/// this daemon owns and may rewrite.
+///
+/// One literal, in one place. `self_repo` below lets `SELF_REPO` override the
+/// *runtime* identity (a fork, a staging deployment), while
+/// `doc_guard::corpus_sync` compares against this constant directly, because an
+/// environment variable that decides whose documents get rewritten is issue #27
+/// reached by a second route. Two literals would let those two answers diverge
+/// silently the moment `SELF_REPO` is set.
+pub const SELF_REPO: &str = "oyatie/anvil";
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -13,6 +24,62 @@ pub struct Config {
     pub auto_forward_webhooks: bool,
     pub ai_provider: ModelProvider,
     pub specific_model: Option<String>,
+    pub webhook_secret: Option<String>,
+    /// Previous webhook secret, honoured during a rotation window.
+    ///
+    /// GitHub signs a delivery with whichever secret the hook held when the
+    /// delivery was created. During rotation, in-flight deliveries still carry
+    /// the old signature, so verifying against only the new secret drops them.
+    pub webhook_secret_previous: Option<String>,
+    /// The repository that holds this daemon's own source (`SELF_REPO`).
+    ///
+    /// Anvil is a managed repository like any other, with one difference: a
+    /// shape rule is enabled in block mode here before it is enabled anywhere
+    /// else, and the daemon must never mutate the tree it is running from.
+    pub self_repo: String,
+}
+
+/// Refuses a managed clone that is, or contains, or is the same git
+/// repository as, the tree the daemon is running from.
+///
+/// Every write path (fixer, queue healer, change delivery) mutates
+/// `repos_dir/<name>` and pushes it. If that path resolves to the daemon's own
+/// checkout, Anvil edits its running source under itself. Today the two differ
+/// only by accident of layout: `repos/` is gitignored and each clone carries
+/// its own `.git`. This makes the separation a boot invariant.
+///
+/// `clone_toplevel` is `git rev-parse --show-toplevel` inside the clone
+/// (`None` when the clone is not a git repository, e.g. not yet cloned).
+/// `daemon_toplevel` is the same for the daemon's working directory. All paths
+/// are expected canonical.
+pub fn managed_clone_overlaps_daemon_tree(
+    clone_path: &Path,
+    clone_toplevel: Option<&Path>,
+    daemon_toplevel: &Path,
+) -> Result<(), String> {
+    if clone_path == daemon_toplevel {
+        return Err(format!(
+            "managed clone {} is the daemon's own source tree",
+            clone_path.display()
+        ));
+    }
+    if daemon_toplevel.starts_with(clone_path) {
+        return Err(format!(
+            "the daemon runs inside managed clone {} (daemon tree {})",
+            clone_path.display(),
+            daemon_toplevel.display()
+        ));
+    }
+    if let Some(top) = clone_toplevel
+        && top == daemon_toplevel
+    {
+        return Err(format!(
+            "managed clone {} belongs to the daemon's own git repository {}",
+            clone_path.display(),
+            daemon_toplevel.display()
+        ));
+    }
+    Ok(())
 }
 
 impl Config {
@@ -61,6 +128,13 @@ impl Config {
         let ai_provider_str = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "agy".to_string());
         let ai_provider = ModelProvider::from_str_name(&ai_provider_str);
         let specific_model = std::env::var("AI_MODEL").ok();
+        let webhook_secret = std::env::var("GITHUB_WEBHOOK_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let webhook_secret_previous = std::env::var("GITHUB_WEBHOOK_SECRET_PREVIOUS")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let self_repo = std::env::var("SELF_REPO").unwrap_or_else(|_| SELF_REPO.to_string());
 
         Self {
             host,
@@ -73,7 +147,64 @@ impl Config {
             auto_forward_webhooks,
             ai_provider,
             specific_model,
+            webhook_secret,
+            webhook_secret_previous,
+            self_repo,
         }
+    }
+
+    /// Boot invariant: the daemon does not serve unless webhook ingress can be
+    /// authenticated.
+    ///
+    /// `webhook_handlers` already refuses every unsigned delivery and its comment
+    /// says the daemon "refuses to boot without the secret". It did not. Anvil
+    /// started, bound the port, answered `/healthz`, and rejected all traffic --
+    /// alive by every external signal and doing nothing, which is the worst of
+    /// the three possible states because it is the one nobody investigates.
+    pub fn assert_webhook_ingress_is_authenticated(&self) -> anyhow::Result<()> {
+        if self.webhook_secret.is_none() {
+            anyhow::bail!(
+                "GITHUB_WEBHOOK_SECRET is not set, so no delivery could be authenticated and every \
+                 webhook would be rejected. Set it to the secret configured on the repository hooks, \
+                 or run the CLI subcommands instead of serving."
+            );
+        }
+        Ok(())
+    }
+
+    /// Boot invariant: no managed clone may be the daemon's own source tree.
+    ///
+    /// Fails closed — a daemon that cannot establish the separation does not
+    /// serve. Clones that do not exist yet are checked by path only.
+    pub async fn assert_managed_clones_are_not_this_tree(&self) -> anyhow::Result<()> {
+        let cwd = std::env::current_dir()?;
+        let daemon_toplevel = git_toplevel(&cwd)
+            .await
+            .unwrap_or_else(|| cwd.canonicalize().unwrap_or(cwd.clone()));
+        let git_mgr = crate::git_manager::GitManager::new(self.repos_dir.clone());
+        for repo in &self.watched_repos {
+            let clone = git_mgr.get_repo_dir(repo);
+            let clone_canonical = clone.canonicalize().unwrap_or_else(|_| clone.clone());
+            let clone_toplevel = if clone.is_dir() {
+                git_toplevel(&clone).await
+            } else {
+                None
+            };
+            managed_clone_overlaps_daemon_tree(
+                &clone_canonical,
+                clone_toplevel.as_deref(),
+                &daemon_toplevel,
+            )
+            .map_err(|why| {
+                anyhow::anyhow!(
+                    "refusing to start: {} (watched repo {}). Set REPOS_DIR to a directory \
+                     outside this checkout.",
+                    why,
+                    repo
+                )
+            })?;
+        }
+        Ok(())
     }
 
     pub fn to_model_config(&self) -> ModelExecutionConfig {
@@ -83,5 +214,62 @@ impl Config {
             reasoning_effort: self.agy_effort.clone(),
             print_timeout_secs: 300,
         }
+    }
+}
+
+/// `git rev-parse --show-toplevel` for `dir`, canonicalised; `None` when
+/// `dir` is not inside a git work tree or git cannot be run.
+async fn git_toplevel(dir: &Path) -> Option<PathBuf> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.current_dir(dir).args(["rev-parse", "--show-toplevel"]);
+    let out = crate::exec::run_bounded(
+        cmd,
+        crate::exec::ExecClass::Quick,
+        "git rev-parse --show-toplevel",
+    )
+    .await
+    .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(raw);
+    Some(p.canonicalize().unwrap_or(p))
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    /// The daemon used to boot without the ingress secret, bind the port, answer
+    /// `/healthz`, and reject every delivery -- alive by every external signal
+    /// and doing nothing, which is the state nobody investigates.
+    #[test]
+    fn serving_without_the_ingress_secret_is_refused() {
+        let cfg = Config {
+            webhook_secret: None,
+            ..Config::from_env()
+        };
+
+        let err = cfg
+            .assert_webhook_ingress_is_authenticated()
+            .expect_err("a daemon that cannot authenticate any delivery must not serve");
+
+        assert!(
+            err.to_string().contains("GITHUB_WEBHOOK_SECRET"),
+            "the refusal must name the missing variable, not merely fail: {err}"
+        );
+    }
+
+    #[test]
+    fn serving_with_the_ingress_secret_is_allowed() {
+        let cfg = Config {
+            webhook_secret: Some("s".to_string()),
+            ..Config::from_env()
+        };
+        assert!(cfg.assert_webhook_ingress_is_authenticated().is_ok());
     }
 }

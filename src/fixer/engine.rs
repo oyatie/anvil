@@ -1,9 +1,57 @@
-use anyhow::{bail, Context, Result};
+use crate::model_prompt::{HarnessText, ModelPrompt};
+use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use super::evaluator::{ItemEvaluation, ReviewFeedbackItem};
+
+/// Builds the write-capable fix turn from classified review fields. Returning
+/// only [`ModelPrompt`] lets behavioral tests exercise the real sink without
+/// exposing a raw prompt constructor.
+pub fn build_apply_prompt(
+    repo: &str,
+    valid_items: &[(ReviewFeedbackItem, ItemEvaluation)],
+) -> Result<ModelPrompt> {
+    let mut prompt = ModelPrompt::builder();
+    prompt.push_harness(HarnessText::FixApplyPreambleAndRepository);
+    prompt.push_repository(repo)?;
+    prompt.push_harness(HarnessText::FixApplyRepositoryEnd);
+
+    for (index, (item, eval)) in valid_items.iter().enumerate() {
+        prompt
+            .push_harness(HarnessText::FixApplyItemStart)
+            .push_usize(index)
+            .push_harness(HarnessText::FixApplyItemHeaderEnd);
+        if let Some(path) = item.file_path.as_deref() {
+            prompt.push_untrusted(Untrusted::new(UntrustedLabel::FilePath, path));
+        } else {
+            prompt.push_harness(HarnessText::FixApplyMissingPath);
+        }
+        prompt.push_untrusted(Untrusted::new(UntrustedLabel::ReviewComment, &item.body));
+        if let Some(proposed) = eval.proposed_fix.as_deref() {
+            prompt.push_untrusted(Untrusted::new(UntrustedLabel::ProposedFix, proposed));
+        } else {
+            prompt.push_harness(HarnessText::FixApplyMissingProposal);
+        }
+        prompt.push_harness(HarnessText::FixApplyItemEnd);
+    }
+
+    prompt.push_harness(HarnessText::FixApplyTask);
+    prompt.finish()
+}
+
+/// Builds the self-correction turn while retaining both path-order extremes of
+/// an oversized working diff and restoring trusted instructions at the tail.
+pub fn build_self_correction_prompt(diff: &str) -> Result<ModelPrompt> {
+    let mut prompt = ModelPrompt::builder();
+    prompt
+        .push_harness(HarnessText::FixSelfCorrectionPreamble)
+        .push_untrusted(Untrusted::new(UntrustedLabel::WorkingDiff, diff))
+        .push_harness(HarnessText::FixSelfCorrectionTask);
+    prompt.finish()
+}
 
 pub struct FixEngine {
     agy_effort: String,
@@ -20,21 +68,7 @@ impl FixEngine {
         repo_dir: &Path,
         valid_items: &[(ReviewFeedbackItem, ItemEvaluation)],
     ) -> Result<()> {
-        let mut prompt = format!(
-            "You are Oyatie's Principal Engineer. Directly implement code fixes in this workspace for `{}` to resolve the following valid review findings:\n\n",
-            repo
-        );
-
-        for (item, eval) in valid_items {
-            prompt.push_str(&format!(
-                "- **File**: {}\n  **Finding**: {}\n  **Proposed Fix**: {}\n\n",
-                item.file_path.as_deref().unwrap_or("N/A"),
-                item.body,
-                eval.proposed_fix.as_deref().unwrap_or("Fix as required")
-            ));
-        }
-
-        prompt.push_str("Inspect the workspace files, make all necessary edits cleanly, ensure types and tests are preserved or updated, and complete the implementation.");
+        let prompt = build_apply_prompt(repo, valid_items)?;
 
         info!("Invoking Antigravity to write code fixes in {:?}", repo_dir);
         let _ = self.run_agy_prompt(&prompt, repo_dir).await?;
@@ -47,29 +81,49 @@ impl FixEngine {
         // 1. Rust project (Cargo.toml)
         if repo_dir.join("Cargo.toml").exists() {
             info!("Detected Rust crate; running `cargo check` and `cargo test`...");
-            let check_out = Command::new("cargo")
-                .current_dir(repo_dir)
-                .arg("check")
-                .output()
-                .await;
+            let mut check_cmd = crate::exec::build_env::command("cargo");
+            check_cmd.current_dir(repo_dir).arg("check");
+            let check_out = crate::exec::run_bounded(
+                check_cmd,
+                crate::exec::ExecClass::Build,
+                "cargo check verification gate",
+            )
+            .await;
 
-            if let Ok(out) = check_out {
-                if !out.status.success() {
+            // A spawn failure previously fell through this `if let` and reached
+            // the `Ok(true)` at the end of the branch, so a missing cargo
+            // reported "verification gate PASSED". Invariant I1: a gate that
+            // could not run must never pass.
+            match check_out {
+                Ok(out) if out.status.success() => {}
+                Ok(_) => {
                     warn!("cargo check failed during verification gate");
                     return Ok(false);
                 }
+                Err(e) => {
+                    bail!("verification gate could not run `cargo check`: {}", e);
+                }
             }
 
-            let test_out = Command::new("cargo")
+            let mut test_cmd = crate::exec::build_env::command("cargo");
+            test_cmd
                 .current_dir(repo_dir)
-                .args(["test", "--no-fail-fast"])
-                .output()
-                .await;
+                .args(["test", "--no-fail-fast"]);
+            let test_out = crate::exec::run_bounded(
+                test_cmd,
+                crate::exec::ExecClass::Build,
+                "cargo test verification gate",
+            )
+            .await;
 
-            if let Ok(out) = test_out {
-                if !out.status.success() {
+            match test_out {
+                Ok(out) if out.status.success() => {}
+                Ok(_) => {
                     warn!("cargo test failed during verification gate");
                     return Ok(false);
+                }
+                Err(e) => {
+                    bail!("verification gate could not run `cargo test`: {}", e);
                 }
             }
             info!("Cargo verification gate PASSED");
@@ -79,16 +133,30 @@ impl FixEngine {
         // 2. Node/TypeScript project (package.json)
         if repo_dir.join("package.json").exists() {
             info!("Detected Node/TypeScript project; running tests...");
-            let npm_test = Command::new("npm")
+            let mut npm_cmd = crate::exec::build_env::command("npm");
+            npm_cmd
                 .current_dir(repo_dir)
-                .args(["test", "--", "--passWithNoTests"])
-                .output()
-                .await;
+                .args(["test", "--", "--passWithNoTests"]);
+            let npm_test = crate::exec::run_bounded(
+                npm_cmd,
+                crate::exec::ExecClass::Build,
+                "npm test verification gate",
+            )
+            .await;
 
-            if let Ok(out) = npm_test {
-                if out.status.success() {
+            match npm_test {
+                Ok(out) if out.status.success() => {
                     info!("npm test PASSED");
                     return Ok(true);
+                }
+                Ok(_) => {
+                    warn!("npm test failed during verification gate");
+                    return Ok(false);
+                }
+                // A gate that could not run (spawn failure or timeout) must not
+                // fall through to the `Ok(true)` at the end of this function.
+                Err(e) => {
+                    bail!("verification gate could not run `npm test`: {}", e);
                 }
             }
         }
@@ -96,16 +164,27 @@ impl FixEngine {
         // 3. Go project (go.mod)
         if repo_dir.join("go.mod").exists() {
             info!("Detected Go project; running `go test ./...`...");
-            let go_test = Command::new("go")
-                .current_dir(repo_dir)
-                .args(["test", "./..."])
-                .output()
-                .await;
+            let mut go_cmd = crate::exec::build_env::command("go");
+            go_cmd.current_dir(repo_dir).args(["test", "./..."]);
+            let go_test = crate::exec::run_bounded(
+                go_cmd,
+                crate::exec::ExecClass::Build,
+                "go test verification gate",
+            )
+            .await;
 
-            if let Ok(out) = go_test {
-                if out.status.success() {
+            match go_test {
+                Ok(out) if out.status.success() => {
                     info!("Go test gate PASSED");
                     return Ok(true);
+                }
+                Ok(_) => {
+                    warn!("go test failed during verification gate");
+                    return Ok(false);
+                }
+                // Same rule as above: an unrunnable gate is not a passing gate.
+                Err(e) => {
+                    bail!("verification gate could not run `go test`: {}", e);
                 }
             }
         }
@@ -114,47 +193,46 @@ impl FixEngine {
     }
 
     pub async fn attempt_self_correction(&self, repo_dir: &Path) -> Result<()> {
-        let diff_out = Command::new("git")
-            .current_dir(repo_dir)
-            .args(["diff"])
-            .output()
-            .await?;
+        let mut diff_cmd = Command::new("git");
+        diff_cmd.current_dir(repo_dir).args(["diff"]);
+        let diff_out = crate::exec::run_bounded(
+            diff_cmd,
+            crate::exec::ExecClass::Quick,
+            "git diff for self-correction",
+        )
+        .await?;
         let diff_str = String::from_utf8_lossy(&diff_out.stdout);
 
-        let prompt = format!(
-            "The previous code edits caused build or test failures. Inspect the repository, check the current diff, diagnose the root cause, and fix the errors so that the test suite passes cleanly.\n\nCurrent diff:\n```diff\n{}\n```",
-            diff_str
-        );
+        // The diff is the contributor's, and this prompt drives a turn with
+        // write access to the tree. See `reviewer::untrusted`.
+        let prompt = build_self_correction_prompt(&diff_str)?;
 
         let _ = self.run_agy_prompt(&prompt, repo_dir).await?;
         Ok(())
     }
 
-    async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
-        let mut cmd = Command::new("agy");
-        cmd.args([
-            "--print",
-            prompt,
-            "--effort",
+    async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
+        let budget = crate::exec::ExecClass::Model.timeout();
+        let cmd = crate::exec::agy_agent(
+            &crate::exec::Posture::in_workspace(working_dir),
             &self.agy_effort,
-            "--dangerously-skip-permissions",
-        ]);
-        cmd.current_dir(working_dir);
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+            budget,
+            None,
+        )?;
 
-        let output = cmd.output().await.context("Failed to run agy command")?;
-        let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+        let turn = crate::exec::turn::run(cmd, prompt, budget, "agy fix prompt")
+            .await
+            .context("Failed to run agy command")?;
 
-        if !output.status.success() {
-            error!("agy returned non-zero status: {}", output.status);
-            warn!("agy stderr: {}", stderr_str);
-            if stdout_str.trim().is_empty() {
-                bail!("agy failed with code {}: {}", output.status, stderr_str);
-            }
+        if !turn.status.success() {
+            error!("agy returned non-zero status: {}", turn.status);
+            warn!("agy stderr: {}", turn.stderr);
         }
 
-        Ok(stdout_str)
+        // Same rule as the queue healer, and for the same reason: this agent
+        // edits the workspace directly, so a run that died mid-edit has left
+        // the tree in a state nobody chose. Partial output is not partial
+        // success.
+        turn.into_result()
     }
 }

@@ -84,6 +84,78 @@ fn rust_sources() -> Vec<(String, String)> {
     out
 }
 
+/// Ignore declaration names, never their bodies or their containing files.
+/// Macro token bodies remain visible to the existing conservative text scan.
+fn mentions_removal_reader(source: &str) -> Result<bool, String> {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct Declarations(Vec<std::ops::Range<usize>>);
+    impl<'ast> Visit<'ast> for Declarations {
+        fn visit_signature(&mut self, signature: &'ast syn::Signature) {
+            if signature.ident == "both_sides" {
+                self.0.push(signature.ident.span().byte_range());
+            }
+            syn::visit::visit_signature(self, signature);
+        }
+    }
+    let parsed = syn::parse_file(source).map_err(|error| error.to_string())?;
+    let mut declarations = Declarations::default();
+    declarations.visit_file(&parsed);
+    let mut code = anvil::source_scan::code_only(source).into_bytes();
+    if code.len() != source.len() {
+        return Err("code projection changed source byte offsets".into());
+    }
+    for range in declarations.0 {
+        if range.start >= range.end || range.end > code.len() {
+            return Err("declaration identifier has invalid source range".into());
+        }
+        code[range].fill(b' ');
+    }
+    String::from_utf8(code)
+        .map(|code| code.contains("both_sides("))
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn declaration_masking_preserves_real_and_macro_body_mentions() {
+    for (source, expected) in [
+        (
+            "impl FileDiff { fn both_sides(&self) -> &str { &self.raw } }",
+            false,
+        ),
+        (
+            "impl FileDiff { fn both_sides(&self) -> &str { &self.raw } } fn caller() { file.both_sides(reason); }",
+            true,
+        ),
+        (
+            "impl FileDiff { fn both_sides(&self) -> &str { other.both_sides(reason) } }",
+            true,
+        ),
+        (
+            "// both_sides(reason)\nconst S: &str = \"é both_sides(reason)\";",
+            false,
+        ),
+        ("fn caller() { wrapper!(file.both_sides(reason)); }", true),
+        ("fn caller() { FileDiff::both_sides(&file, reason); }", true),
+        ("mod nested { trait T { fn both_sides(&self); } }", false),
+        (
+            "mod nested { trait T { fn both_sides(&self); } fn caller() { file.both_sides(reason); } }",
+            true,
+        ),
+        (
+            "const S: &str = \"é\"; impl FileDiff { fn both_sides(&self) -> &str { &self.raw } }",
+            false,
+        ),
+    ] {
+        assert_eq!(
+            mentions_removal_reader(source).expect("inert source parses"),
+            expected,
+            "{source}"
+        );
+    }
+    assert!(mentions_removal_reader("fn incomplete(").is_err());
+}
+
 #[test]
 fn only_the_sanctioned_rules_read_removals_and_the_set_is_small() {
     // The reason enum is the review surface. If this list grows, someone added
@@ -98,8 +170,9 @@ fn only_the_sanctioned_rules_read_removals_and_the_set_is_small() {
         // spanning several lines, and a scanner looking at one line at a time
         // cannot know it is inside one.
         .filter(|(path, body)| {
-            !path.ends_with("diff_context.rs")
-                && anvil::source_scan::code_only(body).contains("both_sides(")
+            mentions_removal_reader(body).unwrap_or_else(|reason| {
+                panic!("cannot classify removal readers in {path}: {reason}")
+            })
         })
         .map(|(path, _)| path)
         .collect();

@@ -14,11 +14,19 @@ PR CI wallclock must target $\le 5\text{min}$ with $\ge 90\%$ compilation cache 
 
 ## 5. Rust, and only Rust — and Anvil is judged by it too
 
-Every standard in this section applies to Anvil's own tree exactly as it
-applies to a managed repository. Not by intent: by construction. The guards
-run against `ANVIL_SOURCE_TREE` on startup and against a managed repo's
-worktree on a pull request, through the *same* entrypoints — so a rule Anvil
-would enforce on oyatie and not on itself is a rule that does not compile.
+Every standard in this section must apply to Anvil's own tree as well as to a
+managed repository. Shared analysis code is part of that obligation, not
+proof that every rule has already been applied inward.
+
+The current startup path records Clean Architecture self-conformance against
+`ANVIL_SOURCE_TREE` and separately requests shape measurement of the current
+working directory at `HEAD`. Both log their result or an acquisition warning
+and continue; neither is a compile-time or startup-admission refusal. Startup
+constructs `RustLanguagePolicy` but does not run its rule suite inward there.
+Compiler properties, the checks below, and these startup observations are
+distinct mechanisms. Universal inward enforcement remains work to prove with
+subject-bound results and failing controls (WS-02 H1-13), not a consequence of
+sharing an entrypoint.
 
 Where that has failed, it failed loudly and is recorded: `unit_missing_face`
 and `cross_unit_non_facade` are `advisory-until-infra` in `.anvil/shape.json`,
@@ -107,5 +115,8 @@ Two consequences worth stating, both measured here:
   Nothing in it is production code, and a scanner that treats it as such
   inflates every ratchet it feeds.
 - A caller that exists only inside `#[cfg(test)]` does **not** make a stage
-  live. `gate_proof` and `postmortem` are both in exactly that state:
-  fully tested, and run by nothing in production.
+  live. Check the actual production consumer, not only the tests. `gate_proof`
+  and `postmortem` now have such consumers: the blocked scorecard publishes
+  a proof qualifier through `publish::proof_line` and a prevention-debt line
+  through `postmortem::prevention_debt_line`. Those are publication paths,
+  not admission gates, and neither line is added on the certified branch.

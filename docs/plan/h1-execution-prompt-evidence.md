@@ -1,7 +1,7 @@
 # Evidence for the H1 execution prompt
 
 Companion to [`h1-execution-prompt.md`](h1-execution-prompt.md). Nothing here is needed to run a
-milestone; it is the record of what the prompt's claims are grounded in, and of the three revisions
+milestone; it is the record of what the prompt's claims are grounded in, and of the four revisions
 that were wrong. Kept separate because the commissioning prompt is read by an agent under an
 instruction budget, and justification competes with control for that budget.
 
@@ -9,10 +9,13 @@ instruction budget, and justification competes with control for that budget.
 
 Revision 3 reached 541 lines and roughly 185 standing obligations. Frontier models reliably follow
 ~150–200 standing instructions before compliance degrades, so the file had become its own defect:
-its stop triggers sat at 93% depth and "do not push" was the last line. Revision 4 is 250 lines
-with every control retained and the push prohibition at 5%.
+its stop triggers sat at 93% depth and "do not push" was the last line. Revision 4 was cut to
+250 lines with the push prohibition at 5%. Its initial claim that every control was retained
+was rejected in review; the roadmap's 2026-09-01 correction records revision 5 as the shipped
+272-line version, with four dropped detectors restored. These are historical revision records,
+not measurements of the current file.
 
-## The three revisions that were wrong
+## The four revisions that were wrong
 
 **Revision 1** — added in the last commit before #197 merged, with no review pass of any kind.
 Adversarial review returned 19 findings, 16 verified. Fatal: the `ACTIVE MILESTONE: H1-<n>` slot
@@ -32,8 +35,17 @@ only print verbs already granted. Seeding four ungranted verbs — three of them
 byte-identical output. `PROPOSE` became simultaneously a hard refusal and a documented workflow,
 because two fixes were written against each other. The DONE restart rule did not terminate.
 
+**Revision 4** — the cut also introduced three blockers: an index-membership check rejected
+new files, the blanket no-write rule contradicted explicitly granted build/commit/format
+operations, and the published `grep -ic` result was wrong. The roadmap records revision 5
+fixing these and restoring the id-ownership check, bare-H1 enumeration, live-test exclusion
+proof and before/after HEAD check. Its recorded in-session approval left no PR review artifact;
+this companion does not invent one. The table below uses the roadmap's corrected `git grep -ic`
+command; the original `grep -ic` prints a `:0` line per file, not the recorded empty output.
+
 **The pattern.** Each revision was written by the author of the one before it, and each introduced
-defects of the class it had just fixed. Revision 4 is a cut rather than a patch for that reason.
+defects of the class it had just fixed. Cutting revision 4 did not itself prove control retention;
+its rejected cases and the revision-5 correction belong in this record too.
 
 ## Measurements, at `origin/dev` @ `65f71fd`
 
@@ -41,7 +53,7 @@ defects of the class it had just fixed. Revision 4 is a cut rather than a patch 
 |---|---|---|
 | 8 of 43 H1 rows have a bare id | `grep -chE '^\| *H1-[0-9]+ *\|' docs/plan/ws-*.md \| paste -sd+ - \| bc` | 8 |
 | total H1 rows | `grep -chE '^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|' docs/plan/ws-*.md \| paste -sd+ - \| bc` | 43 |
-| no dependency field | `grep -ic 'depends-on' docs/plan/ws-*.md` | no output, exit 1 |
+| no dependency field (corrected command) | `git grep -ic 'depends-on' docs/plan/ws-*.md` | no output, exit 1 (recorded correction, not re-executed here) |
 | modules in one file | `grep -c '^pub mod ' src/lib.rs` | 115 |
 | tests auto-discover | `grep -c '\[\[test\]\]' Cargo.toml` | 0 |
 | `cargo run` boots the daemon | `src/cli/handlers.rs:14` | `cli.command.unwrap_or(Commands::Serve)` |

@@ -1,3 +1,10 @@
+---
+title: ABI signoff binding
+category: contract
+status: active
+canonical_authority: false
+---
+
 # ABI signoff binding
 
 The ABI gate accepts only exact supported declaration-line transitions. Its

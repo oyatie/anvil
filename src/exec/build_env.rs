@@ -78,10 +78,21 @@ pub fn command(program: &str) -> tokio::process::Command {
 
 /// Clear the environment and hand back only what a toolchain needs.
 pub fn apply(cmd: &mut tokio::process::Command) {
+    apply_from(cmd, |name| std::env::var(name));
+}
+
+// Tests supply observations without reading or mutating the process environment.
+fn apply_from(
+    cmd: &mut tokio::process::Command,
+    mut read: impl FnMut(&str) -> Result<String, std::env::VarError>,
+) {
     super::non_model::clear_environment(cmd);
     for name in BUILD_INHERITED {
-        if let Ok(value) = std::env::var(name) {
+        if let Ok(value) = read(name) {
             cmd.env(name, value);
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

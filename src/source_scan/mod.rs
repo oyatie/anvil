@@ -63,12 +63,16 @@ pub fn availability_when_test_is_false(attributes: &[syn::Attribute]) -> CfgAvai
     cfg::availability_when_test_is_false(attributes)
 }
 
+fn mask_character(out: &mut String, character: char) {
+    out.extend(std::iter::repeat_n(' ', character.len_utf8()));
+}
+
 pub fn code_only(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut chars = src.chars().peekable();
     let mut in_str = false;
     let mut in_line_comment = false;
-    let mut in_block_comment = false;
+    let mut block_depth = 0usize;
     let mut escaped = false;
 
     while let Some(c) = chars.next() {
@@ -78,16 +82,20 @@ pub fn code_only(src: &str) -> String {
             continue;
         }
         if in_line_comment {
-            out.push(' ');
+            mask_character(&mut out, c);
             continue;
         }
-        if in_block_comment {
-            if c == '*' && chars.peek() == Some(&'/') {
+        if block_depth > 0 {
+            if c == '/' && chars.peek() == Some(&'*') {
                 chars.next();
-                in_block_comment = false;
+                block_depth += 1;
+                out.push_str("  ");
+            } else if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                block_depth -= 1;
                 out.push_str("  ");
             } else {
-                out.push(' ');
+                mask_character(&mut out, c);
             }
             continue;
         }
@@ -101,7 +109,7 @@ pub fn code_only(src: &str) -> String {
                 out.push('"');
                 continue;
             }
-            out.push(' ');
+            mask_character(&mut out, c);
             continue;
         }
         if c == '"' {
@@ -116,7 +124,7 @@ pub fn code_only(src: &str) -> String {
         }
         if c == '/' && chars.peek() == Some(&'*') {
             chars.next();
-            in_block_comment = true;
+            block_depth = 1;
             out.push_str("  ");
             continue;
         }
@@ -139,7 +147,7 @@ pub fn without_commentary(src: &str) -> String {
     let mut chars = src.chars().peekable();
     let mut in_str = false;
     let mut in_line_comment = false;
-    let mut in_block_comment = false;
+    let mut block_depth = 0usize;
     let mut escaped = false;
 
     while let Some(c) = chars.next() {
@@ -149,16 +157,20 @@ pub fn without_commentary(src: &str) -> String {
             continue;
         }
         if in_line_comment {
-            out.push(' ');
+            mask_character(&mut out, c);
             continue;
         }
-        if in_block_comment {
-            if c == '*' && chars.peek() == Some(&'/') {
+        if block_depth > 0 {
+            if c == '/' && chars.peek() == Some(&'*') {
                 chars.next();
-                in_block_comment = false;
+                block_depth += 1;
+                out.push_str("  ");
+            } else if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                block_depth -= 1;
                 out.push_str("  ");
             } else {
-                out.push(' ');
+                mask_character(&mut out, c);
             }
             continue;
         }
@@ -187,7 +199,7 @@ pub fn without_commentary(src: &str) -> String {
         }
         if c == '/' && chars.peek() == Some(&'*') {
             chars.next();
-            in_block_comment = true;
+            block_depth = 1;
             out.push_str("  ");
             continue;
         }

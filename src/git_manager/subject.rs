@@ -58,10 +58,12 @@ impl CertifiedTree {
 pub struct SubjectRoot(PathBuf);
 
 impl SubjectRoot {
-    /// The clone step, and nothing else.
+    /// Admission of a standalone primary clone with matching origin observations.
+    /// This is admission-time identity under trusted, stable host/Git configuration,
+    /// not freshness, remote-server attestation or lasting custody after other code runs.
     ///
     /// `pub(crate)` and called from one place: `GitManager::ensure_repo_cloned`,
-    /// which is the only code in this repository that puts a subject on disk.
+    /// after its private acquisition flow validated both fetch and push destinations.
     pub(crate) fn cloned(dir: PathBuf) -> Self {
         Self(dir)
     }

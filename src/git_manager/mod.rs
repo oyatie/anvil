@@ -4,10 +4,14 @@ use std::time::{Duration, SystemTime};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+mod acquisition;
 pub mod diff_context;
 pub mod hook_liveness;
+mod repository_identity;
 pub mod subject;
 pub mod worktree;
+
+use repository_identity::RepoIdentity;
 
 pub use diff_context::PrDiffContext;
 pub use subject::{CertifiedTree, SubjectRoot, Uncloned};
@@ -56,78 +60,15 @@ impl GitManager {
         }
     }
 
-    /// Gets the local bare/primary path for a given repository (e.g., "oyatie/oyatie" -> "repos/oyatie")
-    ///
-    /// Defence in depth: callers are expected to have validated the name via
-    /// `webhook::repo_guard`, but this took the segment after the last '/'
-    /// unconditionally, so `"x/.."` yielded `repos_base_dir.join("..")` —
-    /// escaping the repos directory (`install_repo_hooks` then writes
-    /// executable files there). Any segment that is not a plain path component
-    /// is now sanitised rather than trusted.
-    pub fn get_repo_dir(&self, repo: &str) -> PathBuf {
-        let raw = repo.split('/').next_back().unwrap_or(repo);
-        let safe: String = raw
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
-            .collect();
-        // Reject any residue containing "..", not just an exact match: stripping
-        // disallowed characters can reassemble a traversal-looking component
-        // (e.g. "..%2f.." -> "..2f.."). A legitimate repository name never
-        // contains "..".
-        let name = if safe.is_empty() || safe == "." || safe.contains("..") {
-            "_invalid_repo_name"
-        } else {
-            safe.as_str()
-        };
-        self.repos_base_dir.join(name)
+    /// An injective owner-qualified path; parsing is not watch-list authorization.
+    pub fn get_repo_dir(&self, repo: &str) -> Result<PathBuf> {
+        Ok(RepoIdentity::parse(repo)?.path(&self.repos_base_dir))
     }
 
-    /// Ensures the primary repository clone is present locally and up to date
+    /// Admits a primary clone with matching fetch/push origin observations.
+    /// Refresh and hook installation remain best-effort, not freshness evidence.
     pub async fn ensure_repo_cloned(&self, repo: &str) -> Result<SubjectRoot> {
-        let repo_dir = self.get_repo_dir(repo);
-
-        if !self.repos_base_dir.exists() {
-            tokio::fs::create_dir_all(&self.repos_base_dir)
-                .await
-                .context("Failed to create repos base directory")?;
-        }
-
-        if !self.worktrees_base_dir.exists() {
-            tokio::fs::create_dir_all(&self.worktrees_base_dir)
-                .await
-                .context("Failed to create worktrees directory")?;
-        }
-
-        if !repo_dir.exists() {
-            info!("Cloning repository {} into {:?}", repo, repo_dir);
-            let clone_url = format!("https://github.com/{}.git", repo);
-            let mut clone_cmd = Command::new("git");
-            clone_cmd.args(["clone", &clone_url, repo_dir.to_str().unwrap()]);
-            let output =
-                crate::exec::run_bounded(clone_cmd, crate::exec::ExecClass::Vcs, "git clone")
-                    .await
-                    .context("Failed to execute git clone")?;
-
-            if !output.status.success() {
-                let err = String::from_utf8_lossy(&output.stderr);
-                bail!("git clone failed for {}: {}", repo, err);
-            }
-            info!("Successfully cloned {}", repo);
-        } else {
-            let mut fetch_cmd = Command::new("git");
-            fetch_cmd
-                .current_dir(&repo_dir)
-                .args(["fetch", "origin", "--prune"]);
-            let _ = crate::exec::run_bounded(
-                fetch_cmd,
-                crate::exec::ExecClass::Vcs,
-                "git fetch origin --prune",
-            )
-            .await;
-        }
-
-        let _ = Self::install_repo_hooks(&repo_dir).await;
-
+        let repo_dir = acquisition::acquire(&self.repos_base_dir, repo).await?;
         Ok(SubjectRoot::cloned(repo_dir))
     }
 
@@ -256,7 +197,7 @@ impl GitManager {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let safe_repo = repo.replace('/', "-");
+        let safe_repo = RepoIdentity::parse(repo)?.key();
         let worktree_name = format!("{}-pr-{}-{}", safe_repo, pr_number, now);
         let worktree_path = self.worktrees_base_dir.join(&worktree_name);
 
@@ -331,7 +272,12 @@ impl GitManager {
         if let Ok(mut entries) = tokio::fs::read_dir(&self.repos_base_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let path = entry.path();
-                if path.is_dir() && path.file_name().map(|n| n != ".worktrees").unwrap_or(false) {
+                let identity = entry.file_name().to_str().and_then(RepoIdentity::from_key);
+                if let Some(identity) = identity
+                    && acquisition::validate_existing(&self.repos_base_dir, &identity)
+                        .await
+                        .is_ok()
+                {
                     let mut prune_cmd = Command::new("git");
                     prune_cmd.current_dir(&path).args(["worktree", "prune"]);
                     let _ = crate::exec::run_bounded(
@@ -623,31 +569,6 @@ async fn lane_lease_unexpired(dir: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn get_repo_dir_cannot_escape_the_repos_directory() {
-        let gm = GitManager::new(PathBuf::from("/tmp/anvil-repos"));
-        for hostile in ["x/..", "../etc", "x/../..", "a/.", "owner/..%2f.."] {
-            let p = gm.get_repo_dir(hostile);
-            assert!(
-                p.starts_with("/tmp/anvil-repos"),
-                "{hostile:?} escaped to {p:?}"
-            );
-            assert!(
-                !p.to_string_lossy().contains(".."),
-                "{hostile:?} produced a traversal component: {p:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn get_repo_dir_still_resolves_normal_names() {
-        let gm = GitManager::new(PathBuf::from("/tmp/anvil-repos"));
-        assert_eq!(
-            gm.get_repo_dir("oyatie/anvil"),
-            PathBuf::from("/tmp/anvil-repos/anvil")
-        );
-    }
 
     /// The exclusion has to name every path Anvil owns, not just the current
     /// one: a checkout carried over from before the move still has the legacy

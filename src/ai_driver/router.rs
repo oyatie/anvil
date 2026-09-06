@@ -315,7 +315,7 @@ impl SubscriptionExecutor {
         self.run_agy_subscription(prompt, working_dir, config).await
     }
 
-    /// Invokes Antigravity subscription CLI (`agy` with Gemini 3.7 Flash - high reasoning effort)
+    /// Invokes the Antigravity subscription CLI with the configured model and effort.
     pub async fn run_agy_subscription(
         &self,
         prompt: &ModelPrompt,
@@ -393,16 +393,14 @@ impl SubscriptionExecutor {
         Ok(response)
     }
 
-    /// Evaluates prompt using Multi-Model Ensemble across Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash subscriptions
+    /// Routes ensemble requests through the configured Claude subscription.
     async fn run_ensemble_subscription(
         &self,
         prompt: &ModelPrompt,
         working_dir: &Path,
         config: &ModelExecutionConfig,
     ) -> Result<String> {
-        info!(
-            "Executing prompt via Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)..."
-        );
+        info!("Executing subscription ensemble via the configured Claude route...");
         self.run_claude_subscription(prompt, working_dir, config)
             .await
     }

@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.97.1"
 authors = ["Oyatie"]
 description = "Anvil: Hyperscale Autonomous Engineering Delivery Fabric, Pre-Merge Quality Matrix & Merge Queue Daemon"
+publish = false
 
 [[bin]]
 name = "anvil"

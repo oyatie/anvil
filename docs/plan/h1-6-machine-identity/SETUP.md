@@ -243,9 +243,9 @@ $ gh variable set ANVIL_APP_ID --repo oyatie/anvil --body "<app id>"
 $ gh secret set ANVIL_APP_PRIVATE_KEY --repo oyatie/anvil < ~/.anvil/anvil-app.private-key.pem
 ```
 
-The workflow edit that consumes them is specified in `CODE-CHANGES.md` §5 and is **not**
-applied — the secrets can be set now and sit unused, which is the right order: the
-workflow change is reviewable once the credential it names exists.
+The workflow edit that consumes them is specified in `CODE-CHANGES.md` §7 and implemented
+by H1-11. Configure them before that workflow change lands: the token-minting step fails
+closed when either credential is absent.
 
 ---
 

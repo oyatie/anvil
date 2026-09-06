@@ -1,20 +1,15 @@
+pub use super::change_identity::BreakingAbiFinding;
+use super::change_identity::ChangeEvidence;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BreakingAbiFinding {
-    pub file_path: String,
-    pub symbol_name: String,
-    pub change_kind: String,
-    pub detail: String,
-}
 
 /// A public function declaration read off one line of a diff.
 #[derive(Debug, Clone)]
 struct Declaration<'a> {
     path: &'a str,
+    source_path: Option<&'a str>,
+    line: &'a str,
     /// The declaration with whitespace and the block opener removed, or `None`
     /// when the parameter list does not close on this line.
     ///
@@ -22,6 +17,13 @@ struct Declaration<'a> {
     /// signature rustfmt has spread over six lines. Comparing a `None` against
     /// anything would report every reflow as a change.
     signature: Option<String>,
+}
+
+impl Declaration<'_> {
+    fn evidence_line(&self) -> Option<&str> {
+        let line = self.line.trim();
+        (self.signature.is_some() && (line.ends_with('{') || line.ends_with(';'))).then_some(line)
+    }
 }
 
 /// What one pass over a diff found. Counts as well as findings, because the
@@ -116,6 +118,8 @@ impl SignatureScanner {
         // read as a header.
         let mut path: Option<&str> = None;
         let mut minus: Option<&str> = None;
+        let mut minus_evidence: Option<&str> = None;
+        let (mut before_path, mut after_path) = (None, None);
         // Names written as `pub fn NAME` anywhere on an added line, anchored or
         // not. Consulted only for a name the diff removes and does not add.
         let mut mentioned_added: BTreeSet<String> = BTreeSet::new();
@@ -129,20 +133,26 @@ impl SignatureScanner {
         for line in diff.lines() {
             if let Some(rest) = line.strip_prefix("--- ") {
                 minus = header_path(rest);
+                minus_evidence = evidence_header_path(rest, "a/");
                 continue;
             }
             if let Some(rest) = line.strip_prefix("+++ ") {
                 // A deletion writes `+++ /dev/null`, and every public function
                 // in the file it deletes leaves the surface with it. The
                 // pre-image path is the only name that file still has.
+                before_path = minus_evidence;
+                after_path = evidence_header_path(rest, "b/");
                 path = header_path(rest).or(minus).filter(|p| is_library_rust(p));
                 minus = None;
+                minus_evidence = None;
                 in_test_cfg = false;
                 continue;
             }
             if line.starts_with("diff --git ") {
                 path = None;
                 minus = None;
+                minus_evidence = None;
+                (before_path, after_path) = (None, None);
                 in_test_cfg = false;
                 continue;
             }
@@ -205,6 +215,8 @@ impl SignatureScanner {
                 .or_default()
                 .push(Declaration {
                     path,
+                    source_path: if sign == "-" { before_path } else { after_path },
+                    line: body,
                     signature: normalized(body),
                 });
         }
@@ -233,6 +245,11 @@ impl SignatureScanner {
                         file_path: d.path.to_string(),
                         symbol_name: name.clone(),
                         change_kind: "REMOVAL".to_string(),
+                        evidence: if gone.len() == 1 {
+                            ChangeEvidence::removal(name, d.source_path, d.evidence_line())
+                        } else {
+                            None
+                        },
                         detail: format!(
                             "`{name}` is removed from the public surface and no `pub fn {name}` is \
                          added anywhere in this diff."
@@ -253,6 +270,13 @@ impl SignatureScanner {
                     file_path: other.path.to_string(),
                     symbol_name: name.clone(),
                     change_kind: "SIGNATURE_CHANGE".to_string(),
+                    evidence: ChangeEvidence::signature_change(
+                        name,
+                        one.source_path,
+                        other.source_path,
+                        one.evidence_line(),
+                        other.evidence_line(),
+                    ),
                     detail: format!("`{before}` became `{after}`."),
                 });
             }
@@ -270,6 +294,18 @@ impl SignatureScanner {
 fn header_path(header: &str) -> Option<&str> {
     let path = header.split_whitespace().next()?;
     path.strip_prefix("a/").or_else(|| path.strip_prefix("b/"))
+}
+
+/// Authority accepts a complete raw path, never the detector's partial token.
+/// Unsupported quoting, escaping and whitespace retain findings without waivers.
+pub(super) fn evidence_header_path<'a>(header: &'a str, prefix: &str) -> Option<&'a str> {
+    if header
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\\'))
+    {
+        return None;
+    }
+    header.strip_prefix(prefix).filter(|path| !path.is_empty())
 }
 
 /// Whether a path is Rust that a library publishes.
@@ -321,83 +357,4 @@ fn normalized(body: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn scan(diff: &str) -> AbiScan {
-        SignatureScanner::new().scan_abi_diff(diff)
-    }
-
-    fn chunk(path: &str, body: &str) -> String {
-        format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n{body}\n")
-    }
-
-    #[test]
-    fn test_detects_removed_public_function() {
-        let findings = scan(&chunk(
-            "src/api.rs",
-            "-pub fn legacy_api() -> u32 {\n-    42\n-}",
-        ))
-        .findings;
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].symbol_name, "legacy_api");
-        assert_eq!(findings[0].change_kind, "REMOVAL");
-    }
-
-    #[test]
-    fn test_passes_added_public_function() {
-        assert!(
-            scan(&chunk(
-                "src/api.rs",
-                "+pub fn new_api() -> u32 {\n+    42\n+}"
-            ))
-            .findings
-            .is_empty()
-        );
-    }
-
-    #[test]
-    fn a_deleted_file_still_names_the_functions_it_took_with_it() {
-        let diff = "diff --git a/src/gone.rs b/src/gone.rs\n--- a/src/gone.rs\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-pub fn vanished() -> u32 { 0 }\n";
-        let findings = scan(diff).findings;
-        assert_eq!(findings.len(), 1, "{findings:?}");
-        assert_eq!(findings[0].file_path, "src/gone.rs");
-    }
-
-    #[test]
-    fn a_repr_attribute_is_recorded_as_a_layout_the_gate_cannot_compute() {
-        let scan = scan(&chunk("src/wire.rs", "-#[repr(C)]\n+#[repr(C, packed)]"));
-        assert_eq!(scan.layout_files, vec!["src/wire.rs".to_string()]);
-        assert!(scan.findings.is_empty());
-    }
-
-    #[test]
-    fn restricted_visibility_is_not_a_published_surface() {
-        assert!(
-            scan(&chunk("src/api.rs", "-pub(crate) fn internal() {}"))
-                .findings
-                .is_empty()
-        );
-        // ...and narrowing a published function to it is a removal.
-        let findings = scan(&chunk(
-            "src/api.rs",
-            "-pub fn open() {}\n+pub(crate) fn open() {}",
-        ))
-        .findings;
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].change_kind, "REMOVAL");
-    }
-
-    #[test]
-    fn normalized_ignores_spacing_and_the_block_opener() {
-        assert_eq!(
-            normalized("pub  fn  f(a: u32) -> u32 {"),
-            normalized("pub fn f(a:u32)->u32;")
-        );
-        assert_eq!(
-            normalized("pub fn f("),
-            None,
-            "an unclosed parameter list is not a signature"
-        );
-    }
-}
+mod tests;

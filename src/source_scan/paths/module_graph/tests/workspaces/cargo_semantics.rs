@@ -160,7 +160,10 @@ fn package_build_true_selects_the_conventional_build_script() {
         .expect("Cargo targets")
         .iter()
         .filter(|target| target["kind"] == serde_json::json!(["custom-build"]))
-        .map(|target| std::path::PathBuf::from(target["src_path"].as_str().expect("target path")))
+        .map(|target| {
+            fs::canonicalize(target["src_path"].as_str().expect("target path"))
+                .expect("canonical Cargo build target")
+        })
         .collect::<Vec<_>>();
     assert_eq!(
         build_roots,

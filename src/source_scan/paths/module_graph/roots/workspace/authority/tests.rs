@@ -165,3 +165,61 @@ fn tool_home_discovery_supports_userprofile_without_environment_home() {
     );
     assert!(snapshot::tool_home(Some("relative".into()), None, None, ".cargo").is_none());
 }
+
+#[test]
+fn metadata_failure_diagnostic_is_byte_bounded_and_escaped() {
+    let mut bytes = vec![b'\n', b'"', b'\\', 0xff];
+    bytes.extend(std::iter::repeat_n(b'x', 508));
+    bytes.extend_from_slice(b"NOT_CAPTURED");
+    let message = Failure::metadata(Some(101), &bytes).message();
+    assert!(message.contains("exit=Some(101)"));
+    assert!(message.contains("stderr_bytes=524"));
+    assert!(message.contains(r#"\n\"\\\xff"#));
+    assert!(!message.contains('\n'));
+    assert!(!message.contains("NOT_CAPTURED"));
+    assert_eq!(message.bytes().filter(|byte| *byte == b'x').count(), 510);
+}
+
+#[test]
+fn actual_repository_restricted_profile_and_role_proof_are_complete() -> Result<(), String> {
+    let root = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
+        .map_err(|_| "snapshot/config preconditions: repository identity".to_owned())?;
+    let packages = super::super::discover(&root)
+        .map_err(|_| "snapshot/config preconditions: workspace discovery".to_owned())?
+        .ok_or_else(|| "snapshot/config preconditions: missing workspace".to_owned())?;
+    let bindings = admitted_bindings(&root, &packages).map_err(|error| error.message())?;
+    let mut eligible = 0;
+    for package in &packages {
+        for dependency in &package.dependencies {
+            if dependency.default_registry && dependency.audited_macro_surface_enabled() {
+                eligible += 1;
+                let grant = (
+                    dependency.key.clone(),
+                    dependency.kind,
+                    dependency.target.clone(),
+                );
+                if !bindings
+                    .get(&package.manifest)
+                    .is_some_and(|set| set.contains(&grant))
+                {
+                    return Err("bindings: expected existing profile grant missing".to_owned());
+                }
+            }
+        }
+    }
+    if eligible == 0 {
+        return Err("bindings: actual profile was not exercised".to_owned());
+    }
+    // This API returns an empty set whenever the conjunctive role proof is
+    // incomplete; requiring this existing declared child proves completeness.
+    let test_files = crate::source_scan::paths::declared_test_module_files(&root)
+        .map_err(|_| "later syntax completeness: role walk failed".to_owned())?;
+    let expected = std::fs::canonicalize(root.join("src/clean_architecture_guard/tests.rs"))
+        .map_err(|_| "later syntax completeness: expected source identity".to_owned())?;
+    if !test_files.contains(&expected) {
+        return Err(
+            "later syntax completeness: expected declared test source not proven".to_owned(),
+        );
+    }
+    Ok(())
+}

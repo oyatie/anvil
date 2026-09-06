@@ -151,3 +151,39 @@ fn reserved_value_proof_is_bound_to_the_scanned_literal_offset() {
         );
     }
 }
+
+#[test]
+fn complete_standalone_literal_opt_in_text_is_data_not_a_call() {
+    for line in [
+        "+ \"allow_insecure(true)\"",
+        "+ \"allow_insecure(true)\",",
+        "+ \"fixture \\\"quoted\\\" insecure_client(true)\",",
+    ] {
+        assert!(
+            IdentityAuditor::new()
+                .audit_cleartext_transport(line)
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn actual_calls_and_unsupported_literal_forms_keep_the_explicit_opt_in_reason() {
+    for line in [
+        "+ allow_insecure(true);",
+        "+ insecure_client(true);",
+        "+ \"allow_insecure(true)",
+        "+ endpoint = \"allow_insecure(true)\";",
+        "+ wrapper(\"allow_insecure(true)\")",
+        "+ \"allow_insecure(true)\", extra",
+    ] {
+        let findings = IdentityAuditor::new().audit_cleartext_transport(line);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].starts_with("Explicit insecure-transport opt-in:"));
+    }
+    let endpoint = format!("+ \"{}service.internal\"", scheme());
+    assert!(
+        IdentityAuditor::new().audit_cleartext_transport(&endpoint)[0]
+            .starts_with("Cleartext http endpoint")
+    );
+}

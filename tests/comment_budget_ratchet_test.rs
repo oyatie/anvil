@@ -26,7 +26,6 @@
 //! the pair of rules fights the formatter. One rule, two dimensions.
 
 use anvil::source_scan::code_only;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Lines a `//` block inside a function body may occupy.
@@ -42,19 +41,11 @@ const MAX_COMMENT_WIDTH: usize = 100;
 /// with no git, and catches a catastrophic regression even there.
 const OVER_BUDGET_COMMENT_LINES_CEILING: usize = 1156;
 
-fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            rust_sources(&p, out);
-        } else if p.extension().is_some_and(|x| x == "rs") {
-            out.push(p);
-        }
-    }
-}
+#[path = "source_acquisition/mod.rs"]
+mod source_acquisition;
+
+#[path = "source_acquisition/merge_base.rs"]
+mod merge_base_sources;
 
 /// Lines this file spends over budget: body-comment overflow plus over-wide
 /// comment lines.
@@ -97,14 +88,12 @@ pub fn over_budget_lines(body: &str) -> usize {
 
 fn offenders() -> Vec<(PathBuf, usize)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    rust_sources(&root, &mut files);
+    let files = source_acquisition::rust_sources(&root).expect("source corpus");
     let mut out: Vec<(PathBuf, usize)> = files
         .into_iter()
-        .filter_map(|p| {
-            let body = fs::read_to_string(&p).ok()?;
-            let n = over_budget_lines(&body);
-            (n > 0).then_some((p, n))
+        .filter_map(|file| {
+            let n = over_budget_lines(&file.text);
+            (n > 0).then_some((file.path, n))
         })
         .collect();
     out.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
@@ -124,21 +113,16 @@ fn comment_blobs_do_not_grow_against_the_merge_base() {
         "HEAD",
         |p| p.starts_with("src/") && p.ends_with(".rs"),
         |tree| {
-            tree.paths()
+            Ok(merge_base_sources::rust_sources(tree)?
                 .iter()
-                .filter(|p| p.starts_with("src/") && p.ends_with(".rs"))
-                .filter_map(|p| tree.read(p).ok().flatten())
-                .filter_map(|b| std::str::from_utf8(b).ok())
-                .map(over_budget_lines)
-                .sum::<usize>()
+                .map(|(_, body)| over_budget_lines(body))
+                .sum::<usize>())
         },
     ));
-    let Ok(base) = derived else {
-        eprintln!("skipped: no merge-base against origin/dev in this checkout");
-        return;
-    };
+    let base = merge_base_sources::required(derived).expect("required merge-base measurement");
 
-    let now: usize = offenders().iter().map(|(_, n)| n).sum();
+    let found = offenders();
+    let now: usize = found.iter().map(|(_, n)| n).sum();
     assert!(
         now <= base.at_merge_base,
         "comment lines over budget grew from {} at merge-base {} to {} here.\n\
@@ -153,7 +137,7 @@ fn comment_blobs_do_not_grow_against_the_merge_base() {
         now,
         MAX_BODY_COMMENT_LINES,
         MAX_COMMENT_WIDTH,
-        offenders()
+        found
             .iter()
             .take(8)
             .map(|(p, n)| format!("  {:>4}  {}", n, p.display()))
@@ -162,8 +146,8 @@ fn comment_blobs_do_not_grow_against_the_merge_base() {
     );
 }
 
-/// The floor, for a checkout with no git. Withheld rather than passed is the
-/// derived test's job; this one only refuses a catastrophe.
+/// The floor works without Git; the separate required comparison fails when
+/// its merge-base cannot be measured.
 #[test]
 fn the_committed_floor_still_holds() {
     let now: usize = offenders().iter().map(|(_, n)| n).sum();

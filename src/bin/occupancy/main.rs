@@ -20,13 +20,13 @@
 //! `set -euo pipefail` and never reaches this process as an empty set.
 //!
 //! Statuses are `pre_merge_guard::report::GateStatus`, and the exit code
-//! is 0 only for `Passed`:
+//! is 0 only for `Passed` or an audited override `Warning`:
 //!
 //! - `Failed` — occupancy measured an overlap, a second hub hop, or a hub
-//!   off trunk HEAD. A defect this gate found.
+//!   without the applicable base freshness. A defect this gate found.
 //! - `Errored` — the gate was configured and had a data source but could
 //!   not produce a measurement: an unreadable list, a malformed line, a
-//!   merge-base answer that is neither `true` nor `false`. Invariant I1:
+//!   malformed or missing freshness evidence. Invariant I1:
 //!   absent evidence is never a pass.
 //! - `NotMeasured` is never emitted. It is acceptable by construction
 //!   (`GateStatus::is_acceptable`), so reporting it here would turn a
@@ -36,9 +36,12 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 
-use anvil::change_delivery::facade::occupancy::{Hop, SpawnRefused, admit_in_queue, anvil_hubs};
+use anvil::change_delivery::facade::occupancy::{
+    Hop, SpawnRefused, admit_in_queue_with_freshness, anvil_hubs,
+};
 use anvil::pre_merge_guard::report::GateStatus;
 
+mod freshness;
 mod inputs;
 use inputs::{OVERRIDE_LABEL, collect, owner_number};
 use std::collections::BTreeSet;
@@ -66,14 +69,21 @@ fn describe(status: &GateStatus) -> String {
 /// Every input error becomes `Errored`, so a missing or unparseable list
 /// cannot be read as an empty path-set.
 fn run(args: &[String]) -> GateStatus {
-    match collect(args) {
-        Ok(i) => verdict(
-            &i.this,
-            i.this_pr,
-            &i.in_flight,
-            i.at_trunk,
-            i.override_label,
-        ),
+    evaluate(collect(args))
+}
+
+fn evaluate(input: Result<inputs::Inputs, String>) -> GateStatus {
+    match input {
+        Ok(i) => {
+            println!("occupancy: {}", i.freshness.diagnostic());
+            verdict(
+                &i.this,
+                i.this_pr,
+                &i.in_flight,
+                &i.freshness,
+                i.override_label,
+            )
+        }
         Err(reason) => GateStatus::Errored(reason),
     }
 }
@@ -82,7 +92,7 @@ fn verdict(
     this: &BTreeSet<String>,
     this_pr: u64,
     in_flight: &[(String, BTreeSet<String>)],
-    merge_base_is_trunk: bool,
+    freshness: &freshness::FreshnessProof,
     override_label: bool,
 ) -> GateStatus {
     let open: Vec<Hop> = match in_flight
@@ -105,7 +115,7 @@ fn verdict(
         .collect();
 
     let hubs = anvil_hubs();
-    match admit_in_queue(this, this_pr, &hubs, &open, merge_base_is_trunk) {
+    match admit_in_queue_with_freshness(this, this_pr, &hubs, &open, freshness.kind()) {
         Ok(_) => GateStatus::Passed,
         Err(SpawnRefused::Overlap { path }) => held(
             format!(
@@ -129,8 +139,8 @@ fn verdict(
         // combination the queue will not build, so admitting it would publish a
         // verdict about a tree that does not exist.
         Err(SpawnRefused::HubOnStaleBase) => GateStatus::Failed(
-            "a hub file was edited from a stale merge-base; hubs are N=1 at trunk HEAD, \
-             so rebase onto the trunk tip"
+            "a hub file was edited from a stale merge-base; rebase onto the destination tip. \
+             Only a verified predecessor promotion may instead prove equal complete base trees"
                 .to_owned(),
         ),
     }
@@ -170,142 +180,4 @@ fn admits(status: &GateStatus) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn set(paths: &[&str]) -> BTreeSet<String> {
-        paths.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    fn occupied(id: &str, paths: &[&str]) -> (String, BTreeSet<String>) {
-        (id.to_owned(), set(paths))
-    }
-
-    fn args(raw: &[&str]) -> Vec<String> {
-        raw.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    /// This hop, at number `pr`, against the open set.
-    fn admit(
-        pr: u64,
-        this: &[&str],
-        in_flight: &[(String, BTreeSet<String>)],
-        at_trunk: bool,
-    ) -> GateStatus {
-        verdict(&set(this), pr, in_flight, at_trunk, false)
-    }
-
-    #[test]
-    fn an_unreadable_list_is_errored_not_passed() {
-        let status = run(&args(&[
-            "--this",
-            "/nonexistent/this.txt",
-            "--in-flight",
-            "/nonexistent/in-flight.txt",
-            "--merge-base-is-trunk",
-            "true",
-            "--this-pr",
-            "7",
-        ]));
-        assert!(
-            matches!(status, GateStatus::Errored(_)),
-            "a list the check could not read is absent evidence, not an empty path-set: {status:?}"
-        );
-        assert!(!admits(&status));
-    }
-
-    #[test]
-    fn an_overlap_is_failed_and_names_the_pull_request_holding_the_path() {
-        let status = admit(
-            9,
-            &["tests/lane_a.rs"],
-            &[occupied("pr-7", &["tests/lane_a.rs"])],
-            true,
-        );
-        let GateStatus::Failed(reason) = &status else {
-            panic!("an overlap is a defect this gate measured: {status:?}");
-        };
-        assert!(reason.contains("tests/lane_a.rs"), "{reason}");
-        assert!(
-            reason.contains("pr-7"),
-            "the refusal must name the occupant: {reason}"
-        );
-        assert!(!admits(&status));
-    }
-
-    /// An owner the collecting step wrote in a shape this binary does not
-    /// understand is a hop that would silently stop being compared against.
-    #[test]
-    fn an_unparseable_owner_is_errored_not_a_hop_quietly_dropped() {
-        let status = verdict(
-            &set(&["tests/lane_a.rs"]),
-            9,
-            &[occupied("branch-foo", &["tests/lane_a.rs"])],
-            true,
-            false,
-        );
-        let GateStatus::Errored(reason) = &status else {
-            panic!("an owner that does not parse is absent evidence: {status:?}");
-        };
-        assert!(reason.contains("branch-foo"), "{reason}");
-        assert!(!admits(&status));
-    }
-
-    /// The override is visible in the status, so nothing downstream can read it
-    /// as a measured disjointness.
-    #[test]
-    fn the_override_label_admits_an_overlap_as_a_warning_never_as_a_pass() {
-        let file = &["tests/shared.rs"];
-        let status = verdict(&set(file), 9, &[occupied("pr-7", file)], true, true);
-        let GateStatus::Warning(reason) = &status else {
-            panic!("an audited override admits, and says so: {status:?}");
-        };
-        assert!(
-            reason.contains(OVERRIDE_LABEL),
-            "the warning must name the label that admitted it: {reason}"
-        );
-        assert!(reason.contains("pr-7"), "and what it overrode: {reason}");
-        assert!(admits(&status));
-        assert_ne!(
-            status,
-            GateStatus::Passed,
-            "an overridden admission is not a measurement"
-        );
-    }
-
-    /// The one refusal the label may not lift.
-    #[test]
-    fn the_override_label_does_not_admit_a_hub_off_a_stale_base() {
-        let status = verdict(&set(&["src/main.rs"]), 7, &[], false, true);
-        assert!(
-            matches!(status, GateStatus::Failed(_)),
-            "the other refusals order hops that were each measured; this one says \
-             the measurement was taken against a combination the queue will not \
-             build, and admitting it publishes a verdict about a tree that does \
-             not exist: {status:?}"
-        );
-        assert!(!admits(&status));
-    }
-
-    #[test]
-    fn errored_is_the_state_for_a_forge_that_did_not_answer_and_it_does_not_admit() {
-        let status = GateStatus::Errored("rate limited".to_owned());
-        assert!(
-            !admits(&status),
-            "a check that could not measure must not read as no overlap"
-        );
-    }
-
-    #[test]
-    fn not_measured_would_admit_which_is_why_occupancy_never_reports_it() {
-        let unmeasured = GateStatus::NotMeasured {
-            gate_id: "occupancy".to_owned(),
-            reason: "no data source".to_owned(),
-        };
-        assert!(
-            unmeasured.is_acceptable(),
-            "NotMeasured is acceptable by construction, so occupancy must never emit it"
-        );
-        assert!(!admits(&unmeasured), "and it is not an admission either");
-    }
-}
+mod tests;

@@ -9,6 +9,16 @@ use std::path::Path;
 
 use anvil::stage_liveness::{STAGES, STAGES_WITHOUT_A_CALLER, Stage, uninvoked};
 
+#[test]
+fn malformed_source_returns_a_path_qualified_measurement_error() {
+    let sources = vec![(
+        "src/incomplete.rs".to_string(),
+        "pub fn unfinished(".to_string(),
+    )];
+    let error = uninvoked(&sources).expect_err("malformed source is not measured");
+    assert!(error.contains("src/incomplete.rs"), "{error}");
+}
+
 fn production_sources() -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut stack = vec![Path::new("src").to_path_buf()];
@@ -34,7 +44,7 @@ fn the_uninvoked_count_does_not_exceed_the_ceiling() {
     // Equality rather than `<=`: at a ceiling of zero the two say the same
     // thing about a rise, and `len() <= 0` on a `usize` is a comparison clippy
     // correctly calls always-true-or-false.
-    let dead = uninvoked(&production_sources());
+    let dead = uninvoked(&production_sources()).expect("classify production sources");
     assert_eq!(
         dead.len(),
         STAGES_WITHOUT_A_CALLER,
@@ -58,7 +68,7 @@ fn a_stage_with_a_caller_is_not_reported() {
         ),
         ("src/postmortem/mod.rs".to_string(), String::new()),
     ];
-    let dead = uninvoked(&sources);
+    let dead = uninvoked(&sources).expect("classify fixture sources");
     assert!(
         !dead.iter().any(|s| s.stage == "postmortem"),
         "a stage with a real caller was reported dead"
@@ -73,7 +83,10 @@ fn a_stage_referring_only_to_itself_is_still_dead() {
         "fn inner() { crate::postmortem::classify(); }".to_string(),
     )];
     assert!(
-        uninvoked(&sources).iter().any(|s| s.stage == "postmortem"),
+        uninvoked(&sources)
+            .expect("classify fixture sources")
+            .iter()
+            .any(|s| s.stage == "postmortem"),
         "a stage cited only inside its own files was counted as invoked"
     );
 }
@@ -93,6 +106,7 @@ fn a_mention_in_a_comment_or_string_is_not_a_caller() {
         ];
         assert!(
             uninvoked(&sources)
+                .expect("classify fixture sources")
                 .iter()
                 .any(|s| s.stage == "webhook::next_phase"),
             "a stage named only in prose was counted as invoked: {text}"
@@ -114,7 +128,10 @@ fn a_caller_that_exists_only_in_tests_does_not_count() {
         ("src/gate_proof/mod.rs".to_string(), String::new()),
     ];
     assert!(
-        uninvoked(&sources).iter().any(|s| s.stage == "gate_proof"),
+        uninvoked(&sources)
+            .expect("classify fixture sources")
+            .iter()
+            .any(|s| s.stage == "gate_proof"),
         "a stage called only from a test module was counted as live in production"
     );
 }
@@ -155,14 +172,16 @@ fn uninvoked_stages_do_not_grow_against_the_merge_base() {
                     Some((p.clone(), text))
                 })
                 .collect();
-            uninvoked(&sources).len()
+            uninvoked(&sources)
+                .expect("classify merge-base sources")
+                .len()
         },
     ));
     let Ok(base) = derived else {
         eprintln!("skipped: no merge-base against origin/dev");
         return;
     };
-    let dead = uninvoked(&production_sources());
+    let dead = uninvoked(&production_sources()).expect("classify production sources");
     assert!(
         dead.len() <= base.at_merge_base,
         "stages with no production caller grew from {} at merge-base {} to {}:\n{}",

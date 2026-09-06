@@ -208,6 +208,8 @@ pub struct BrandAbsenceReport {
     pub is_blocking: bool,
     /// One line stating the outcome, the recorded debt, and the real gate count.
     pub summary: String,
+    /// Source that could not be read or classified; never a measured pass.
+    pub measurement_error: Option<String>,
 }
 
 impl BrandAbsenceReport {
@@ -256,6 +258,12 @@ impl BrandAbsenceReport {
 
     pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
         use crate::pre_merge_guard::report::GateStatus;
+        if let Some(reason) = &self.measurement_error {
+            return GateStatus::NotMeasured {
+                gate_id: "brand_absence_status".to_string(),
+                reason: reason.clone(),
+            };
+        }
         if self.new_violations.is_empty() {
             return GateStatus::Passed;
         }
@@ -315,7 +323,11 @@ impl BrandAbsenceGate {
     /// instances are directory names, which a scanner that only read
     /// declarations would miss entirely.
     pub fn scan_source(&self, path: &str, source: &str) -> BrandAbsenceReport {
-        let hits = self.collect_hits(path, &crate::source_scan::without_test_modules(source));
+        let production = match crate::source_scan::try_without_test_modules(source) {
+            Ok(production) => production,
+            Err(reason) => return self.not_measured(format!("{path}: {reason}")),
+        };
+        let hits = self.collect_hits(path, &production);
         self.finish(hits)
     }
 
@@ -332,7 +344,9 @@ impl BrandAbsenceGate {
         let repo_root = repo_root.as_path();
         let mut hits = Vec::new();
         let mut files = Vec::new();
-        collect_rs_files(&repo_root.join("src"), &mut files);
+        if let Err(reason) = collect_rs_files(&repo_root.join("src"), &mut files) {
+            return self.not_measured(reason);
+        }
         files.sort();
         for file in files {
             let rel = file
@@ -343,12 +357,24 @@ impl BrandAbsenceGate {
             if rel == VOCABULARY_DEFINITION_PATH {
                 continue;
             }
-            let Ok(body) = std::fs::read_to_string(&file) else {
-                continue;
+            let body = match std::fs::read_to_string(&file) {
+                Ok(body) => body,
+                Err(reason) => return self.not_measured(format!("cannot read {rel}: {reason}")),
             };
-            hits.extend(self.collect_hits(&rel, &crate::source_scan::without_test_modules(&body)));
+            let production = match crate::source_scan::try_without_test_modules(&body) {
+                Ok(production) => production,
+                Err(reason) => return self.not_measured(format!("{rel}: {reason}")),
+            };
+            hits.extend(self.collect_hits(&rel, &production));
         }
         self.finish(hits)
+    }
+
+    fn not_measured(&self, reason: String) -> BrandAbsenceReport {
+        let mut report = self.finish(Vec::new());
+        report.summary = format!("brand-absence gate not measured: {reason}");
+        report.measurement_error = Some(reason);
+        report
     }
 
     /// Every hit in the file, before the ledger is applied.
@@ -452,6 +478,7 @@ impl BrandAbsenceGate {
             allowlisted_debt_total,
             is_blocking: !WARN_ONLY,
             summary,
+            measurement_error: None,
         }
     }
 }
@@ -835,18 +862,20 @@ fn declared_names(code: &str) -> Vec<(usize, String)> {
     out
 }
 
-fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| format!("cannot read source directory {}: {error}", dir.display()))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("cannot read source entry in {}: {error}", dir.display()))?;
         let path = entry.path();
         if path.is_dir() {
-            collect_rs_files(&path, out);
+            collect_rs_files(&path, out)?;
         } else if path.extension().is_some_and(|e| e == "rs") {
             out.push(path);
         }
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

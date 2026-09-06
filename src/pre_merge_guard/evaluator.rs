@@ -644,21 +644,7 @@ impl PreMergeGuard {
         let brand_absence_status = brand_absence_report.gate_status();
 
         let migration_boundary_status =
-            match crate::migration::live_tree_violations(&diff_ctx.repo_working_dir) {
-                Ok(v) if v.is_empty() => GateStatus::Passed,
-                Ok(v) => GateStatus::Failed(format!(
-                    "{} component(s) marked Migrating depend on code oyatie supersedes: {}",
-                    v.len(),
-                    v.iter()
-                        .map(|x| format!("{} -> {}", x.from, x.to))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-                Err(reason) => GateStatus::NotMeasured {
-                    gate_id: "migration_boundary_status".to_string(),
-                    reason,
-                },
-            };
+            super::migration_boundary_gate_status(&diff_ctx.repo_working_dir);
 
         let shape_status = shape_gate_status(shape_outcome);
 

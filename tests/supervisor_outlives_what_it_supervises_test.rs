@@ -74,7 +74,7 @@ fn the_doc_parity_probe_takes_all_three_deadlines_from_that_one_value() {
     );
     // Three, not two. The tool's own deadline used to be spelled here as
     // `DOC_PARITY_PROBE.tool_arg()`; it is now derived inside
-    // `exec::turn::agy_turn`, which this site hands the same budget. So all
+    // `exec::agy_agent`, which this site hands the same budget. So all
     // three deadlines still come from the one value, and the value is now
     // written once per consumer rather than once per deadline: the watchdog,
     // the argv builder, and the process bound.
@@ -84,11 +84,11 @@ fn the_doc_parity_probe_takes_all_three_deadlines_from_that_one_value() {
         "every deadline for this turn must come from the one value"
     );
     assert!(
-        code.contains("agy_turn("),
+        code.contains("agy_agent("),
         "agy must be told a deadline derived from the same value, which is what \
-         `agy_turn` does with the budget it is handed"
+         `agy_agent` does with the budget it is handed"
     );
-    // And that `agy_turn` really derives it is
+    // And that `agy_agent` really derives it is
     // `agy_print_timeout_test::the_constructor_every_site_defers_to_passes_the_flag`,
     // asserted there rather than restated here.
     assert!(

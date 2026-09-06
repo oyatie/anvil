@@ -70,36 +70,22 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
                 run_id, repo
             );
             let branch_str = branch.unwrap_or_else(|| "main".to_string());
-            let sha_str = commit_sha.unwrap_or_default();
             let wf_str = workflow_name.unwrap_or_else(|| "CI".to_string());
             let repo_dir = state.git_mgr.ensure_repo_cloned(&repo).await?;
 
             state
                 .ci_triager
-                .triage_workflow_run(&repo, run_id, &branch_str, &sha_str, &wf_str, &repo_dir)
+                .triage_workflow_run_with_optional_sha(
+                    &repo,
+                    run_id,
+                    &branch_str,
+                    commit_sha.as_deref(),
+                    &wf_str,
+                    &repo_dir,
+                )
                 .await?;
         }
-        Commands::Enlist { repo, pr } => {
-            info!(
-                "Running on-demand merge queue enlistment for {}#{}",
-                repo, pr
-            );
-            // This path has not reviewed the pull request, so it runs the
-            // certification corpus and hands over what that produced.
-            let evidence = crate::webhook::pipelines::certify::evidence_for_enlistment(
-                &state, &repo, pr, None,
-            )
-            .await;
-            // The cause, on the way to the exit code. Collapsed to "no report
-            // was obtained" it tells an operator nothing they can act on.
-            if let Err(e) = &evidence {
-                tracing::warn!("No certification report for {}#{}: {:#}", repo, pr, e);
-            }
-            state
-                .merge_enlister
-                .enlist_into_merge_queue(&repo, pr, evidence.as_ref().ok())
-                .await?;
-        }
+        Commands::Enlist { repo, pr } => crate::cli::enlist::enlist(&state, &repo, pr).await?,
         Commands::HealQueue { repo, pr } => {
             info!("Running on-demand merge queue healer for {}#{}", repo, pr);
             let what_happened = state
@@ -250,13 +236,8 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
         }
         Commands::FlakeRehab { repo } => {
             info!("Running Flaky-Test Quarantine Rehabilitation for {}", repo);
-            let rep = state
-                .flake_quarantine
-                .evaluate_quarantine_lifecycle(&["tests::flaky_test".to_string()]);
-            println!(
-                "\n🧪 FlakeQuarantine Result: {}\nQuarantined: {} | Rehabilitated: {}\n",
-                rep.summary, rep.quarantined_tests_isolated, rep.rehabilitated_tests_restored
-            );
+            let report = state.flake_quarantine.rehabilitation_report();
+            println!("\n🧪 FlakeQuarantine: {report}\n");
         }
         Commands::Reap => {
             info!("Reaping stale preview environments and orphaned worktrees...");

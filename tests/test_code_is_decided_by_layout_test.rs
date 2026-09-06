@@ -8,8 +8,8 @@
 //! named after what it selects. Neither is test code; both are exactly what the
 //! gate exists to find.
 //!
-//! `source_scan::paths::is_test_source` is the predicate that already exists,
-//! already has its own must-flag and must-spare fixtures, and answers by layout.
+//! `source_scan::paths::is_test_source` answers Cargo's explicit test layouts;
+//! an external module is answered by its parsed declaration instead.
 
 use anvil::monorepo_guard::whole_file_expansion::{FileChange, WholeFileExpansion};
 use anvil::source_scan::paths::is_test_source;
@@ -20,6 +20,17 @@ fn repo_with(path: &str, lines: usize) -> tempfile::TempDir {
     let full = dir.path().join(path);
     std::fs::create_dir_all(full.parent().expect("parent")).expect("mkdir");
     std::fs::write(&full, "pub struct X;\n".repeat(lines)).expect("write");
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).expect("source root");
+    if let Ok(relative) = full.strip_prefix(&src) {
+        std::fs::write(
+            src.join("lib.rs"),
+            format!("#[path = {:?}] mod subject;\n", relative.to_string_lossy()),
+        )
+        .expect("crate root");
+    } else {
+        std::fs::write(src.join("lib.rs"), "pub struct Root;\n").expect("crate root");
+    }
     dir
 }
 
@@ -33,6 +44,7 @@ fn oversized(path: &str) -> Vec<String> {
             net_lines: 60,
         },
     )
+    .expect("evaluate fixture")
     .into_iter()
     .map(|v| v.category)
     .collect()
@@ -45,15 +57,13 @@ const PRODUCTION_THAT_SAYS_TEST: &[&str] = &[
     "src/predictive_test_selector/mod.rs",
     "src/supply_chain_guard/slsa_attestation.rs",
     "src/latest_state.rs",
+    "src/thing_test.rs",
+    "src/thing_tests.rs",
+    "src/widget/tests/helper.rs",
 ];
 
 /// And the twin: files that genuinely are test code and must stay exempt.
-const REALLY_TEST_CODE: &[&str] = &[
-    "tests/whatever.rs",
-    "crates/x/tests/bar.rs",
-    "src/clean_architecture_guard/tests.rs",
-    "src/thing_test.rs",
-];
+const REALLY_TEST_CODE: &[&str] = &["tests/whatever.rs", "crates/x/tests/bar.rs"];
 
 #[test]
 fn a_production_file_whose_name_says_test_is_not_test_code() {
@@ -79,6 +89,23 @@ fn test_code_is_still_exempt() {
     }
 }
 
+#[test]
+fn an_external_test_module_is_decided_by_its_declaration() {
+    let path = std::path::Path::new("src/clean_architecture_guard/tests.rs");
+    assert!(
+        !is_test_source(path.to_str().expect("UTF-8 fixture path")),
+        "a basename cannot say whether an external module ships"
+    );
+    assert!(
+        anvil::source_scan::is_cfg_test_module_file(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+            path,
+        )
+        .expect("classify repository source"),
+        "the parent's exact cfg(test) declaration makes this test-only"
+    );
+}
+
 /// The gate itself, not just the predicate: an oversized production file that
 /// this change grew is reported, whatever its name says.
 #[test]
@@ -98,6 +125,36 @@ fn the_ceiling_still_spares_a_grown_test_file() {
     assert!(
         !found.iter().any(|c| c == "OVERSIZED_WHOLE_FILE"),
         "test code is exempt by layout and must stay exempt; got {found:?}"
+    );
+}
+
+#[test]
+fn the_ceiling_spares_an_external_module_declared_only_for_tests() {
+    let dir = tempfile::tempdir().expect("repository");
+    std::fs::create_dir_all(dir.path().join("src/guard")).expect("module directory");
+    std::fs::write(dir.path().join("src/lib.rs"), "mod guard;\n").expect("crate root");
+    std::fs::write(
+        dir.path().join("src/guard.rs"),
+        "#[cfg(test)]\nmod fixtures;\n",
+    )
+    .expect("declaring module");
+    std::fs::write(
+        dir.path().join("src/guard/fixtures.rs"),
+        "pub struct X;\n".repeat(WholeFileExpansion::MAX_WHOLE_FILE_LINES + 50),
+    )
+    .expect("fixture source");
+    let found = WholeFileExpansion::evaluate_whole_file(
+        dir.path(),
+        "src/guard/fixtures.rs",
+        &FileChange {
+            added: "pub struct X;\n",
+            net_lines: 60,
+        },
+    )
+    .expect("evaluate cfg-test fixture");
+    assert!(
+        !found.iter().any(|v| v.category == "OVERSIZED_WHOLE_FILE"),
+        "an exact cfg(test) module is test code: {found:?}"
     );
 }
 

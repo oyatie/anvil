@@ -1,3 +1,4 @@
+use crate::model_prompt::{HarnessText, ModelPrompt};
 use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -6,9 +7,27 @@ use tracing::{error, info, warn};
 
 use crate::github::GitHubClient;
 
+mod publication;
+
+/// Maximum escaped log bytes included in the human-facing fallback report.
+/// This is independent of the model prompt's CI-log cap: both retain the tail,
+/// but the fallback is published directly when no model JSON was obtained.
+const MAX_CI_FALLBACK_DIAGNOSTIC_BYTES: usize = 20_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CiFailureCategory {
+    Compilation,
+    TestPanic,
+    Infrastructure,
+    TimingFlake,
+    LintType,
+    Unspecified,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CiTriageDiagnosis {
-    pub failure_category: String, // "COMPILATION", "TEST_PANIC", "INFRASTRUCTURE", "TIMING_FLAKE", "LINT_TYPE"
+    pub failure_category: CiFailureCategory,
     pub root_cause: String,
     pub culprit_file_and_line: Option<String>,
     pub actionable_remediation: String,
@@ -39,9 +58,35 @@ impl CiTriager {
         workflow_name: &str,
         repo_dir: &Path,
     ) -> Result<CiTriageDiagnosis> {
+        self.triage_workflow_run_with_optional_sha(
+            repo,
+            run_id,
+            branch,
+            (!commit_sha.is_empty()).then_some(commit_sha),
+            workflow_name,
+            repo_dir,
+        )
+        .await
+    }
+
+    pub(crate) async fn triage_workflow_run_with_optional_sha(
+        &self,
+        repo: &str,
+        run_id: u64,
+        branch: &str,
+        commit_sha: Option<&str>,
+        workflow_name: &str,
+        repo_dir: &Path,
+    ) -> Result<CiTriageDiagnosis> {
         info!(
             "Triaging failed workflow run #{} ('{}') on {}/{} (commit: {})...",
-            run_id, workflow_name, repo, branch, commit_sha
+            run_id,
+            workflow_name,
+            repo,
+            branch,
+            commit_sha
+                .filter(|sha| !sha.is_empty())
+                .unwrap_or("unknown")
         );
 
         // Fetch failed logs using `gh run view --log-failed`
@@ -65,8 +110,7 @@ impl CiTriager {
             .await?;
 
         // Post triage diagnostic issue / comment
-        self.publish_triage_report(repo, run_id, branch, &diagnosis)
-            .await?;
+        self.publish_triage_report(repo, run_id, &diagnosis).await?;
 
         Ok(diagnosis)
     }
@@ -89,15 +133,14 @@ impl CiTriager {
         .await
         .context("Failed to execute gh run view --log-failed")?;
 
-        let logs = if output.status.success() {
-            String::from_utf8_lossy(&output.stdout).to_string()
-        } else {
-            String::from_utf8_lossy(&output.stderr).to_string()
-        };
-
-        // Whole: `Untrusted<CiLogs>` is the single truncation point and keeps
-        // the trailing bytes. Capping here too retained the opposite end.
-        Ok(logs)
+        // `Untrusted::CiLogs` owns the sole cap and deliberately keeps the
+        // diagnostic tail. Returning the full source here preserves the real
+        // measured length in its truncation declaration.
+        decode_failed_logs(
+            output.status.success(),
+            output.stdout,
+            output.stderr.as_slice(),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -106,49 +149,12 @@ impl CiTriager {
         repo: &str,
         run_id: u64,
         branch: &str,
-        commit_sha: &str,
+        commit_sha: Option<&str>,
         workflow_name: &str,
         logs: &str,
         working_dir: &Path,
     ) -> Result<CiTriageDiagnosis> {
-        let prompt = format!(
-            r#####"You are Antigravity's Principal Infrastructure & Trunk Reliability Engineer. Conduct an automated Root Cause Diagnosis for a failed CI workflow on `{repo}`.
-
-## Failure Context:
-- **Repository**: {repo}
-- **Branch**: {branch}
-- **Workflow**: {workflow_name}
-- **Workflow Run ID**: #{run_id}
-- **Commit SHA**: {commit_sha}
-
-{logs}
-
-## Instructions:
-1. Identify the exact error: compilation error, panicking test assertion, timing/flake hazard, network timeout, or infrastructure crash.
-2. Pinpoint the culprit file and line number if visible in the stack trace.
-3. Formulate clear, actionable remediation steps.
-
-## Output Format:
-Output strictly valid JSON matching this schema:
-```json
-{{
-  "failure_category": "COMPILATION | TEST_PANIC | TIMING_FLAKE | INFRASTRUCTURE | LINT_TYPE",
-  "root_cause": "Concise 1-2 sentence explanation of the failure mechanism",
-  "culprit_file_and_line": "path/to/file.rs:42",
-  "actionable_remediation": "Clear instructions for fixing the problem",
-  "formatted_markdown": "### 🚨 Trunk CI Failure Diagnostic: {workflow_name} on `{branch}`\n\n| Attribute | Details |\n|---|---|\n| **Category** | ... |\n| **Culprit File** | ... |\n| **Root Cause** | ... |\n\n#### 🔍 Diagnostic Breakdown\n...\n\n#### 🛠️ Recommended Remediation\n..."
-}}
-```
-"#####,
-            repo = repo,
-            branch = branch,
-            workflow_name = workflow_name,
-            run_id = run_id,
-            commit_sha = commit_sha,
-            // Contributor-controlled despite looking like machine output: a
-            // test the pull request adds prints whatever it likes.
-            logs = Untrusted::new(UntrustedLabel::CiLogs, logs,).render()
-        );
+        let prompt = build_ci_triage_prompt(repo, run_id, branch, commit_sha, workflow_name, logs)?;
 
         let output = self.run_agy_prompt(&prompt, working_dir).await?;
         let json_candidate = extract_json_block(&output);
@@ -160,18 +166,7 @@ Output strictly valid JSON matching this schema:
                     "Failed to parse CI triage JSON: {}. Building fallback diagnosis.",
                     e
                 );
-                Ok(CiTriageDiagnosis {
-                    failure_category: "UNSPECIFIED".to_string(),
-                    root_cause: "Workflow run failed on trunk".to_string(),
-                    culprit_file_and_line: None,
-                    actionable_remediation: "Inspect workflow failure logs for details".to_string(),
-                    formatted_markdown: format!(
-                        "### 🚨 Trunk CI Failure on `{}` (Run #{})\n\n**Logs Snippet:**\n```text\n{}\n```",
-                        branch,
-                        run_id,
-                        logs.lines().take(30).collect::<Vec<_>>().join("\n")
-                    ),
-                })
+                Ok(fallback_diagnosis(run_id, logs))
             }
         }
     }
@@ -180,7 +175,6 @@ Output strictly valid JSON matching this schema:
         &self,
         repo: &str,
         run_id: u64,
-        branch: &str,
         diag: &CiTriageDiagnosis,
     ) -> Result<()> {
         info!(
@@ -188,27 +182,9 @@ Output strictly valid JSON matching this schema:
             repo, run_id
         );
 
-        let title = format!(
-            "🚨 Trunk CI Failure on `{}`: Run #{} ({})",
-            branch, run_id, diag.failure_category
-        );
-        let body = format!(
-            "{}\n\n*Run URL: https://github.com/{}/actions/runs/{}*\n\n---\n*🤖 [Triaged] by Oyatie Anvil*",
-            diag.formatted_markdown, repo, run_id
-        );
-
-        // Open an issue on GitHub to alert maintainers
-        let mut cmd = crate::exec::gh();
-        cmd.args([
-            "issue", "create", "--repo", repo, "--title", &title, "--body", &body,
-        ]);
-
-        let out = crate::exec::run_bounded(
-            cmd,
-            crate::exec::ExecClass::Api,
-            "gh issue create (ci triage report)",
-        )
-        .await?;
+        let out =
+            publication::create_issue(crate::exec::gh(), repo, run_id, &diag.formatted_markdown)
+                .await?;
         if out.status.success() {
             let issue_url = String::from_utf8_lossy(&out.stdout).trim().to_string();
             info!("Successfully created triage issue: {}", issue_url);
@@ -220,10 +196,14 @@ Output strictly valid JSON matching this schema:
         Ok(())
     }
 
-    async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
+    async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
         let budget = crate::exec::ExecClass::Model.timeout();
-        let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
-        crate::exec::turn::agy_turn(&mut cmd, &self.agy_effort, budget);
+        let cmd = crate::exec::agy_agent(
+            &crate::exec::Posture::in_workspace(working_dir),
+            &self.agy_effort,
+            budget,
+            None,
+        )?;
 
         let turn = crate::exec::turn::run(cmd, prompt, budget, "agy (ci triager)")
             .await
@@ -235,6 +215,95 @@ Output strictly valid JSON matching this schema:
         }
 
         turn.into_result()
+    }
+}
+
+fn decode_failed_logs(success: bool, stdout: Vec<u8>, stderr: &[u8]) -> Result<String> {
+    if !success {
+        anyhow::bail!(
+            "gh run view --log-failed returned no CI-log evidence: {}",
+            String::from_utf8_lossy(stderr).trim()
+        );
+    }
+    String::from_utf8(stdout)
+        .context("gh run view --log-failed returned non-UTF-8 evidence; refusing lossy logs")
+}
+
+fn build_ci_triage_prompt(
+    repo: &str,
+    run_id: u64,
+    branch: &str,
+    commit_sha: Option<&str>,
+    workflow_name: &str,
+    logs: &str,
+) -> Result<ModelPrompt> {
+    let mut prompt = ModelPrompt::builder();
+    prompt.push_harness(HarnessText::CiPreambleAndRepository);
+    prompt.push_repository(repo)?;
+    prompt
+        .push_harness(HarnessText::CiRunId)
+        .push_u64(run_id)
+        .push_harness(HarnessText::CiCommitSha);
+    if let Some(commit_sha) = commit_sha.filter(|sha| !sha.is_empty()) {
+        prompt.push_commit_sha(commit_sha)?;
+    } else {
+        prompt.push_harness(HarnessText::CiUnknownCommitSha);
+    }
+    prompt
+        .push_harness(HarnessText::CiMetadataEnd)
+        .push_untrusted(Untrusted::new(UntrustedLabel::BranchName, branch))
+        .push_untrusted(Untrusted::new(UntrustedLabel::WorkflowName, workflow_name))
+        .push_untrusted(Untrusted::new(UntrustedLabel::CiLogs, logs))
+        .push_harness(HarnessText::CiResponseContract);
+    prompt.finish()
+}
+
+/// HTML-escapes the longest UTF-8 suffix whose escaped representation fits the
+/// fallback byte budget. Selecting before materialising bounds allocation even
+/// for one marker-stuffed, attacker-controlled line.
+fn escaped_log_tail(logs: &str) -> (String, usize) {
+    let escaped_len = |ch: char| match ch {
+        '&' => 5,
+        '<' | '>' => 4,
+        _ => ch.len_utf8(),
+    };
+    let mut start = logs.len();
+    let mut rendered_len = 0usize;
+    for (index, ch) in logs.char_indices().rev() {
+        let next = escaped_len(ch);
+        if rendered_len + next > MAX_CI_FALLBACK_DIAGNOSTIC_BYTES {
+            break;
+        }
+        rendered_len += next;
+        start = index;
+    }
+
+    let selected = &logs[start..];
+    let mut escaped = String::with_capacity(rendered_len);
+    for ch in selected.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            _ => escaped.push(ch),
+        }
+    }
+    (escaped, selected.len())
+}
+
+fn fallback_diagnosis(run_id: u64, logs: &str) -> CiTriageDiagnosis {
+    let (tail, selected_bytes) = escaped_log_tail(logs);
+    CiTriageDiagnosis {
+        failure_category: CiFailureCategory::Unspecified,
+        root_cause: "Workflow run failed on trunk".to_string(),
+        culprit_file_and_line: None,
+        actionable_remediation: "Inspect workflow failure logs for details".to_string(),
+        formatted_markdown: format!(
+            "### 🚨 Trunk CI Failure (Run #{run_id})\n\n\
+             **Logs Tail:** final {selected_bytes} bytes of {} original bytes\n\n\
+             <pre>{tail}</pre>",
+            logs.len()
+        ),
     }
 }
 
@@ -256,27 +325,4 @@ fn extract_json_block(text: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_ci_triage_diagnosis() {
-        let raw = r#####"```json
-{
-  "failure_category": "COMPILATION",
-  "root_cause": "Missing trait bound `Serialize` on struct AppPayload",
-  "culprit_file_and_line": "src/models.rs:54",
-  "actionable_remediation": "Add #[derive(Serialize)] to AppPayload",
-  "formatted_markdown": "### Trunk CI Failure Diagnostic..."
-}
-```"#####;
-        let json_str = extract_json_block(raw);
-        let parsed: CiTriageDiagnosis = serde_json::from_str(&json_str).expect("Valid parse");
-        assert_eq!(parsed.failure_category, "COMPILATION");
-        assert_eq!(
-            parsed.culprit_file_and_line.as_deref(),
-            Some("src/models.rs:54")
-        );
-        assert!(parsed.root_cause.contains("Missing trait bound"));
-    }
-}
+mod tests;

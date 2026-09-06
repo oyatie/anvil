@@ -263,7 +263,11 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "",
         "import:tokio::process::Command->Command",
     ),
-    ("src/exec/agent/transport.rs", "", "type-alias:ReadTask"),
+    (
+        "src/exec/agent/transport/session.rs",
+        "",
+        "type-alias:ReadTask",
+    ),
     (
         "src/exec/agent/transport.rs",
         "deliver",
@@ -325,27 +329,12 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "mut-ref:child",
     ),
     (
-        "src/exec/agent/transport.rs",
-        "deliver_with_stdin",
-        "mut-ref:child",
-    ),
-    (
-        "src/exec/agent/transport.rs",
-        "deliver_with_stdin",
-        "mut-ref:child",
-    ),
-    (
-        "src/exec/agent/transport.rs",
-        "deliver_with_stdin",
-        "mut-ref:child",
-    ),
-    (
-        "src/exec/agent/transport.rs",
+        "src/exec/agent/transport/session.rs",
         "finish",
         "mut-ref:self.stderr",
     ),
     (
-        "src/exec/agent/transport.rs",
+        "src/exec/agent/transport/session.rs",
         "finish",
         "mut-ref:self.stdout",
     ),

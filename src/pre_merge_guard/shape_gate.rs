@@ -18,7 +18,8 @@ const GATE_ID: &str = "shape_status";
 /// - Git failure: `Errored`.
 /// - Bootstrap (no baseline at the merge-base) and advisory-only regressions:
 ///   `Warning` carrying the distance.
-/// - Any regression on a blocking rule: `Failed`, first five keys named.
+/// - Any blocking refusal: `Failed`, first five reasons named (new keys,
+///   withdrawn blocking rules with debt, or inert signoffs).
 /// - A blocking rule the engine could not evaluate: `NotMeasured`. It found
 ///   nothing only because it never ran, and a judgement standing on a rule
 ///   that did not run is absent evidence reading as a pass (I1).
@@ -45,7 +46,7 @@ pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome)
                     first.push("…");
                 }
                 GateStatus::Failed(format!(
-                    "{} regression(s) on blocking shape rules since the baseline: {}",
+                    "{} blocking refusal(s) on shape rules since the baseline: {}",
                     blocking.len(),
                     first.join("; ")
                 ))

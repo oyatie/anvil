@@ -1,5 +1,5 @@
-//! Execution primitives reachable only after the parent module has minted a
-//! checked non-model capability.
+// Execution primitives reachable only after the parent module has minted a
+// checked non-model capability.
 
 use anyhow::{Result, bail};
 use std::process::{ExitStatus, Output};
@@ -8,6 +8,8 @@ use tracing::warn;
 
 use super::{NonModelCommand, SyncNonModelCommand};
 use crate::exec::ExecClass;
+
+mod sync_capture;
 
 #[expect(
     clippy::disallowed_methods,
@@ -119,68 +121,69 @@ pub(super) async fn run_with_stdin(
     reason = "checked synchronous non-model transport owns this execution"
 )]
 pub(super) fn run_sync_bounded(
-    SyncNonModelCommand(mut command): SyncNonModelCommand,
+    SyncNonModelCommand(command): SyncNonModelCommand,
     limit: Duration,
     what: &str,
 ) -> Result<Output> {
-    use std::io::Read;
-
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|error| anyhow::anyhow!("{} failed to run: {}", what, error))?;
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    let stdout_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        if let Some(pipe) = stdout.as_mut() {
-            let _ = pipe.read_to_end(&mut bytes);
-        }
-        bytes
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        if let Some(pipe) = stderr.as_mut() {
-            let _ = pipe.read_to_end(&mut bytes);
-        }
-        bytes
-    });
-
-    let deadline = Instant::now() + limit;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                bail!("{} timed out after {}s", what, limit.as_secs());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                bail!("{} failed while waiting: {}", what, error);
-            }
-        }
-    };
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| anyhow::anyhow!("{} stdout reader panicked", what))?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| anyhow::anyhow!("{} stderr reader panicked", what))?;
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
+    run_sync_task(limit, what, || async move {
+        // Conversion preserves the checked canonical program, argv and
+        // environment. Async pipe ownership lets deadline cancellation close
+        // both streams rather than waiting for blocking readers to see EOF.
+        let mut command = tokio::process::Command::from(command);
+        command
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null());
+        let capture = sync_capture::prepare(&mut command)
+            .await
+            .map_err(|error| anyhow::anyhow!("{} capture setup failed: {}", what, error))?;
+        let child = command
+            .spawn()
+            .map_err(|error| anyhow::anyhow!("{} failed to run: {}", what, error))?;
+        // Stdio::from(File) retains parent writer copies in Command. They
+        // must close immediately so only child-held writers govern EOF.
+        drop(command);
+        capture
+            .finish(child)
+            .await
+            .map_err(|error| anyhow::anyhow!("{} failed while waiting: {}", what, error))
     })
 }
+
+fn run_sync_task<T, F>(limit: Duration, what: &str, task: impl FnOnce() -> F + Send) -> Result<T>
+where
+    T: Send,
+    F: std::future::Future<Output = Result<T>>,
+{
+    // Thread/runtime startup consumes this same budget. No task is started
+    // after it expires, and no blocking reader or blocking-pool task is used.
+    let deadline = Instant::now()
+        .checked_add(limit)
+        .ok_or_else(|| anyhow::anyhow!("{} timeout exceeds the clock range", what))?;
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("anvil-sync-exec".to_owned())
+            .spawn_scoped(scope, move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| anyhow::anyhow!("{} runtime failed: {}", what, error))?;
+                runtime.block_on(async {
+                    if Instant::now() >= deadline {
+                        bail!("{} timed out after {}s", what, limit.as_secs());
+                    }
+                    match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), task())
+                        .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => bail!("{} timed out after {}s", what, limit.as_secs()),
+                    }
+                })
+            })
+            .map_err(|error| anyhow::anyhow!("{} worker failed to start: {}", what, error))?
+            .join()
+            .map_err(|_| anyhow::anyhow!("{} worker panicked", what))?
+    })
+}
+
+#[cfg(test)]
+mod tests;

@@ -6,6 +6,7 @@ use super::package::TargetKind;
 
 mod aliases;
 mod audited_registry;
+mod authority;
 mod dependencies;
 mod glob;
 mod provenance;
@@ -19,7 +20,7 @@ pub(super) struct PackageManifest {
     pub(super) value: toml::Value,
     dependencies: Vec<DependencySpec>,
     global_overrides: Vec<LocalOverride>,
-    audited_registry: BTreeSet<String>,
+    audited_registry: BTreeSet<(String, dependencies::DependencyKind, Option<String>)>,
 }
 
 pub(super) fn discover(repo_root: &Path) -> Result<Option<Vec<PackageManifest>>, String> {
@@ -74,7 +75,6 @@ pub(super) fn discover(repo_root: &Path) -> Result<Option<Vec<PackageManifest>>,
     }
 
     let global_overrides = dependencies::overrides(&root_value, &canonical_repo)?;
-    let audited_registry = audited_registry::packages(&canonical_repo)?;
     for dependency in &global_overrides {
         queue.push_back(canonical_package_dir(
             &canonical_repo,
@@ -132,10 +132,11 @@ pub(super) fn discover(repo_root: &Path) -> Result<Option<Vec<PackageManifest>>,
             value,
             dependencies,
             global_overrides: global_overrides.clone(),
-            audited_registry: audited_registry.clone(),
+            audited_registry: BTreeSet::new(),
         });
     }
     packages.sort_by(|a, b| a.manifest.cmp(&b.manifest));
+    authority::admit(&canonical_repo, &mut packages);
     Ok(Some(packages))
 }
 

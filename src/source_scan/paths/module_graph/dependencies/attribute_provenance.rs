@@ -147,6 +147,7 @@ fn is_audited_attribute(meta: &Meta, provenance: &Provenance<'_>) -> bool {
             .collect::<Vec<_>>(),
         provenance.scope,
         provenance.aliases,
+        provenance.macros,
     )
 }
 
@@ -225,6 +226,7 @@ fn check_derive(meta: &Meta, provenance: &Provenance<'_>) -> Option<String> {
                 &segments,
                 provenance.scope,
                 provenance.aliases,
+                provenance.macros,
             );
         (!audited_external
             && (derive.leading_colon.is_some()
@@ -289,5 +291,23 @@ mod tests {
         let symbols = Symbols::default();
         assert!(reason("#[cfg_attr(test, evil::inject)] struct S;", &symbols).is_none());
         assert!(reason("#[cfg_attr(unix, evil::inject)] struct S;", &symbols).is_some());
+    }
+
+    #[test]
+    fn clap_generated_names_require_known_lexical_bindings() {
+        let mut symbols = Symbols::default();
+        symbols.add_audited_derive_crate("clap", "clap");
+        assert!(reason("#[derive(clap::Parser)] struct Args;", &symbols).is_none());
+        symbols.add_use(&[], &syn::parse_str("use other::format;").unwrap());
+        assert!(reason("#[derive(clap::Parser)] struct Args;", &symbols).is_some());
+    }
+
+    #[test]
+    fn serde_default_generated_facade_requires_its_actual_extern_binding() {
+        let mut symbols = Symbols::default();
+        symbols.add_audited_derive_crate("codec", "serde");
+        assert!(reason("#[derive(codec::Serialize)] struct Record;", &symbols).is_some());
+        symbols.add_audited_derive_crate("serde", "serde");
+        assert!(reason("#[derive(codec::Serialize)] struct Record;", &symbols).is_none());
     }
 }

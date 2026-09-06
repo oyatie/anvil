@@ -53,6 +53,10 @@ impl<'ast> Visit<'ast> for Syntax<'_> {
 
     fn visit_item(&mut self, item: &'ast Item) {
         if !super::super::item_is_non_production(item) {
+            if super::macro_contract::affected_async_trait_item(item, self) {
+                self.uncertainties
+                    .push("async_trait receiver rewrite affects a macro token tree".to_owned());
+            }
             visit::visit_item(self, item);
         }
     }
@@ -227,11 +231,21 @@ impl<'ast> Visit<'ast> for Syntax<'_> {
                         self.record_reachable_macro_body(body);
                     }
                 }
-                if self.symbols.is_audited_function_macro(
-                    &path,
-                    &self.logical_module,
-                    &self.lexical.aliases,
-                ) {
+                if self
+                    .symbols
+                    .audited_function_macro(
+                        &path,
+                        &self.logical_module,
+                        &self.lexical.aliases,
+                        &self.lexical.macros,
+                    )
+                    .is_some_and(|(package, symbol)| {
+                        super::macro_contract::public_function_tokens(
+                            (&package, &symbol),
+                            mac.tokens.clone(),
+                        )
+                    })
+                {
                     locally_measured = true;
                 }
                 if !locally_measured && !known_unshadowed_builtin_macro(self, &path) {

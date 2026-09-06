@@ -424,16 +424,6 @@ const EXPECTED_SAFE_ASSOCIATED_SPAWNS: &[(&str, &str, &str)] = &[
         "replacement::spawn",
     ),
     (
-        "src/exec/non_model/transport.rs",
-        "run_sync_bounded",
-        "std::thread::spawn",
-    ),
-    (
-        "src/exec/non_model/transport.rs",
-        "run_sync_bounded",
-        "std::thread::spawn",
-    ),
-    (
         "src/fleet_observer/mod.rs",
         "spawn_continuous_poller",
         "tokio::spawn",
@@ -575,7 +565,12 @@ const SAFE_DATA_MACROS: &[&str] = &[
     "write",
     "writeln",
 ];
-const SAFE_CODE_MACROS: &[&str] = &["sqlx::query", "tokio::join", "tokio::select"];
+const SAFE_CODE_MACROS: &[&str] = &[
+    "sqlx::query",
+    "tokio::join",
+    "tokio::select",
+    "tokio::try_join",
+];
 const APPROVED_SAFE_MACRO_IMPORTS: &[&str] = &[
     "anyhow::anyhow",
     "anyhow::bail",
@@ -1667,7 +1662,12 @@ fn token_path_ending_at(tokens: &[TokenTree], end: usize) -> String {
     associated_token_path(tokens, end)
 }
 
-fn macro_token_policy(name: &str) -> Option<(bool, bool)> {
+fn macro_token_policy(name: &str, tokens: &TokenStream) -> Option<(bool, bool)> {
+    // The pinned try_join audit covers nonempty public expression lists,
+    // not its internal normalization entrypoint. Keep recursive token checks.
+    if name == "tokio::try_join" && !public_try_join_tokens(tokens) {
+        return None;
+    }
     if SAFE_DATA_MACROS.contains(&name) {
         Some((true, true))
     } else if SAFE_CODE_MACROS.contains(&name) {
@@ -1679,6 +1679,27 @@ fn macro_token_policy(name: &str) -> Option<(bool, bool)> {
     } else {
         None
     }
+}
+
+fn public_try_join_tokens(tokens: &TokenStream) -> bool {
+    let parser = |input: syn::parse::ParseStream<'_>| {
+        let fork = input.fork();
+        if fork
+            .parse::<syn::Ident>()
+            .is_ok_and(|ident| ident == "biased")
+            && fork.peek(syn::token::Semi)
+        {
+            let _: syn::Ident = input.parse()?;
+            let _: syn::token::Semi = input.parse()?;
+        }
+        let expressions =
+            input.parse_terminated(<syn::Expr as syn::parse::Parse>::parse, syn::token::Comma)?;
+        if expressions.is_empty() {
+            return Err(input.error("try_join requires expressions"));
+        }
+        Ok(())
+    };
+    syn::parse::Parser::parse2(parser, tokens.clone()).is_ok()
 }
 
 fn macro_tokens_execute_process(
@@ -1694,7 +1715,7 @@ fn macro_tokens_execute_process(
                 && matches!(&tokens[index - 2], TokenTree::Ident(_))
             {
                 let nested = token_path_ending_at(&tokens, index - 2);
-                let Some(policy) = macro_token_policy(&nested) else {
+                let Some(policy) = macro_token_policy(&nested, &group.stream()) else {
                     return true;
                 };
                 policy
@@ -2512,7 +2533,7 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
         // repository census can identify. Make every include an explicit seam
         // decision; source-controlled Rust modules are discovered directly.
         let macro_name = syn_path_name(&invocation.path);
-        let policy = macro_token_policy(&macro_name);
+        let policy = macro_token_policy(&macro_name, &invocation.tokens);
         if syn_path_is(&invocation.path, "include") || policy.is_none() {
             self.record(format!("macro:{}", syn_path_name(&invocation.path)));
         } else if let Some((allow_bare_process_names, allow_trusted_roots)) = policy
@@ -6589,7 +6610,12 @@ fn every_execution_site_is_downstream_of_its_typed_capability() {
     }
     assert_eq!(
         command_flow(&non_model, "run_sync_bounded"),
-        ["bind:command", "tuple-bind:SyncNonModelCommand:command"]
+        [
+            "bind:command",
+            "bind:command",
+            "mut-ref:command",
+            "tuple-bind:SyncNonModelCommand:command",
+        ]
     );
     assert_eq!(
         command_flow(&replacement, "replacement_command"),
@@ -7328,6 +7354,23 @@ fn macro_classifier_allows_only_proved_data_macros() {
         }
     "#;
     assert!(contains_process_execution_syntax(dependency_macro));
+}
+
+#[test]
+fn audited_try_join_uses_public_grammar_and_keeps_nested_token_checks() {
+    for source in [
+        "fn f() { tokio::try_join!(one(), two()); }",
+        "fn f() { tokio::try_join!(biased; one(), two(),); }",
+    ] {
+        assert!(!contains_process_execution_syntax(source), "{source}");
+    }
+    for source in [
+        "fn f() { tokio::try_join!(); }",
+        "fn f() { tokio::try_join!(@internal one()); }",
+        "fn f() { tokio::try_join!(unknown::future!()); }",
+    ] {
+        assert!(contains_process_execution_syntax(source), "{source}");
+    }
 }
 
 #[test]

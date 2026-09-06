@@ -26,8 +26,10 @@ pub(in crate::source_scan::paths::module_graph) fn symbols_for_root(
 pub(in crate::source_scan::paths::module_graph) fn symbols_for_classification(
     path: &Path,
     repo_root: &Path,
+    aliases: &BTreeSet<String>,
+    audited_derive_crates: &BTreeMap<String, String>,
 ) -> Result<(Symbols, bool), String> {
-    collect_symbols(path, repo_root, &BTreeSet::new(), &BTreeMap::new(), false)
+    collect_symbols(path, repo_root, aliases, audited_derive_crates, false)
 }
 
 fn collect_symbols(

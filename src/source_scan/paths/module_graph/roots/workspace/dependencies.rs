@@ -10,6 +10,7 @@ pub(super) struct DependencySpec {
     pub(super) renamed: bool,
     pub(super) directory: Option<PathBuf>,
     pub(super) kind: DependencyKind,
+    pub(super) target: Option<String>,
     pub(super) default_registry: bool,
     pub(super) default_features: bool,
     pub(super) features: BTreeSet<String>,
@@ -21,7 +22,7 @@ pub(super) struct LocalOverride {
     pub(super) directory: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum DependencyKind {
     Normal,
     Dev,
@@ -72,23 +73,27 @@ pub(super) fn collect(
     let manifest_table = manifest
         .as_table()
         .ok_or_else(|| "Cargo manifest root is not a table".to_owned())?;
-    add_tables(manifest_table, &mut tables);
+    add_tables(manifest_table, None, &mut tables);
     if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
-        for target in targets.values().filter_map(toml::Value::as_table) {
-            add_tables(target, &mut tables);
+        for (condition, target) in targets {
+            if let Some(target) = target.as_table() {
+                add_tables(target, Some(condition.as_str()), &mut tables);
+            }
         }
     }
     let mut dependencies = Vec::new();
-    for (table, kind) in tables {
+    for (table, kind, target) in tables {
         for (name, specification) in table {
-            dependencies.push(parse_spec(
+            let mut dependency = parse_spec(
                 name,
                 specification,
                 kind,
                 inherited,
                 workspace_root,
                 package_dir,
-            )?);
+            )?;
+            dependency.target = target.map(str::to_owned);
+            dependencies.push(dependency);
         }
     }
     Ok(dependencies)
@@ -96,7 +101,12 @@ pub(super) fn collect(
 
 fn add_tables<'a>(
     manifest: &'a toml::map::Map<String, toml::Value>,
-    tables: &mut Vec<(&'a toml::map::Map<String, toml::Value>, DependencyKind)>,
+    target: Option<&'a str>,
+    tables: &mut Vec<(
+        &'a toml::map::Map<String, toml::Value>,
+        DependencyKind,
+        Option<&'a str>,
+    )>,
 ) {
     for (name, kind) in [
         ("dependencies", DependencyKind::Normal),
@@ -104,7 +114,7 @@ fn add_tables<'a>(
         ("build-dependencies", DependencyKind::Build),
     ] {
         if let Some(table) = manifest.get(name).and_then(toml::Value::as_table) {
-            tables.push((table, kind));
+            tables.push((table, kind, target));
         }
     }
 }
@@ -179,6 +189,7 @@ fn parse_spec(
         renamed,
         directory,
         kind,
+        target: None,
         default_registry,
         default_features,
         features: enabled_features,

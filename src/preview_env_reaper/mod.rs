@@ -19,6 +19,12 @@ pub struct PreviewEnvReaper {
     engine: PreviewReaperEngine,
 }
 
+impl Default for PreviewEnvReaper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PreviewEnvReaper {
     pub fn new() -> Self {
         let engine = PreviewReaperEngine::new();
@@ -72,7 +78,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ fn ui() {}".to_string(),
             changed_files: vec!["src/app.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

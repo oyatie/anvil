@@ -1,3 +1,4 @@
+use crate::git_manager::diff_context::{BothSides, diffs_by_path};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -5,8 +6,8 @@ use tracing::info;
 
 use crate::git_manager::PrDiffContext;
 
-pub mod service_graph;
-pub use service_graph::{CrossServiceFinding, ServiceGraphValidator};
+pub mod contract_scan;
+pub use contract_scan::{CrossServiceFinding, NO_CONSUMER_REGISTRY};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceImpactReport {
@@ -15,17 +16,23 @@ pub struct ServiceImpactReport {
     pub summary: String,
 }
 
-pub struct CrossServiceImpactEngine {
-    validator: ServiceGraphValidator,
+pub struct CrossServiceImpactEngine;
+
+impl Default for CrossServiceImpactEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CrossServiceImpactEngine {
     pub fn new() -> Self {
-        let validator = ServiceGraphValidator::new();
-        Self { validator }
+        Self
     }
 
-    /// 100% Deterministic evaluation of monorepo cross-service blast radius
+    /// Reports required schema fields a changed wire contract lost.
+    ///
+    /// The impacted consumer set is not part of the answer: see
+    /// [`NO_CONSUMER_REGISTRY`].
     pub fn evaluate_cross_service_impact(
         &self,
         _repo_dir: &Path,
@@ -38,28 +45,56 @@ impl CrossServiceImpactEngine {
 
         let mut breaking_findings = Vec::new();
 
-        for file_diff in diff_ctx.diff_content.split("diff --git") {
-            let lines: Vec<&str> = file_diff.lines().collect();
-            let mut current_file = "api.yaml".to_string();
-            if let Some(first_line) = lines.first() {
-                if let Some(path) = first_line.split_whitespace().last() {
-                    current_file = path.trim_start_matches("b/").to_string();
-                }
-            }
+        for file in diffs_by_path(&diff_ctx.diff_content) {
+            // The path is the one the diff states. It used to default to the
+            // literal "api.yaml", a plausible path this gate published
+            // as the location of a finding that was not found there.
+            //
+            // `raw` -- this rule compares the two sides of the diff on purpose: a
+            // required field disappearing IS the finding, so it needs the markers.
 
-            let file_findings = self
-                .validator
-                .evaluate_service_contracts(&current_file, file_diff);
-            breaking_findings.extend(file_findings);
+            breaking_findings.extend(contract_scan::removed_required_fields(
+                &file.path,
+                // The only rule in the corpus whose SUBJECT is the removal: a
+                // `required` field that disappears is the breaking change, so
+                // it cannot work from additions. Naming the reason is what
+                // keeps that deliberate rather than accidental.
+                file.both_sides(BothSides::ContractComparesRemovedFields),
+            ));
         }
 
         let is_compatible = breaking_findings.is_empty();
+        let contracts_read: Vec<&String> = diff_ctx
+            .changed_files
+            .iter()
+            .filter(|f| contract_scan::is_wire_contract(f))
+            .collect();
+
         let summary = if is_compatible {
-            "✅ PASSED (Cross-service wire contract compatibility verified across all monorepo microservices)".to_string()
+            format!(
+                "No required schema field was removed from the {} changed wire contract(s) read ({}). Nothing else about compatibility is measured, and {}.",
+                contracts_read.len(),
+                if contracts_read.is_empty() {
+                    "none in this diff".to_string()
+                } else {
+                    contracts_read
+                        .iter()
+                        .map(|f| f.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+                NO_CONSUMER_REGISTRY
+            )
         } else {
             format!(
-                "❌ FAILED ({} cross-service breaking wire contract change(s) detected)",
-                breaking_findings.len()
+                "{} required schema field(s) removed from a wire contract: {}. {}.",
+                breaking_findings.len(),
+                breaking_findings
+                    .iter()
+                    .map(|f| format!("{} lost `{}`", f.contract_file, f.removed_required_field))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                NO_CONSUMER_REGISTRY
             )
         };
 
@@ -76,7 +111,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cross_service_nominal() {
+    fn a_diff_touching_no_wire_contract_is_compatible() {
         let engine = CrossServiceImpactEngine::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
@@ -86,7 +121,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ fn endpoint() {}".to_string(),
             changed_files: vec!["src/api.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };
@@ -95,5 +133,6 @@ mod tests {
             .evaluate_cross_service_impact(Path::new("."), &diff_ctx)
             .unwrap();
         assert!(rep.is_compatible);
+        assert!(rep.summary.contains("none in this diff"));
     }
 }

@@ -14,10 +14,6 @@ impl TraceReplayer {
     }
 
     pub fn execute_replay_verification(&self, traces: &[ReplayTraceRecord]) -> (bool, usize) {
-        if traces.is_empty() {
-            return (true, 5); // 5 synthetic hermetic replay records passed
-        }
-
         let passed = traces.iter().all(|t| !t.input_payload.is_empty());
         (passed, traces.len())
     }

@@ -1,0 +1,67 @@
+# Promotion rungs: staging ← dev, canary ← staging, production ← canary.
+# Feature work enters at `dev`.
+#
+# What this check does: a pull request into a rung whose head repository is not
+# this repository, or whose head ref is not that rung's predecessor, FAILS this
+# check. A fork branch named `dev` is not the protected `dev` rung, and missing
+# repository metadata is a refusal rather than guessed provenance. A skipped
+# rung is therefore born failing. Whether that failure blocks a merge is
+# deliberately not claimed here: repository rulesets and branch protection
+# assign required checks, and that mutable external configuration can change
+# independently of this file.
+#
+# `dev` is the trunk and the default branch. This header claimed as much from
+# the day it was written, but the repository did not practise it: work landed
+# on `main`, `dev` fell 43 commits behind, and pull requests auto-targeting the
+# default branch diffed against a stale base — roughly 49k phantom additions
+# apiece across #31, #32, #34, #42-#46 and #48. That is fixed by merging `main`
+# into `dev` and seeding the rungs, which is the first time this file has had a
+# real rung to guard.
+#
+# `main` still exists and still carries the history everything above descends
+# from. It has no role in this ladder, and no replacement role has been
+# decided. Do not infer one from its absence here.
+#
+# `.github/workflows/promotion-open-next.yml` opens the next rung's pull
+# request when a rung advances. Its `next` map is the inverse of `pred` below,
+# and `tests/promotion_ladder_test.rs` fails if the two drift.
+name: promotion-predecessor
+
+on:
+  pull_request:
+    branches: [staging, canary, production]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  promotion-predecessor:
+    name: promotion-predecessor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require predecessor rung
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const pred = { staging: "dev", canary: "staging", production: "canary" };
+            const base = context.payload.pull_request.base.ref;
+            const head = context.payload.pull_request.head.ref;
+            const currentRepo = `${context.repo.owner}/${context.repo.repo}`;
+            const baseRepo = context.payload.pull_request.base.repo?.full_name;
+            const headRepo = context.payload.pull_request.head.repo?.full_name;
+            const want = pred[base];
+            if (!want) {
+              core.setFailed(`unexpected promotion base '${base}'`);
+              return;
+            }
+            const sourceIsPredecessor =
+              baseRepo === currentRepo && headRepo === baseRepo && head === want;
+            if (!sourceIsPredecessor) {
+              core.setFailed(
+                `promote ${base} only from ${currentRepo}:${want}; ` +
+                  `head is '${headRepo ?? "<missing>"}:${head}' and base repository is ` +
+                  `'${baseRepo ?? "<missing>"}'.`
+              );
+              return;
+            }

@@ -1,0 +1,35 @@
+name: supply-chain-weekly
+
+# Advisories and licences, weekly and non-blocking.
+#
+# Scheduled rather than per-pull-request on purpose. A new advisory is
+# published against code that already merged, so a pull request is the wrong
+# subject: the same commit is clean on Monday and vulnerable on Tuesday without
+# anyone editing it. Putting this on the merge path would also pay its
+# wall-clock on every merge forever to answer a question that changes daily.
+#
+# Red here is a signal to act on the dependency graph, never a merge blocker.
+
+on:
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: "1.98.0"
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+      - name: Advisories, licences, bans and sources
+        run: cargo deny --all-features check

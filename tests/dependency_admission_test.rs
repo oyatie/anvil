@@ -1,0 +1,232 @@
+//! Dependencies enter by decision, not by convenience.
+//!
+//! Anvil's lockfile is 162 crates against oyatie's 1438. That leanness is a
+//! property worth defending: every crate is code nobody here reviewed, running
+//! with the daemon's credentials, in a process that clones repositories and
+//! spawns agents with `--dangerously-skip-permissions`.
+//!
+//! These tests are a ratchet, not a ban. The count may fall freely; raising it
+//! requires editing this file, which makes the decision visible in review
+//! rather than invisible in a lockfile diff.
+
+use std::collections::BTreeSet;
+use std::fs;
+
+/// Direct dependencies after three reviewed additions to the 22-crate set.
+///
+/// `syn` and `proc-macro2` move from test dependencies to the production source
+/// classifier, and `quote` supplies AST token rendering. The model-process
+/// dependency census independently pins the exact production dependency set,
+/// so these are named decisions rather than blanket slots.
+const DIRECT_DEPENDENCY_CEILING: usize = 25;
+
+const DIRECT_DEPENDENCIES_BEFORE_NAMED_ADDITIONS: &[&str] = &[
+    "anyhow",
+    "async-trait",
+    "axum",
+    "chrono",
+    "clap",
+    "dotenvy",
+    "futures",
+    "hex",
+    "hmac",
+    "regex",
+    "serde",
+    "serde_json",
+    "serde_yaml",
+    "sha2",
+    "socket2",
+    "subtle",
+    "tempfile",
+    "tokio",
+    "tokio-stream",
+    "toml",
+    "tracing",
+    "tracing-subscriber",
+];
+
+/// Transitive crates at the time this ratchet was set.
+const LOCKFILE_CEILING: usize = 170;
+
+fn manifest() -> String {
+    fs::read_to_string("Cargo.toml").expect("Cargo.toml")
+}
+
+fn parsed_toml(path: &str) -> toml::Value {
+    fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("{path} must be readable: {error}"))
+        .parse()
+        .unwrap_or_else(|error| panic!("{path} must parse as TOML: {error}"))
+}
+
+/// Direct `[dependencies]` crate names from a Cargo manifest.
+///
+/// A missing or unreadable `[dependencies]` table is a failed ratchet, not an
+/// empty set. The previous line-scan returned `BTreeSet::new()` when it could
+/// not find the exact bytes `\n[dependencies]\n`, so a reformatted or
+/// CRLF-normalized manifest would pass `deps.len() <= CEILING` with zero crates.
+fn direct_dependencies_from(manifest: &str) -> BTreeSet<String> {
+    let value: toml::Value = manifest.parse().expect("Cargo.toml must parse as TOML");
+    let table = value
+        .get("dependencies")
+        .and_then(|v| v.as_table())
+        .unwrap_or_else(|| {
+            panic!(
+                "Cargo.toml has no [dependencies] table; an unreadable manifest \
+             must fail the ratchet, not pass with zero crates"
+            )
+        });
+    table.keys().cloned().collect()
+}
+
+fn direct_dependencies() -> BTreeSet<String> {
+    direct_dependencies_from(&manifest())
+}
+
+#[test]
+fn direct_dependency_count_only_falls() {
+    let deps = direct_dependencies();
+    assert!(
+        deps.len() <= DIRECT_DEPENDENCY_CEILING,
+        "{} direct dependencies, ceiling is {}. Adding one is a decision: it must be \
+         justified here, not merely typed into Cargo.toml.\n{:?}",
+        deps.len(),
+        DIRECT_DEPENDENCY_CEILING,
+        deps
+    );
+}
+
+#[test]
+fn direct_dependency_additions_are_the_three_reviewed_decisions() {
+    let baseline = DIRECT_DEPENDENCIES_BEFORE_NAMED_ADDITIONS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<BTreeSet<_>>();
+    let added = direct_dependencies()
+        .difference(&baseline)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        added,
+        BTreeSet::from([
+            "proc-macro2".to_string(),
+            "quote".to_string(),
+            "syn".to_string(),
+        ]),
+        "only the reviewed source-classifier parsing, span, and AST token rendering dependencies may exceed the prior 22-crate set"
+    );
+}
+
+#[test]
+fn transitive_crate_count_only_falls() {
+    let lock = fs::read_to_string("Cargo.lock").expect("Cargo.lock");
+    let total = lock.matches("\nname = ").count();
+    assert!(
+        total <= LOCKFILE_CEILING,
+        "{total} crates in the lockfile, ceiling is {LOCKFILE_CEILING}. A dependency's \
+         real cost is its transitive closure, which is where a one-line addition becomes \
+         forty crates nobody reviewed."
+    );
+}
+
+#[test]
+fn an_admission_policy_exists_and_denies_the_things_that_matter() {
+    let deny = fs::read_to_string("deny.toml")
+        .expect("deny.toml must exist: dependencies enter by policy, not by habit");
+
+    for (needle, why) in [
+        ("yanked", "a yanked crate was withdrawn by its author"),
+        (
+            "unmaintained",
+            "an unmaintained crate accrues unfixed vulnerabilities",
+        ),
+        ("[licenses]", "license compatibility is not optional"),
+        (
+            "[bans]",
+            "duplicate and wildcard versions are how closures grow",
+        ),
+    ] {
+        assert!(
+            deny.contains(needle),
+            "deny.toml has no `{needle}` policy — {why}"
+        );
+    }
+}
+
+#[test]
+fn the_private_workspace_license_exception_is_narrow_and_paired() {
+    let cargo = parsed_toml("Cargo.toml");
+    let package = cargo
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .expect("Cargo.toml must have a [package] table");
+    assert_eq!(
+        package.get("publish").and_then(toml::Value::as_bool),
+        Some(false),
+        "cargo-deny may ignore the first-party workspace crate only when Cargo.toml explicitly \
+         marks it non-publishable with `publish = false`"
+    );
+
+    let deny = parsed_toml("deny.toml");
+    let licenses = deny
+        .get("licenses")
+        .and_then(toml::Value::as_table)
+        .expect("deny.toml must have a [licenses] table");
+    let private = licenses
+        .get("private")
+        .and_then(toml::Value::as_table)
+        .expect("[licenses] must narrowly configure private workspace crates");
+    assert_eq!(
+        private.get("ignore").and_then(toml::Value::as_bool),
+        Some(true),
+        "cargo-deny must ignore the explicitly non-publishable first-party workspace crate"
+    );
+    assert_eq!(
+        private.len(),
+        1,
+        "[licenses].private must contain only `ignore = true`; broadening this exception needs \
+         separate policy review"
+    );
+
+    assert!(
+        licenses
+            .get("allow")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|allowed| !allowed.is_empty()),
+        "the private-workspace exception must not disable the dependency license allowlist"
+    );
+    assert_eq!(
+        licenses
+            .get("confidence-threshold")
+            .and_then(toml::Value::as_float),
+        Some(0.8),
+        "the private-workspace exception must not weaken dependency license identification"
+    );
+}
+
+#[test]
+fn the_policy_is_the_same_one_oyatie_uses() {
+    // Two policies that drift are worse than one that is occasionally
+    // inconvenient. This repository is being absorbed into oyatie; the admission
+    // rules should not have to be reconciled at that point.
+    let deny = fs::read_to_string("deny.toml").expect("deny.toml");
+    assert!(
+        deny.contains("oyatie"),
+        "deny.toml must record that it is adopted from oyatie, so a reader knows where \
+         to change it first"
+    );
+}
+
+#[test]
+fn a_reformatted_dependencies_table_is_still_counted() {
+    let deps = direct_dependencies_from(
+        "[package]\nname = \"x\"\n[dependencies]\nfoo = \"1\"\nbar = { version = \"2\" }\n",
+    );
+    assert_eq!(deps, BTreeSet::from(["bar".to_string(), "foo".to_string()]));
+}
+
+#[test]
+#[should_panic(expected = "no [dependencies] table")]
+fn a_manifest_without_dependencies_fails_the_ratchet() {
+    let _ = direct_dependencies_from("[package]\nname = \"x\"\n");
+}

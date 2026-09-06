@@ -10,6 +10,12 @@ pub struct HeavyDependencyFinding {
 
 pub struct HeavyDependencyScanner;
 
+impl Default for HeavyDependencyScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeavyDependencyScanner {
     pub fn new() -> Self {
         Self

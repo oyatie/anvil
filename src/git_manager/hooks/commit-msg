@@ -1,0 +1,12 @@
+#!/bin/sh
+# First line: type(scope): summary. Merge/Revert/fixup/squash pass.
+set -eu
+if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
+first=$(head -n 1 "$1")
+case "$first" in
+  Merge*|Revert*|fixup!*|squash!*) exit 0 ;;
+esac
+echo "$first" | grep -qE '^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)(\([a-zA-Z0-9_./-]+\))?!?: .+' || {
+  echo "commit-msg: expected type(scope): summary, got: $first" >&2
+  exit 1
+}

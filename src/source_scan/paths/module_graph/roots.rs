@@ -18,6 +18,71 @@ pub(super) struct CrateRoot {
     pub(super) audited_derive_crates: BTreeMap<String, String>,
 }
 
+/// Architecture-only descriptors keep the existing declaration context API
+/// unchanged while retaining concrete target identity for local aliases.
+pub(super) fn architecture_roots(
+    repo: &Path,
+) -> Result<Vec<super::ownership::OwnershipRoot>, String> {
+    use super::ownership::{CrateIdentity, OwnershipRoot};
+    let Some(packages) = workspace::discover(repo)? else {
+        let mut paths = Vec::new();
+        package::conventional_roots(repo, repo, &mut paths)?;
+        return Ok(paths
+            .into_iter()
+            .map(|root| OwnershipRoot {
+                identity: CrateIdentity {
+                    manifest: None,
+                    root,
+                    kind: "conventional",
+                },
+                aliases: BTreeMap::new(),
+            })
+            .collect());
+    };
+    let mut targets = Vec::new();
+    for (index, manifest) in packages.iter().enumerate() {
+        let mut roots = Vec::new();
+        package::roots(manifest, repo, &mut roots)?;
+        for target in roots {
+            let kind = match target.kind {
+                package::TargetKind::Library => "library",
+                package::TargetKind::Binary => "binary",
+                package::TargetKind::BuildScript => "build-script",
+            };
+            let identity = CrateIdentity {
+                manifest: Some(manifest.manifest.clone()),
+                root: target.path.clone(),
+                kind,
+            };
+            targets.push((index, target, identity));
+        }
+    }
+    let libraries: BTreeMap<_, _> = targets
+        .iter()
+        .filter(|(_, target, _)| target.kind == package::TargetKind::Library)
+        .map(|(index, _, identity)| (packages[*index].directory.clone(), identity.clone()))
+        .collect();
+    let mut out = Vec::new();
+    for (index, target, identity) in targets {
+        let names = packages[index].local_alias_targets(target.kind, &packages)?;
+        let mut aliases = BTreeMap::new();
+        for (name, destinations) in names {
+            let resolved = destinations
+                .iter()
+                .map(|directory| {
+                    libraries
+                        .get(directory)
+                        .cloned()
+                        .ok_or_else(|| "local alias destination has no library target".to_string())
+                })
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            aliases.insert(name, resolved);
+        }
+        out.push(OwnershipRoot { identity, aliases });
+    }
+    Ok(out)
+}
+
 /// Top-level production modules declared by every package in the workspace.
 pub fn production_top_level_modules(repo_root: &Path) -> Result<BTreeSet<String>, String> {
     let mut modules = BTreeSet::new();

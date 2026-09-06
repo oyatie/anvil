@@ -7,9 +7,9 @@
 //! next to the other gates where it is reviewed.
 
 use super::baseline::{Judgement, judge};
-use crate::ratchet::ports::Mode;
-use crate::shape::ports::{ShapeDistance, SpecSource};
-use std::collections::BTreeMap;
+use crate::ratchet::facade::Mode;
+use crate::shape::ports::{ShapeDistance, ShapeReport, SpecSource};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// What the gate measured, for telemetry and the fleet view.
@@ -23,6 +23,23 @@ pub struct ShapeMeasurement {
     pub blocking_regressions: usize,
     pub advisory_regressions: usize,
     pub fixed: usize,
+    /// Rules the tenant declared in a blocking mode that the measurement could
+    /// not evaluate, each with the reason, as `rule: why`.
+    ///
+    /// A rule that was not measured contributes no keys, so it can regress
+    /// nothing and the ratchet has nothing to refuse. Publishing that as a
+    /// pass would let absent evidence read as conformance (I1), so the gate
+    /// withholds instead — and it withholds only for rules the tenant asked to
+    /// be blocked on, because an advisory rule that could not run refuses
+    /// nothing either way.
+    pub blocking_unmeasured: Vec<String>,
+}
+
+impl ShapeMeasurement {
+    /// Why this measurement is not one, when a blocking rule did not run.
+    pub fn unmeasured_reason(&self) -> Option<String> {
+        (!self.blocking_unmeasured.is_empty()).then(|| self.blocking_unmeasured.join("; "))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,17 +56,36 @@ pub enum ShapeGateOutcome {
     /// Measured and judged against the frozen baseline.
     Judged {
         measurement: ShapeMeasurement,
-        /// Keys new since the baseline under blocking rules: `rule: key`.
+        /// Blocking refusals: new keys, withdrawn rules with baselined debt,
+        /// and inert signoffs. These are not all newly measured regressions.
         blocking: Vec<String>,
     },
 }
 
+/// The blocking rules `report` could not evaluate, as `rule: why`.
+///
+/// Joined against the rule set the head spec declares, never against the
+/// verdict: a rule that was not measured produced no findings and may have no
+/// baseline entry either, so the verdict is exactly where it would be missing.
+pub fn blocking_unmeasured(report: &ShapeReport, blocking_rules: &BTreeSet<String>) -> Vec<String> {
+    report
+        .not_measured
+        .iter()
+        .filter(|(rule, _)| blocking_rules.contains(&rule.0))
+        .map(|(rule, why)| format!("{rule}: {why}"))
+        .collect()
+}
+
 fn measurement_of(j: &Judgement) -> ShapeMeasurement {
-    let (report, verdict) = match j {
-        Judgement::Bootstrap { report, .. } => (report, None),
+    let empty = BTreeSet::new();
+    let (report, verdict, blocking_rules) = match j {
+        Judgement::Bootstrap { report, .. } => (report, None, &empty),
         Judgement::Judged {
-            report, verdict, ..
-        } => (report, Some(verdict)),
+            report,
+            verdict,
+            blocking_rules,
+            ..
+        } => (report, Some(verdict), blocking_rules),
     };
     let mut per_rule: BTreeMap<String, usize> = BTreeMap::new();
     for f in &report.findings {
@@ -67,6 +103,7 @@ fn measurement_of(j: &Judgement) -> ShapeMeasurement {
             })
         })
         .unwrap_or((0, 0, 0));
+    let blocking_unmeasured = blocking_unmeasured(report, blocking_rules);
     ShapeMeasurement {
         repo: report.repo.clone(),
         rev: report.rev.clone(),
@@ -80,6 +117,7 @@ fn measurement_of(j: &Judgement) -> ShapeMeasurement {
         blocking_regressions: blocking,
         advisory_regressions: advisory,
         fixed,
+        blocking_unmeasured,
     }
 }
 
@@ -106,26 +144,34 @@ pub async fn judge_pr(
                 ShapeGateOutcome::Errored { reason: msg }
             }
         }
-        Ok(j) => {
-            let mut m = measurement_of(&j);
-            m.repo = repo_label.to_string();
-            match &j {
-                Judgement::Bootstrap { .. } => ShapeGateOutcome::Bootstrap { measurement: m },
-                Judgement::Judged { verdict, .. } => {
-                    let mut blocking = Vec::new();
-                    for (rule, v) in &verdict.per_rule {
-                        if v.mode == Mode::BlockOnNew {
-                            blocking.extend(v.regressions.iter().map(|k| format!("{rule}: {k}")));
-                        }
-                    }
-                    for (rule, key) in &verdict.inert_signoff {
-                        blocking.push(format!("{rule}: inert signoff for {key}"));
-                    }
-                    ShapeGateOutcome::Judged {
-                        measurement: m,
-                        blocking,
+        Ok(j) => outcome_from_judgement(j, repo_label),
+    }
+}
+
+/// Pure projection of a completed judgement into the certification outcome.
+pub fn outcome_from_judgement(j: Judgement, repo_label: &str) -> ShapeGateOutcome {
+    let mut m = measurement_of(&j);
+    m.repo = repo_label.to_string();
+    match &j {
+        Judgement::Bootstrap { .. } => ShapeGateOutcome::Bootstrap { measurement: m },
+        Judgement::Judged { verdict, .. } => {
+            let mut blocking = Vec::new();
+            for (rule, v) in &verdict.per_rule {
+                if v.mode == Mode::BlockOnNew {
+                    blocking.extend(v.regressions.iter().map(|k| format!("{rule}: {k}")));
+                    if v.withdrawn {
+                        blocking.push(format!(
+                            "{rule}: withdrawn blocking rule with baselined debt"
+                        ));
                     }
                 }
+            }
+            for (rule, key) in &verdict.inert_signoff {
+                blocking.push(format!("{rule}: inert signoff for {key}"));
+            }
+            ShapeGateOutcome::Judged {
+                measurement: m,
+                blocking,
             }
         }
     }
@@ -142,7 +188,7 @@ impl ShapeGateOutcome {
         }
     }
 
-    /// One line: `distance N (units M/K conformant, B new on blocking rules, A advisory)`.
+    /// One line: distance, real new-key counts, and distinct blocking refusals.
     pub fn summary(&self) -> String {
         match self {
             ShapeGateOutcome::NoSpec { reason }
@@ -156,12 +202,13 @@ impl ShapeGateOutcome {
                 measurement: m,
                 blocking,
             } => format!(
-                "distance {} (units {}/{} conformant, {} fixed, {} new on advisory rules, {} new on blocking rules)",
+                "distance {} (units {}/{} conformant, {} fixed, {} new on advisory rules, {} new on blocking rules, {} blocking refusal(s))",
                 m.distance.findings_total,
                 m.distance.units_conformant,
                 m.distance.units_total,
                 m.fixed,
                 m.advisory_regressions,
+                m.blocking_regressions,
                 blocking.len()
             ),
         }

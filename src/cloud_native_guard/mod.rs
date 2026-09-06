@@ -4,6 +4,14 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::git_manager::diff_context::{FileChangeKind, diffs_by_path};
+
+fn prohibited_tool_path(file: &str) -> bool {
+    (file.starts_with("scripts/") || file.starts_with("tools/"))
+        && [".sh", ".py", ".mjs", ".js"]
+            .iter()
+            .any(|suffix| file.ends_with(suffix))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudNativeViolation {
@@ -17,6 +25,26 @@ pub struct CloudNativeReport {
     pub is_compliant: bool,
     pub violations: Vec<CloudNativeViolation>,
     pub summary: String,
+}
+
+impl CloudNativeReport {
+    /// This report as the certification corpus reads it.
+    ///
+    /// Beside the report rather than in `pre_merge_guard::evaluator`, which is
+    /// one function computing every status and is far past ADR-0719 D-35's
+    /// budget. `rust_language_policy::RustSkillsReport::gate_status` is the
+    /// same shape.
+    pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
+        if self.is_compliant {
+            crate::pre_merge_guard::report::GateStatus::Passed
+        } else {
+            crate::pre_merge_guard::report::GateStatus::Failed(format!(
+                "{} added line(s) import a proprietary cloud SDK from a core \
+                 layer, hardcode a cloud endpoint, or add non-Rust tooling",
+                self.violations.len()
+            ))
+        }
+    }
 }
 
 pub struct CloudNativeGuard;
@@ -44,6 +72,30 @@ impl CloudNativeGuard {
         );
 
         let mut violations = Vec::new();
+        let files = diffs_by_path(&diff_ctx.diff_content);
+        // The name list can reveal missing observation, never prove creation.
+        for path in diff_ctx
+            .changed_files
+            .iter()
+            .filter(|p| prohibited_tool_path(p))
+        {
+            let direct = files.iter().any(|file| file.path == *path);
+            let matches: Vec<_> = files
+                .iter()
+                .filter(|file| {
+                    if direct {
+                        file.path == *path
+                    } else {
+                        file.previous_path() == Some(path.as_str())
+                    }
+                })
+                .collect();
+            if matches.len() != 1 || matches[0].change_kind().is_none() {
+                return Err(anyhow::anyhow!(
+                    "non-Rust tooling change kind is not observable for {path}"
+                ));
+            }
+        }
 
         // 1. Check for proprietary cloud SDKs in Domain Core
         let proprietary_sdks = [
@@ -53,23 +105,30 @@ impl CloudNativeGuard {
             "azure_",
             "cloudflare::",
         ];
-        for file in &diff_ctx.changed_files {
-            let is_core = file.contains("/core/") || file.contains("-domain/");
-            if is_core {
-                for line in diff_ctx.diff_content.lines() {
-                    if line.starts_with('+') && !line.starts_with("+++") {
-                        for sdk in &proprietary_sdks {
-                            if line.contains(sdk) {
-                                violations.push(CloudNativeViolation {
-                                    category: "PROPRIETARY_CLOUD_SDK_IN_CORE".to_string(),
-                                    description: format!(
-                                        "Domain Core file '{}' directly references proprietary cloud SDK '{}'. Use an abstract Port trait in core and isolate SDK in adapters.",
-                                        file, sdk
-                                    ),
-                                    snippet: line.trim().to_string(),
-                                });
-                            }
-                        }
+        // Attribution comes from the diff itself, not from the changed-file
+        // list. A path-keyed loop over the whole diff joins nothing: the path
+        // chooses whether to look and the diff chooses what is found, so an
+        // SDK import in an adapter lands on every core file in the change.
+        //
+        // `diffs_by_path` already attributes hunks to paths and is the parser
+        // this repository requires; hand-rolling a second one is what the
+        // diff-parsing ratchet forbids.
+        for fd in &files {
+            let is_core = fd.path.contains("/core/") || fd.path.contains("-domain/");
+            if !is_core {
+                continue;
+            }
+            for line in fd.added().lines() {
+                for sdk in &proprietary_sdks {
+                    if line.contains(sdk) {
+                        violations.push(CloudNativeViolation {
+                            category: "PROPRIETARY_CLOUD_SDK_IN_CORE".to_string(),
+                            description: format!(
+                                "Domain Core file '{}' directly references proprietary cloud SDK '{}'. Use an abstract Port trait in core and isolate SDK in adapters.",
+                                fd.path, sdk
+                            ),
+                            snippet: line.trim().to_string(),
+                        });
                     }
                 }
             }
@@ -103,13 +162,22 @@ impl CloudNativeGuard {
         }
 
         // 3. Check for new non-Rust scripts in scripts/ or tools/
-        for file in &diff_ctx.changed_files {
-            if (file.starts_with("scripts/") || file.starts_with("tools/"))
-                && (file.ends_with(".sh")
-                    || file.ends_with(".py")
-                    || file.ends_with(".mjs")
-                    || file.ends_with(".js"))
-            {
+        for fd in files.iter().filter(|fd| prohibited_tool_path(&fd.path)) {
+            let introduced = match fd.change_kind() {
+                Some(FileChangeKind::Added | FileChangeKind::Copied) => true,
+                Some(FileChangeKind::Renamed) => {
+                    !prohibited_tool_path(fd.previous_path().ok_or_else(|| {
+                        anyhow::anyhow!("tooling rename source is not observable")
+                    })?)
+                }
+                Some(FileChangeKind::Modified | FileChangeKind::Deleted) => false,
+                None => anyhow::bail!(
+                    "non-Rust tooling change kind is not observable for {}",
+                    fd.path
+                ),
+            };
+            if introduced {
+                let file = &fd.path;
                 violations.push(CloudNativeViolation {
                     category: "NON_RUST_SCRIPT_TOOLING".to_string(),
                     description: format!(
@@ -157,9 +225,20 @@ mod tests {
             base_branch: "dev".to_string(),
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
-            diff_content: "+ use aws_sdk_s3::Client;".to_string(),
+            // A real unified diff. The previous fixture was a bare `+` line with
+            // no header, which git never emits; it passed only because the
+            // guard read the path from `changed_files` and the text from the
+            // whole string, which is the defect this fixture now exercises.
+            diff_content:
+                "diff --git a/billing/core/src/invoice.rs b/billing/core/src/invoice.rs\n\
+                 --- a/billing/core/src/invoice.rs\n+++ b/billing/core/src/invoice.rs\n\
+                 @@ -1,0 +1,1 @@\n+use aws_sdk_s3::Client;\n"
+                    .to_string(),
             changed_files: vec!["billing/core/src/invoice.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

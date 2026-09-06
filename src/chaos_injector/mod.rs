@@ -173,31 +173,14 @@ impl ChaosFaultInjector {
 /// line of a scan looking for that text, nor a test fixture quoting it. Escapes
 /// are honoured so `"\""` does not leave the scanner inside a string forever.
 ///
-/// Character-level, not a parser: raw strings (`r#"..."#`) and a `//` inside a
-/// character literal are not modelled. Both would have to be added to this
-/// module's own diff to matter, and this is a lint, not a compiler.
+/// One line of Rust as code: commentary gone, string-literal BODIES gone,
+/// quotes kept.
+///
+/// Delegates to the shared scanner. This was one of nine spellings of the same
+/// idea; keeping the name here keeps the call sites and the fidelity registry's
+/// citations of it intact, while the behaviour has exactly one definition.
 pub fn code_only(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
-    let mut in_string = false;
-    while let Some(c) = chars.next() {
-        match c {
-            // The escaped character is part of the literal body, so it is
-            // dropped with the rest of it -- and `\"` must not be read as the
-            // closing quote.
-            '\\' if in_string => {
-                chars.next();
-            }
-            '"' => {
-                in_string = !in_string;
-                out.push('"');
-            }
-            '/' if !in_string && chars.peek() == Some(&'/') => break,
-            _ if !in_string => out.push(c),
-            _ => {}
-        }
-    }
-    out
+    crate::source_scan::code_only(line)
 }
 
 #[cfg(test)]

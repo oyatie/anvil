@@ -105,37 +105,5 @@ impl OwnerMap {
 /// matches a basename anywhere; a leading slash anchors to the root; `*` and
 /// `**` as in globs.
 pub fn codeowners_matches(pattern: &str, path: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    let anchored = pattern.starts_with('/');
-    let pat = pattern.trim_start_matches('/');
-    if !pattern.contains('/')
-        || pattern.ends_with('/') && !pattern.trim_end_matches('/').contains('/')
-    {
-        // basename or top-level-dir-anywhere pattern
-        let stem = pat.trim_end_matches('/');
-        let glob = crate::shape::core::glob::Glob::new(stem);
-        if pattern.ends_with('/') {
-            return path.split('/').any(|seg| glob.matches(seg)) && path.contains('/');
-        }
-        return path.split('/').any(|seg| glob.matches(seg));
-    }
-    let glob = if pat.ends_with('/') {
-        crate::shape::core::glob::Glob::new(&format!("{pat}**"))
-    } else {
-        crate::shape::core::glob::Glob::new(pat)
-    };
-    if glob.matches(path) {
-        return true;
-    }
-    if !anchored {
-        // unanchored path patterns may match at any depth
-        let g = crate::shape::core::glob::Glob::new(&format!(
-            "**/{pat}{}",
-            if pat.ends_with('/') { "**" } else { "" }
-        ));
-        return g.matches(path);
-    }
-    false
+    super::pattern::matches(pattern, path)
 }

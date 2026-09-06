@@ -1,3 +1,39 @@
+//! The approved stack, the apex ADR lock, and the dependency ratchet.
+//!
+//! # Why rule 2 reads `code_only`
+//!
+//! A bare substring search over every `+` line made this gate refuse the change
+//! that WIRED it, twice.
+//!
+//! First on a test fixture: the change adds `"+use mongodb::Client;\n"` to
+//! `tests/stack_whitelist_guard_test.rs` — the line that proves the gate catches
+//! MongoDB — and the scan read the fixture as an adoption.
+//!
+//! Then, after a first fix that stripped only double-quoted spans, on the fix's
+//! own comment: `named, not used. Neither can hide a real use redis::…`.
+//! Backticks are not quotes and `mod.rs` is not a test source, so the sentence
+//! explaining the exclusion was itself read as an adoption of Redis.
+//!
+//! That was the fourth hand-rolled "is this code" scan in this tree to be beaten
+//! by prose, which is why this one is not hand-rolled: `source_scan::code_only`
+//! blanks line comments, block comments and string literals in one place that is
+//! tested once.
+//!
+//! Both exclusions are the rule's subject rather than exemptions from it. A gate
+//! about production code adopting an unapproved dependency has no subject in a
+//! test fixture, and a crate named in a comment or a string is named, not used.
+//! Neither hides a real `use redis::…`, which is code in a file that ships.
+//!
+//! # Why rule 3 walks one file at a time
+//!
+//! The `[dependencies]` section flag is raised by that header and lowered by
+//! the next line starting `[`. Nothing in a `diff --git` header starts with
+//! `[`, so scanning the whole diff left the flag raised across every following
+//! file: a change that added one dependency and also touched Rust source
+//! reported each added source line as an unauthorised dependency, attributed to
+//! the Cargo.toml. Scoping the walk to one file's hunks is what makes the flag
+//! mean what its name says.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -17,6 +53,22 @@ pub struct StackWhitelistReport {
     pub is_compliant: bool,
     pub violations: Vec<StackWhitelistViolation>,
     pub summary: String,
+}
+
+impl StackWhitelistReport {
+    /// This report as the certification corpus reads it. See
+    /// `CloudNativeReport::gate_status` for why it lives here.
+    pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
+        if self.is_compliant {
+            crate::pre_merge_guard::report::GateStatus::Passed
+        } else {
+            crate::pre_merge_guard::report::GateStatus::Failed(format!(
+                "{} added line(s) introduce a technology the approved list does \
+                 not name, or edit an accepted apex ADR in place",
+                self.violations.len()
+            ))
+        }
+    }
 }
 
 pub struct StackWhitelistGuard;
@@ -45,10 +97,26 @@ impl StackWhitelistGuard {
         ),
     ];
 
-    /// Evaluates PR diffs against the Approved Hyperscaler Stack Manifest and Apex ADR Immutability
+    /// Evaluates PR diffs against the approved stack and the apex ADR lock.
+    ///
+    /// # `is_human_author`
+    ///
+    /// The certification pipeline does not establish authorship, so neither
+    /// value it could pass is a measurement.
+    ///
+    /// `false` asserts agent authorship nobody observed, and two of the three
+    /// rules fire only on that assertion — `APEX_ADR_IMMUTABILITY_BREACH` and
+    /// `UNAUTHORIZED_DEPENDENCY_EXPANSION` — so passing it would refuse every
+    /// pull request that adds a dependency or touches an ADR, on the strength
+    /// of a fact nobody measured. A fabricated accusation is I1's symmetric
+    /// violation and the more expensive direction to be wrong in.
+    ///
+    /// `true` leaves those two rules inert until authorship is measured, which
+    /// this gate's fidelity entry records as its gap. The approved-stack rule,
+    /// which does not depend on authorship, still runs.
     pub fn evaluate_stack_whitelist(
         &self,
-        _repo_dir: &Path,
+        repo_dir: &Path,
         diff_ctx: &PrDiffContext,
         is_human_author: bool,
     ) -> Result<StackWhitelistReport> {
@@ -76,19 +144,74 @@ impl StackWhitelistGuard {
             }
         }
 
-        // 2. Unapproved Stack / Dependency Hallucination Scanner
-        for line in diff_ctx.diff_content.lines() {
-            if line.starts_with('+') && !line.starts_with("+++") {
+        // 2. Unapproved stack scanner. See the module docs.
+        let files = crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content);
+        let mut test_sources = None;
+        if files.is_empty() && !diff_ctx.diff_content.trim().is_empty() {
+            // A diff with no `diff --git` headers. Nothing can be attributed to
+            // a path, so nothing can be excluded by one either -- and reporting
+            // zero violations because the parse found no files is precisely the
+            // fail-open this rule exists to prevent. Every added line is
+            // scanned, and the finding says it could not name a file.
+            for line in diff_ctx.diff_content.lines() {
+                if !line.starts_with('+') || line.starts_with("+++") {
+                    continue;
+                }
+                let code = crate::source_scan::code_only(line);
                 for (banned_kw, rationale) in Self::BANNED_UNAPPROVED_STACK {
-                    if line.contains(banned_kw) {
+                    if code.contains(banned_kw) {
                         violations.push(StackWhitelistViolation {
                             category: "UNAPPROVED_STACK_TECHNOLOGY".to_string(),
                             item: banned_kw.to_string(),
                             description: format!(
-                                "Unapproved technology '{}' detected in PR diff: {}. Stack additions require an accepted ADR in docs/decisions/.",
+                                "Unapproved technology '{}' added by a diff carrying no file headers, so it cannot be attributed: {}. Stack additions require an accepted ADR in docs/decisions/.",
                                 banned_kw, rationale
                             ),
                         });
+                    }
+                }
+            }
+        } else {
+            for fd in files {
+                let full_path = repo_dir.join(&fd.path);
+                let rust_test_source = if fd.path.ends_with(".rs") && full_path.is_file() {
+                    if test_sources.is_none() {
+                        test_sources = Some(
+                            crate::source_scan::paths::TestSourceClassifier::new(repo_dir)
+                                .map_err(anyhow::Error::msg)?,
+                        );
+                    }
+                    test_sources
+                        .as_ref()
+                        .expect("initialized Rust test-source classifier")
+                        .classify(Path::new(&fd.path))
+                        .map_err(anyhow::Error::msg)?
+                } else {
+                    crate::source_scan::paths::is_test_source(&fd.path)
+                };
+                if rust_test_source {
+                    continue;
+                }
+                // `code_only` preserves line count and offsets, so its output
+                // lines up with the post-image line for line.
+                let after = fd.after_change();
+                let code = crate::source_scan::code_only(after);
+                let added: Vec<&str> = fd.added().lines().collect();
+                for (code_line, raw_line) in code.lines().zip(after.lines()) {
+                    if !added.contains(&raw_line) {
+                        continue;
+                    }
+                    for (banned_kw, rationale) in Self::BANNED_UNAPPROVED_STACK {
+                        if code_line.contains(banned_kw) {
+                            violations.push(StackWhitelistViolation {
+                                category: "UNAPPROVED_STACK_TECHNOLOGY".to_string(),
+                                item: format!("{}:{}", fd.path, banned_kw),
+                                description: format!(
+                                    "Unapproved technology '{}' added to '{}': {}. Stack additions require an accepted ADR in docs/decisions/.",
+                                    banned_kw, fd.path, rationale
+                                ),
+                            });
+                        }
                     }
                 }
             }
@@ -96,32 +219,46 @@ impl StackWhitelistGuard {
 
         // 3. Asymmetric Dependency Ratchet: Agents can remove/retire dependencies, but cannot add new ones without ADR
         if !is_human_author {
-            for file in &diff_ctx.changed_files {
-                if file.ends_with("Cargo.toml") {
-                    let mut in_deps_section = false;
-                    for line in diff_ctx.diff_content.lines() {
-                        if line.contains("[dependencies]")
-                            || line.contains("[workspace.dependencies]")
-                        {
-                            in_deps_section = true;
-                        } else if line.starts_with('[') {
-                            in_deps_section = false;
-                        }
-
-                        if in_deps_section && line.starts_with('+') && !line.starts_with("+++") {
-                            let dep_entry = line.trim_start_matches('+').trim();
-                            if !dep_entry.is_empty() && !dep_entry.starts_with('#') {
-                                violations.push(StackWhitelistViolation {
-                                    category: "UNAUTHORIZED_DEPENDENCY_EXPANSION".to_string(),
-                                    item: dep_entry.to_string(),
-                                    description: format!(
-                                        "Autonomous agent attempted to add new dependency '{}' to '{}'. Agents can remove/retire dependencies, but adding new packages requires human approval and an accepted ADR.",
-                                        dep_entry, file
-                                    ),
-                                });
-                            }
-                        }
+            // Per file. See the module docs for why.
+            for fd in crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content) {
+                if !fd.path.ends_with("Cargo.toml") {
+                    continue;
+                }
+                let mut in_deps_section = false;
+                // `after_change` rather than `added`: the `[dependencies]`
+                // header is usually CONTEXT, not an added line, so a rule
+                // reading only additions would never see the section it needs
+                // to be inside.
+                for line in fd.after_change().lines() {
+                    let t = line.trim();
+                    if t.starts_with("[dependencies]") || t.starts_with("[workspace.dependencies]")
+                    {
+                        in_deps_section = true;
+                        continue;
+                    } else if t.starts_with('[') {
+                        in_deps_section = false;
+                        continue;
                     }
+                    if !in_deps_section {
+                        continue;
+                    }
+                    // Only lines this change ADDS are expansions. A dependency
+                    // already present is context.
+                    if !fd.added().lines().any(|a| a == line) {
+                        continue;
+                    }
+                    let dep_entry = t;
+                    if dep_entry.is_empty() || dep_entry.starts_with('#') {
+                        continue;
+                    }
+                    violations.push(StackWhitelistViolation {
+                        category: "UNAUTHORIZED_DEPENDENCY_EXPANSION".to_string(),
+                        item: dep_entry.to_string(),
+                        description: format!(
+                            "Autonomous agent attempted to add new dependency '{}' to '{}'. Agents can remove/retire dependencies, but adding new packages requires human approval and an accepted ADR.",
+                            dep_entry, fd.path
+                        ),
+                    });
                 }
             }
         }
@@ -150,43 +287,4 @@ impl StackWhitelistGuard {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_catches_hallucinated_redis_and_apex_adr_mutation() {
-        let guard = StackWhitelistGuard::new();
-        let diff_ctx = PrDiffContext {
-            repo: "oyatie/oyatie".to_string(),
-            pr_number: 999,
-            base_branch: "dev".to_string(),
-            base_sha: "aaa".to_string(),
-            head_sha: "bbb".to_string(),
-            diff_content: "+ use redis::Client;".to_string(),
-            changed_files: vec![
-                "docs/decisions/ADR-0701-monorepo-capability-live-apex.md".to_string(),
-                "crates/cache/src/lib.rs".to_string(),
-            ],
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
-            is_incremental: false,
-            previous_head_sha: None,
-        };
-
-        let report = guard
-            .evaluate_stack_whitelist(Path::new("/tmp"), &diff_ctx, false)
-            .unwrap();
-        assert!(!report.is_compliant);
-        assert!(
-            report
-                .violations
-                .iter()
-                .any(|v| v.category == "APEX_ADR_IMMUTABILITY_BREACH")
-        );
-        assert!(
-            report
-                .violations
-                .iter()
-                .any(|v| v.category == "UNAPPROVED_STACK_TECHNOLOGY")
-        );
-    }
-}
+mod tests;

@@ -101,7 +101,10 @@ fn diff(diff_content: String) -> PrDiffContext {
         head_sha: "bbbbbbb".to_string(),
         diff_content,
         changed_files: Vec::new(),
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }
@@ -478,11 +481,9 @@ mod stub {
     use anvil::stacked_diffs::StackedDiffsReport;
     use anvil::supply_chain_guard::SupplyChainReport;
     use anvil::unresolved_review_guard::UnresolvedReviewReport;
-    use anvil::upgrade_train::UpgradeTrainReport;
     use anvil::vex_scanner::OpenVexReport;
     use anvil::wasm_sandbox::WasmSandboxReport;
     use anvil::zero_day_patcher::ZeroDayReport;
-    use anvil::zero_trust_workload::ZeroTrustWorkloadReport;
     use serde::de::{
         self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess,
         Visitor,
@@ -544,12 +545,6 @@ mod stub {
             rehabilitated_tests_restored: 0,
             summary: STUB.to_string(),
         };
-        let zero_trust = ZeroTrustWorkloadReport {
-            passed: true,
-            cleartext_transport_findings: 0,
-            violations: Vec::new(),
-            summary: STUB.to_string(),
-        };
         let carbon = CarbonComputeReport {
             status: GateStatus::Passed,
             passed: true,
@@ -562,13 +557,6 @@ mod stub {
             passed: true,
             replayed_fixtures_count: 0,
             divergence_detected: false,
-            summary: STUB.to_string(),
-        };
-        let upgrade = UpgradeTrainReport {
-            status: GateStatus::Passed,
-            passed: true,
-            pending_upgrades_available: 0,
-            breaking_major_upgrades: 0,
             summary: STUB.to_string(),
         };
 
@@ -631,10 +619,8 @@ mod stub {
                 &wasm,
                 &consistency,
                 &flake,
-                &zero_trust,
                 &carbon,
                 &replay,
-                &upgrade,
                 &neutral::<MutationAdequacyReport>(),
                 &neutral::<FeatureFlagReport>(),
                 &neutral::<BenchmarkReport>(),
@@ -644,6 +630,11 @@ mod stub {
                 &ShapeGateOutcome::NoSpec {
                     reason: STUB.to_string(),
                 },
+                // The three gates whose guards had no caller. Stubs, like every
+                // other report in this fixture: this test is about the trace
+                // gate, not about them.
+                &neutral(),
+                &neutral(),
             )
             .expect("the evaluator must map a set of gate reports without failing")
     }

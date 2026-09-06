@@ -12,12 +12,57 @@
 //!     cancelled work left orphaned `agy`, `gh` and `cargo` processes behind.
 //!
 //! Invariant I5: every subprocess has a timeout AND `kill_on_drop(true)`.
+//!
+//! The network seam is not a generic direct-HTTP capability. A library user
+//! cannot select a model-provider endpoint or send an arbitrary prompt through
+//! Anvil's OSV transport:
+//!
+//! ```compile_fail
+//! let _ = anvil::exec::net("curl");
+//! ```
+//!
+//! ```compile_fail
+//! let _ = anvil::supply_chain_guard::osv_stream::post_json(
+//!     "curl",
+//!     "https://api.openai.com/v1/responses",
+//!     "raw contributor prompt",
+//!     std::time::Duration::from_secs(30),
+//! );
+//! ```
+
+pub mod agent;
+pub mod build_env;
+pub mod gh;
+pub mod inherited;
+mod non_model;
+mod replacement;
+pub mod turn;
+pub use agent::{
+    AgentCommand, Posture, ProviderCredential, agy_agent, claude_agent, codex_agent, cursor_agent,
+    grok_agent,
+};
+pub use gh::command as gh;
+pub use inherited::INHERITED;
 
 use anyhow::{Result, bail};
 use std::process::Output;
 use std::time::Duration;
 use tokio::process::Command;
-use tracing::warn;
+
+use crate::model_prompt::ModelPrompt;
+
+/// Executes the one finite non-forge HTTP request authored by Anvil.
+///
+/// The executable, destination, method, headers, curl limits, and process
+/// budget are sealed in `exec::net`; a crate caller supplies only typed locked
+/// package records, which this boundary serializes as an OSV batch. In
+/// particular, this is not a generic URL, body, or raw network-command
+/// capability that could become a second direct model transport.
+pub(crate) async fn post_osv_batch(
+    packages: &[crate::supply_chain_guard::LockedPackage],
+) -> Result<Output> {
+    non_model::post_osv_batch(packages).await
+}
 
 /// How long a class of subprocess may run before it is killed.
 ///
@@ -64,6 +109,41 @@ impl ExecClass {
 /// drops it with no output at all.
 pub const AGY_PRINT_TIMEOUT_MARGIN: Duration = Duration::from_secs(30);
 
+/// One budget for a supervised model turn, yielding BOTH deadlines.
+///
+/// A supervisor bounded more tightly than the work it supervises does not
+/// supervise it -- it truncates it, and then reports the failure it caused. The
+/// doc-parity probe handed agy `--print-timeout 120s` and wrapped it in a
+/// watchdog hardcoded to 30, so a healthy call was killed at thirty seconds and
+/// the gate published `Errored`, which blocks merge-queue admission. Nothing
+/// related the two numbers, so nothing could notice they disagreed.
+///
+/// They are one value now. `supervisor()` is what bounds the turn and
+/// `tool_arg()` is what the tool is told, derived from it by subtracting
+/// [`AGY_PRINT_TIMEOUT_MARGIN`] -- so the tool always ends its own turn first,
+/// with a message, rather than being dropped silently. The two cannot drift
+/// because there is only one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SupervisedTurn(Duration);
+
+impl SupervisedTurn {
+    /// A turn bounded at `limit`.
+    pub const fn bounded_at(limit: Duration) -> Self {
+        Self(limit)
+    }
+
+    /// The budget for the watchdog around the call.
+    pub const fn supervisor(self) -> Duration {
+        self.0
+    }
+
+    /// The `--print-timeout` argument for the tool itself, strictly inside the
+    /// supervisor's budget.
+    pub fn tool_arg(self) -> String {
+        agy_print_timeout_arg(self.0)
+    }
+}
+
 /// agy's `--print-timeout` value (Go duration syntax) for a turn Anvil bounds
 /// at `limit`.
 ///
@@ -92,47 +172,50 @@ pub fn agy_print_timeout_arg(limit: Duration) -> String {
 /// `cursor-agent` and `cargo` all fork helpers of their own, which survive.
 /// Full containment needs a process group and a negative-pgid kill; that is
 /// tracked separately and is not attempted here.
-pub async fn run_bounded(mut cmd: Command, class: ExecClass, what: &str) -> Result<Output> {
-    cmd.kill_on_drop(true);
-    match tokio::time::timeout(class.timeout(), cmd.output()).await {
-        Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => bail!("{} failed to run: {}", what, e),
-        Err(_) => {
-            warn!(
-                "{} exceeded the {} timeout of {}s and was killed",
-                what,
-                class.label(),
-                class.timeout().as_secs()
-            );
-            bail!(
-                "{} timed out after {}s ({} class)",
-                what,
-                class.timeout().as_secs(),
-                class.label()
-            )
-        }
-    }
+pub(crate) async fn run_bounded(cmd: Command, class: ExecClass, what: &str) -> Result<Output> {
+    non_model::run(cmd, class, what).await
 }
 
 /// Same bound, with an explicit duration for callers that carry their own
 /// configured limit (for example `ModelExecutionConfig::print_timeout_secs`).
-pub async fn run_bounded_for(mut cmd: Command, limit: Duration, what: &str) -> Result<Output> {
-    cmd.kill_on_drop(true);
-    match tokio::time::timeout(limit, cmd.output()).await {
-        Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => bail!("{} failed to run: {}", what, e),
-        Err(_) => {
-            warn!(
-                "{} exceeded its {}s timeout and was killed",
-                what,
-                limit.as_secs()
-            );
-            bail!("{} timed out after {}s", what, limit.as_secs())
-        }
-    }
+pub(crate) async fn run_bounded_for(cmd: Command, limit: Duration, what: &str) -> Result<Output> {
+    non_model::run_for(cmd, limit, what).await
+}
+
+/// Runs an intentionally long-lived checked non-model command until it exits.
+/// Cancellation still kills the child; this is used only for supervised forge
+/// forwarders whose job is to outlive every finite [`ExecClass`] budget.
+pub(crate) async fn run_unbounded_status(
+    cmd: Command,
+    what: &str,
+) -> std::io::Result<std::process::ExitStatus> {
+    non_model::run_status(cmd, what)
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))
+}
+
+/// Synchronous checked non-model runner for call chains and destructors that
+/// cannot await. The same finite executable/alias admission policy applies.
+pub(crate) fn run_sync_bounded(
+    cmd: std::process::Command,
+    limit: Duration,
+    what: &str,
+) -> Result<Output> {
+    non_model::run_sync_bounded(cmd, limit, what)
+}
+
+/// Starts the one detached process that replaces the running Anvil binary.
+/// The underlying `Command` remains inside a purpose-specific private seam.
+pub(crate) fn spawn_replacement_binary() -> Result<tokio::process::Child> {
+    replacement::spawn()
 }
 
 /// Same bound, plus delivery of a payload on the child's STDIN.
+///
+/// This raw API is admitted only for the finite direct non-model vocabulary in
+/// `non_model`; a model turn must use [`run_bounded_with_model_prompt`]. It is
+/// not a descendant-process sandbox: admitted build/toolchain programs can
+/// launch their own children.
 ///
 /// # Why this lives here and not at the call site
 ///
@@ -156,50 +239,24 @@ pub async fn run_bounded_for(mut cmd: Command, limit: Duration, what: &str) -> R
 ///
 /// The pipe is closed once the payload is written; without that EOF the child
 /// waits for more input and every call runs to the timeout.
-pub async fn run_bounded_with_stdin(
-    mut cmd: Command,
+pub(crate) async fn run_bounded_with_stdin(
+    cmd: Command,
     stdin_payload: &str,
     limit: Duration,
     what: &str,
 ) -> Result<Output> {
-    use tokio::io::AsyncWriteExt;
+    non_model::run_with_stdin(cmd, stdin_payload, limit, what).await
+}
 
-    cmd.kill_on_drop(true);
-    cmd.stdin(std::process::Stdio::piped());
-
-    let deliver = async {
-        let mut child = match cmd.spawn() {
-            Ok(child) => child,
-            Err(e) => bail!("{} failed to run: {}", what, e),
-        };
-
-        let pipe = child.stdin.take();
-        let write = async move {
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.write_all(stdin_payload.as_bytes()).await;
-                let _ = pipe.shutdown().await;
-            }
-        };
-        let wait = child.wait_with_output();
-
-        let (_, waited) = tokio::join!(write, wait);
-        match waited {
-            Ok(output) => Ok(output),
-            Err(e) => bail!("{} failed to run: {}", what, e),
-        }
-    };
-
-    match tokio::time::timeout(limit, deliver).await {
-        Ok(result) => result,
-        Err(_) => {
-            warn!(
-                "{} exceeded its {}s timeout while being fed on stdin and was killed",
-                what,
-                limit.as_secs()
-            );
-            bail!("{} timed out after {}s", what, limit.as_secs())
-        }
-    }
+/// Delivers an opaque model prompt. This is the only non-streaming transport
+/// allowed to obtain its bytes; callers cannot substitute a raw `String`.
+pub async fn run_bounded_with_model_prompt(
+    cmd: AgentCommand,
+    prompt: &ModelPrompt,
+    limit: Duration,
+    what: &str,
+) -> Result<Output> {
+    agent::deliver(cmd, prompt, limit, what).await
 }
 
 /// Lives here rather than in one of its callers. It was defined in
@@ -224,57 +281,4 @@ pub fn interpret_agy_outcome(status_success: bool, stdout: &str, stderr: &str) -
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn agy_print_timeout_sits_a_margin_under_anvils_bound() {
-        use super::{ExecClass, agy_print_timeout_arg};
-        use std::time::Duration;
-        assert_eq!(
-            agy_print_timeout_arg(ExecClass::Model.timeout()),
-            "570s",
-            "600s Model bound minus the 30s margin"
-        );
-        assert_eq!(agy_print_timeout_arg(Duration::from_secs(420)), "390s");
-        // Never 0s: agy reads that as "do not wait" and the turn dies at once.
-        assert_eq!(agy_print_timeout_arg(Duration::from_secs(5)), "1s");
-        assert_eq!(agy_print_timeout_arg(Duration::ZERO), "1s");
-    }
-
-    use super::*;
-
-    #[tokio::test]
-    async fn returns_output_for_a_fast_command() {
-        let mut c = Command::new("echo");
-        c.arg("hello");
-        let out = run_bounded(c, ExecClass::Quick, "echo").await.expect("ok");
-        assert!(String::from_utf8_lossy(&out.stdout).contains("hello"));
-    }
-
-    #[tokio::test]
-    async fn a_hung_command_is_killed_and_reported_as_an_error() {
-        let mut c = Command::new("sleep");
-        c.arg("30");
-        let err = run_bounded_for(c, Duration::from_millis(200), "sleep")
-            .await
-            .expect_err("must time out");
-        let msg = err.to_string();
-        assert!(msg.contains("timed out"), "unexpected: {msg}");
-    }
-
-    #[tokio::test]
-    async fn a_missing_binary_is_an_error_not_a_silent_pass() {
-        let c = Command::new("anvil-no-such-binary-xyz");
-        let err = run_bounded(c, ExecClass::Quick, "probe")
-            .await
-            .expect_err("must error");
-        assert!(err.to_string().contains("failed to run"));
-    }
-
-    #[test]
-    fn timeouts_are_ordered_by_expected_cost() {
-        assert!(ExecClass::Quick.timeout() < ExecClass::Api.timeout());
-        assert!(ExecClass::Api.timeout() < ExecClass::Vcs.timeout());
-        assert!(ExecClass::Vcs.timeout() < ExecClass::Model.timeout());
-        assert!(ExecClass::Model.timeout() < ExecClass::Build.timeout());
-    }
-}
+mod tests;

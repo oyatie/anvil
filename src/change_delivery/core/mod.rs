@@ -2,6 +2,7 @@ pub mod ledger;
 pub mod model;
 pub mod naming;
 pub mod owners;
+pub mod pattern;
 pub mod policy;
 pub mod purity;
 pub mod shard;
@@ -12,4 +13,4 @@ pub use naming::{LABEL_SHAPE_MOVE, LABEL_STRUCTURE_ONLY, branch_name, pr_marker,
 pub use owners::OwnerMap;
 pub use policy::{Admission, LandingInputs, LandingMode, LandingPolicy, Withheld, admit};
 pub use purity::{NameStatus, PurityViolation, diff_is_structure_only};
-pub use shard::{conflict_pairs, select_independent, shard_plan};
+pub use shard::{Held, Sequenced, conflict_pairs, select_independent, sequence, shard_plan};

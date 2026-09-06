@@ -18,12 +18,15 @@
 //! `all_statuses()` — and this test pins the structure so the chain cannot
 //! come back.
 
-use std::fs;
-use std::path::PathBuf;
-
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong.
 fn evaluator_source() -> String {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/pre_merge_guard/evaluator.rs");
-    fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
 }
 
 #[test]

@@ -91,7 +91,10 @@ fn diff_ctx(files: &[&str], diff_content: &str, working_dir: &Path) -> PrDiffCon
         base_sha: "base123".to_string(),
         head_sha: "head456".to_string(),
         previous_head_sha: None,
-        repo_working_dir: working_dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            working_dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: diff_content.to_string(),
         changed_files: files.iter().map(|f| f.to_string()).collect(),
         is_incremental: false,
@@ -113,13 +116,13 @@ fn clean_diff(working_dir: &Path) -> PrDiffContext {
 /// Fixture constants inside a test module are legitimate -- they are inputs a
 /// test supplies, which is exactly what a real data source will supply later.
 /// A constant in the production half is the defect.
-fn production_source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-    match s.find("#[cfg(test)]") {
-        Some(i) => s[..i].to_string(),
-        None => s,
-    }
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 /// Every `.rs` file under a gate's module directory, as (repo-relative path,
@@ -178,41 +181,7 @@ fn assert_absent_from_module(module_dir: &str, needles: &[&str]) {
 /// so a scan for numeric literals sees code only. Each blanked character is
 /// replaced one-for-one, so column positions still line up with the file.
 ///
-/// Char literals are not tracked: a stray `'"'` would blank the rest of the
-/// line, which can only hide a hit, never invent one. Stated rather than
-/// implied, because the whole point of the lane is not overclaiming what a
-/// mechanism covers.
-fn code_only(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
-    let mut in_str = false;
-    let mut escaped = false;
-    while let Some(c) = chars.next() {
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_str = false;
-                out.push('"');
-                continue;
-            }
-            out.push(' ');
-            continue;
-        }
-        if c == '"' {
-            in_str = true;
-            out.push('"');
-            continue;
-        }
-        if c == '/' && chars.peek() == Some(&'/') {
-            break;
-        }
-        out.push(c);
-    }
-    out
-}
+use anvil::source_scan::code_only;
 
 /// Numeric literals *assigned* in the production half of a gate's caller.
 ///
@@ -1682,7 +1651,7 @@ fn test_the_certification_pipeline_supplies_no_topology_metrics_or_rollout_state
     // the gate abstains and names the entry point it is NOT allowed to use, so a
     // scan over raw text would be satisfied by the prose and tripped by it in
     // turn.
-    let src: String = production_source("src/webhook/pipelines/certify.rs")
+    let src: String = production_source("src/webhook/pipelines/certify")
         .lines()
         .map(code_only)
         .collect::<Vec<_>>()

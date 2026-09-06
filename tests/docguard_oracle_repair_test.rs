@@ -2594,15 +2594,15 @@ struct NeutralGuardReports {
     wasm: anvil::wasm_sandbox::WasmSandboxReport,
     consistency: anvil::consistency_guard::ConsistencyReport,
     flake_quarantine: anvil::flake_quarantine::FlakeQuarantineReport,
-    zero_trust: anvil::zero_trust_workload::ZeroTrustWorkloadReport,
     carbon: anvil::carbon_aware::CarbonComputeReport,
     replay: anvil::replay_harness::ReplayHarnessReport,
-    upgrade_train: anvil::upgrade_train::UpgradeTrainReport,
     mutation: anvil::chaos_mutation_guard::MutationAdequacyReport,
     feature_flag: anvil::feature_flag_ratchet::FeatureFlagReport,
     bench: anvil::criterion_bench_ratchet::BenchmarkReport,
     attestation: anvil::attestation_guard::AttestationReport,
     shape: anvil::shape::facade::gate::ShapeGateOutcome,
+    cloud_native: anvil::cloud_native_guard::CloudNativeReport,
+    stack_whitelist: anvil::stack_whitelist_guard::StackWhitelistReport,
 }
 
 /// The summary string carried by every neutral report that has one.
@@ -2945,12 +2945,6 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             rehabilitated_tests_restored: 0,
             summary: n(),
         },
-        zero_trust: anvil::zero_trust_workload::ZeroTrustWorkloadReport {
-            passed: true,
-            cleartext_transport_findings: 0,
-            violations: Vec::new(),
-            summary: n(),
-        },
         carbon: anvil::carbon_aware::CarbonComputeReport {
             status: GateStatus::Passed,
             passed: true,
@@ -2963,13 +2957,6 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             passed: true,
             replayed_fixtures_count: 0,
             divergence_detected: false,
-            summary: n(),
-        },
-        upgrade_train: anvil::upgrade_train::UpgradeTrainReport {
-            status: GateStatus::Passed,
-            passed: true,
-            pending_upgrades_available: 0,
-            breaking_major_upgrades: 0,
             summary: n(),
         },
         mutation: anvil::chaos_mutation_guard::MutationAdequacyReport {
@@ -3000,6 +2987,16 @@ fn neutral_guard_reports() -> NeutralGuardReports {
             summary: n(),
         },
         shape: anvil::shape::facade::gate::ShapeGateOutcome::NoSpec { reason: n() },
+        cloud_native: anvil::cloud_native_guard::CloudNativeReport {
+            is_compliant: true,
+            violations: Vec::new(),
+            summary: n(),
+        },
+        stack_whitelist: anvil::stack_whitelist_guard::StackWhitelistReport {
+            is_compliant: true,
+            violations: Vec::new(),
+            summary: n(),
+        },
     }
 }
 
@@ -3024,7 +3021,10 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
         previous_head_sha: None,
         diff_content: "+pub fn newly_public() {}\n".to_string(),
         changed_files: vec!["src/lib.rs".to_string()],
-        repo_working_dir: workdir.path().to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            workdir.path().to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     };
 
     PreMergeGuard::new()
@@ -3086,10 +3086,8 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
             &r.wasm,
             &r.consistency,
             &r.flake_quarantine,
-            &r.zero_trust,
             &r.carbon,
             &r.replay,
-            &r.upgrade_train,
             &r.mutation,
             &r.feature_flag,
             &r.bench,
@@ -3097,6 +3095,8 @@ fn certification_report_for(doc: &DocGuardReport) -> PreMergeCertificationReport
             Some(true),
             "APPROVE",
             &r.shape,
+            &r.cloud_native,
+            &r.stack_whitelist,
         )
         .expect("the evaluator is arithmetic over the reports it is handed")
 }

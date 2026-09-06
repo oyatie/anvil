@@ -32,7 +32,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Sites present when this gate was written, counted AFTER the allowlist.
 ///
@@ -45,7 +45,14 @@ use std::path::PathBuf;
 /// `println!`, which `cargo test` captures and hides on a passing test -- anvil
 /// reviewed this gate and pointed out the note would never be seen. A number
 /// that must be updated by the change that moves it needs no reminder.
-const CEILING: usize = 19;
+// Nineteen became twenty when the test-module filter stopped treating the
+// literal `#[cfg(test)]` in this repository's own prose as an attribute and
+// brace-matching from the next unrelated `{`. The newly visible
+// `clean_architecture_guard::evaluate_source_tree` already parsed diffs before
+// this repair; recording it closes the false decrease without authorizing a
+// new parser.
+const CEILING: usize = 20;
+const TOKEN_AWARE_RECOVERED_SITE: &str = "clean_architecture_guard/mod.rs::evaluate_source_tree";
 
 /// Functions allowed to walk a diff, with the reason.
 ///
@@ -73,7 +80,14 @@ const ALLOWED: &[(&str, &str)] = &[
          attributes no finding, so it has no path to get wrong",
     ),
     (
-        "harness/rules.rs::fixture",
+        "harness/rules/cleartext_transport.rs::fixture",
+        "CONSTRUCTS a diff, for the reason the entry below gives. Every \
+         converted gate adds one of these, so the allowlist grows by a rule's \
+         fixture rather than by a parser -- which is the distinction this \
+         ratchet is drawn on",
+    ),
+    (
+        "harness/rules/secret_on_added_line.rs::fixture",
         "CONSTRUCTS a diff, it does not read one: `Rule::fixture` builds the \
          seeded defect and its conformant twin, and a fixture that spells a \
          `+++ b/` header contains the literal without parsing anything. This is \
@@ -102,30 +116,47 @@ const DIFF_MARKERS: &[&str] = &["+++ b/", "diff --git"];
 /// Also from that review: the first draft keyed on `pub`/`async` and dropped a
 /// bare `unsafe fn` or `extern "C" fn` entirely, so a parser written either way
 /// was invisible to the gate that exists to see it.
-const FN_INTRODUCERS: &[&str] = &[
-    "fn ",
-    "pub fn ",
-    "pub(crate) fn ",
-    "async fn ",
-    "pub async fn ",
-    "pub(crate) async fn ",
-    "unsafe fn ",
-    "pub unsafe fn ",
-    "const fn ",
-    "pub const fn ",
-    "extern ",
-    "pub extern ",
-];
+/// Qualifiers that may sit between the start of a definition and its `fn`.
+///
+/// A closed grammar, not an enumeration of spellings. The list this replaces
+/// held eighteen literal prefixes and still missed `pub(super) fn`, which is
+/// how splitting a file under the 300-line budget made a real diff parser
+/// invisible and dropped this ratchet's count from 19 to 18. A fall that is
+/// really a blind spot is worse than a rise: it gets recorded as progress.
+///
+/// `pub(...)` in any form is handled separately since its body is arbitrary.
+const FN_QUALIFIERS: &[&str] = &["async", "unsafe", "const", "default", "extern"];
 
 fn rust_sources() -> Vec<PathBuf> {
     let mut out = Vec::new();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let test_modules = anvil::source_scan::paths::declared_test_module_files(repository)
+        .expect("classify declared test modules once");
     let mut stack = vec![PathBuf::from("src")];
     while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let entries = fs::read_dir(&dir).unwrap_or_else(|error| {
+            panic!("read Rust source directory {}: {error}", dir.display())
+        });
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|error| {
+                panic!(
+                    "read entry in Rust source directory {}: {error}",
+                    dir.display()
+                )
+            });
             let p = entry.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "rs") {
+            } else if p.extension().is_some_and(|e| e == "rs")
+                // A file the parent declares as `#[cfg(test)] mod <name>;`
+                // carries no `#[cfg(test)]` of its own, so `strip_test_items`
+                // below cannot see it is test code. Splitting one guard under
+                // the 300-line budget turned five unit tests into five
+                // "hand-rolled diff parsers" here. The answer lives in
+                // `source_scan` because twelve scanners in this tree strip
+                // test code the same way and share the same blind spot.
+                && !is_declared_test_file(&repository.join(&p), &test_modules)
+            {
                 out.push(p);
             }
         }
@@ -134,44 +165,29 @@ fn rust_sources() -> Vec<PathBuf> {
     out
 }
 
-/// Removes `#[cfg(test)]` items by matching braces.
-///
-/// The first draft truncated the file at the first occurrence of the string.
-/// Anvil's review pointed out that a doc comment, an inner module, or a string
-/// literal carrying that text near the top of a file blinds the scan to every
-/// production function below it -- a gate that silently stops looking, which is
-/// the defect this whole class is made of.
-fn without_test_modules(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(i) = rest.find("#[cfg(test)]") {
-        out.push_str(&rest[..i]);
-        let after = &rest[i..];
-        let Some(open) = after.find('{') else {
-            return out;
-        };
-        let mut depth = 0i32;
-        let mut end = None;
-        for (k, c) in after[open..].char_indices() {
-            match c {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(open + k + 1);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        match end {
-            Some(e) => rest = &after[e..],
-            None => return out,
-        }
-    }
-    out.push_str(rest);
-    out
+fn is_declared_test_file(path: &Path, declared: &BTreeSet<PathBuf>) -> bool {
+    let canonical = fs::canonicalize(path)
+        .unwrap_or_else(|error| panic!("canonical source identity {}: {error}", path.display()));
+    declared.contains(&canonical)
+}
+
+#[test]
+fn declared_test_membership_uses_existing_canonical_file_identity() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    let path = root.path().join("source.rs");
+    fs::write(&path, "").expect("ordinary source file");
+    let canonical = fs::canonicalize(&path).expect("canonical fixture identity");
+    let declared = [canonical.clone()].into_iter().collect();
+    assert!(is_declared_test_file(&path, &declared));
+    assert!(is_declared_test_file(&canonical, &declared));
+    assert!(!is_declared_test_file(&path, &BTreeSet::new()));
+}
+
+#[test]
+#[should_panic(expected = "canonical source identity")]
+fn declared_test_membership_does_not_excuse_a_missing_file() {
+    let root = tempfile::tempdir().expect("identity fixture");
+    is_declared_test_file(&root.path().join("missing.rs"), &BTreeSet::new());
 }
 
 /// A path written with `/` on every platform.
@@ -192,24 +208,74 @@ fn function_starts(body: &str) -> Vec<(usize, String)> {
     let mut out: Vec<(usize, String)> = Vec::new();
     for (off, line) in line_offsets(body) {
         let t = line.trim_start();
-        if !FN_INTRODUCERS.iter().any(|k| t.starts_with(k)) {
-            continue;
-        }
-        // `extern "C" fn name` and `extern crate` both start with `extern `;
-        // only the one that reaches an `fn` is a definition.
-        let Some(fi) = t.find("fn ") else {
+        let Some(name) = definition_name(t) else {
             continue;
         };
-        let name: String = t[fi + 3..]
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        if name.is_empty() {
-            continue;
-        }
         out.push((off + (line.len() - t.len()), name));
     }
     out
+}
+
+/// The function this line defines, if it defines one.
+///
+/// Strips an optional visibility (`pub`, `pub(crate)`, `pub(super)`,
+/// `pub(in path)`), then any number of qualifiers in any order, and requires
+/// `fn <name>` to be what remains. Matching the grammar rather than listing
+/// spellings is what makes a new combination impossible to slip through.
+fn definition_name(trimmed: &str) -> Option<String> {
+    let mut rest = trimmed;
+
+    if let Some(after) = rest.strip_prefix("pub") {
+        rest = if let Some(open) = after.strip_prefix('(') {
+            // `pub(crate)`, `pub(super)`, `pub(in crate::x)` -- body is
+            // arbitrary, so skip to its closing paren rather than list them.
+            open.find(')').map(|i| &open[i + 1..])?
+        } else {
+            after
+        };
+        if !rest.starts_with(char::is_whitespace) {
+            return None; // `public_thing`, not `pub `
+        }
+    }
+
+    // Qualifiers may appear in any order before `fn`, so consume them in a
+    // loop rather than enumerating the orderings.
+    loop {
+        rest = rest.trim_start();
+        // `extern "C" fn` carries an ABI string; `extern crate` never reaches
+        // an `fn` and falls out below.
+        if let Some(after) = rest.strip_prefix("extern")
+            && (after.starts_with(char::is_whitespace) || after.starts_with('"'))
+        {
+            rest = after.trim_start();
+            if let Some(tail) = rest.strip_prefix('"') {
+                rest = &tail[tail.find('"').map(|i| i + 1)?..];
+            }
+            continue;
+        }
+        let Some(shorter) = FN_QUALIFIERS
+            .iter()
+            .filter(|q| **q != "extern")
+            .find_map(|q| {
+                rest.strip_prefix(*q)
+                    .filter(|r| r.starts_with(char::is_whitespace))
+            })
+        else {
+            break;
+        };
+        rest = shorter;
+    }
+
+    let rest = rest.trim_start().strip_prefix("fn")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None; // `fnord`
+    }
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
 }
 
 fn line_offsets(body: &str) -> Vec<(usize, &str)> {
@@ -224,23 +290,7 @@ fn line_offsets(body: &str) -> Vec<(usize, &str)> {
 
 /// The code of `chunk`, without its commentary.
 ///
-/// A marker inside a comment is PROSE, not a parser. This mattered immediately:
-/// a function's span runs to the start of the next `fn`, which sweeps in that
-/// next function's doc comment -- so `schema_evolution::new` was reported as a
-/// diff parser because the comment describing the function BELOW it says
-/// "one file at a time". Two false positives, both from attributing a
-/// neighbour's prose to a function, which is the same misattribution shape the
-/// gate exists to prevent.
-fn code_only(chunk: &str) -> String {
-    chunk
-        .lines()
-        .map(|l| match l.find("//") {
-            Some(i) if !l[..i].contains('"') => &l[..i],
-            _ => l,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+use anvil::source_scan::without_commentary as code_only;
 
 /// Every function that walks a unified diff itself.
 ///
@@ -248,8 +298,10 @@ fn code_only(chunk: &str) -> String {
 fn hand_rolled_parsers() -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     for path in rust_sources() {
-        let text = fs::read_to_string(&path).unwrap_or_default();
-        let body = without_test_modules(&text);
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read Rust source {}: {error}", path.display()));
+        let body = anvil::source_scan::try_without_test_modules(&text)
+            .unwrap_or_else(|error| panic!("classify Rust source {}: {error}", path.display()));
         let rel = posix_rel(&path);
 
         let starts = function_starts(&body);
@@ -274,6 +326,10 @@ fn hand_rolled_diff_parsing_is_exactly_what_was_recorded() {
     assert!(
         !found.is_empty(),
         "the scan found no diff parsing at all, which means it did not run"
+    );
+    assert!(
+        found.contains(TOKEN_AWARE_RECOVERED_SITE),
+        "the one pre-existing parser recovered from the old string/brace desynchronization disappeared; remove its recorded count only with the production parser"
     );
 
     let allowed: BTreeSet<&str> = ALLOWED.iter().map(|(k, _)| *k).collect();
@@ -319,4 +375,34 @@ fn every_allowlist_entry_still_exists_and_still_parses() {
         "allowlist entries that no longer parse a diff: {stale:?}\n\
          Remove them, or the exemption outlives the reason for it."
     );
+}
+
+/// The helper must find test-only files AND spare production ones.
+///
+/// Seeded against the real case: `src/clean_architecture_guard/tests.rs` is
+/// declared `#[cfg(test)] mod tests;` and contains no `#[cfg(test)]` itself.
+#[test]
+fn cfg_test_module_files_are_recognised_and_production_files_are_not() {
+    assert!(
+        anvil::source_scan::is_cfg_test_module_file(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            Path::new("src/clean_architecture_guard/tests.rs"),
+        )
+        .expect("classify test module"),
+        "a file the parent declares under #[cfg(test)] was read as production code"
+    );
+    for production in [
+        "src/clean_architecture_guard/mod.rs",
+        "src/clean_architecture_guard/analyze.rs",
+        "src/source_scan/mod.rs",
+    ] {
+        assert!(
+            !anvil::source_scan::is_cfg_test_module_file(
+                Path::new(env!("CARGO_MANIFEST_DIR")),
+                Path::new(production),
+            )
+            .expect("classify production module"),
+            "{production} is production code but was skipped as a test module"
+        );
+    }
 }

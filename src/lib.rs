@@ -3,6 +3,12 @@
 //! Provides the PreMergeGuard quality matrix, autonomous 16-lens adversarial code review,
 //! deterministic PR & issue self-healing loops, zero-trust workload validation, and fail-closed merge train orchestration.
 
+// Zero `unsafe` exists in this crate today, so the guarantee is free and
+// belongs at the rung where a defect cannot be written rather than at a gate
+// that reports one afterwards. `forbid` rather than `deny`: an inner
+// `allow` cannot reopen it. oyatie carries the same line in three crates.
+#![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 pub mod adr_drift_ratchet;
 pub mod ai_driver;
 pub mod api_contract_guard;
@@ -39,7 +45,6 @@ pub mod deadlock_analyzer;
 pub mod debt_shrink_guard;
 pub mod doc_archival_sweeper;
 pub mod doc_guard;
-pub mod dual_track_build_guard;
 pub mod early_exit_cascade;
 pub mod ephemeral_sandbox;
 pub mod ephemeral_secrets;
@@ -53,6 +58,7 @@ pub mod flake_cost_dampener;
 pub mod flake_quarantine;
 pub mod fleet_observer;
 pub mod formal_verification;
+pub mod gate_proof;
 pub mod ghost_migration_harness;
 pub mod git_manager;
 pub mod github;
@@ -63,6 +69,7 @@ pub mod hermetic_build;
 pub mod idempotency_guard;
 pub mod incident_healer;
 pub mod incident_sentry;
+pub mod intake;
 pub mod issue_reconciler;
 pub mod jittered_backoff;
 pub mod kani_guard;
@@ -74,8 +81,12 @@ pub mod metrics;
 pub mod microbenchmark_ratchet;
 pub mod migration;
 pub mod migration_orchestrator;
+pub mod model_prompt;
 pub mod modularization_guard;
 pub mod monorepo_guard;
+pub mod pause;
+pub mod plan;
+pub mod postmortem;
 pub mod pr_self_healer;
 pub mod pre_merge_guard;
 pub mod predictive_test_selector;
@@ -99,20 +110,21 @@ pub mod shadow_traffic_harness;
 pub mod shape;
 pub mod shuffle_shard_simulator;
 pub mod slo_canary_guard;
+pub mod source_scan;
 pub mod stack_whitelist_guard;
 pub mod stacked_diffs;
+pub mod stage_liveness;
 pub mod state;
 pub mod supply_chain_guard;
 pub mod telemetry_store;
+pub mod toolchain;
 pub mod trace_context_guard;
 pub mod unresolved_review_guard;
-pub mod upgrade_train;
 pub mod vex_scanner;
 pub mod wasm_sandbox;
 pub mod watchdog;
 pub mod webhook;
 pub mod zero_day_patcher;
-pub mod zero_trust_workload;
 
 // Compatibility aliases
 pub use automated_canary as auto_canary_analysis;

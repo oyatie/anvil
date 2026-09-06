@@ -35,10 +35,10 @@
 //! # Why every test here is offline
 //!
 //! A gate whose test suite reaches api.osv.dev is a gate whose test suite is a
-//! network monitor. The transport is one function, `post_json`, and it is
-//! exercised against programs that are not curl. Everything that decides a
-//! verdict -- lockfile parsing, payload construction, response parsing, the
-//! pass/fail rule -- is pure and is driven from fixtures.
+//! network monitor. The finite transport is exercised against a fake `curl`
+//! in its private unit module. Everything that decides a verdict -- lockfile
+//! parsing, payload construction, response parsing, the pass/fail rule -- is
+//! pure and is driven from fixtures here.
 
 use anvil::git_manager::PrDiffContext;
 use anvil::pre_merge_guard::report::GateStatus;
@@ -46,7 +46,6 @@ use anvil::supply_chain_guard::osv_stream::{self, OsvAdvisoryStream};
 use anvil::supply_chain_guard::{LockedPackage, SupplyChainGuard};
 use anvil::zero_day_patcher::ZeroDayAutoPatcher;
 use std::path::Path;
-use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -103,7 +102,10 @@ fn ctx(work_dir: &Path) -> PrDiffContext {
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
         previous_head_sha: None,
-        repo_working_dir: work_dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            work_dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: "+ time = \"0.1.44\"\n".to_string(),
         changed_files: vec!["Cargo.toml".to_string()],
         is_incremental: false,
@@ -300,108 +302,20 @@ fn output_carrying_no_status_code_is_an_error() {
 // The transport -- every way the subprocess itself can fail
 // ---------------------------------------------------------------------------
 
-/// A program that answers exactly like curl -- body, newline, status trailer --
-/// and exits with `code`. The only way to exercise the transport's success path
-/// and its exit-code handling without making a network request.
-#[cfg(unix)]
-fn fake_curl(dir: &Path, body: &str, http: &str, code: u8) -> String {
-    use std::os::unix::fs::PermissionsExt;
-    let path = dir.join("fake-curl");
-    std::fs::write(
-        &path,
-        format!("#!/bin/sh\nprintf '%s\\n%s' '{body}' '{http}'\nexit {code}\n"),
-    )
-    .expect("write fake curl");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    path.to_string_lossy().into_owned()
-}
-
-/// The transport's one success path, offline.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_two_hundred_response_is_returned_verbatim() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let program = fake_curl(dir.path(), r#"{"results":[{}]}"#, "200", 0);
-
-    let body = osv_stream::post_json(
-        &program,
-        osv_stream::OSV_BATCH_URL,
-        "{}",
-        Duration::from_secs(5),
-    )
-    .await
-    .expect("a 200 with a body is an answer");
-    assert_eq!(body, r#"{"results":[{}]}"#);
-}
-
-/// Catches: dropping the exit-code check.
+/// A budget these fixtures are not measuring.
 ///
-/// The first version of this test ran `false`, which exits 1 AND writes
-/// nothing -- so it stayed green with the exit-code guard deleted, because the
-/// empty output failed the status-trailer check instead. A curl that dies after
-/// writing a plausible body -- a connection reset mid-transfer, `--max-time`
-/// firing on a partial response -- is the case that needs the guard, and a
-/// mutation survived until this test was written.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_nonzero_exit_is_an_error_even_when_the_body_looks_like_an_answer() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let program = fake_curl(dir.path(), r#"{"results":[{},{},{}]}"#, "200", 7);
-
-    let err = osv_stream::post_json(
-        &program,
-        osv_stream::OSV_BATCH_URL,
-        "{}",
-        Duration::from_secs(5),
-    )
-    .await
-    .expect_err("a transfer that died is not an advisory-free result");
-    assert!(
-        err.contains('7'),
-        "the reason must name the exit status the runner saw: {err}"
-    );
-}
-
-#[tokio::test]
-async fn a_missing_curl_is_an_error_the_gate_can_report() {
-    let err = osv_stream::post_json(
-        "anvil-there-is-no-such-binary",
-        osv_stream::OSV_BATCH_URL,
-        "{}",
-        Duration::from_secs(5),
-    )
-    .await
-    .expect_err("a program that does not exist cannot answer");
-    assert!(!err.trim().is_empty());
-}
-
-#[tokio::test]
-async fn a_nonzero_exit_is_an_error_the_gate_can_report() {
-    // `false` is curl-shaped enough for this: it accepts the arguments, exits
-    // 1, and writes nothing -- exactly what curl does on a DNS failure.
-    let err = osv_stream::post_json(
-        "false",
-        osv_stream::OSV_BATCH_URL,
-        "{}",
-        Duration::from_secs(5),
-    )
-    .await
-    .expect_err("a non-zero exit is not a clean audit");
-    assert!(!err.trim().is_empty());
-}
-
-#[tokio::test]
-async fn a_request_that_outlives_its_budget_is_killed_and_reported() {
-    // The single `map_err` in `post_json` covers both arms `run_bounded_for`
-    // can fail on. This pins the arm the two tests above do not reach.
-    let mut cmd = tokio::process::Command::new("sleep");
-    cmd.arg("30");
-    let err = anvil::exec::run_bounded_for(cmd, Duration::from_millis(50), "test: a slow request")
-        .await
-        .expect_err("a request past its budget produces no measurement");
-    assert!(err.to_string().contains("timed out"));
-}
-
+/// They are about the transport's answer: a 200 returned verbatim, a non-zero
+/// exit reported, a missing status trailer refused. The deadline is incidental,
+/// and at five seconds it was not incidental enough -- under a full-suite run
+/// the machine took longer than that to spawn a two-line shell script, and both
+/// fixtures failed with
+///
+///     curl OSV querybatch timed out after 5s
+///
+/// which is the transport reporting a timeout correctly and the fixture
+/// measuring the load average. Observed twice, and never reproducible in
+/// isolation, which is what a wall-clock dependency looks like from the outside.
+///
 // ---------------------------------------------------------------------------
 // The verdict -- can fail, can pass, and abstains on absent evidence
 // ---------------------------------------------------------------------------
@@ -554,42 +468,50 @@ fn the_zero_day_gate_abstains_on_a_diff_that_would_previously_have_passed() {
 /// inside a test module is not a call in the gate.
 #[test]
 fn the_gate_asks_the_advisory_database_rather_than_answering_from_itself() {
-    let src = production_source("src/supply_chain_guard.rs");
+    let src = production_source("src/supply_chain_guard");
     assert!(
         src.contains("OsvAdvisoryStream::query_batch(&packages).await"),
         "the audit no longer queries the advisory database, so its verdict is \
          whatever the code substituted for the query"
     );
 
-    let transport = production_source("src/supply_chain_guard/osv_stream.rs");
+    let transport = production_source("src/supply_chain_guard/osv_stream");
+    let network = production_source("src/exec/net");
     assert!(
-        transport.contains("post_json(CURL, OSV_BATCH_URL, &payload, OSV_BUDGET).await"),
-        "the query no longer goes through the bounded executor with a budget"
+        transport.contains("let body = post_batch(chunk).await?")
+            && transport.contains("crate::exec::post_osv_batch(packages)"),
+        "the query no longer sends typed locked-package chunks through the finite OSV request"
     );
     assert!(
-        // `run_bounded` and not `run_bounded_for(cmd, budget`: the invariant is
-        // that the subprocess is bounded, and `run_bounded(cmd, ExecClass::Api,
-        // ..)` satisfies it too. Pinning one spelling would turn this guard RED
-        // for a change that breaks nothing.
-        transport.contains("run_bounded"),
+        network.contains("super::NonModelCommand::checked_for(cmd, &[CURL])?")
+            && network.contains("super::transport::run_for(command, OSV_BUDGET,")
+            && network.contains(
+                "const OSV_BUDGET: std::time::Duration = std::time::Duration::from_secs(20)"
+            ),
         "a per-PR network call outside the bounded executor has no deadline \
          (invariant I5)"
+    );
+    let executor = production_source("src/exec/non_model/transport");
+    assert!(
+        executor.contains("command.kill_on_drop(true)")
+            && executor.contains("tokio::time::timeout(limit, command.output()).await"),
+        "the OSV transport's budget must bound execution and cancel the child"
     );
     assert!(
         // The exact argument, not the mention: `body_of`'s own doc comment
         // names `%{http_code}`, so a looser needle stayed green with the
         // argument deleted and a mutation survived.
-        transport.contains(r#""\n%{http_code}""#),
+        network.contains(r#""\n%{http_code}""#),
         "without the status trailer curl -s hides a 429 and the throttled \
          response parses as an advisory-free result"
     );
 }
 
-fn production_source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-    match s.find("#[cfg(test)]") {
-        Some(i) => s[..i].to_string(),
-        None => s,
-    }
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
 }

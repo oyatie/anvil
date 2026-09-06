@@ -136,7 +136,10 @@ fn diff_ctx(repo: &str, repo_dir: &Path, changed: &[&str]) -> PrDiffContext {
         diff_content: "diff --git a/src/lib.rs b/src/lib.rs\n+pub fn newly_public() {}\n"
             .to_string(),
         changed_files: changed.iter().map(|f| (*f).to_string()).collect(),
-        repo_working_dir: repo_dir.to_path_buf(),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            repo_dir.to_path_buf(),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     }
 }
 

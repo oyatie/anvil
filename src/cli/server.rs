@@ -124,29 +124,7 @@ pub async fn run_server(state: AppState) -> Result<()> {
         }
     });
 
-    // Shape Program fleet sweep: measure every watched repository's trunk on a
-    // cadence, record the trend, and write the ranked move plan for delivery.
-    // Report-only (I25): blocks nobody, mutates nothing in any repository.
-    {
-        let deps = crate::shape::facade::sweep::SweepDeps {
-            git_mgr: state.git_mgr.clone(),
-            telemetry: state.telemetry_store.clone(),
-            data_dir: state.config.data_dir.clone(),
-        };
-        let repos = state.config.watched_repos.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
-            loop {
-                interval.tick().await;
-                for repo in &repos {
-                    match crate::shape::facade::sweep::sweep_repo(&deps, repo).await {
-                        Ok(summary) => info!("[Shape Sweep] {summary}"),
-                        Err(e) => tracing::warn!("[Shape Sweep] {repo} noticed: {e}"),
-                    }
-                }
-            }
-        });
-    }
+    crate::cli::sweep_task::spawn(&state);
 
     // Spawn background GC heartbeat for abandoned git worktrees (crash recovery & leak prevention)
     let git_mgr_gc = state.git_mgr.clone();
@@ -157,29 +135,6 @@ pub async fn run_server(state: AppState) -> Result<()> {
             interval.tick().await;
             if let Err(e) = git_mgr_gc.clean_abandoned_worktrees().await {
                 tracing::warn!("GitManager worktree GC noticed: {}", e);
-            }
-        }
-    });
-
-    // Spawn background Proactive Upgrade Train worker (Daily cadence)
-    let train_state = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400)); // 24 hours
-        interval.tick().await; // Initial tick fires immediately, delay first run
-        loop {
-            interval.tick().await;
-            info!("Running scheduled Proactive Upgrade Train across watched repositories...");
-            for repo in &train_state.config.watched_repos {
-                let candidates = vec![crate::upgrade_train::DependencyUpgradeCandidate {
-                    package_name: "tokio".to_string(),
-                    current_version: "1.38.0".to_string(),
-                    target_version: "1.38.1".to_string(),
-                    is_major_breaking: false,
-                }];
-                let rep = train_state
-                    .upgrade_train
-                    .evaluate_upgrade_train(&candidates);
-                info!("Scheduled upgrade train on {}: {}", repo, rep.summary);
             }
         }
     });
@@ -258,7 +213,7 @@ pub async fn run_server(state: AppState) -> Result<()> {
                             {
                                 warn!("stale-hook cleanup for {repo} noticed: {e}");
                             }
-                            let mut fwd = Command::new("gh");
+                            let mut fwd = crate::exec::gh();
                             // Detach stdin from the operator's terminal.
                             //
                             // These children previously inherited the pane's tty and
@@ -285,7 +240,9 @@ pub async fn run_server(state: AppState) -> Result<()> {
                             if let Some(sec) = secret.as_deref() {
                                 fwd.args(["--secret", sec]);
                             }
-                            fwd.status().await.map(|st| st.code().unwrap_or(-1))
+                            crate::exec::run_unbounded_status(fwd, "gh webhook forward")
+                                .await
+                                .map(|status| status.code().unwrap_or(-1))
                         }
                     },
                 )
@@ -349,7 +306,7 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
         let target_url = format!("http://{}:{}/webhook", config.host, config.port);
         let task = tokio::spawn(async move {
             info!("Forwarding webhooks for {} to {}", repo_clone, target_url);
-            let mut cmd = Command::new("gh");
+            let mut cmd = crate::exec::gh();
             // See the boot-time forwarder: keep the child off the operator's tty.
             cmd.stdin(std::process::Stdio::null());
             // Unbounded by design, same as the boot-time forwarder: this child is
@@ -373,7 +330,7 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
             // See forwarder_supervisor: `status()` is Ok(status) when the child
             // ran and died, so an Err-only check made every real forwarder death
             // silent. Report the exit either way.
-            match cmd.status().await {
+            match crate::exec::run_unbounded_status(cmd, "gh webhook forward").await {
                 Ok(st) => error!(
                     "Webhook forwarder exited for {} with code {}",
                     repo_clone,
@@ -396,7 +353,7 @@ pub async fn check_environment(github_client: &GitHubClient, config: &Config) ->
     println!("\n🔍 Checking Oyatie Autonomous Engineering Pipeline Environment:\n");
 
     print!("1. GitHub CLI (`gh`): ");
-    let mut gh_ver = Command::new("gh");
+    let mut gh_ver = crate::exec::gh();
     gh_ver.arg("--version");
     match crate::exec::run_bounded(gh_ver, crate::exec::ExecClass::Quick, "gh --version").await {
         Ok(out) if out.status.success() => {
@@ -417,9 +374,7 @@ pub async fn check_environment(github_client: &GitHubClient, config: &Config) ->
     }
 
     print!("3. Antigravity CLI (`agy`): ");
-    let mut agy_help = Command::new("agy");
-    agy_help.arg("--help");
-    match crate::exec::run_bounded(agy_help, crate::exec::ExecClass::Quick, "agy --help").await {
+    match crate::exec::agent::probe_agy_help().await {
         Ok(out) if out.status.success() => println!("✅ Ready"),
         _ => println!("❌ 'agy' not found in PATH"),
     }

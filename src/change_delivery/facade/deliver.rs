@@ -8,12 +8,12 @@ use crate::change_delivery::facade::plan::{
     manifests_from_tree, owners_from_tree, plan_from_report,
 };
 use crate::change_delivery::ports::{
-    GateResult, LandingPolicy, LocalGate, PurityViolation, RewriteEngine, Shard, VcsPort,
-    select_independent, shard_plan,
+    GateResult, LandingPolicy, LocalGate, PurityViolation, RewriteEngine, Shard, VcsPort, sequence,
+    shard_plan,
 };
-use crate::shape::adapters::GitTreeAtRev;
+use crate::shape::facade::GitTreeAtRev;
+use crate::shape::facade::TreeSource;
 use crate::shape::facade::measure::{MeasureRequest, measure_repo};
-use crate::shape::ports::TreeSource;
 use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 
@@ -55,7 +55,10 @@ pub async fn deliver_dry_run(
         .await
         .map_err(|e| anyhow!("{e}"))?;
     let report = measure_repo(&MeasureRequest {
-        repo_dir: req.repo_dir.clone(),
+        repo_dir: crate::git_manager::SubjectRoot::asserted(
+            req.repo_dir.clone(),
+            crate::git_manager::Uncloned::OperatorSupplied,
+        ),
         rev: sha.clone(),
         repo: req.repo.clone(),
         spec_override: req.spec_override.clone(),
@@ -71,8 +74,21 @@ pub async fn deliver_dry_run(
         tracing::warn!("{p}");
     }
     let shards = shard_plan(&plan, &owners, &manifests, &policy);
-    let mut selected = select_independent(&shards, &[], &policy);
+    // The first wave may open now; the rest are reported, not dropped.
+    // `truncate` bounds this run, not the plan.
+    let sequenced = sequence(&shards, &[], &policy);
+    let mut selected = sequenced.waves.first().cloned().unwrap_or_default();
     selected.truncate(req.max);
+    if sequenced.waves.len() > 1 || !sequenced.held.is_empty() || !sequenced.stuck.is_empty() {
+        tracing::info!(
+            rounds = sequenced.waves.len(),
+            placed = sequenced.placed(),
+            held = sequenced.held.len(),
+            stuck = sequenced.stuck.len(),
+            opening_now = selected.len(),
+            "shape delivery is sequenced across rounds"
+        );
+    }
 
     let vcs = GitLaneVcs::new(req.repo_dir.join(".anvil-lanes"));
     let rewrite = MechanicalRewrite;

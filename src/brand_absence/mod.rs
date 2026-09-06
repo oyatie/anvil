@@ -40,6 +40,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use crate::git_manager::SubjectRoot;
+
 /// The file that defines the vocabulary unavoidably contains every term in it,
 /// so [`BrandAbsenceGate::scan_tree`] skips it. This is a mechanical necessity
 /// rather than an exemption: [`BrandAbsenceGate::scan_source`] is path-agnostic
@@ -206,6 +208,8 @@ pub struct BrandAbsenceReport {
     pub is_blocking: bool,
     /// One line stating the outcome, the recorded debt, and the real gate count.
     pub summary: String,
+    /// Source that could not be read or classified; never a measured pass.
+    pub measurement_error: Option<String>,
 }
 
 impl BrandAbsenceReport {
@@ -254,6 +258,12 @@ impl BrandAbsenceReport {
 
     pub fn gate_status(&self) -> crate::pre_merge_guard::report::GateStatus {
         use crate::pre_merge_guard::report::GateStatus;
+        if let Some(reason) = &self.measurement_error {
+            return GateStatus::NotMeasured {
+                gate_id: "brand_absence_status".to_string(),
+                reason: reason.clone(),
+            };
+        }
         if self.new_violations.is_empty() {
             return GateStatus::Passed;
         }
@@ -313,17 +323,30 @@ impl BrandAbsenceGate {
     /// instances are directory names, which a scanner that only read
     /// declarations would miss entirely.
     pub fn scan_source(&self, path: &str, source: &str) -> BrandAbsenceReport {
-        let hits = self.collect_hits(path, &blank_cfg_test_modules(source));
+        let production = match crate::source_scan::try_without_test_modules(source) {
+            Ok(production) => production,
+            Err(reason) => return self.not_measured(format!("{path}: {reason}")),
+        };
+        let hits = self.collect_hits(path, &production);
         self.finish(hits)
     }
 
     /// Walks every `.rs` file under `root` and scans it. Paths are reported
     /// relative to `root`'s parent-of-`src` view, i.e. as they appear in the
     /// ledger.
-    pub fn scan_tree(&self, repo_root: &Path) -> BrandAbsenceReport {
+    /// Scans the tree under review.
+    ///
+    /// Takes a [`SubjectRoot`] and not a `&Path` because this gate once
+    /// scanned anvil's own tree and published a finding no author of the
+    /// pull request could act on. A caller now has to hold a subject to call
+    /// it, and the only thing that hands one out is the clone step.
+    pub fn scan_tree(&self, repo_root: &SubjectRoot) -> BrandAbsenceReport {
+        let repo_root = repo_root.as_path();
         let mut hits = Vec::new();
         let mut files = Vec::new();
-        collect_rs_files(&repo_root.join("src"), &mut files);
+        if let Err(reason) = collect_rs_files(&repo_root.join("src"), &mut files) {
+            return self.not_measured(reason);
+        }
         files.sort();
         for file in files {
             let rel = file
@@ -334,12 +357,24 @@ impl BrandAbsenceGate {
             if rel == VOCABULARY_DEFINITION_PATH {
                 continue;
             }
-            let Ok(body) = std::fs::read_to_string(&file) else {
-                continue;
+            let body = match std::fs::read_to_string(&file) {
+                Ok(body) => body,
+                Err(reason) => return self.not_measured(format!("cannot read {rel}: {reason}")),
             };
-            hits.extend(self.collect_hits(&rel, &blank_cfg_test_modules(&body)));
+            let production = match crate::source_scan::try_without_test_modules(&body) {
+                Ok(production) => production,
+                Err(reason) => return self.not_measured(format!("{rel}: {reason}")),
+            };
+            hits.extend(self.collect_hits(&rel, &production));
         }
         self.finish(hits)
+    }
+
+    fn not_measured(&self, reason: String) -> BrandAbsenceReport {
+        let mut report = self.finish(Vec::new());
+        report.summary = format!("brand-absence gate not measured: {reason}");
+        report.measurement_error = Some(reason);
+        report
     }
 
     /// Every hit in the file, before the ledger is applied.
@@ -443,6 +478,7 @@ impl BrandAbsenceGate {
             allowlisted_debt_total,
             is_blocking: !WARN_ONLY,
             summary,
+            measurement_error: None,
         }
     }
 }
@@ -826,166 +862,25 @@ fn declared_names(code: &str) -> Vec<(usize, String)> {
     out
 }
 
-fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| format!("cannot read source directory {}: {error}", dir.display()))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("cannot read source entry in {}: {error}", dir.display()))?;
         let path = entry.path();
         if path.is_dir() {
-            collect_rs_files(&path, out);
+            collect_rs_files(&path, out)?;
         } else if path.extension().is_some_and(|e| e == "rs") {
             out.push(path);
         }
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // The debt ledger
 // ---------------------------------------------------------------------------
 
-/// Blanks out `#[cfg(test)]` modules, preserving line numbering.
-///
-/// Test text never reaches a pull request. Counting a stamp that lives only in
-/// a fixture does two kinds of damage: it inflates the debt ledger, and it lets
-/// a real production violation hide beneath a ceiling that test data paid for.
-///
-/// Lines are replaced rather than removed so every reported line number still
-/// points at the right line of the original file.
-fn blank_cfg_test_modules(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut depth: i32 = 0;
-    let mut in_test = false;
-    let mut pending = false;
-
-    for line in source.lines() {
-        let trimmed = line.trim_start();
-
-        if !in_test && trimmed.starts_with("#[cfg(test)]") {
-            pending = true;
-            out.push('\n');
-            continue;
-        }
-
-        if pending && trimmed.starts_with("mod ") {
-            in_test = true;
-            pending = false;
-            depth = line.matches('{').count() as i32 - line.matches('}').count() as i32;
-            out.push('\n');
-            continue;
-        }
-        // An attribute on something that is not a module: not a test module.
-        if pending && !trimmed.is_empty() {
-            pending = false;
-        }
-
-        if in_test {
-            depth += line.matches('{').count() as i32;
-            depth -= line.matches('}').count() as i32;
-            if depth <= 0 {
-                in_test = false;
-            }
-            out.push('\n');
-            continue;
-        }
-
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Regenerates the ledger body. Run with:
-    /// `cargo test -p anvil brand_absence::tests::print_ledger -- --ignored --nocapture`
-    #[test]
-    #[ignore = "generator: prints the KNOWN_VIOLATIONS body for this file"]
-    fn print_ledger() {
-        let gate = BrandAbsenceGate::with_allowlist(Vec::new());
-        let report = gate.scan_tree(Path::new(env!("CARGO_MANIFEST_DIR")));
-        let mut counts: std::collections::BTreeMap<(String, String, BrandViolationKind), usize> =
-            std::collections::BTreeMap::new();
-        for v in &report.new_violations {
-            *counts
-                .entry((v.path.clone(), v.stamp.clone(), v.kind))
-                .or_insert(0) += 1;
-        }
-        let mut merged: std::collections::BTreeMap<(String, String), (usize, Vec<String>)> =
-            std::collections::BTreeMap::new();
-        for ((path, stamp, kind), n) in counts {
-            let e = merged.entry((path, stamp)).or_insert((0, Vec::new()));
-            e.0 += n;
-            let label = match kind {
-                BrandViolationKind::Name => "name",
-                BrandViolationKind::DisplayString => "display string",
-                BrandViolationKind::GateCountClaim => "gate-count claim",
-            };
-            if !e.1.iter().any(|l| l == label) {
-                e.1.push(label.to_string());
-            }
-        }
-        for ((path, stamp), (n, kinds)) in &merged {
-            let body = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
-                .unwrap_or_default()
-                .to_lowercase();
-            let stamp = [
-                stamp.clone(),
-                stamp.replace(' ', "_"),
-                stamp.replace(' ', "-"),
-                stamp.replace(' ', ""),
-            ]
-            .into_iter()
-            .find(|candidate| body.contains(candidate))
-            .unwrap_or_else(|| stamp.clone());
-            println!(
-                "    AllowlistedDebt {{ path: {path:?}, stamp: {stamp:?}, occurrences: {n}, debt_note: \"pre-existing {}; rename deferred to the retain/discard determination (plan 36.2)\" }},",
-                kinds.join(" + ")
-            );
-        }
-        println!("// entries: {}", merged.len());
-        println!("{}", report.summary);
-    }
-
-    /// Prints the gate's current verdict over `src/`. Not asserted: the tree is
-    /// being edited by other lanes, and this gate is warn-only by design, so a
-    /// new violation must show up in the report rather than break the build.
-    #[test]
-    #[ignore = "reporter: prints the warn-only verdict for src/"]
-    fn print_tree_status() {
-        let report = BrandAbsenceGate::new().scan_tree(Path::new(env!("CARGO_MANIFEST_DIR")));
-        for v in &report.new_violations {
-            println!(
-                "{}:{} {:?} [{}] {}",
-                v.path, v.line, v.kind, v.stamp, v.snippet
-            );
-        }
-        println!("{}", report.summary);
-    }
-
-    #[test]
-    fn real_gate_count_reads_the_corpus() {
-        // Pinned to the corpus constant rather than a literal. This test
-        // previously hardcoded 68, which is exactly how seven PR-visible
-        // strings came to claim 70 against a corpus of 68.
-        assert_eq!(
-            BrandAbsenceGate::new().real_gate_count(),
-            crate::pre_merge_guard::report::TOTAL_GATES
-        );
-    }
-
-    #[test]
-    fn ledger_has_no_duplicate_keys() {
-        let mut keys: Vec<(String, String)> =
-            load_allowlist(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
-                .iter()
-                .map(|e| (e.path.clone(), e.stamp.clone()))
-                .collect();
-        let before = keys.len();
-        keys.sort_unstable();
-        keys.dedup();
-        assert_eq!(before, keys.len());
-    }
-}
+mod tests;

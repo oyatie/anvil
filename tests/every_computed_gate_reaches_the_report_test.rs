@@ -15,15 +15,22 @@
 //! directly.
 
 use std::collections::BTreeSet;
-use std::fs;
 
-fn read(p: &str) -> String {
-    fs::read_to_string(p).unwrap_or_else(|e| panic!("{p} must be readable: {e}"))
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn read(module: &str) -> String {
+    anvil::source_scan::paths::module_source(
+        module,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
 }
 
 /// `let <name>_status` bindings in the evaluator, ignoring comments.
 fn computed_in_evaluator() -> BTreeSet<String> {
-    let src = read("src/pre_merge_guard/evaluator.rs");
+    let src = read("src/pre_merge_guard/evaluator");
     let mut out = BTreeSet::new();
     for line in src.lines() {
         let t = line.trim_start();
@@ -46,7 +53,7 @@ fn computed_in_evaluator() -> BTreeSet<String> {
 /// Every `<name>_status` mentioned anywhere in the evaluator's report literal,
 /// which covers both `foo_status,` shorthand and `foo_status: bar_status`.
 fn carried_into_the_report() -> BTreeSet<String> {
-    let src = read("src/pre_merge_guard/evaluator.rs");
+    let src = read("src/pre_merge_guard/evaluator");
     let start = src
         .find("let mut report = PreMergeCertificationReport {")
         .expect("the report literal must exist");
@@ -94,7 +101,7 @@ fn every_computed_gate_status_is_carried_into_the_report() {
 
 #[test]
 fn the_declared_total_matches_what_the_report_actually_carries() {
-    let rp = read("src/pre_merge_guard/report.rs");
+    let rp = read("src/pre_merge_guard/report");
     // Scope to the struct body: a `: GateStatus,` in a function signature or a
     // doc example elsewhere in the file is not a gate.
     let start = rp

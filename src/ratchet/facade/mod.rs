@@ -3,7 +3,20 @@
 //! empty baseline (which would make every existing key a regression) nor as
 //! a pass.
 
-use crate::ratchet::ports::{Baseline, FrozenReferenceSource, RefError, Signoff};
+pub mod derived;
+
+use crate::ratchet::ports::{FrozenReferenceSource, RefError};
+
+/// The ratchet vocabulary, for units outside this one.
+///
+/// A consumer needs to resolve a merge-base, load the frozen pair, compare,
+/// and refuse a regeneration that grows. Reaching into `ports` or `adapters`
+/// for those is a facade bypass the seal counts; exporting them here is the
+/// difference between a unit with a door and a unit with a hole.
+pub use crate::ratchet::adapters::GitMergeBase;
+pub use crate::ratchet::ports::{
+    Baseline, Growth, Mode, RatchetVerdict, Signoff, compare, regen_is_monotonic,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reference {

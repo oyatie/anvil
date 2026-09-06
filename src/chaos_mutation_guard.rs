@@ -78,7 +78,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::process::Command;
 use tracing::info;
 
 use crate::exec::run_bounded_for;
@@ -301,7 +300,7 @@ impl ChaosMutationGuard {
         }
         let out_dir = scratch.path().join("out");
 
-        let mut cmd = Command::new("cargo");
+        let mut cmd = crate::exec::build_env::command("cargo");
         cmd.current_dir(repo_dir)
             .arg("mutants")
             .arg("--in-diff")
@@ -548,7 +547,10 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             previous_head_sha: None,
-            repo_working_dir: std::path::PathBuf::from("/tmp"),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("/tmp"),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             diff_content: diff.to_string(),
             changed_files: changed.iter().map(|s| s.to_string()).collect(),
             is_incremental: false,
@@ -1138,7 +1140,7 @@ mod tests {
     fn the_gate_really_spawns_the_mutation_tool_and_bounds_it() {
         let code = production_code();
         assert!(
-            code.contains("Command::new(\"cargo\")") && code.contains(".arg(\"mutants\")"),
+            code.contains("letmutcmd=crate::exec::build_env::command(\"cargo\");cmd.current_dir(repo_dir).arg(\"mutants\")"),
             "a mutation gate that spawns no mutation tool measures nothing"
         );
         assert!(

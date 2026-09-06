@@ -5,9 +5,12 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod diff_context;
+pub mod hook_liveness;
+pub mod subject;
 pub mod worktree;
 
 pub use diff_context::PrDiffContext;
+pub use subject::{CertifiedTree, SubjectRoot, Uncloned};
 pub use worktree::EphemeralWorktree;
 
 /// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes
@@ -80,7 +83,7 @@ impl GitManager {
     }
 
     /// Ensures the primary repository clone is present locally and up to date
-    pub async fn ensure_repo_cloned(&self, repo: &str) -> Result<PathBuf> {
+    pub async fn ensure_repo_cloned(&self, repo: &str) -> Result<SubjectRoot> {
         let repo_dir = self.get_repo_dir(repo);
 
         if !self.repos_base_dir.exists() {
@@ -125,18 +128,22 @@ impl GitManager {
 
         let _ = Self::install_repo_hooks(&repo_dir).await;
 
-        Ok(repo_dir)
+        Ok(SubjectRoot::cloned(repo_dir))
     }
 
     /// Native hooks live in `$(git rev-parse --git-common-dir)/hooks`.
     /// Worktrees share that directory. `core.hooksPath` stays unset.
     fn common_hooks_dir(repo_dir: &Path) -> Result<PathBuf> {
-        let out = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        command
             .args(["-C"])
             .arg(repo_dir)
-            .args(["rev-parse", "--git-common-dir"])
-            .output()
-            .context("git rev-parse --git-common-dir")?;
+            .args(["rev-parse", "--git-common-dir"]);
+        let out = crate::exec::run_sync_bounded(
+            command,
+            crate::exec::ExecClass::Quick.timeout(),
+            "git rev-parse --git-common-dir",
+        )?;
         if !out.status.success() {
             bail!(
                 "git-common-dir failed: {}",
@@ -599,7 +606,7 @@ impl GitManager {
 /// True when `dir` holds a lane lease naming a future expiry (epoch seconds).
 /// An unreadable or malformed lease does not protect the directory.
 async fn lane_lease_unexpired(dir: &std::path::Path) -> bool {
-    let lease = dir.join(crate::change_delivery::adapters::git_vcs::LANE_LEASE_FILE);
+    let lease = dir.join(crate::change_delivery::facade::LANE_LEASE_FILE);
     let Ok(raw) = tokio::fs::read_to_string(&lease).await else {
         return false;
     };

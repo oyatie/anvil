@@ -4,9 +4,9 @@
 
 use crate::change_delivery::ports::{
     LandingPolicy, MOVE_PLAN_SCHEMA_V1, Move, MoveKind, OwnerMap, ShapeMovePlan, Shard,
-    conflict_pairs, select_independent, shard_plan,
+    conflict_pairs, sequence, shard_plan,
 };
-use crate::shape::ports::{Fix, ShapeReport};
+use crate::shape::facade::{Fix, ShapeReport};
 
 /// Rank: stable units first; satellite alias moves (mechanical, no code)
 /// before other file moves; crate renames last.
@@ -73,7 +73,13 @@ pub fn plan_from_report(report: &ShapeReport, spec_version: &str) -> ShapeMovePl
 
 pub struct DryRun {
     pub shards: Vec<Shard>,
+    /// What may open now: the first wave.
     pub selected: Vec<Shard>,
+    /// Every shard, in the round it may open in, plus the ones no round will
+    /// take. A dry run that reports only `selected` is shorter than the plan
+    /// it describes, and a reader cannot tell a shard that waits a round from
+    /// one that was never planned.
+    pub sequenced: crate::change_delivery::ports::Sequenced,
     pub conflicts: usize,
     pub policy: LandingPolicy,
 }
@@ -86,10 +92,12 @@ pub fn dry_run(
 ) -> DryRun {
     let shards = shard_plan(plan, owners, manifests, &policy);
     let conflicts = conflict_pairs(&shards).len();
-    let selected = select_independent(&shards, &[], &policy);
+    let sequenced = sequence(&shards, &[], &policy);
+    let selected = sequenced.waves.first().cloned().unwrap_or_default();
     DryRun {
         shards,
         selected,
+        sequenced,
         conflicts,
         policy,
     }
@@ -113,6 +121,15 @@ pub fn render(d: &DryRun, plan: &ShapeMovePlan) -> String {
         d.policy.require_destination_stable,
         d.selected.len()
     );
+    // The rounds this plan takes, and what no round takes. A conflicting pair
+    // is two rounds, not one round and a disappearance.
+    out.push_str(&format!(
+        "  waves: {} round(s) placing {} shard(s); {} held by policy; {} that no round admits\n",
+        d.sequenced.waves.len(),
+        d.sequenced.placed(),
+        d.sequenced.held.len(),
+        d.sequenced.stuck.len()
+    ));
     for s in d.shards.iter().take(25) {
         out.push_str(&format!(
             "  [{}] {:<28} {:<20} {:>3} move(s)  owners={:?}{}{}\n",
@@ -135,14 +152,14 @@ pub fn render(d: &DryRun, plan: &ShapeMovePlan) -> String {
 /// `CODEOWNERS`) plus every `OWNERS` file, read by revision.
 pub async fn owners_from_tree(repo_dir: &std::path::Path, rev: &str) -> OwnerMap {
     let mut map = OwnerMap::default();
-    let Ok(tree) = crate::shape::adapters::GitTreeAtRev::load(repo_dir, rev, |p| {
+    let Ok(tree) = crate::shape::facade::GitTreeAtRev::load(repo_dir, rev, |p| {
         p == ".github/CODEOWNERS" || p == "CODEOWNERS" || p.rsplit('/').next() == Some("OWNERS")
     })
     .await
     else {
         return map;
     };
-    use crate::shape::ports::TreeSource;
+    use crate::shape::facade::TreeSource;
     for (path, bytes) in tree.loaded() {
         let text = String::from_utf8_lossy(bytes);
         if path.ends_with("CODEOWNERS") {
@@ -161,12 +178,12 @@ pub async fn owners_from_tree(repo_dir: &std::path::Path, rev: &str) -> OwnerMap
 /// Manifest paths (every profile's unit marker) at the revision, for
 /// touch-set prediction.
 pub async fn manifests_from_tree(repo_dir: &std::path::Path, rev: &str) -> Vec<String> {
-    use crate::shape::ports::{LanguageProfile, TreeSource};
+    use crate::shape::facade::{LanguageProfile, TreeSource};
     let markers: Vec<&str> = LanguageProfile::ALL
         .iter()
         .map(|p| p.unit_marker())
         .collect();
-    match crate::shape::adapters::GitTreeAtRev::load(repo_dir, rev, |_| false).await {
+    match crate::shape::facade::GitTreeAtRev::load(repo_dir, rev, |_| false).await {
         Ok(tree) => tree
             .paths()
             .iter()
@@ -175,4 +192,24 @@ pub async fn manifests_from_tree(repo_dir: &std::path::Path, rev: &str) -> Vec<S
             .collect(),
         Err(_) => Vec::new(),
     }
+}
+
+/// Write the ranked move plan for a measured repository, and say where.
+///
+/// Delivery's half of the fleet sweep. It lives here because turning a shape
+/// report into moves is what this unit is for; performing it inside `shape`
+/// made measurement depend on delivery and closed a dependency cycle.
+pub async fn write_move_plan(
+    data_dir: &std::path::Path,
+    repo: &str,
+    report: &ShapeReport,
+) -> Result<std::path::PathBuf, String> {
+    let plan = plan_from_report(report, "adopted");
+    let dir = data_dir.join("shape");
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    let path = dir.join(format!("{}.moveplan.json", repo.replace('/', "-")));
+    tokio::fs::write(&path, format!("{}\n", plan.to_json()))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(path)
 }

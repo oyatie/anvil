@@ -1,4 +1,7 @@
 use anyhow::Result;
+
+pub use super::gates::{review_verdict_gate, unresolved_review_gate};
+pub use super::shape_gate::shape_gate_status;
 use tracing::info;
 
 use super::matrix::MatrixRenderer;
@@ -38,6 +41,7 @@ use crate::flake_quarantine::FlakeQuarantineReport;
 use crate::formal_verification::FormalVerificationReport;
 use crate::ghost_migration_harness::GhostMigrationReport;
 use crate::git_manager::PrDiffContext;
+
 use crate::gitops_drift_reconciler::GitOpsDriftReport;
 use crate::gitops_promotion::GitOpsPromotionReport;
 use crate::hermetic_build::HermeticBuildReport;
@@ -64,11 +68,9 @@ use crate::stacked_diffs::StackedDiffsReport;
 use crate::supply_chain_guard::SupplyChainReport;
 use crate::trace_context_guard::TraceContextReport;
 use crate::unresolved_review_guard::UnresolvedReviewReport;
-use crate::upgrade_train::UpgradeTrainReport;
 use crate::vex_scanner::OpenVexReport;
 use crate::wasm_sandbox::WasmSandboxReport;
 use crate::zero_day_patcher::ZeroDayReport;
-use crate::zero_trust_workload::ZeroTrustWorkloadReport;
 
 pub struct PreMergeGuard;
 
@@ -164,10 +166,8 @@ impl PreMergeGuard {
         wasm_report: &WasmSandboxReport,
         consistency_report: &ConsistencyReport,
         flake_quarantine_report: &FlakeQuarantineReport,
-        zero_trust_report: &ZeroTrustWorkloadReport,
         carbon_report: &CarbonComputeReport,
         replay_report: &ReplayHarnessReport,
-        upgrade_train_report: &UpgradeTrainReport,
         mutation_report: &MutationAdequacyReport,
         feature_flag_report: &FeatureFlagReport,
         bench_report: &BenchmarkReport,
@@ -178,6 +178,8 @@ impl PreMergeGuard {
         test_suite_passed: Option<bool>,
         review_verdict: &str,
         shape_outcome: &crate::shape::facade::gate::ShapeGateOutcome,
+        cloud_native_report: &crate::cloud_native_guard::CloudNativeReport,
+        stack_whitelist_report: &crate::stack_whitelist_guard::StackWhitelistReport,
     ) -> Result<PreMergeCertificationReport> {
         info!(
             "Evaluating full-lifecycle quality and GitOps gates for {}#{} ({} gates)...",
@@ -227,14 +229,7 @@ impl PreMergeGuard {
         // A run that classified no layered file measured nothing: reporting it
         // as Passed would be absent evidence dressed as a pass (invariant I1),
         // and reporting it as Failed would be a fabricated accusation.
-        let clean_arch_status = match clean_arch_report.measurement.not_measured_reason() {
-            Some(reason) => GateStatus::NotMeasured {
-                gate_id: "clean_arch_status".to_string(),
-                reason: reason.to_string(),
-            },
-            None if clean_arch_report.is_clean => GateStatus::Passed,
-            None => GateStatus::Failed(clean_arch_report.summary.clone()),
-        };
+        let clean_arch_status = clean_arch_report.gate_status();
 
         // 8. Monorepo Guard
         let monorepo_status = if monorepo_report.is_compliant {
@@ -392,11 +387,7 @@ impl PreMergeGuard {
         let shadow_traffic_status = shadow_traffic_report.status.clone();
 
         // 37. Zero-Unresolved-Comments Review Gate
-        let unresolved_review_status = if unresolved_review_report.is_clean {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(unresolved_review_report.summary.clone())
-        };
+        let unresolved_review_status = unresolved_review_gate(unresolved_review_report);
 
         // 38. Pre-Commit Conventional-Commit & Secret Probe
         // Rebuilt from `is_valid`, which is false both for a violation and for a
@@ -444,9 +435,24 @@ impl PreMergeGuard {
                     .join(" "),
             )
         } else if formal_report.policy_files_seen.is_empty() {
-            GateStatus::NotMeasured {
+            // `NotApplicable`, not `NotMeasured`. The correction above was to
+            // stop publishing a green gate over a diff carrying no policy, and
+            // it stands -- this is still not a pass. But the two absences are
+            // different questions and admission asks only one of them:
+            // `NotMeasured` means the capability could not be exercised here
+            // and blocks unless `admission::ABSENCE_POLICY` exempts the gate;
+            // `NotApplicable` means it ran and the subject set was empty, which
+            // is this case exactly. The scan executed, over a change that adds
+            // no policy line.
+            //
+            // Reported as `NotMeasured`, this gate withheld admission from
+            // every pull request that touches no policy file -- which is nearly
+            // all of them. PR #129 carried zero failures and was refused on
+            // this and one other absence of the same shape.
+            GateStatus::NotApplicable {
                 gate_id: "formal_verification_status".to_string(),
-                reason: "this change adds no line to a policy file, so the policy scan had                          nothing to examine. Absence of a match is not evidence of safety."
+                subject: "this change adds no line to a policy file, so the policy scan had \
+                          nothing to examine. Absence of a match is not evidence of safety."
                     .to_string(),
             }
         } else {
@@ -551,11 +557,7 @@ impl PreMergeGuard {
         let flake_quarantine_status = flake_quarantine_report.status.clone();
 
         // 57. Zero-Trust SPIFFE Workload Identity
-        let cleartext_transport_status = if zero_trust_report.passed {
-            GateStatus::Passed
-        } else {
-            GateStatus::Failed(zero_trust_report.summary.clone())
-        };
+        let cleartext_transport_status = super::harness_gates::cleartext_transport(diff_ctx);
 
         // 58. GreenOps Carbon-Aware Compute
         let carbon_compute_status = carbon_report.status.clone();
@@ -564,7 +566,6 @@ impl PreMergeGuard {
         let replay_harness_status = replay_report.status.clone();
 
         // 60. Proactive Dependency Upgrade Train
-        let upgrade_train_status = upgrade_train_report.status.clone();
 
         // 61. Mutation Adequacy of the Changed Lines
         //
@@ -619,17 +620,7 @@ impl PreMergeGuard {
         // may pass. VERDICT_ERRORED means the harness obtained no review at all —
         // that is Errored, not Failed, because the model did not judge the code
         // adversely; the review simply did not happen. Both block (invariant I1).
-        let review_verdict_status = match review_verdict {
-            "APPROVE" | "COMMENT" => GateStatus::Passed,
-            crate::reviewer::VERDICT_ERRORED => GateStatus::Errored(
-                "AI Code Review produced no parseable verdict; the review did not complete"
-                    .to_string(),
-            ),
-            other => GateStatus::Failed(format!(
-                "AI Code Review & 16-Lens Matrix issued blocking verdict: {}",
-                other
-            )),
-        };
+        let review_verdict_status = review_verdict_gate(review_verdict);
 
         // Anvil turns these two inward. Every other gate in this matrix runs
         // against the pull request's repository; these run against Anvil's own
@@ -641,27 +632,21 @@ impl PreMergeGuard {
         // `is_blocking` is always false -- a module that had decided not to
         // block, blocking anyway, over a scan of Anvil's own tree that no
         // author of the pull request under review can act on.
-        let brand_absence_report = crate::brand_absence::BrandAbsenceGate::new()
-            .scan_tree(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+        let brand_absence_report =
+            crate::brand_absence::BrandAbsenceGate::new().scan_tree(&diff_ctx.repo_working_dir);
         let brand_absence_status = brand_absence_report.gate_status();
 
-        let migration_boundary_status = match crate::migration::live_tree_violations() {
-            Ok(v) if v.is_empty() => GateStatus::Passed,
-            Ok(v) => GateStatus::Failed(format!(
-                "{} component(s) marked Migrating depend on code oyatie supersedes: {}",
-                v.len(),
-                v.iter()
-                    .map(|x| format!("{} -> {}", x.from, x.to))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
-            Err(reason) => GateStatus::NotMeasured {
-                gate_id: "migration_boundary_status".to_string(),
-                reason,
-            },
-        };
+        let migration_boundary_status =
+            super::migration_boundary_gate_status(&diff_ctx.repo_working_dir);
 
         let shape_status = shape_gate_status(shape_outcome);
+
+        // The three guards that had no caller. Each already measured its
+        // subject and each already had seeded fixtures; what was missing was
+        // any pull request ever being told. Each maps its own report to a
+        // status, beside the report rather than here.
+        let cloud_native_status = cloud_native_report.gate_status();
+        let stack_whitelist_status = stack_whitelist_report.gate_status();
 
         let mut report = PreMergeCertificationReport {
             // Derived by seal(); never a caller-supplied verdict.
@@ -729,7 +714,6 @@ impl PreMergeGuard {
             cleartext_transport_status,
             carbon_compute_status,
             replay_harness_status,
-            upgrade_train_status,
             mutation_status,
             feature_flag_status,
             bench_status,
@@ -738,6 +722,8 @@ impl PreMergeGuard {
             schema_compat_status,
             performance_concurrency_status,
             test_suite_status,
+            cloud_native_status,
+            stack_whitelist_status,
             unmeasured_gates: Vec::new(),
             summary_markdown: String::new(),
             // This function is the certification run: these seventy-two
@@ -765,53 +751,6 @@ impl PreMergeGuard {
         report.seal();
         report.summary_markdown = MatrixRenderer::render(&report);
         Ok(report)
-    }
-}
-
-/// Maps the Shape Program outcome onto the certification vocabulary.
-///
-/// - No spec adopted: `Warning`, visible on every scorecard, never
-///   withholding — a tenant that has not opted in has nothing to measure
-///   (owner decision 2026-08-20; precedent: coverage's NothingToMeasure).
-/// - Spec present but unreadable: `NotMeasured` (I1 — the gate was asked to
-///   measure and could not).
-/// - Git failure: `Errored`.
-/// - Bootstrap (no baseline at the merge-base) and advisory-only regressions:
-///   `Warning` carrying the distance.
-/// - Any regression on a blocking rule: `Failed`, first five keys named.
-pub fn shape_gate_status(outcome: &crate::shape::facade::gate::ShapeGateOutcome) -> GateStatus {
-    use crate::shape::facade::gate::ShapeGateOutcome as O;
-    match outcome {
-        O::NoSpec { .. } => GateStatus::Warning(
-            "no shape spec adopted (.anvil/shape.json absent); see `anvil shape validate-spec`"
-                .to_string(),
-        ),
-        O::SpecUnreadable { reason } => GateStatus::NotMeasured {
-            gate_id: "shape_status".to_string(),
-            reason: reason.clone(),
-        },
-        O::Errored { reason } => GateStatus::Errored(reason.clone()),
-        O::Bootstrap { .. } => GateStatus::Warning(outcome.summary()),
-        O::Judged {
-            blocking,
-            measurement,
-        } => {
-            if !blocking.is_empty() {
-                let mut first: Vec<&str> = blocking.iter().take(5).map(String::as_str).collect();
-                if blocking.len() > 5 {
-                    first.push("…");
-                }
-                GateStatus::Failed(format!(
-                    "{} regression(s) on blocking shape rules since the baseline: {}",
-                    blocking.len(),
-                    first.join("; ")
-                ))
-            } else if measurement.advisory_regressions > 0 {
-                GateStatus::Warning(outcome.summary())
-            } else {
-                GateStatus::Passed
-            }
-        }
     }
 }
 

@@ -136,6 +136,24 @@ const DEF_KEYWORDS: &[&str] = &[
     "fn ", "struct ", "enum ", "const ", "static ", "trait ", "type ",
 ];
 
+/// Everything a definition may carry before its keyword.
+///
+/// Order does not matter; the check is a prefix match against each. `async`
+/// and the restricted visibilities are the ones whose absence made the
+/// resolver blind to a large fraction of the tree.
+const DEF_PREFIXES: &[&str] = &[
+    "",
+    "pub ",
+    "pub(crate) ",
+    "pub(super) ",
+    "async ",
+    "pub async ",
+    "pub(crate) async ",
+    "pub(super) async ",
+    "unsafe ",
+    "pub unsafe ",
+];
+
 /// The lines of `sym`'s definition, located rather than counted.
 ///
 /// This is the whole difference from a line citation. The window is FOUND by
@@ -153,8 +171,15 @@ const DEF_KEYWORDS: &[&str] = &[
 fn symbol_window(lines: &[&str], sym: &str) -> Option<(usize, usize)> {
     let a = lines.iter().position(|l| {
         let t = l.trim_start();
+        // Every prefix a definition can carry before its keyword. Without
+        // `async` and the restricted visibilities, `symbol_window` reported
+        // "no definition found" for `async fn run_cargo_mutants` sitting in
+        // plain sight -- and a resolver that cannot see half the functions in
+        // the tree cannot replace a line number.
         DEF_KEYWORDS.iter().any(|kw| {
-            t.starts_with(&format!("{kw}{sym}")) || t.starts_with(&format!("pub {kw}{sym}"))
+            DEF_PREFIXES
+                .iter()
+                .any(|pre| t.starts_with(&format!("{pre}{kw}{sym}")))
         })
             // A struct field is a definition a gap can legitimately cite, and
             // the visibility prefix is part of how it is spelled. Without these
@@ -164,6 +189,19 @@ fn symbol_window(lines: &[&str], sym: &str) -> Option<(usize, usize)> {
             || t.starts_with(&format!("pub {sym}:"))
             || t.starts_with(&format!("pub(crate) {sym}:"))
     })?;
+    // A doc comment and its attributes are part of the definition. Without
+    // this, a gap that quotes the sentence explaining WHY a function is
+    // written the way it is cites a symbol whose window starts below the
+    // sentence, and the citation cannot resolve to the thing it is about.
+    let mut top = a;
+    while top > 0 {
+        let prev = lines[top - 1].trim_start();
+        if prev.starts_with("///") || prev.starts_with("#[") || prev.starts_with("//!") {
+            top -= 1;
+        } else {
+            break;
+        }
+    }
     let indent = lines[a].len() - lines[a].trim_start().len();
     let z = lines[a + 1..]
         .iter()
@@ -174,7 +212,7 @@ fn symbol_window(lines: &[&str], sym: &str) -> Option<(usize, usize)> {
         })
         .map(|k| a + 1 + k + 1)
         .unwrap_or(lines.len());
-    Some((a, z.min(lines.len())))
+    Some((top, z.min(lines.len())))
 }
 
 /// Whether `text` defines `sym`.
@@ -623,13 +661,7 @@ fn every_constant_quoted_in_a_gap_still_exists_in_a_file_that_gap_cites() {
 /// and it is the only one that fires when a file is edited far above the cited
 /// range and every line number below shifts.
 ///
-/// Prompting cannot prevent it because nobody edits line numbers on purpose;
-/// they are invalidated as a side effect of an unrelated insertion.
-/// A file's code with every `//` comment removed, for the same reason as
-/// [`code_only`]: a quotation is evidence only when the code contains it.
-fn code_only_body(body: &str) -> String {
-    body.lines().map(code_only).collect::<Vec<_>>().join("\n")
-}
+use anvil::source_scan::without_commentary as code_only_body;
 
 /// The code on a line, with any trailing `//` comment removed.
 ///
@@ -640,23 +672,13 @@ fn code_only_body(body: &str) -> String {
 /// lines above the cited line. The decision they described lived in another
 /// file entirely.
 ///
-/// Quotes inside string literals are kept -- a gap quoting a literal the code
-/// really contains is exactly what this check is for -- so the scan tracks
-/// whether it is inside a `"` before treating `//` as a comment opener.
-fn code_only(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut in_string = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if in_string => i += 1,
-            b'"' => in_string = !in_string,
-            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
-            _ => {}
-        }
-        i += 1;
-    }
-    line
+/// One line as code, commentary gone and string literals kept.
+///
+/// Delegates to the shared scanner. It returns an owned `String` where this
+/// returned a slice, which is why the wrapper stays: the call sites compare
+/// trimmed text and a borrow would not outlive the temporary.
+fn code_only(line: &str) -> String {
+    anvil::source_scan::without_commentary(line)
 }
 
 #[test]
@@ -687,7 +709,7 @@ fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
                 match symbol_window(&lines, sym) {
                     Some((a, z)) => {
                         for line in &lines[a..z] {
-                            window.push_str(code_only(line));
+                            window.push_str(&code_only(line));
                             window.push('\n');
                         }
                     }
@@ -706,7 +728,7 @@ fn every_cited_line_range_actually_contains_the_evidence_it_is_cited_for() {
                 let lo = a.saturating_sub(1 + ANCHOR_TOLERANCE);
                 let hi = (z + ANCHOR_TOLERANCE).min(lines.len());
                 for line in &lines[lo.min(lines.len())..hi] {
-                    window.push_str(code_only(line));
+                    window.push_str(&code_only(line));
                     window.push('\n');
                 }
             }
@@ -756,14 +778,15 @@ fn code_only_strips_commentary_but_keeps_string_literals() {
 // Symbol anchors
 // ---------------------------------------------------------------------------
 
-/// Line-anchored citations present when the symbol form was added.
+/// Line-anchored citations still in the registry.
 ///
-/// It may fall and must never rise. Not a ban: 132 of them exist, they are all
-/// currently correct, and rewriting every one in a single change would be a
-/// diff nobody can review against a file every gate pull request already
-/// conflicts on. New citations use `path.rs::symbol`; the old ones convert as
-/// their gaps are edited anyway.
-const LINE_CITATION_CEILING: usize = 132;
+/// Zero, and it may never rise. Every citation is now `path.rs::symbol`, whose
+/// window is located by searching for the definition rather than counted from
+/// the top of the file -- so an edit above it moves the definition and the
+/// citation moves with it. A line number cannot do that: it is written down
+/// once and invalidated by the next insertion above it, which happened four
+/// times in a single day of gate work.
+const LINE_CITATION_CEILING: usize = 0;
 
 fn line_citation_count() -> usize {
     AUDITED_GATES
@@ -852,22 +875,29 @@ fn a_symbol_that_is_only_mentioned_does_not_satisfy_a_citation() {
 
 #[test]
 fn line_anchored_citations_may_fall_but_never_rise() {
-    let count = line_citation_count();
+    // The scan must still be able to find its subject. With the ceiling at
+    // zero, "no line citations" and "the parser stopped working" produce the
+    // same number, so the corpus is measured through the other form: if
+    // nothing at all parses, this gate did not run.
+    let symbols = AUDITED_GATES
+        .iter()
+        .flat_map(|e| parse_citations(e.gap))
+        .filter(|c| c.symbol.is_some())
+        .count();
     assert!(
-        count > 0,
+        symbols > 0,
         "no citations were parsed at all, so this gate did not run"
     );
-    assert!(
-        count <= LINE_CITATION_CEILING,
+
+    // Equality rather than `<=`: at a ceiling of zero the two say the same
+    // thing about a rise, and `count <= 0` on a `usize` is a comparison clippy
+    // correctly calls always-true-or-false.
+    let count = line_citation_count();
+    assert_eq!(
+        count, LINE_CITATION_CEILING,
         "{count} line-anchored citation(s), ceiling is {LINE_CITATION_CEILING}.\n\
          A line number is invalidated by the next insertion above it -- that \
          happened four times in one day. Cite `path.rs::symbol` instead; the \
          window is located rather than counted, so it moves with the code."
     );
-    if count < LINE_CITATION_CEILING {
-        println!(
-            "NOTE: {count} line-anchored citations remain but the ceiling is \
-             {LINE_CITATION_CEILING}. Lower it in the change that converted them."
-        );
-    }
 }

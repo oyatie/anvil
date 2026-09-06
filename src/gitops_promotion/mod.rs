@@ -65,7 +65,9 @@ impl GitOpsPromotionEngine {
 
             // `all`: an image pinned by a line this change does not touch is
             // still pinned, and one it DELETES is not this change's mutable tag.
-            let findings = self.pinner.scan_unpinned_images(&file.path, &file.all);
+            let findings = self
+                .pinner
+                .scan_unpinned_images(&file.path, file.after_change());
             unpinned_findings.extend(findings);
         }
 
@@ -102,7 +104,7 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ image: ghcr.io/oyatie/console@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
             changed_files: vec!["infra/gitops/app.yaml".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(std::path::PathBuf::from("."), crate::git_manager::Uncloned::TestFixture),
             is_incremental: false,
             previous_head_sha: None,
         };

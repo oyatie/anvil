@@ -42,7 +42,10 @@ fn ctx(diff: &str) -> PrDiffContext {
         previous_head_sha: None,
         diff_content: diff.to_string(),
         changed_files: vec![],
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
     }
 }
 
@@ -212,9 +215,12 @@ fn removing_a_violation_is_not_committing_one() {
 /// A wire-contract rule whose subject IS the removal keeps both sides.
 #[test]
 fn a_removed_required_field_is_still_a_breaking_change() {
-    let diff = "diff --git a/api/openapi.yaml b/api/openapi.yaml\n\
-                --- a/api/openapi.yaml\n+++ b/api/openapi.yaml\n\
-                 required:\n-  - tenant_id\n+  - name\n";
+    let diff = concat!(
+        "diff --git a/api/openapi.yaml b/api/openapi.yaml\n",
+        "--- a/api/openapi.yaml\n+++ b/api/openapi.yaml\n",
+        "@@ -1,2 +1,2 @@\n",
+        " required:\n-  - tenant_id\n+  - name\n",
+    );
     let report = CrossServiceImpactEngine::new()
         .evaluate_cross_service_impact(Path::new("."), &ctx(diff))
         .unwrap();
@@ -225,5 +231,10 @@ fn a_removed_required_field_is_still_a_breaking_change() {
     assert_eq!(
         report.breaking_findings[0].contract_file,
         "api/openapi.yaml"
+    );
+    assert_eq!(report.breaking_findings.len(), 1);
+    assert_eq!(
+        report.breaking_findings[0].removed_required_field,
+        "tenant_id"
     );
 }

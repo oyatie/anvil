@@ -85,6 +85,19 @@ impl MigrationEntry {
 /// oyatie tree; see PLAN.md section 38 for method and honest limits.
 pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
     MigrationEntry {
+        component: "pre_merge_guard/status",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "",
+        counterpart_loc: 0,
+        evidence: "GateStatus was extracted from report.rs into status.rs on dev at c937591; \
+                   report.rs reexports the same enum. This preserves the existing report entry's \
+                   admission-vocabulary custody at its actual owner, rather than granting a new \
+                   verdict to the surrounding evaluator. The enum distinguishes failure, inability \
+                   to measure, and measured absence. No fresh upstream comparison is claimed; \
+                   the original report entry records that evidence.",
+    },
+    MigrationEntry {
         component: "pre_merge_guard/report",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
@@ -92,7 +105,8 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         counterpart_loc: 0,
         evidence: "Split out from the pre_merge_guard entry after the migration-boundary gate found \
                    seven Migrating modules depending on it. Every one of those imports exactly \
-                   `GateStatus` and nothing else. report.rs owns the admission vocabulary -- \
+                   `GateStatus` and nothing else. report.rs retains the report and reexports the \
+                   admission vocabulary now owned by status.rs -- \
                    Errored, NotMeasured, is_admissible -- and a search of oyatie's \
                    governance/check/honest-claims (1878 lines) and aspirational-enforcement (692) \
                    found aspiration tracking but ZERO not-measured, unmeasured, or abstain \
@@ -332,7 +346,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   real duration source.",
     },
     MigrationEntry {
-        component: "clean_architecture_guard.rs",
+        component: "clean_architecture_guard/",
         verdict: Verdict::Superseded,
         confidence: Confidence::Verified,
         oyatie_counterpart: "ci/facade/facade-core-layering + core-dependency-isolation + port-placement + \
@@ -551,7 +565,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         evidence: "127 lines; cargo/Buck dual-track parity. oyatie's build-target-parity gate enforces \
                   precisely this: 'every member must carry a tracked BUCK file, and every member with Rust \
                   test code must declare a rust_test target' (ci/facade/build-target-parity/src/lib.rs \
-                  header), backed by oya-buck-syntax-kernel and oya-buck-test-wiring-app.",
+                  header), backed by oya-buck-syntax-kernel and oya-buck-test-wiring-app. DELETED: no production caller, counterpart verified.",
     },
     MigrationEntry {
         component: "early_exit_cascade",
@@ -748,6 +762,102 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         evidence: "409 lines, PURE. Environment promotion tiers + DigestPinner (unpinned image detection). \
                   oyatie's policy-deploy-parity (1944) and cloud-iac-helm-chart-signed-image-wiring gate \
                   cover digest pinning and deploy parity; promotion-tier state machine has no counterpart.",
+    },
+    MigrationEntry {
+        component: "gate_proof",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie's gates are not required to demonstrate they fire",
+        counterpart_loc: 0,
+        evidence: "PURE. Each gate names the test that seeds its defect and the test that spares \
+                  a conformant subject. `Rule::fixture` makes an unproven rule unspellable on the \
+                  harness; the hand-wired gates are not on it, so the obligation is imposed here \
+                  instead -- and both citations are checked to EXIST and to mention the thing \
+                  under test. That second check is the whole value: inferring the mapping from \
+                  the test-naming convention produced false proofs, claiming an ADR test \
+                  demonstrated psa_status and slo_status. GATES_WITHOUT_PROOF is exact and \
+                  counts only gates that can fire at all, since a gate declared unprovisionable \
+                  in ABSENCE_POLICY cannot be seeded with a defect either. Migrates because the \
+                  obligation is not anvil-specific.",
+    },
+    MigrationEntry {
+        component: "source_scan",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie's checks each strip commentary their own way",
+        counterpart_loc: 0,
+        evidence: "PURE, ~60 lines. Reads Rust source as CODE: line comments, block comments and \
+                  string-literal bodies removed, quotes and byte offsets kept, so a scan sees \
+                  code and can still name a line. Extracted because NINE spellings of this idea \
+                  existed under four behaviours and one name -- the weakest dropped whole \
+                  comment lines and left block comments, the strongest was private to one test \
+                  file. A reader reaching for `code_only` got whichever was nearest, and the \
+                  failure was silent in both directions: reading commentary as code invents a \
+                  finding, missing a construct hides one. Both happened within an hour. Migrates \
+                  because every governance scan in either repository needs it.",
+    },
+    MigrationEntry {
+        component: "stage_liveness",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie proves gates fire, not that stages run",
+        counterpart_loc: 0,
+        evidence: "PURE over a source list. `gate_proof` makes a gate demonstrate it can FIRE;                   nothing made a stage demonstrate it RUNS, and three were found dead in one day                   -- `next_phase`, whose reject arm therefore did nothing at all; the local hooks,                   pointed at a directory that did not exist; and the enlist doors, refusing every                   input on a premise that had stopped being true. Each was complete, documented                   and tested. None was a bug in the code that failed, which is why no unit test                   over that code could catch it. Reachability alone answers the wrong question: a                   module inside a reachable parent scores reachable with zero callers, and                   `next_phase` measured that way all session. So each stage names the SYMBOL                   whose presence in production code proves invocation, searched outside the                   stage's own files, with comments, string literals and `#[cfg(test)]` modules                   removed first -- a stage named in a doc comment is documented, not called.                   Six stages have no production caller today, recorded exactly. Migrates because                   every repository can hold a stage nothing runs.",
+    },
+    MigrationEntry {
+        component: "toolchain",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie pins a channel and declares an MSRV, and nothing reads either",
+        counterpart_loc: 0,
+        evidence: "PURE over two declared strings. MSRV and the toolchain channel are different \
+                   promises that move in opposite directions for opposite reasons: the channel \
+                   should chase stable, because every release carries soundness fixes and new \
+                   deny-by-default lints that become build breaks the day the pin moves; MSRV \
+                   should lag, because raising it strands consumers. Anvil declared 1.97.1 for \
+                   both while stable was 1.98.0 -- not a coincidence to tidy but the signature \
+                   of a pair nobody was managing, and nothing in the tree could tell. Equality \
+                   is therefore itself a finding rather than a consistency. Version ordering is \
+                   numeric because three-digit minors have arrived and 1.100.0 sorts before \
+                   1.98.0 as text. The lag budget is two trains rather than zero, because a \
+                   gate that fires every release Tuesday teaches readers to ignore it, and \
+                   latest-stable is passed in rather than fetched, because a verdict that \
+                   depends on network reachability is not deterministic and cannot run in a \
+                   hermetic build. Migrates because every repository pins a toolchain and \
+                   promises an MSRV.",
+    },
+    MigrationEntry {
+        component: "plan",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie plans structural moves, not work",
+        counterpart_loc: 0,
+        evidence: "PURE. What a work item proposes, declared before it is done, so that it can be                   REFUSED before anyone writes a line. Every refusal is free at this point and                   expensive later: two lanes given overlapping write-sets become an N-squared                   consolidation, and a sequence with no valid order becomes a stack of pull                   requests that lands in no order at all. Waves group plans whose dependencies                   have landed AND whose write sets are pairwise disjoint -- both conditions are                   necessary, since dependencies alone give an order that still conflicts and                   disjointness alone gives lanes that cannot build. Holding a plan back is not                   refusing it: a sequenced plan still lands, a refused one needs a person, and                   conflicts are reported separately from sequencing so a write set can be                   changed while that is still cheap. `adds_edges` is carried and not yet                   checked: whether an added edge closes a cycle belongs with the graph, and                   depending on that module would stack this change on an unmerged branch -- the                   diamond this module exists to help avoid. Migrates because every repository                   that dispatches parallel work needs the write-set question answered before                   dispatch rather than at merge.",
+    },
+    MigrationEntry {
+        component: "intake",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Verified,
+        oyatie_counterpart: "no counterpart: oyatie has no unified work-item queue",
+        counterpart_loc: 0,
+        evidence: "PURE. One shape for every intent, and a queue keyed on DERIVED identity.                   Seven producers raise work here -- issue reconciler, roadmap guard, incident                   sentry, zero-day patcher, GitOps drift, corpus auditor, review memory -- and                   each raises its own type, so nothing can compare across them, prioritise                   between them, or say what is outstanding. Worse, the standing audits print                   findings that re-enter nothing, so LEARN back to INTAKE is an arc and a                   finding that is not queued will be found again. Identity is a function of                   source, subject and finding, never generated: every sweep re-reports                   everything it can still see, and a generated id would grow the backlog                   linearly with the number of passes and never converge -- exactly the defect                   the recovery sweep had when it re-certified every open pull request on every                   pass. `Remedy` separates Mechanical from NeedsJudgement from Unclassified,                   because collapsing the last two lets `nobody looked` pass as `a machine                   cannot`. Migrates because every repository accumulates work from more than                   one source.",
+    },
+    MigrationEntry {
+        component: "postmortem",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Probable,
+        oyatie_counterpart: "no counterpart: oyatie records no fix-class ledger",
+        counterpart_loc: 0,
+        evidence: "PURE. The ledger of defect classes and what refuses each of them. Every fix is \
+                  evidence that some class reached somewhere expensive enough to repair by hand, \
+                  so each one is a candidate for admission into the pipeline; this is where the \
+                  admission is recorded. Entries carry first principles, the instances, and \
+                  remedies at every layer that warrants one -- and `Layer::Ci` counts as debt, \
+                  because a class caught there was observed rather than prevented. Compiled \
+                  rather than written down: `every_live_remedy_names_something_that_exists` \
+                  fails on a remedy naming a check that is absent, and \
+                  CLASSES_ONLY_CAUGHT_AFTER_THE_FACT is exact so moving a class earlier lowers \
+                  it in the same change. Migrates because the doctrine is not anvil-specific.",
     },
     MigrationEntry {
         component: "harness",
@@ -949,6 +1059,17 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   lifecycle. Counterpart NOT established for the lifecycle half.",
     },
     MigrationEntry {
+        component: "model_prompt",
+        verdict: Verdict::Migrating,
+        confidence: Confidence::Unresolved,
+        oyatie_counterpart: "",
+        counterpart_loc: 0,
+        evidence: "Introduced after the component audit as the typed boundary between contributor-authored \
+                  text and a model-provider command. No oyatie counterpart has been established, so the \
+                  conservative disposition is to carry the boundary forward rather than infer that an \
+                  existing model executor supersedes its authorship, size, and terminal-task guarantees.",
+    },
+    MigrationEntry {
         component: "modularization_guard.rs",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
@@ -1056,7 +1177,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                    source when it cannot.",
     },
     MigrationEntry {
-        component: "queue_healer (dir)",
+        component: "queue_healer/bisector",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
         oyatie_counterpart: "none found",
@@ -1340,6 +1461,15 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
                   middleware.",
     },
     MigrationEntry {
+        component: "pause",
+        verdict: Verdict::Rewired,
+        confidence: Confidence::Unresolved,
+        oyatie_counterpart: "not established from this repository",
+        counterpart_loc: 0,
+        evidence: "The port is 'is this fleet, or this repository, held?'. Unresolved: no oyatie \
+                  counterpart was inspected, so absence would be inferred from anvil's own catalog.",
+    },
+    MigrationEntry {
         component: "unresolved_review_guard",
         verdict: Verdict::Rewired,
         confidence: Confidence::Probable,
@@ -1359,7 +1489,7 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         evidence: "130 lines, PURE. DependencyUpgradeCandidate + TrainOrchestrator. oyatie owns dependency \
                   currency as three mature gates: dep-freshness (1484, hermetic gate over a committed \
                   freshness mirror with snapshot_date as the as-of clock), dependency-automation (1812), \
-                  rust-toolchain-bump-proposer (2027).",
+                  rust-toolchain-bump-proposer (2027). DELETED: gate NotProvisioned, and its only callers fabricated their input.",
     },
     MigrationEntry {
         component: "vex_scanner",

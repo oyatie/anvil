@@ -5,123 +5,16 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use hmac::{Hmac, Mac};
-use serde::Deserialize;
-use sha2::Sha256;
-use subtle::ConstantTimeEq;
 use tracing::{error, info, warn};
 
+use super::hmac::verify_github_hmac;
+use super::payload::{GitHubWebhookPayload, WebhookUser};
 use super::pipelines::execute_pr_review;
 use super::{ApiResponse, AppState};
 use crate::fixer::ReviewFeedbackItem;
 use crate::queue_healer::QueueHealer;
 
-/// Verifies GitHub X-Hub-Signature-256 HMAC in constant time to prevent timing attacks
-pub fn verify_github_hmac(secret: &str, raw_bytes: &[u8], signature_header: Option<&str>) -> bool {
-    let signature = match signature_header {
-        Some(sig) => sig,
-        None => return false,
-    };
-
-    let expected_hex = match signature.strip_prefix("sha256=") {
-        Some(hex) => hex,
-        None => signature,
-    };
-
-    let expected_bytes = match hex::decode(expected_hex) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-
-    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-
-    mac.update(raw_bytes);
-    let result = mac.finalize().into_bytes();
-
-    result.as_slice().ct_eq(&expected_bytes).into()
-}
-
-#[derive(Deserialize, Debug)]
-pub struct GitHubWebhookPayload {
-    pub action: Option<String>,
-    pub number: Option<u64>,
-    pub pull_request: Option<WebhookPullRequest>,
-    pub repository: Option<WebhookRepository>,
-    pub comment: Option<WebhookComment>,
-    pub review: Option<WebhookReview>,
-    pub workflow_run: Option<WebhookWorkflowRun>,
-    pub merge_group: Option<WebhookMergeGroup>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookPullRequest {
-    pub number: u64,
-    pub title: String,
-    pub body: Option<String>,
-    pub head: WebhookCommitRef,
-    pub base: WebhookCommitRef,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookCommitRef {
-    pub sha: String,
-    #[serde(rename = "ref")]
-    pub branch_ref: String,
-    /// Present on pull_request payloads. Comparing head.repo to base.repo is the
-    /// payload-side equivalent of `isCrossRepository`: it identifies a fork PR,
-    /// whose head branch name must never be used as a push target against the
-    /// base repository. See github::fork_guard.
-    #[serde(default)]
-    pub repo: Option<WebhookRepository>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookComment {
-    pub id: u64,
-    pub path: Option<String>,
-    pub line: Option<u64>,
-    pub body: String,
-    pub user: Option<WebhookUser>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookReview {
-    pub id: u64,
-    pub body: Option<String>,
-    pub state: Option<String>,
-    pub user: Option<WebhookUser>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookWorkflowRun {
-    pub id: u64,
-    pub name: Option<String>,
-    pub head_branch: Option<String>,
-    pub head_sha: Option<String>,
-    pub conclusion: Option<String>,
-    pub status: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookMergeGroup {
-    pub head_ref: String,
-    pub head_sha: String,
-    pub base_ref: String,
-    pub base_sha: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookUser {
-    pub login: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct WebhookRepository {
-    pub full_name: String,
-}
+mod fix_entry;
 
 pub async fn webhook_handler(
     State(state): State<AppState>,
@@ -260,94 +153,87 @@ pub async fn webhook_handler(
 
     let action = payload.action.as_deref().unwrap_or("");
 
-    // Case 1: Pull Request lifecycle events (opened, synchronize, reopened)
-    if event_type == "pull_request" {
-        let supported_actions = ["opened", "synchronize", "reopened"];
-        if !supported_actions.contains(&action) {
+    // Case 1: Pull Request lifecycle events. Which actions those are, and
+    // whether a draft is one, is `pr_admission`'s to say, not this handler's.
+    if event_type == "pull_request"
+        && let Some(pr) = payload.pull_request
+    {
+        let pr_number = pr.number;
+        let head_sha = pr.head.sha.clone();
+
+        // One pure decision, exercisable without a server.
+        if let crate::webhook::pr_admission::PrAdmission::Skip(why) =
+            crate::webhook::pr_admission::admit(action, pr.draft, &pr.title)
+        {
             return (
                 StatusCode::OK,
                 Json(ApiResponse {
                     success: true,
-                    message: format!("Ignored PR action: {}", action),
+                    message: format!("Skipped {}#{}: {}", repo_name, pr_number, why.as_str()),
                 }),
             );
         }
 
-        if let Some(pr) = payload.pull_request {
-            let pr_number = pr.number;
-            let head_sha = pr.head.sha.clone();
-
-            // Anti-Loop Filter 1: Ignore commits created by the automated governance sync
-            if pr.title.contains("[skip review]") {
-                return (
-                    StatusCode::OK,
-                    Json(ApiResponse {
-                        success: true,
-                        message: format!(
-                            "Skipped review for automated PR {}#{}",
-                            repo_name, pr_number
-                        ),
-                    }),
-                );
-            }
-
-            // Anti-Loop Filter 2: Check if already certified and in merge queue
-            if let Some(prior) = state.state_mgr.get_pr_state(&repo_name, pr_number).await
-                && prior.last_certified_head_sha.as_deref() == Some(&head_sha)
-                && prior.is_enlisted_in_merge_queue
-            {
-                info!(
-                    "PR {}#{} head {} is already 100% certified and in merge queue. Dropping webhook loop.",
-                    repo_name, pr_number, head_sha
-                );
-                return (
-                    StatusCode::OK,
-                    Json(ApiResponse {
-                        success: true,
-                        message: format!(
-                            "PR {}#{} is already certified and queued",
-                            repo_name, pr_number
-                        ),
-                    }),
-                );
-            }
-
-            let state_clone = state.clone();
-            let repo_clone = repo_name.clone();
-            let pr_title = pr.title.clone();
-            let pr_body = pr.body.unwrap_or_default();
-            let base_branch = pr.base.branch_ref.clone();
-            let base_sha = pr.base.sha.clone();
-
-            tokio::spawn(async move {
-                if let Err(e) = execute_pr_review(
-                    &state_clone,
-                    &repo_clone,
-                    pr_number,
-                    &pr_title,
-                    &pr_body,
-                    &base_branch,
-                    &base_sha,
-                    &head_sha,
-                    false,
-                )
-                .await
-                {
-                    error!(
-                        "Failed to execute PR review for {}#{}: {:?}",
-                        repo_clone, pr_number, e
-                    );
-                }
-            });
-
+        // Anti-Loop Filter 2: Check if already certified and in merge queue
+        if let Some(prior) = state.state_mgr.get_pr_state(&repo_name, pr_number).await
+            && prior.last_certified_head_sha.as_deref() == Some(&head_sha)
+            && prior.is_enlisted_in_merge_queue
+        {
+            info!(
+                "PR {}#{} head {} is already 100% certified and in merge queue. Dropping webhook loop.",
+                repo_name, pr_number, head_sha
+            );
             return (
-                StatusCode::ACCEPTED,
+                StatusCode::OK,
                 Json(ApiResponse {
                     success: true,
-                    message: format!("Review queued for {}#{}", repo_name, pr.number),
+                    message: format!(
+                        "PR {}#{} is already certified and queued",
+                        repo_name, pr_number
+                    ),
                 }),
             );
         }
+
+        let state_clone = state.clone();
+        let repo_clone = repo_name.clone();
+        let pr_title = pr.title.clone();
+        let pr_body = pr.body.unwrap_or_default();
+        let base_branch = pr.base.branch_ref.clone();
+        let base_sha = pr.base.sha.clone();
+
+        tokio::spawn(async move {
+            // Also read inside; a delegated read moves when the callee does.
+            if state_clone.pause.holds(&repo_clone, pr_number, "reviewing") {
+                return;
+            }
+            if let Err(e) = execute_pr_review(
+                &state_clone,
+                &repo_clone,
+                pr_number,
+                &pr_title,
+                &pr_body,
+                &base_branch,
+                &base_sha,
+                &head_sha,
+                false,
+            )
+            .await
+            {
+                error!(
+                    "Failed to execute PR review for {}#{}: {:?}",
+                    repo_clone, pr_number, e
+                );
+            }
+        });
+
+        return (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse {
+                success: true,
+                message: format!("Review queued for {}#{}", repo_name, pr.number),
+            }),
+        );
     }
 
     // Case 2: Inline Review Comment Created (pull_request_review_comment)
@@ -355,21 +241,25 @@ pub async fn webhook_handler(
         && action == "created"
         && let (Some(pr), Some(comment)) = (&payload.pull_request, &payload.comment)
     {
-        let author = comment
-            .user
-            .as_ref()
-            .map(|u| u.login.clone())
-            .unwrap_or_else(|| "reviewer".to_string());
-
-        if author.contains("bot") || author.contains("antigravity") {
-            return (
-                StatusCode::OK,
-                Json(ApiResponse {
-                    success: true,
-                    message: "Ignored comment from bot".to_string(),
-                }),
-            );
-        }
+        // The author is read out of the actor the guard passed, not named
+        // before it: a comment carrying no user is not answerable, and a
+        // stand-in login would make it look like one. See `github::identity`.
+        let actor = comment.user.as_ref().map(WebhookUser::actor);
+        let author = match (
+            crate::github::identity::answerable(actor.as_ref()).await,
+            actor,
+        ) {
+            (true, Some(actor)) => actor.login,
+            _ => {
+                return (
+                    StatusCode::OK,
+                    Json(ApiResponse {
+                        success: true,
+                        message: "Ignored: not a comment Anvil answers".to_string(),
+                    }),
+                );
+            }
+        };
 
         let feedback_item = ReviewFeedbackItem {
             comment_id: Some(comment.id),
@@ -397,17 +287,20 @@ pub async fn webhook_handler(
         };
 
         tokio::spawn(async move {
-            let _ = state_clone
-                .fixer
-                .resolve_and_fix(
-                    &repo_clone,
-                    pr_number,
-                    &head_branch,
-                    &head_sha,
-                    is_cross_repository,
-                    &[feedback_item],
-                )
-                .await;
+            // Clones, model turn, pushes to the contributor. See `pause`.
+            if state_clone.pause.holds(&repo_clone, pr_number, "fixing") {
+                return;
+            }
+            fix_entry::run(
+                state_clone,
+                repo_clone,
+                pr_number,
+                head_branch,
+                head_sha,
+                is_cross_repository,
+                feedback_item,
+            )
+            .await;
         });
 
         return (
@@ -435,22 +328,40 @@ pub async fn webhook_handler(
             let repo_clone = repo_name.clone();
             let run_id = wf.id;
             let branch_str = branch.to_string();
-            let commit_sha = wf.head_sha.unwrap_or_default();
+            let commit_sha = wf.head_sha;
             let wf_name = wf.name.unwrap_or_else(|| "CI Workflow".to_string());
 
             tokio::spawn(async move {
-                if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
-                    let _ = state_clone
-                        .ci_triager
-                        .triage_workflow_run(
-                            &repo_clone,
-                            run_id,
-                            &branch_str,
-                            &commit_sha,
-                            &wf_name,
-                            &repo_dir,
-                        )
-                        .await;
+                // Model turn, then a public issue. PR 0: a workflow run.
+                if state_clone.pause.holds(&repo_clone, 0, "triaging CI") {
+                    return;
+                }
+                let repo_dir = match state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
+                    Ok(repo_dir) => repo_dir,
+                    Err(err) => {
+                        error!(
+                            "Workflow CI triage could not prepare {}: {:?}",
+                            repo_clone, err
+                        );
+                        return;
+                    }
+                };
+                if let Err(err) = state_clone
+                    .ci_triager
+                    .triage_workflow_run_with_optional_sha(
+                        &repo_clone,
+                        run_id,
+                        &branch_str,
+                        commit_sha.as_deref(),
+                        &wf_name,
+                        &repo_dir,
+                    )
+                    .await
+                {
+                    error!(
+                        "Workflow CI triage failed for run #{} on {}: {:?}",
+                        run_id, repo_clone, err
+                    );
                 }
             });
 
@@ -481,6 +392,10 @@ pub async fn webhook_handler(
         // would be logged nowhere at all -- the one enlist door where the
         // refusal would have become *less* observable than before.
         tokio::spawn(async move {
+            // Pushes a heal commit and enlists directly. See `pause`.
+            if state_clone.pause.holds(&repo_clone, pr_number, "healing") {
+                return;
+            }
             match state_clone
                 .queue_healer
                 .heal_ejected_pr(&state_clone, &repo_clone, pr_number)
@@ -513,57 +428,4 @@ pub async fn webhook_handler(
             message: format!("Ignored event: {}/{}", event_type, action),
         }),
     )
-}
-
-#[cfg(test)]
-mod hmac_tests {
-    use super::*;
-    use hmac::Mac;
-
-    fn sign(secret: &str, body: &[u8]) -> String {
-        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(body);
-        format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
-    }
-
-    #[test]
-    fn accepts_a_correctly_signed_body() {
-        let body = br#"{"action":"opened"}"#;
-        assert!(verify_github_hmac(
-            "s3cr3t",
-            body,
-            Some(&sign("s3cr3t", body))
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_secret_missing_header_and_tampered_body() {
-        let body = br#"{"action":"opened"}"#;
-        let sig = sign("s3cr3t", body);
-        assert!(!verify_github_hmac("other", body, Some(&sig)));
-        assert!(!verify_github_hmac("s3cr3t", body, None));
-        assert!(!verify_github_hmac(
-            "s3cr3t",
-            br#"{"action":"closed"}"#,
-            Some(&sig)
-        ));
-        assert!(!verify_github_hmac("s3cr3t", body, Some("sha256=zzzz")));
-        assert!(!verify_github_hmac("s3cr3t", body, Some("")));
-    }
-
-    /// The rotation window: a delivery signed with the OLD secret must still
-    /// verify while GITHUB_WEBHOOK_SECRET_PREVIOUS is set, and must stop
-    /// verifying once it is cleared. This is what makes rotation lossless.
-    #[test]
-    fn rotation_window_accepts_old_signatures_then_stops() {
-        let body = br#"{"action":"synchronize"}"#;
-        let old_sig = sign("old-secret", body);
-
-        // New secret alone does not accept an old-signed delivery.
-        assert!(!verify_github_hmac("new-secret", body, Some(&old_sig)));
-        // The previous secret does -- this is the fallback the handler consults.
-        assert!(verify_github_hmac("old-secret", body, Some(&old_sig)));
-        // After the window closes, the old signature is refused.
-        assert!(!verify_github_hmac("unrelated", body, Some(&old_sig)));
-    }
 }

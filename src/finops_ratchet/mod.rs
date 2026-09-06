@@ -63,7 +63,7 @@ impl FinOpsUnitCostRatchet {
             // not the defect.
             let file_findings = self
                 .scanner
-                .scan_hotpath_allocations(&file.path, &file.added);
+                .scan_hotpath_allocations(&file.path, file.added());
             findings.extend(file_findings);
         }
 
@@ -122,7 +122,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ pub fn sum(a: &[u8]) -> usize { a.len() }".to_string(),
             changed_files: vec!["src/lib.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

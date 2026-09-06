@@ -172,7 +172,10 @@ fn certified_scorecard_published_is_a_single_counted_line() {
 /// function itself cannot be invoked without a live AppState.
 #[test]
 fn false_green_prevention_upsert_call_site_must_not_publish_summary_markdown() {
-    let src = include_str!("../src/webhook/pipelines/review.rs");
+    let src = &anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         !src.contains("&cert_report.summary_markdown"),
         "Expected False Green prevention: the upsert path must stop publishing \
@@ -450,7 +453,10 @@ fn false_red_prevention_matrix_renderer_survives_for_its_remaining_callers() {
         "Expected False Red prevention: red_green_gates_test.rs asserts this marker"
     );
 
-    let evaluator = include_str!("../src/pre_merge_guard/evaluator.rs");
+    let evaluator = anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         evaluator.contains("MatrixRenderer::render("),
         "Expected False Red prevention: evaluator.rs is a remaining caller and \
@@ -461,7 +467,10 @@ fn false_red_prevention_matrix_renderer_survives_for_its_remaining_callers() {
 /// P2. The call site keeps the marker it upserts on.
 #[test]
 fn false_red_prevention_upsert_call_site_keeps_the_existing_marker() {
-    let src = include_str!("../src/webhook/pipelines/review.rs");
+    let src = &anvil::source_scan::paths::module_source(
+        "src/webhook/pipelines/review",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     assert!(
         src.contains("\"<!-- ANVIL_SCORECARD_RECEIPT -->\""),
         "Expected False Red prevention: the upsert marker must be unchanged so \
@@ -687,7 +696,6 @@ fn boundary_worst_case_body_fits_a_github_comment_and_beats_the_table() {
         cleartext_transport_status,
         carbon_compute_status,
         replay_harness_status,
-        upgrade_train_status,
         mutation_status,
         feature_flag_status,
         bench_status,
@@ -706,9 +714,14 @@ fn boundary_worst_case_body_fits_a_github_comment_and_beats_the_table() {
         published.len(),
         GITHUB_COMMENT_LIMIT
     );
+    // Derived from the report, not written down: the literal `68` assumed a
+    // corpus of seventy-four, so removing one gate broke a test about the
+    // scorecard reporting every failing gate — by disagreeing with the corpus,
+    // which is the defect the scorecard itself exists to prevent.
+    let failing = r.gate_counts().failed;
     assert!(
-        published.contains("68 finding(s)"),
-        "every failing gate must be reported:\n{}",
+        published.contains(&format!("{failing} finding(s)")),
+        "every failing gate must be reported ({failing} expected):\n{}",
         &published[..published.len().min(400)]
     );
     // "beats the table" was in the name but unasserted: even in the worst case,
@@ -763,16 +776,18 @@ fn a_certified_scorecard_discloses_how_many_passing_gates_are_low_fidelity() {
         .split_once("do not fully measure")
         .expect("disclosure line")
         .1;
-    // `debt-shrink` used to stand here as a gate the registry did not record.
-    // It does now: this pull request audited it and entered it as Heuristic,
-    // so naming it in the disclosure became correct and it is no longer a
-    // negative example. `idempotency` replaces it -- still unaudited, so the
-    // list keeps exactly as many gates that must NOT appear.
-    for gate in ["cell-isolation", "monorepo", "idempotency"] {
+    // These three used to stand here as gates the registry did not record. It
+    // records all three now, as Heuristic, so naming them became correct and
+    // they stopped being negative examples. Nothing is unaudited any more, so
+    // the negative examples are the two gates recorded as `Measured`: the
+    // disclosure is for gates that pass while measuring less than their name
+    // says, and a gate that measures what it claims must stay out of it.
+    for gate in ["shape", "unresolved-review"] {
         assert!(
             !disclosure.contains(gate),
-            "gate {gate} is not recorded below Measured fidelity, so naming it \
-             in the disclosure makes the list meaningless:\n{body}"
+            "gate {gate} is recorded as Measured, so naming it in the \
+             disclosure of gates that do not fully measure makes the list \
+             meaningless:\n{body}"
         );
     }
 

@@ -24,6 +24,9 @@ use crate::exec::{ExecClass, run_bounded};
 use crate::publish::{self, AnvilAction};
 use crate::reviewer::{InlineReviewComment, ReviewResponse};
 
+pub mod publication;
+use publication::{RecordedReview, ReviewPublication};
+
 #[derive(Serialize)]
 struct CreateReviewRequest {
     commit_id: String,
@@ -48,20 +51,17 @@ struct ReviewCommentPayload {
 
 /// Submits a review with no diff to anchor comments in.
 ///
-/// The empty diff is not a placeholder: it is the correct argument for a review
-/// that carries no inline comments, which is what `merge_enlister`'s approving
-/// review is. `GitHubClient::submit_pr_review` refuses to reach this with a
-/// non-empty comment list, so an un-threaded caller cannot bypass validation by
-/// omission (I22 -- a bypass by omission is not a mechanism). The path that
-/// does have findings is `submit_pr_review_with_diff`, threaded from
-/// `PrDiffContext::diff_content`.
+/// The client refuses inline findings without a diff. This formal-only door
+/// additionally refuses comment fallback as evidence of a recorded review.
 pub async fn submit_pr_review_impl(
     repo: &str,
     pr_number: u64,
     head_sha: &str,
     review: &ReviewResponse,
-) -> Result<()> {
-    submit_pr_review_with_diff(repo, pr_number, head_sha, review, "").await
+) -> Result<RecordedReview> {
+    submit_pr_review_with_diff(repo, pr_number, head_sha, review, "")
+        .await?
+        .require_recorded()
 }
 
 /// Submits a review, keeping only the inline comments the `diff` proves are
@@ -72,7 +72,7 @@ pub async fn submit_pr_review_with_diff(
     head_sha: &str,
     review: &ReviewResponse,
     diff: &str,
-) -> Result<()> {
+) -> Result<ReviewPublication> {
     let validation = validate_comments_against_diff(diff, &review.comments);
 
     for line in validation.drop_log() {
@@ -126,14 +126,12 @@ pub async fn submit_pr_review_with_diff(
             stderr
         );
 
-        return submit_fallback_review(repo, pr_number, head_sha, review, &validation).await;
+        submit_fallback_review(repo, pr_number, head_sha, review, &validation).await?;
+        return Ok(ReviewPublication::SummaryCommentOnly);
     }
 
-    info!(
-        "Successfully published PR review for {}#{}",
-        repo, pr_number
-    );
-    Ok(())
+    let receipt = RecordedReview::from_response(&output.stdout, head_sha, &request.event)?;
+    Ok(ReviewPublication::RecordedReview(receipt))
 }
 
 async fn submit_fallback_review(

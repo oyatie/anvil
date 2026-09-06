@@ -87,9 +87,8 @@ fn every_declining_path_disarms_rather_than_one_of_them() {
 
 /// `disarm_auto_merge` must not be `Result`, so a caller cannot `?` on it.
 ///
-/// `gh` exits non-zero when there is nothing to disable, which is the ordinary
-/// case -- most pull requests were never armed. A caller writing `?` would
-/// abandon the rest of a rejection because a pull request had nothing armed.
+/// A nonzero exit does not establish whether anything remains armed. The
+/// caller must report Unknown and continue rejection instead of abandoning it.
 #[test]
 fn disarming_cannot_abort_the_refusal_that_called_it() {
     let src = production("src/merge_enlister");
@@ -108,7 +107,7 @@ fn disarming_cannot_abort_the_refusal_that_called_it() {
     assert!(
         !sig.contains("Result"),
         "`disarm_auto_merge` returns a `Result`, so a caller can `?` on it and \
-         abandon a refusal because there was nothing armed to take away"
+         abandon a refusal when arming is unknown"
     );
 }
 
@@ -123,7 +122,9 @@ fn the_outcome_keeps_absent_evidence_apart_from_a_measurement() {
         .split_once("\n}")
         .expect("it closes")
         .0;
-    for variant in ["WasArmed", "NothingArmed", "Unknown"] {
+    assert!(!decl.contains("NothingArmed"));
+    assert!(!decl.contains("WasArmed"));
+    for variant in ["DisableAccepted", "Unknown"] {
         assert!(
             decl.contains(variant),
             "`Disarmed` has no `{variant}`. Collapsing an unreachable forge \

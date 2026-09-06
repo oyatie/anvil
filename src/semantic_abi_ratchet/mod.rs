@@ -7,8 +7,16 @@ use tracing::info;
 use crate::git_manager::PrDiffContext;
 use crate::pre_merge_guard::report::GateStatus;
 
+mod change_identity;
+use change_identity::abi_key;
+
 pub mod signature_scanner;
 pub use signature_scanner::{AbiScan, BreakingAbiFinding, SignatureScanner};
+
+#[cfg(test)]
+mod report_tests;
+#[cfg(test)]
+mod signoff_tests;
 
 /// The gate this report publishes under, so an unmeasured layout is recorded
 /// against the same id the scorecard renders.
@@ -16,15 +24,6 @@ pub const SEMANTIC_ABI_GATE_ID: &str = "semantic_abi_status";
 
 /// Where a human records that a public signature change was intended.
 pub const ABI_SIGNOFF_PATH: &str = ".anvil/baselines/semantic-abi.signoff.json";
-
-/// The key a signoff names a finding by.
-///
-/// Symbol and file, never the line: a signed-off change that moves down its
-/// file has not become a different decision, and a key that says otherwise
-/// would expire for the wrong reason.
-fn abi_key(f: &BreakingAbiFinding) -> String {
-    format!("{}@{}", f.symbol_name, f.file_path)
-}
 
 /// What no diff-reading gate can answer, said once so every sentence below says
 /// the same thing.
@@ -44,8 +43,9 @@ const LAYOUT_DISCLAIMER: &str = "struct memory layout is not computed: no compil
 pub struct SemanticAbiReport {
     /// Whether the public function signatures this gate could compare are
     /// backward-compatible. It is not a verdict on layout, which was never
-    /// measured -- see `status`.
+    /// measured -- see `status`. An accepted break remains false.
     pub is_abi_stable: bool,
+    /// Every observed break, including changes accepted by exact signoff.
     pub breaking_findings: Vec<BreakingAbiFinding>,
     pub summary: String,
     /// The verdict, decided here and published unchanged.
@@ -90,102 +90,87 @@ impl SemanticAbiRatchet {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        let mut scan = self.scanner.scan_abi_diff(&diff_ctx.diff_content);
-
-        // A deliberate signature change is still a signature change; what a
-        // signoff records is that someone decided to make it. Until this
-        // existed the gate had no such path -- no allowlist, no waiver, no
-        // baseline -- so the only ways past a considered API change were to
-        // revert it or to leave the gate red.
-        //
-        // The entry expires on its own. This gate compares the two sides of a
-        // diff rather than a stored baseline, so once the change merges the
-        // diff no longer carries it and the key matches nothing. A key still
-        // listed after that is inert and should be deleted; it is not doing
-        // anything.
+        let scan = self.scanner.scan_abi_diff(&diff_ctx.diff_content);
         let signoff = std::fs::read(repo_dir.join(ABI_SIGNOFF_PATH))
             .ok()
             .and_then(|b| Signoff::parse(&b).ok())
             .unwrap_or_default();
-        let signed: Vec<String> = scan
-            .findings
+        Ok(assess(&diff_ctx.repo, scan, &signoff))
+    }
+}
+
+/// Authorization changes the policy verdict, never the observed findings.
+fn assess(repo: &str, scan: AbiScan, signoff: &Signoff) -> SemanticAbiReport {
+    let (accepted, unaccepted): (Vec<_>, Vec<_>) = scan.findings.iter().partition(|finding| {
+        abi_key(repo, finding).is_some_and(|key| signoff.covers(SEMANTIC_ABI_GATE_ID, &key))
+    });
+    let labels = |findings: &[&BreakingAbiFinding]| {
+        findings
             .iter()
-            .filter(|f| signoff.covers(SEMANTIC_ABI_GATE_ID, &abi_key(f)))
-            .map(abi_key)
-            .collect();
-        scan.findings
-            .retain(|f| !signoff.covers(SEMANTIC_ABI_GATE_ID, &abi_key(f)));
-        if !signed.is_empty() {
-            info!(
-                "SemanticAbiRatchet: {} signed-off change(s): {}",
-                signed.len(),
-                signed.join(", ")
-            );
-        }
-
-        let is_abi_stable = scan.findings.is_empty();
-
-        let unpaired = if scan.unpaired_names == 0 {
-            String::new()
-        } else {
+            .map(|f| format!("{} {} at {}", f.change_kind, f.symbol_name, f.file_path))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    let accepted_note = if accepted.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {} observed breaking public function change(s) accepted by exact recorded signoff: {}. This is not an ABI-stable comparison.",
+            accepted.len(),
+            labels(&accepted)
+        )
+    };
+    let unpaired = if scan.unpaired_names == 0 {
+        String::new()
+    } else {
+        format!(
+            "; {} name(s) were declared on both sides more than once or across several lines, so their signatures were not compared",
+            scan.unpaired_names
+        )
+    };
+    let (status, summary) = if !unaccepted.is_empty() {
+        let summary = format!(
+            "❌ FAILED ({} unaccepted breaking public function change(s): {}).{} {LAYOUT_DISCLAIMER}.",
+            unaccepted.len(),
+            labels(&unaccepted),
+            accepted_note
+        );
+        (GateStatus::Failed(summary.clone()), summary)
+    } else if !scan.layout_files.is_empty() {
+        // A repr addition/removal remains unmeasured even when a signature
+        // change was accepted. An identical repr line on both sides is a move.
+        let reason = format!(
+            "{} of the diff's file(s) add or remove a `#[repr(...)]` line, and {LAYOUT_DISCLAIMER}.{}",
+            scan.layout_files.len(),
+            accepted_note
+        );
+        (
+            GateStatus::NotMeasured {
+                gate_id: SEMANTIC_ABI_GATE_ID.to_string(),
+                reason: reason.clone(),
+            },
+            format!("➖ NOT MEASURED ({reason})."),
+        )
+    } else if !accepted.is_empty() {
+        let summary = format!(
+            "⚠️ WARNING.{accepted_note} Comparison scope: {} declaration(s) read{unpaired}. {LAYOUT_DISCLAIMER}.",
+            scan.declarations_read
+        );
+        (GateStatus::Warning(summary.clone()), summary)
+    } else {
+        (
+            GateStatus::Passed,
             format!(
-                "; {} name(s) were declared on both sides more than once or across several lines, \
-                 so their signatures were not compared",
-                scan.unpaired_names
-            )
-        };
-
-        let (status, summary) = if !is_abi_stable {
-            let summary = format!(
-                "❌ FAILED ({} breaking public function change(s): {}). {LAYOUT_DISCLAIMER}.",
-                scan.findings.len(),
-                scan.findings
-                    .iter()
-                    .map(|f| format!("{} {} at {}", f.change_kind, f.symbol_name, f.file_path))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            );
-            (GateStatus::Failed(summary.clone()), summary)
-        } else if !scan.layout_files.is_empty() {
-            // A `#[repr(...)]` line is the one case where the unmeasured half of
-            // this gate's claim decides the answer, and a pass here would be the
-            // gate's own defect restated: silence read as evidence. `NotMeasured`
-            // makes no accusation and still withholds merge-queue admission
-            // through `unmeasured_gates` (invariant I1).
-            // "add or remove", not "change": what was measured is that a
-            // `#[repr(...)]` line is present on one side of the diff and not
-            // the other. A line present identically on both sides was moved and
-            // no longer counts, but a brand-new `#[repr(C)]` type does -- it
-            // adds a repr line, and this gate cannot tell that from an existing
-            // type gaining one.
-            let reason = format!(
-                "{} of the diff's file(s) add or remove a `#[repr(...)]` line, and {LAYOUT_DISCLAIMER}",
-                scan.layout_files.len()
-            );
-            (
-                GateStatus::NotMeasured {
-                    gate_id: SEMANTIC_ABI_GATE_ID.to_string(),
-                    reason: reason.clone(),
-                },
-                format!("➖ NOT MEASURED ({reason})."),
-            )
-        } else {
-            (
-                GateStatus::Passed,
-                format!(
-                    "✅ PASSED ({} public function declaration(s) read; none removed without being \
-                     re-added and no compared signature changed{unpaired}). {LAYOUT_DISCLAIMER}.",
-                    scan.declarations_read
-                ),
-            )
-        };
-
-        Ok(SemanticAbiReport {
-            is_abi_stable,
-            breaking_findings: scan.findings,
-            summary,
-            status,
-        })
+                "✅ PASSED ({} public function declaration(s) read; none removed without being re-added and no compared signature changed{unpaired}). {LAYOUT_DISCLAIMER}.",
+                scan.declarations_read
+            ),
+        )
+    };
+    SemanticAbiReport {
+        is_abi_stable: scan.findings.is_empty(),
+        breaking_findings: scan.findings,
+        summary,
+        status,
     }
 }
 

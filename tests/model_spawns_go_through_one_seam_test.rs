@@ -6099,7 +6099,7 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
         [
             (
                 "src/exec/build_env.rs".to_owned(),
-                "apply".to_owned(),
+                "apply_from".to_owned(),
                 "call:super::non_model::clear_environment:arg0=cmd".to_owned(),
             ),
             (

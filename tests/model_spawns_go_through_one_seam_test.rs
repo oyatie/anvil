@@ -17,6 +17,12 @@ use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
+#[path = "model_spawns/mixed_spawn_tests.rs"]
+mod mixed_spawn_tests;
+
+#[path = "model_spawns/qualified_attribute_tests.rs"]
+mod qualified_attribute_tests;
+
 const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
 const EXPECTED_PROVIDER_SEAM_TOKEN_SHA256: &str =
     "0d6dca38e9bcfbb71045dce507a1c6c89be2870eb238566849b1cc6a66e5b7a8";
@@ -1430,7 +1436,9 @@ fn expression_attributes(expression: &syn::Expr) -> &[syn::Attribute] {
 
 fn attribute_policy_violations(meta: &syn::Meta, violations: &mut Vec<String>) {
     let name = syn_path_name(meta.path());
-    if !APPROVED_ATTRIBUTES.contains(&name.as_str()) {
+    if !APPROVED_ATTRIBUTES.contains(&name.as_str())
+        && !APPROVED_ATTRIBUTE_IMPORTS.contains(&name.as_str())
+    {
         violations.push(format!("unapproved-attribute:{name}"));
         return;
     }
@@ -1952,7 +1960,7 @@ impl ProcessExecutionVisitor<'_> {
         )
     }
 
-    fn canonical_safe_spawn(&self, path: &syn::Path) -> Option<String> {
+    fn canonical_safe_spawn(&self, path: &syn::Path) -> SpawnResolution {
         self.process_symbols.safe_spawn(
             &path_segments(path),
             &self.logical_module,
@@ -2491,11 +2499,28 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
 
     fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
         if let Some(path) = expression_path(&expression.func) {
-            if let Some(spawn) = self
-                .canonical_safe_spawn(path)
-                .or_else(|| safe_associated_spawn(path).then(|| syn_path_name(path)))
-            {
-                self.record_associated_spawn(spawn);
+            let handled_spawn = match self.canonical_safe_spawn(path) {
+                SpawnResolution::Process => {
+                    self.record("associated-call:spawn");
+                    true
+                }
+                SpawnResolution::Safe(spawns) => {
+                    for spawn in spawns {
+                        self.record_associated_spawn(spawn);
+                    }
+                    true
+                }
+                SpawnResolution::Ambiguous => {
+                    self.record("ambiguous-associated-spawn");
+                    true
+                }
+                SpawnResolution::NotSpawn if safe_associated_spawn(path) => {
+                    self.record("ambiguous-associated-spawn");
+                    true
+                }
+                SpawnResolution::NotSpawn => false,
+            };
+            if handled_spawn {
                 for argument in &expression.args {
                     self.visit_expr(argument);
                 }
@@ -2524,7 +2549,12 @@ impl<'ast> Visit<'ast> for ProcessExecutionVisitor<'_> {
     }
 
     fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
-        if expression.qself.is_none() && self.canonical_safe_spawn(&expression.path).is_some() {
+        if expression.qself.is_none()
+            && !matches!(
+                self.canonical_safe_spawn(&expression.path),
+                SpawnResolution::NotSpawn
+            )
+        {
             self.record("associated-reference:spawn");
             syn::visit::visit_expr_path(self, expression);
             return;
@@ -2641,6 +2671,22 @@ struct ProcessAlias {
 struct ProcessResolved {
     local: bool,
     segments: Vec<String>,
+}
+
+impl ProcessResolved {
+    fn unresolved() -> Self {
+        Self {
+            local: true,
+            segments: vec!["@unresolved".to_owned()],
+        }
+    }
+}
+
+enum SpawnResolution {
+    Process,
+    Safe(BTreeSet<String>),
+    Ambiguous,
+    NotSpawn,
 }
 
 #[derive(Clone, Default)]
@@ -2779,37 +2825,68 @@ impl ProcessSymbols {
         path: &[String],
         scope: &[String],
         locals: &BTreeMap<String, Vec<Vec<String>>>,
-    ) -> Option<String> {
-        self.resolve(path, scope, locals)
-            .into_iter()
-            .find_map(
-                |resolved| match (resolved.local, resolved.segments.as_slice()) {
-                    (false, [root, spawn]) if root == "tokio" && spawn == "spawn" => {
-                        Some("tokio::spawn".to_owned())
-                    }
-                    (false, [root, task, spawn])
-                        if root == "tokio" && task == "task" && spawn == "spawn" =>
-                    {
-                        Some("tokio::spawn".to_owned())
-                    }
-                    (false, [root, thread, spawn])
-                        if root == "std" && thread == "thread" && spawn == "spawn" =>
-                    {
-                        Some("std::thread::spawn".to_owned())
-                    }
-                    (true, [cli, sweep, spawn])
-                        if cli == "cli" && sweep == "sweep_task" && spawn == "spawn" =>
-                    {
-                        Some("crate::cli::sweep_task::spawn".to_owned())
-                    }
-                    (true, [replacement, spawn])
-                        if replacement == "replacement" && spawn == "spawn" =>
-                    {
-                        Some("replacement::spawn".to_owned())
-                    }
-                    _ => None,
-                },
-            )
+    ) -> SpawnResolution {
+        let resolved = self.resolve(path, scope, locals);
+        // A process candidate wins even when another cfg resolves this same
+        // spelling to a task spawn. Inspect full paths for bare imported aliases.
+        if resolved.iter().any(|candidate| {
+            !candidate.local
+                && candidate
+                    .segments
+                    .split_last()
+                    .is_some_and(|(method, prefix)| {
+                        method == "spawn" && canonical_process_segments(prefix)
+                    })
+        }) {
+            return SpawnResolution::Process;
+        }
+        let mut safe = BTreeSet::new();
+        let mut other = false;
+        for candidate in resolved {
+            let name = match (candidate.local, candidate.segments.as_slice()) {
+                (false, [root, spawn]) if root == "tokio" && spawn == "spawn" => {
+                    Some("tokio::spawn")
+                }
+                (false, [root, task, spawn])
+                    if root == "tokio" && task == "task" && spawn == "spawn" =>
+                {
+                    Some("tokio::spawn")
+                }
+                (false, [root, thread, spawn])
+                    if root == "std" && thread == "thread" && spawn == "spawn" =>
+                {
+                    Some("std::thread::spawn")
+                }
+                (true, [cli, sweep, spawn])
+                    if cli == "cli" && sweep == "sweep_task" && spawn == "spawn" =>
+                {
+                    Some("crate::cli::sweep_task::spawn")
+                }
+                (true, [replacement, spawn])
+                    if replacement == "replacement" && spawn == "spawn" =>
+                {
+                    Some("replacement::spawn")
+                }
+                (true, [exec, replacement, spawn])
+                    if exec == "exec" && replacement == "replacement" && spawn == "spawn" =>
+                {
+                    Some("replacement::spawn")
+                }
+                _ => None,
+            };
+            if let Some(name) = name {
+                safe.insert(name.to_owned());
+            } else {
+                other = true;
+            }
+        }
+        if safe.is_empty() {
+            SpawnResolution::NotSpawn
+        } else if other {
+            SpawnResolution::Ambiguous
+        } else {
+            SpawnResolution::Safe(safe)
+        }
     }
 
     fn declared(&self, scope: &[String], name: &str) -> bool {
@@ -2839,7 +2916,7 @@ impl ProcessSymbols {
         };
         let state = (scope.to_vec(), path.to_vec());
         if !visiting.insert(state.clone()) {
-            return BTreeSet::new();
+            return BTreeSet::from([ProcessResolved::unresolved()]);
         }
         let mut candidates = BTreeSet::new();
         match first.as_str() {
@@ -2861,7 +2938,7 @@ impl ProcessSymbols {
                 while path.get(cursor).is_some_and(|part| part == "super") {
                     if absolute.pop().is_none() {
                         visiting.remove(&state);
-                        return BTreeSet::new();
+                        return BTreeSet::from([ProcessResolved::unresolved()]);
                     }
                     cursor += 1;
                 }
@@ -2899,6 +2976,11 @@ impl ProcessSymbols {
             }
         }
         visiting.remove(&state);
+        // Losing an unresolved alternative would let a known-safe sibling
+        // falsely look like the complete all-configuration answer.
+        if expanded.is_empty() {
+            expanded.insert(ProcessResolved::unresolved());
+        }
         expanded
     }
 

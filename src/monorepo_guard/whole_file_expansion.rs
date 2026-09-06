@@ -16,20 +16,17 @@ use std::path::Path;
 
 /// What this change did to one file, as the diff reports it.
 pub struct FileChange<'a> {
-    /// Only the lines this change ADDS, without their `+`.
-    pub added: &'a str,
-    /// Lines added minus lines removed. Negative means the file shrank.
-    pub net_lines: i64,
+    diff: &'a crate::git_manager::diff_context::FileDiff,
 }
 
-impl FileChange<'_> {
-    fn grew(&self) -> bool {
-        self.net_lines > 0
+impl<'a> FileChange<'a> {
+    /// Construction now requires shared parser evidence, not raw-line literals.
+    pub fn from_diff(diff: &'a crate::git_manager::diff_context::FileDiff) -> Self {
+        Self { diff }
     }
 
-    fn adds(&self, line: &str) -> bool {
-        let needle = line.trim();
-        !needle.is_empty() && self.added.lines().any(|a| a.trim() == needle)
+    fn grew(&self) -> bool {
+        self.diff.net_lines() > 0
     }
 }
 
@@ -72,6 +69,28 @@ impl WholeFileExpansion {
 
         let lines: Vec<&str> = content.lines().collect();
         let line_count = lines.len();
+        let added = if is_rust {
+            if change.diff.path != file_path {
+                anyhow::bail!("changed source path disagrees with diff evidence");
+            }
+            let added = change
+                .diff
+                .added_post_image_lines()
+                .map_err(|reason| anyhow::Error::msg(reason.to_owned()))
+                .with_context(|| format!("cannot attribute changed source {file_path}"))?;
+            for occurrence in added {
+                if lines.get(occurrence.line() - 1).copied() != Some(occurrence.text()) {
+                    anyhow::bail!(
+                        "changed source {} disagrees at line {}",
+                        file_path,
+                        occurrence.line()
+                    );
+                }
+            }
+            added
+        } else {
+            &[]
+        };
 
         // 1. Whole-file line limit check
         // Over budget AND made worse here. A change that shrinks an oversized
@@ -88,7 +107,7 @@ impl WholeFileExpansion {
                 category: "OVERSIZED_WHOLE_FILE".to_string(),
                 description: format!(
                     "File '{}' is {} lines and this change grew it by {}, past the module-size ceiling of {}. Split it into more modules inside the same crate.",
-                    file_path, line_count, change.net_lines, Self::MAX_WHOLE_FILE_LINES
+                    file_path, line_count, change.diff.net_lines(), Self::MAX_WHOLE_FILE_LINES
                 ),
                 snippet: format!("Total lines: {}", line_count),
             });
@@ -104,18 +123,15 @@ impl WholeFileExpansion {
                 "std::net::",
                 "redis::",
             ];
-            for (idx, line) in lines.iter().enumerate() {
-                // A line that was already here is not this change's finding.
-                if !change.adds(line) {
-                    continue;
-                }
+            for occurrence in added {
+                let line = occurrence.text();
                 for kw in &banned_io_keywords {
                     if line.contains(kw) {
                         violations.push(MonorepoViolation {
                             category: "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION".to_string(),
                             description: format!(
                                 "Domain Core file '{}' imports direct I/O library '{}' at line {}. Domain Core must be 100% pure business logic with zero I/O drivers.",
-                                file_path, kw, idx + 1
+                                file_path, kw, occurrence.line()
                             ),
                             snippet: line.trim().to_string(),
                         });
@@ -139,13 +155,18 @@ impl WholeFileExpansion {
             let production = crate::source_scan::try_without_test_modules(&content)
                 .map_err(anyhow::Error::msg)?;
             let production = crate::source_scan::code_only(&production);
-            for (idx, line) in production.lines().enumerate() {
-                if line.contains(".unwrap()") && change.adds(line) {
+            let projected: Vec<_> = production.lines().collect();
+            if projected.len() != lines.len() {
+                anyhow::bail!("production projection changed source line coordinates");
+            }
+            for occurrence in added {
+                let line = projected[occurrence.line() - 1];
+                if line.contains(".unwrap()") {
                     violations.push(MonorepoViolation {
                         category: "PRODUCTION_UNWRAP_DETECTED".to_string(),
                         description: format!(
                             "Production file '{}' gains a raw unwrap at line {}. Use `?`, `unwrap_or_default()`, or explicit error handling.",
-                            file_path, idx + 1
+                            file_path, occurrence.line()
                         ),
                         snippet: line.trim().to_string(),
                     });
@@ -162,6 +183,17 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn creation(path: &str, source: &str) -> Vec<crate::git_manager::diff_context::FileDiff> {
+        let body = source
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        crate::git_manager::diff_context::diffs_by_path(&format!(
+            "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{} @@\n{body}",
+            source.lines().count()
+        ))
+    }
+
     #[test]
     fn test_catches_oversized_file_and_core_io() {
         let dir = tempdir().unwrap();
@@ -176,10 +208,8 @@ mod tests {
 
         // A change that CREATES the file: every line is added, and the net
         // growth is the whole file. Both findings are this change's.
-        let change = FileChange {
-            added: &code,
-            net_lines: code.lines().count() as i64,
-        };
+        let files = creation("billing/core/src/order.rs", &code);
+        let change = FileChange::from_diff(&files[0]);
         let violations = WholeFileExpansion::evaluate_whole_file(
             dir.path(),
             "billing/core/src/order.rs",
@@ -217,13 +247,11 @@ mod tests {
             .map(|index| format!("pub fn shipping_{index}() {{}}\n"))
             .collect::<String>();
         std::fs::write(dir.path().join("tests/shipping.rs"), &source).unwrap();
+        let files = creation("tests/shipping.rs", &source);
         let violations = WholeFileExpansion::evaluate_whole_file(
             dir.path(),
             "tests/shipping.rs",
-            &FileChange {
-                added: &source,
-                net_lines: source.lines().count() as i64,
-            },
+            &FileChange::from_diff(&files[0]),
         )
         .unwrap();
         assert!(

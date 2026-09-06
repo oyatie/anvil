@@ -261,12 +261,7 @@ impl QueueHealer {
         )
         .await?;
 
-        let has_merge_conflict = !merge_out.status.success();
-        let conflict_details = if has_merge_conflict {
-            String::from_utf8_lossy(&merge_out.stderr).to_string()
-        } else {
-            String::new()
-        };
+        let conflict_details = prompt::merge_conflict_details(&merge_out);
 
         // 4. Prompt Antigravity to repair the merge group failure / conflict
         info!(
@@ -278,7 +273,7 @@ impl QueueHealer {
             pr_number,
             base_branch,
             &meta.head_ref_name,
-            has_merge_conflict.then_some(conflict_details.as_str()),
+            conflict_details.as_deref(),
         )?;
 
         self.run_agy_prompt(&prompt, work_dir).await?;

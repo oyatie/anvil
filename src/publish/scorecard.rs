@@ -244,10 +244,10 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
             qualifiers.push(format!("{} warned", counts.warned));
         }
         if counts.unmeasured > 0 {
-            // Said as what it is. "unmeasured" alone invites a reader to
-            // discount a real measurement failure alongside a capability this
-            // deployment simply does not have.
-            let blocking_absences = counts.unmeasured - declared_absent.len();
+            // Declared absences combine missing capability and empty subject;
+            // subtract them from both count buckets, not unmeasured alone.
+            let blocking_absences =
+                counts.unmeasured + counts.not_applicable - declared_absent.len();
             if blocking_absences > 0 {
                 qualifiers.push(format!("{blocking_absences} unmeasured"));
             }

@@ -6,7 +6,10 @@
 //! honest as modules are added, split, and renamed.
 
 use anvil::migration::MIGRATION_LEDGER;
-use anvil::migration::{Confidence, Verdict, deletable_today, surviving_surface, verdict_counts};
+use anvil::migration::{
+    Confidence, Verdict, deletable_today, ledger_component_identity, surviving_surface,
+    verdict_counts,
+};
 use std::collections::HashSet;
 use std::fs;
 
@@ -44,12 +47,13 @@ fn the_ledger_is_not_empty_and_covers_all_three_fates() {
 fn no_component_is_listed_twice_under_conflicting_verdicts() {
     let mut seen: std::collections::HashMap<&str, Verdict> = std::collections::HashMap::new();
     for e in MIGRATION_LEDGER {
-        if let Some(prev) = seen.insert(e.component, e.verdict) {
+        let identity = ledger_component_identity(e.component);
+        if let Some(prev) = seen.insert(identity, e.verdict) {
             assert_eq!(
                 prev, e.verdict,
-                "`{}` appears twice with different verdicts ({:?} then {:?}); a component \
+                "`{identity}` appears twice with different verdicts ({:?} then {:?}); a component \
                  cannot have two destinies",
-                e.component, prev, e.verdict
+                prev, e.verdict
             );
         }
     }

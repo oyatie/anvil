@@ -1,80 +1,33 @@
 //! Whether a path holds tests rather than shipped code.
-use std::fs;
-use std::path::Path;
+
+mod module_graph;
+
+pub use module_graph::{
+    TestSourceClassifier, declared_production_module_files_from_roots, declared_test_module_files,
+    declared_test_module_files_from_roots, module_source, production_module_dependencies,
+    production_top_level_modules, try_is_test_source, try_module_source,
+};
 
 /// Rust that exists to test other Rust, by Cargo's layout.
 ///
 /// A `#[cfg(test)]` module inside a production file is deliberately NOT covered:
 /// that file ships, and stripping the module is [`super::without_test_modules`].
 ///
-/// A file named exactly `tests.rs` or `test.rs` IS covered. That is the
-/// `#[cfg(test)] mod tests;` split -- the shape a module takes when its
-/// fixtures outgrow the file, and the shape
-/// `subject_root_escape_hatches_are_named_test` already recognises as test-only.
-/// Judged by basename rather than by reading the parent's declaration, because
-/// this is a pure path predicate; a `tests.rs` a parent declared WITHOUT
-/// `#[cfg(test)]` would be miscounted, and no such file exists in this tree.
+/// External modules are deliberately NOT classified by basename. `mod tests;`
+/// ships while `#[cfg(test)] mod fixtures;` does not; only the declaration can
+/// tell them apart. Call [`try_is_test_source`] when a source tree is
+/// available.
 pub fn is_test_source(path: &str) -> bool {
-    let basename = path.rsplit('/').next().unwrap_or(path);
-    path.starts_with("tests/")
-        || path.contains("/tests/")
-        || path.ends_with("_test.rs")
-        || path.ends_with("_tests.rs")
-        || basename == "tests.rs"
-        || basename == "test.rs"
-}
-
-/// Production Rust for a module, whether it is a file or a directory.
-///
-/// `module_source("src/merge_enlister", root)` reads `merge_enlister.rs` if
-/// that is what exists, and every `.rs` under `merge_enlister/` if it is a
-/// directory instead. Test modules are stripped, so callers get what ships.
-///
-/// # Why this is a function and not a path each caller writes
-///
-/// Thirty-four test files read a specific `src/<name>.rs` by path, three
-/// hundred and thirty-two times between them. Splitting a file into a directory
-/// is routine here -- the oversized-file ratchet demands it, and this tree has
-/// done it to `gate_proof`, `pre_merge_guard`, `harness::rules`, `occupancy`
-/// and `merge_enlister` -- and every one of those reads goes BLIND that day.
-/// Blind, not failing: a scan that reads nothing finds nothing wrong.
-///
-/// # Panics
-///
-/// When no source exists for `module`. A scan that cannot find its subject must
-/// say so rather than report nothing wrong with it.
-pub fn module_source(module: &str, repo_root: &Path) -> String {
-    let base = repo_root.join(module);
-    let mut paths = Vec::new();
-    let as_file = base.with_extension("rs");
-    if as_file.is_file() {
-        paths.push(as_file);
-    }
-    if base.is_dir() {
-        let mut stack = vec![base.clone()];
-        while let Some(dir) = stack.pop() {
-            for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
-                let p = e.path();
-                if p.is_dir() {
-                    stack.push(p);
-                } else if p.extension().is_some_and(|x| x == "rs") {
-                    paths.push(p);
-                }
-            }
+    let normalized = path.replace('\\', "/");
+    let mut below_src = false;
+    for component in normalized.split('/') {
+        if component == "src" {
+            below_src = true;
+        } else if component == "tests" {
+            return !below_src;
         }
     }
-    assert!(
-        !paths.is_empty(),
-        "no production source for `{module}` under {}: a scan that cannot find \
-         its subject reports nothing wrong with it",
-        repo_root.display()
-    );
-    paths.sort();
-    paths
-        .iter()
-        .map(|p| super::without_test_modules(&fs::read_to_string(p).unwrap_or_default()))
-        .collect::<Vec<_>>()
-        .join("\n")
+    false
 }
 
 #[cfg(test)]
@@ -83,15 +36,7 @@ mod tests {
 
     #[test]
     fn cargos_layout_is_the_rule() {
-        for p in [
-            "tests/foo.rs",
-            "crates/x/tests/bar.rs",
-            "src/thing_test.rs",
-            "src/thing_tests.rs",
-            // The `#[cfg(test)] mod tests;` split.
-            "src/clean_architecture_guard/tests.rs",
-            "src/thing/test.rs",
-        ] {
+        for p in ["tests/foo.rs", "crates/x/tests/bar.rs"] {
             assert!(is_test_source(p), "{p} is test code");
         }
     }
@@ -108,6 +53,15 @@ mod tests {
             // A basename that merely ENDS in the word is not the split.
             "src/latests.rs",
             "src/contests.rs",
+            // A declaration, not this basename, decides whether these ship.
+            "src/tests.rs",
+            "src/clean_architecture_guard/tests.rs",
+            "src/thing/test.rs",
+            "src\\thing\\tests.rs",
+            "src/thing_test.rs",
+            "src/thing_tests.rs",
+            "src\\thing_tests.rs",
+            "src/widget/tests/helper.rs",
         ] {
             assert!(
                 !is_test_source(p),

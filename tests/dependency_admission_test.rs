@@ -12,8 +12,38 @@
 use std::collections::BTreeSet;
 use std::fs;
 
-/// Direct dependencies at the time this ratchet was set.
-const DIRECT_DEPENDENCY_CEILING: usize = 22;
+/// Direct dependencies after three reviewed additions to the 22-crate set.
+///
+/// `syn` and `proc-macro2` move from test dependencies to the production source
+/// classifier, and `quote` supplies AST token rendering. The model-process
+/// dependency census independently pins the exact production dependency set,
+/// so these are named decisions rather than blanket slots.
+const DIRECT_DEPENDENCY_CEILING: usize = 25;
+
+const DIRECT_DEPENDENCIES_BEFORE_NAMED_ADDITIONS: &[&str] = &[
+    "anyhow",
+    "async-trait",
+    "axum",
+    "chrono",
+    "clap",
+    "dotenvy",
+    "futures",
+    "hex",
+    "hmac",
+    "regex",
+    "serde",
+    "serde_json",
+    "serde_yaml",
+    "sha2",
+    "socket2",
+    "subtle",
+    "tempfile",
+    "tokio",
+    "tokio-stream",
+    "toml",
+    "tracing",
+    "tracing-subscriber",
+];
 
 /// Transitive crates at the time this ratchet was set.
 const LOCKFILE_CEILING: usize = 170;
@@ -56,6 +86,27 @@ fn direct_dependency_count_only_falls() {
         deps.len(),
         DIRECT_DEPENDENCY_CEILING,
         deps
+    );
+}
+
+#[test]
+fn direct_dependency_additions_are_the_three_reviewed_decisions() {
+    let baseline = DIRECT_DEPENDENCIES_BEFORE_NAMED_ADDITIONS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<BTreeSet<_>>();
+    let added = direct_dependencies()
+        .difference(&baseline)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        added,
+        BTreeSet::from([
+            "proc-macro2".to_string(),
+            "quote".to_string(),
+            "syn".to_string(),
+        ]),
+        "only the reviewed source-classifier parsing, span, and AST token rendering dependencies may exceed the prior 22-crate set"
     );
 }
 

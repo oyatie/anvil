@@ -9,25 +9,13 @@
 //! `exec::gh` is the seam. This refuses a spawn that skips it, and measures a
 //! real child to show the bound is applied rather than merely written down.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The seam itself, which is where the bare `Command::new` is supposed to be.
 const SEAM: &str = "src/exec/gh.rs";
 
-fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            rust_sources(&p, out);
-        } else if p.extension().is_some_and(|x| x == "rs") {
-            out.push(p);
-        }
-    }
-}
+#[path = "source_acquisition/mod.rs"]
+mod source_acquisition;
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -45,19 +33,16 @@ fn repo() -> PathBuf {
 /// strips comments and leaves string literals standing, which is the
 /// distinction between the two.
 fn gh_spawns() -> Vec<String> {
-    let mut files = Vec::new();
-    rust_sources(&repo().join("src"), &mut files);
-    files.sort();
+    let files = source_acquisition::rust_sources(&repo().join("src")).expect("source corpus");
     let mut found = Vec::new();
-    for p in files {
+    for file in files {
+        let p = file.path;
         let rel = p
             .strip_prefix(repo())
             .unwrap_or(&p)
             .to_string_lossy()
             .replace('\\', "/");
-        let Ok(raw) = fs::read_to_string(&p) else {
-            continue;
-        };
+        let raw = file.text;
         let body =
             anvil::source_scan::without_commentary(&anvil::source_scan::without_test_modules(&raw));
         for _ in body.matches("Command::new(\"gh\")") {

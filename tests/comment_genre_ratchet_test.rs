@@ -14,8 +14,7 @@
 //! `# Panics`, `# Examples`. An example teaches what three paragraphs of
 //! rationale do not, and it cannot rot silently because it compiles.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::LazyLock;
 
 /// Phrases that only ever introduce a story about a previous revision.
@@ -37,35 +36,22 @@ static NARRATIVE: LazyLock<regex::Regex> = LazyLock::new(|| {
 /// git available, and so a catastrophic regression is caught even then.
 const NARRATIVE_COMMENT_LINES_CEILING: usize = 157;
 
-fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            rust_sources(&p, out);
-        } else if p.extension().is_some_and(|x| x == "rs") {
-            out.push(p);
-        }
-    }
-}
+#[path = "source_acquisition/mod.rs"]
+mod source_acquisition;
+
+#[path = "source_acquisition/merge_base.rs"]
+mod merge_base_sources;
 
 fn offenders() -> Vec<String> {
-    let mut files = Vec::new();
-    rust_sources(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut files,
-    );
+    let files =
+        source_acquisition::rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))
+            .expect("source corpus");
     let mut found = Vec::new();
-    for p in files {
-        let Ok(body) = fs::read_to_string(&p) else {
-            continue;
-        };
-        for (n, line) in body.lines().enumerate() {
+    for file in files {
+        for (n, line) in file.text.lines().enumerate() {
             let t = line.trim();
             if (t.starts_with("//") || t.starts_with("//!")) && NARRATIVE.is_match(t) {
-                found.push(format!("{}:{}", p.display(), n + 1));
+                found.push(format!("{}:{}", file.path.display(), n + 1));
             }
         }
     }
@@ -92,9 +78,8 @@ fn narrative_comments_do_not_exceed_the_recorded_ceiling() {
 
 /// The bound that actually holds: no growth against this change's own base.
 ///
-/// Needs a git repository with `origin/dev` reachable. Where that is absent —
-/// a source tarball, a shallow clone — the measurement is skipped rather than
-/// passed, because a bound nobody computed is not a bound that held.
+/// Requires a readable merge-base against `origin/dev`; unavailable evidence
+/// fails this comparison. The standalone ceiling remains usable without Git.
 #[test]
 fn narrative_comments_do_not_grow_against_the_merge_base() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -105,20 +90,14 @@ fn narrative_comments_do_not_grow_against_the_merge_base() {
         "HEAD",
         |p| p.starts_with("src/") && p.ends_with(".rs"),
         |tree| {
-            tree.paths()
+            Ok(merge_base_sources::rust_sources(tree)?
                 .iter()
-                .filter(|p| p.starts_with("src/") && p.ends_with(".rs"))
-                .filter_map(|p| tree.read(p).ok().flatten())
-                .filter_map(|b| std::str::from_utf8(b).ok())
-                .flat_map(|body| body.lines().map(str::trim).collect::<Vec<_>>())
+                .flat_map(|(_, body)| body.lines().map(str::trim))
                 .filter(|t| (t.starts_with("//") || t.starts_with("//!")) && NARRATIVE.is_match(t))
-                .count()
+                .count())
         },
     ));
-    let Ok(base) = derived else {
-        eprintln!("skipped: no merge-base against origin/dev in this checkout");
-        return;
-    };
+    let base = merge_base_sources::required(derived).expect("required merge-base measurement");
     let now = offenders().len();
     assert!(
         now <= base.at_merge_base,

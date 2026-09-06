@@ -122,7 +122,8 @@ fn production_source(rel: &str) -> String {
     }
 }
 
-use anvil::source_scan::code_only;
+#[path = "support/attestation_provenance_scan.rs"]
+mod provenance_scan;
 
 fn rs_files(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
     let entries = std::fs::read_dir(dir)
@@ -346,11 +347,8 @@ fn no_fabricated_attestation_claim_survives_anywhere_in_src() {
             Some(i) => &body[..i],
             None => body.as_str(),
         };
-        let code = code_only(production);
-        for needle in ["is_attested", "Cryptographic lane receipt"] {
-            if code.contains(needle) {
-                found.push(format!("{}: {needle}", path.display()));
-            }
+        for needle in provenance_scan::fabricated_claims(production) {
+            found.push(format!("{}: {needle}", path.display()));
         }
     }
     assert!(
@@ -501,17 +499,6 @@ fn the_registry_records_what_this_gate_is_blocked_on() {
 /// `the_receipt_exclusion_pathspec_excludes_receipts_and_nothing_else`.
 #[test]
 fn no_production_site_spells_its_own_whole_tree_git_add() {
-    /// The only production files allowed to spell `-A` themselves. Adding a
-    /// file here is a deliberate act a reviewer sees; adding a staging site
-    /// that reaches for `["add", "-A"]` is the mistake this pins shut.
-    const MAY_SPELL_THEIR_OWN_STAGING: &[&str] = &[
-        // The shared builder every other site calls.
-        "src/git_manager/mod.rs",
-        // Lane staging: excludes the receipts dir *and* the lane lease file,
-        // through a different exec path (`LaneError`, not `anyhow`).
-        "src/change_delivery/adapters/git_vcs.rs",
-    ];
-
     let mut files = Vec::new();
     rs_files(&repo_root().join("src"), &mut files);
     assert!(files.len() > 50, "the src scan found almost nothing");
@@ -523,16 +510,8 @@ fn no_production_site_spells_its_own_whole_tree_git_add() {
             .expect("under repo root")
             .to_string_lossy()
             .replace('\\', "/");
-        let src = code_only(&production_source(&rel));
-        if !src.contains("\"-A\"") {
-            continue;
-        }
-        if !MAY_SPELL_THEIR_OWN_STAGING.contains(&rel.as_str()) {
-            offenders.push(format!("{rel}: stages a whole tree without going through git_manager::stage_excluding_receipts"));
-        } else if !src.contains(":(exclude)") {
-            offenders.push(format!(
-                "{rel}: spells its own `git add -A` with no exclusion"
-            ));
+        if let Some(reason) = provenance_scan::staging_violation(&rel, &production_source(&rel)) {
+            offenders.push(format!("{rel}: {reason}"));
         }
     }
     assert!(

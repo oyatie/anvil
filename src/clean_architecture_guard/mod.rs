@@ -11,7 +11,7 @@
 //! Both funnel through the same analysis, so the standard Anvil applies to other
 //! people is the standard it reports on itself.
 //!
-//! The report carries an explicit [`ArchMeasurement`] third state. A tree in
+//! The report distinguishes empty subjects from unavailable evidence. A tree in
 //! which no file belongs to any recognised layer has not been shown to be clean —
 //! it has not been measured at all. Reporting that as `is_clean = true` would be
 //! absent evidence dressed as a pass, the same failure the repo's
@@ -102,7 +102,6 @@ impl CleanArchitectureGuard {
         analyze::analyze_unified_diff(
             &diff_ctx.diff_content,
             format!("{}#{}", diff_ctx.repo, diff_ctx.pr_number),
-            &source_tree::workspace_members(&diff_ctx.repo_working_dir),
             &diff_ctx.repo_working_dir,
         )
     }
@@ -123,8 +122,8 @@ impl CleanArchitectureGuard {
             return Ok(CleanArchitectureReport {
                 is_clean: false,
                 violations: Vec::new(),
-                summary: format!("Clean Architecture NOT MEASURED for {scope}: {reason}."),
-                measurement: ArchMeasurement::NotMeasured {
+                summary: format!("Clean Architecture UNAVAILABLE for {scope}: {reason}."),
+                measurement: ArchMeasurement::Unavailable {
                     reason,
                     files_inspected: 0,
                 },
@@ -153,7 +152,7 @@ impl CleanArchitectureGuard {
             }
         }
 
-        analyze::analyze_unified_diff(&diff, scope, &source_tree::workspace_members(root), base)
+        analyze::analyze_unified_diff(&diff, scope, base)
     }
 
     /// Runs the guard against Anvil's own source tree and records the finding.
@@ -164,6 +163,13 @@ impl CleanArchitectureGuard {
     pub fn self_conformance(&self) -> Result<CleanArchitectureReport> {
         let report = self.evaluate_source_tree(Path::new(ANVIL_SOURCE_TREE))?;
         match &report.measurement {
+            ArchMeasurement::Unavailable {
+                reason,
+                files_inspected,
+            } => warn!(
+                "CleanArchitectureGuard self-conformance: UNAVAILABLE on Anvil's own tree \
+                 ({files_inspected} file(s) inspected): {reason}"
+            ),
             ArchMeasurement::NotMeasured {
                 reason,
                 files_inspected,

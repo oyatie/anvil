@@ -1,6 +1,7 @@
 //! Whether a path holds tests rather than shipped code.
 
 mod module_graph;
+pub(crate) use module_graph::{ArchitectureOwnership, RootRelation};
 
 pub use module_graph::{
     TestSourceClassifier, declared_production_module_files_from_roots, declared_test_module_files,

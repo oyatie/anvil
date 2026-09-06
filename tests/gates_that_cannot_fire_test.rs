@@ -170,10 +170,13 @@ fn code_only_strips_commentary_but_keeps_published_sentences() {
 /// than the named file, because the cheapest evasion of P3 is moving the
 /// constant one file sideways.
 fn module_sources(module_dir: &str) -> Vec<(String, String)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(module_dir);
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = repository.join(module_dir);
     if root.is_file() {
         return vec![(module_dir.to_string(), production_source(module_dir))];
     }
+    let test_modules = anvil::source_scan::paths::declared_test_module_files(repository)
+        .expect("classify declared test modules once");
     let mut out = Vec::new();
     let mut stack = vec![root.clone()];
     while let Some(dir) = stack.pop() {
@@ -181,7 +184,7 @@ fn module_sources(module_dir: &str) -> Vec<(String, String)> {
             let path = entry.expect("dir entry").path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
+            } else if path.extension().is_some_and(|e| e == "rs") && !test_modules.contains(&path) {
                 let rel = format!(
                     "{}/{}",
                     module_dir,

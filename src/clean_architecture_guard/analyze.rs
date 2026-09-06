@@ -4,9 +4,12 @@
 //! no state, so the same rules apply to someone else's pull request and to
 //! Anvil's own tree.
 
+use std::path::Path;
+
+use anyhow::Result;
 use regex::Regex;
 
-use super::paths::{classify_layer, is_import_line, is_test_source, layer_name};
+use super::paths::{classify_layer, is_import_line, layer_name};
 use super::report::{ArchLayer, ArchMeasurement, ArchViolation, CleanArchitectureReport};
 use super::scan::{FaceScan, scan_faces};
 
@@ -14,7 +17,10 @@ pub(super) fn analyze_unified_diff(
     diff_content: &str,
     scope: String,
     local_crates: &[String],
-) -> CleanArchitectureReport {
+    repo_root: &Path,
+) -> Result<CleanArchitectureReport> {
+    let test_sources = crate::source_scan::paths::TestSourceClassifier::new(repo_root)
+        .map_err(anyhow::Error::msg)?;
     let mut violations = Vec::new();
     let mut current_file = String::new();
     let mut current_layer: Option<ArchLayer> = None;
@@ -24,6 +30,7 @@ pub(super) fn analyze_unified_diff(
     let mut face_subjects = 0usize;
     // A `use` rustfmt broke across lines, held until its `;` arrives.
     let mut pending_use: Option<String> = None;
+    let mut current_is_test = false;
 
     let core_forbidden_imports = [
         (
@@ -47,6 +54,9 @@ pub(super) fn analyze_unified_diff(
     for line in diff_content.lines() {
         if let Some(stripped) = line.strip_prefix("+++ b/") {
             current_file = stripped.trim().to_string();
+            current_is_test = test_sources
+                .classify(Path::new(&current_file))
+                .map_err(anyhow::Error::msg)?;
             // Test sources are out of scope, as they are for
             // `evaluate_source_tree`, which reads `src/` alone. The seal
             // governs the dependency structure that ships; a test reaching
@@ -54,7 +64,7 @@ pub(super) fn analyze_unified_diff(
             // two entry points to different scopes made the same guard report
             // four violations on a pull request and zero on the tree those
             // files live in.
-            current_layer = if is_test_source(&current_file) {
+            current_layer = if current_is_test {
                 None
             } else {
                 classify_layer(&current_file)
@@ -136,7 +146,7 @@ pub(super) fn analyze_unified_diff(
                 // layer classification. The seal flags an UNLAYERED importer
                 // too, so checking only `classify_layer` left every test file
                 // still reported.
-                Some(_) if is_test_source(&current_file) => FaceScan {
+                Some(_) if current_is_test => FaceScan {
                     bypasses: Vec::new(),
                     subjects: 0,
                 },
@@ -277,11 +287,11 @@ pub(super) fn analyze_unified_diff(
         }
     };
 
-    CleanArchitectureReport {
+    Ok(CleanArchitectureReport {
         is_clean,
         violations,
         summary,
         measurement,
         scope,
-    }
+    })
 }

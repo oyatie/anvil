@@ -62,7 +62,7 @@ impl LockfileReconciler {
         // 1. Rust Cargo lockfile reconciliation
         if repo_dir.join("Cargo.toml").exists() {
             info!("Reconciling Cargo.lock in {:?}", repo_dir);
-            let mut cargo_cmd = Command::new("cargo");
+            let mut cargo_cmd = crate::exec::build_env::command("cargo");
             cargo_cmd.current_dir(&repo_dir).args(["check", "--quiet"]);
             let _ = crate::exec::run_bounded(
                 cargo_cmd,
@@ -75,7 +75,7 @@ impl LockfileReconciler {
         // 2. Node.js package-lock reconciliation
         if repo_dir.join("package.json").exists() {
             info!("Reconciling package-lock.json in {:?}", repo_dir);
-            let mut npm_cmd = Command::new("npm");
+            let mut npm_cmd = crate::exec::build_env::command("npm");
             npm_cmd.current_dir(&repo_dir).args([
                 "install",
                 "--package-lock-only",
@@ -94,7 +94,7 @@ impl LockfileReconciler {
             repo_dir.join("scripts/console/generate-documentation-manifest.mjs");
         if doc_manifest_script.exists() {
             info!("Reconciling documentation manifest in {:?}", repo_dir);
-            let mut node_cmd = Command::new("node");
+            let mut node_cmd = crate::exec::build_env::command("node");
             node_cmd
                 .current_dir(&repo_dir)
                 .arg("scripts/console/generate-documentation-manifest.mjs");
@@ -109,7 +109,7 @@ impl LockfileReconciler {
         let adr_index_script = repo_dir.join("scripts/console/generate-adr-index.mjs");
         if adr_index_script.exists() {
             info!("Reconciling ADR index in {:?}", repo_dir);
-            let mut node_cmd = Command::new("node");
+            let mut node_cmd = crate::exec::build_env::command("node");
             node_cmd
                 .current_dir(&repo_dir)
                 .arg("scripts/console/generate-adr-index.mjs");

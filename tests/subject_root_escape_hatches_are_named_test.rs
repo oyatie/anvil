@@ -28,32 +28,14 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Their contents never reach a release build, so a fixture in one is not a
 /// production caller even though it carries no `#[cfg(test)]` of its own.
 fn test_only_modules(files: &[PathBuf]) -> HashSet<PathBuf> {
-    let mut out = HashSet::new();
-    for f in files {
-        let Ok(body) = fs::read_to_string(f) else {
-            continue;
-        };
-        let lines: Vec<&str> = body.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            if !line.trim().starts_with("#[cfg(test)]") {
-                continue;
-            }
-            let Some(next) = lines.get(i + 1) else {
-                continue;
-            };
-            let Some(name) = next
-                .trim()
-                .strip_prefix("mod ")
-                .and_then(|r| r.strip_suffix(';'))
-            else {
-                continue;
-            };
-            let dir = f.parent().unwrap_or(Path::new("."));
-            out.insert(dir.join(format!("{name}.rs")));
-            out.insert(dir.join(name).join("mod.rs"));
-        }
-    }
-    out
+    let classifier =
+        anvil::source_scan::paths::TestSourceClassifier::new(Path::new(env!("CARGO_MANIFEST_DIR")))
+            .expect("declaration-driven source classification");
+    files
+        .iter()
+        .filter(|path| classifier.classify(path).expect("classify source role"))
+        .cloned()
+        .collect()
 }
 
 /// Which lines of a file sit inside a `#[cfg(test)]` module, or `None` when

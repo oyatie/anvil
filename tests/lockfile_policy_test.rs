@@ -58,17 +58,29 @@ fn toolchain_is_pinned_to_an_exact_version_not_a_channel_name() {
 }
 
 #[test]
-fn package_rust_version_matches_the_toolchain_pin() {
-    assert_eq!(
-        package_rust_version(),
-        toolchain_channel(),
-        "[package] rust-version and rust-toolchain.toml must name the same version"
+fn package_rust_version_is_not_ahead_of_the_toolchain_pin() {
+    // This asserted EQUALITY, which made the two facts one number: the channel
+    // is what we compile with and should chase stable, MSRV is what consumers
+    // may compile under and should rise rarely. `src/toolchain` now reports
+    // equality as a finding.
+    //
+    // The old assertion had a real point underneath it, kept here: an MSRV
+    // BELOW the channel that no job ever builds under is a promise with no
+    // measurement behind it. That is `Drift::MsrvUnverified`, and anvil is in
+    // that state today -- every CI job installs the channel. The remedy is a
+    // build under MSRV, not a number that agrees with itself.
+    let msrv = package_rust_version();
+    let channel = toolchain_channel();
+    assert!(
+        msrv <= channel,
+        "MSRV {msrv} is newer than the pinned channel {channel}: the promised \
+         minimum cannot build here at all"
     );
 }
 
 #[test]
 fn ci_installs_the_pinned_toolchain_not_stable() {
-    let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
+    let ci = merge_path_text();
     // rust-toolchain.toml is the pin. Repeating the version in YAML is a drift
     // surface; dtolnay/rust-toolchain with no `toolchain:` input honours the file.
     let channel = toolchain_channel();
@@ -84,7 +96,7 @@ fn ci_installs_the_pinned_toolchain_not_stable() {
 
 #[test]
 fn ci_and_hooks_build_with_locked_dependencies() {
-    let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
+    let ci = merge_path_text();
     // Cheap local: pre-push `cargo check --locked`.
     // Pre-merge: clippy + nextest, both --locked.
     // Post-submit: `cargo build --release --locked` (release-profile compile check).
@@ -98,22 +110,32 @@ fn ci_and_hooks_build_with_locked_dependencies() {
             "`{step}` in ci.yml must pass --locked: {line}"
         );
     }
-    // Parsed, not substring-matched: `ci.contains("if: github.event_name ==
-    // 'push'")` passes with that string in a comment or on any other job. The
-    // property is that the *release* job is the gated one.
-    let workflow: serde_yaml::Value = serde_yaml::from_str(&ci).expect("ci.yml must be valid YAML");
-    let release = &workflow["jobs"]["release"];
+    // Parsed, not substring-matched. The property is that the release build is
+    // post-submit, and the rung split makes that structural rather than a
+    // condition: `release` lives in the file whose only trigger is `push`, so
+    // there is no `if:` left to get wrong. Asserting the trigger asserts more
+    // than the old guard did -- an `if:` can be edited off a job, a file's `on:`
+    // cannot be without moving the job.
+    let post: serde_yaml::Value = serde_yaml::from_str(
+        &fs::read_to_string(repo_root().join(".github/workflows/postsubmit.yml"))
+            .expect("postsubmit.yml"),
+    )
+    .expect("postsubmit.yml must be valid YAML");
     assert!(
-        !release.is_null(),
-        "ci.yml must define a `release` job; found jobs: {:?}",
-        workflow["jobs"]
+        !post["jobs"]["release"].is_null(),
+        "postsubmit.yml must define the `release` job; found: {:?}",
+        post["jobs"]
             .as_mapping()
             .map(|m| m.keys().collect::<Vec<_>>())
     );
+    let triggers = post["on"]
+        .as_mapping()
+        .expect("postsubmit.yml declares triggers");
+    let names: Vec<&str> = triggers.keys().filter_map(|k| k.as_str()).collect();
     assert_eq!(
-        release["if"].as_str(),
-        Some("github.event_name == 'push'"),
-        "the release job must be post-submit (push to trunk), not a PR merge gate"
+        names,
+        vec!["push"],
+        "the release build is post-submit: postsubmit.yml must trigger on push and nothing else"
     );
     let pre_push =
         fs::read_to_string(repo_root().join("src/git_manager/hooks/pre-push")).expect("pre-push");
@@ -125,9 +147,36 @@ fn ci_and_hooks_build_with_locked_dependencies() {
         pre_push.contains("cargo check") && pre_push.contains("--locked"),
         "pre-push must `cargo check --locked`"
     );
+    // The SUITE belongs in CI. Named source-only scans do not.
+    //
+    // This was a blanket ban on `cargo test` in the hook, and its intent -- keep
+    // the hook fast -- is right and kept. But the ban also refused a class of
+    // check that costs almost nothing and whose whole value is being early: a
+    // scan that reads source, runs no service and touches no network, catching
+    // a duplication or a stale count before it reaches a reviewer rather than
+    // after.
+    //
+    // Measured on a warm tree rather than argued: the five scans below take
+    // 1.08s, against the 74.7s `cargo check --all-targets` this hook already
+    // pays two steps above. That is 1.4%, and `--all-targets` has already
+    // type-checked them.
+    //
+    // So the rule is narrowed, not dropped: no bare `cargo test`, which would
+    // run the whole corpus, and every invocation must name its targets.
+    for line in pre_push.lines() {
+        let l = line.trim();
+        if !l.contains("cargo test") && !l.contains("cargo nextest") {
+            continue;
+        }
+        assert!(
+            l.contains("--test ") || l.ends_with('\\'),
+            "pre-push runs an unbounded test invocation, which makes it the suite \
+             and the suite belongs in CI: {l}"
+        );
+    }
     assert!(
-        !pre_push.contains("cargo nextest") && !pre_push.contains("cargo test"),
-        "pre-push must stay a compile check; the test suite belongs in CI"
+        !pre_push.contains("cargo nextest run\n") && !pre_push.contains("cargo test\n"),
+        "pre-push must not run the whole corpus; name the scans it needs"
     );
 }
 
@@ -142,4 +191,20 @@ fn lockfile_is_format_version_4() {
         version_line, "version = 4",
         "Cargo.lock must stay at format v4 (smaller merge diffs; the 1.83+ default)"
     );
+}
+
+/// The workflows on the merge path, as one text.
+///
+/// Presubmit, the lane it calls, and postsubmit. Deliberately NOT the scheduled
+/// lanes: `toolchain-weekly` installs `stable` on purpose, because resolving
+/// what latest stable IS is the question it exists to answer. A pin is a
+/// merge-path property, and asking it of a drift detector inverts the rule.
+fn merge_path_text() -> String {
+    let dir = repo_root().join(".github/workflows");
+    let mut all = String::new();
+    for name in ["presubmit.yml", "build-and-test.yml", "postsubmit.yml"] {
+        all.push_str(&fs::read_to_string(dir.join(name)).unwrap_or_else(|_| panic!("{name}")));
+        all.push('\n');
+    }
+    all
 }

@@ -1,5 +1,9 @@
-//! The 21-gate exemption must be stated on the scorecard, not merely asserted
-//! in a doc comment.
+//! The unaudited-gate exemption must be stated on the scorecard, not merely
+//! asserted in a doc comment.
+//!
+//! Its size is not written here. It was twenty-one when this file was named for
+//! it and is zero now, and a count in a title is the same stale claim the
+//! mechanism below exists to prevent.
 //!
 //! `report.rs` justifies withholding a verdict from any gate with no registry
 //! entry, and defends that exemption with: "is not silent:
@@ -10,8 +14,8 @@
 //! exemption was silent, and the sentence justifying it rested on a mechanism
 //! that did not run.
 //!
-//! This is the red half: it fails against a scorecard that does not disclose
-//! the count.
+//! This is the red half: it fails against a scorecard whose sentence and whose
+//! registry disagree, in either direction.
 
 use anvil::fidelity;
 use anvil::pre_merge_guard::report::{GateStatus, PreMergeCertificationReport, TOTAL_GATES};
@@ -34,21 +38,28 @@ fn all_passing() -> PreMergeCertificationReport {
 #[test]
 fn the_scorecard_states_how_many_gates_nobody_has_audited() {
     let gaps = fidelity::gap_report(TOTAL_GATES);
-    assert!(
-        gaps.unaudited > 0,
-        "fixture premise: the audit is incomplete, so there is a number to publish"
-    );
-
     let report = all_passing();
     let body = publish::scorecard::render(&report);
 
-    assert!(
-        body.contains(&gaps.unaudited.to_string()),
-        "the scorecard must state that {} of {} gates have no registry entry; \
-         a reader cannot discount what they were never shown:\n{body}",
-        gaps.unaudited,
-        TOTAL_GATES
-    );
+    // Both directions, because the audit is complete as this is written and a
+    // one-directional assertion would have gone vacuous the moment it was.
+    // What must hold is that the sentence and the registry agree: the count is
+    // published when there is one, and no count is claimed when there is not.
+    if gaps.unaudited > 0 {
+        assert!(
+            body.contains(&format!("A further {} of {TOTAL_GATES}", gaps.unaudited)),
+            "the scorecard must state that {} of {} gates have no registry entry; \
+             a reader cannot discount what they were never shown:\n{body}",
+            gaps.unaudited,
+            TOTAL_GATES
+        );
+    } else {
+        assert!(
+            !body.contains("have no registry entry at all"),
+            "every gate is audited, so a scorecard claiming some are not is \
+             publishing a stale number:\n{body}"
+        );
+    }
 }
 
 #[test]

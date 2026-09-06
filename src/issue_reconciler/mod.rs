@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod issue_auditor;
@@ -34,7 +33,7 @@ impl IssueReconciler {
             repo
         );
 
-        let mut list_cmd = Command::new("gh");
+        let mut list_cmd = crate::exec::gh();
         list_cmd.args([
             "issue",
             "list",
@@ -87,7 +86,7 @@ impl IssueReconciler {
                 // reader, who sees a confident reason and no way to know it was never
                 // checked. Until each verdict is backed by a real signal, Anvil states
                 // its finding and a human decides.
-                let mut close_cmd = Command::new("gh");
+                let mut close_cmd = crate::exec::gh();
                 close_cmd.args([
                     "issue",
                     "comment",

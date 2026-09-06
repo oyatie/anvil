@@ -56,7 +56,24 @@ impl PredictiveTestSelector {
         // found none, so the selector always had something to select and the
         // gate always had something to report. An undiscovered workspace is not
         // a one-package workspace.
-        let workspace_packages = WorkspaceDagSelector::discover_workspace_packages_sync(_repo_dir);
+        let workspace_packages =
+            match WorkspaceDagSelector::discover_workspace_packages_sync(_repo_dir) {
+                Ok(packages) => packages,
+                Err(error) => {
+                    let reason = format!("workspace discovery was not measured: {error:#}");
+                    return Ok(PredictiveTestReport {
+                        status: GateStatus::NotMeasured {
+                            gate_id: GATE_ID.to_string(),
+                            reason: reason.clone(),
+                        },
+                        is_optimized: false,
+                        selected_packages: Vec::new(),
+                        skipped_packages_count: 0,
+                        pruning_ratio: 0.0,
+                        summary: reason,
+                    });
+                }
+            };
         if workspace_packages.is_empty() {
             return Ok(PredictiveTestReport {
                 status: GateStatus::NotMeasured {
@@ -109,8 +126,27 @@ impl PredictiveTestSelector {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_predictive_selector_nominal() {
+    fn selection_report(package_count: usize) -> PredictiveTestReport {
+        let root = tempfile::tempdir().unwrap();
+        let members = (0..package_count)
+            .map(|i| format!("\"pkg{i}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        std::fs::write(
+            root.path().join("Cargo.toml"),
+            format!("[workspace]\nmembers=[{members}]\nresolver=\"2\"\n"),
+        )
+        .unwrap();
+        for i in 0..package_count {
+            let package = root.path().join(format!("pkg{i}"));
+            std::fs::create_dir_all(package.join("src")).unwrap();
+            std::fs::write(
+                package.join("Cargo.toml"),
+                format!("[package]\nname=\"pkg{i}\"\nversion=\"0.1.0\"\nedition=\"2024\"\n"),
+            )
+            .unwrap();
+            std::fs::write(package.join("src/lib.rs"), "pub fn ordinary() {}").unwrap();
+        }
         let sel = PredictiveTestSelector::new();
         let diff_ctx = PrDiffContext {
             repo: "oyatie/oyatie".to_string(),
@@ -119,15 +155,35 @@ mod tests {
             base_sha: "aaa".to_string(),
             head_sha: "bbb".to_string(),
             diff_content: "+ fn test() {}".to_string(),
-            changed_files: vec!["src/main.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            changed_files: vec!["pkg0/src/lib.rs".to_string()],
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                root.path().to_path_buf(),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };
 
-        let rep = sel
-            .evaluate_test_selection(Path::new("."), &diff_ctx)
-            .unwrap();
-        assert!(rep.is_optimized);
+        sel.evaluate_test_selection(root.path(), &diff_ctx).unwrap()
+    }
+
+    #[test]
+    fn one_package_does_not_claim_pruning() {
+        let report = selection_report(1);
+        assert!(!report.is_optimized);
+        assert!(matches!(report.status, GateStatus::Warning(_)));
+        assert_eq!(report.selected_packages, ["pkg0"]);
+        assert_eq!(report.skipped_packages_count, 0);
+        assert_eq!(report.pruning_ratio, 0.0);
+    }
+
+    #[test]
+    fn independent_unchanged_package_is_pruned() {
+        let report = selection_report(2);
+        assert!(report.is_optimized);
+        assert!(matches!(report.status, GateStatus::Passed));
+        assert_eq!(report.selected_packages, ["pkg0"]);
+        assert_eq!(report.skipped_packages_count, 1);
+        assert_eq!(report.pruning_ratio, 0.5);
     }
 }

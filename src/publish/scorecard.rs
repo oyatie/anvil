@@ -53,7 +53,7 @@ const REMEDIATION: &[(&str, &str)] = &[
     ),
     (
         "semantic_abi_status",
-        "restore the removed public item, or bump major and note it in CHANGELOG.md",
+        "for an unaccepted change, restore the declaration or record an explicitly reviewed exact transition",
     ),
     (
         "secret_scan_status",
@@ -92,27 +92,44 @@ fn gate_name(gate_id: &str) -> String {
 }
 
 /// One finding, rendered on a single line plus optional detail lines.
+///
+/// Carries no fidelity note. The registry records nearly the whole corpus below
+/// `Measured`, so a note per finding is one identical sentence on almost every
+/// line -- kilobytes of it in the worst case, which is enough to push the terse
+/// rendering past the size of the table it exists to replace, and enough to
+/// bury the findings a reader can act on. `understatement_note` says it once.
 fn finding_line(gate_id: &str, kind: &str, detail: &str) -> String {
     let mut s = format!("- **{}** — {}: {}", gate_name(gate_id), kind, detail.trim());
     if let Some(fix) = remediation_for(gate_id) {
         s.push_str(&format!("\n  - fix: {}", fix));
     }
-    if let Some(f) = fidelity_for(gate_id)
-        && f < Fidelity::Measured
-    {
-        s.push_str(&format!(
-            "\n  - note: this gate is {} fidelity and does not fully measure what its name implies",
-            f.label().to_lowercase()
-        ));
-    }
     s
+}
+
+/// Whether the registry records this gate as measuring less than its name says.
+fn understates_itself(gate_id: &str) -> bool {
+    fidelity_for(gate_id).is_some_and(|f| f < Fidelity::Measured)
+}
+
+/// The one line that says which of the findings above come from gates that do
+/// not measure what they are named for. Empty when none of them do.
+fn understatement_note(gates: &[String]) -> String {
+    if gates.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n⚠️ {} of the finding(s) above come from gates that do not fully measure what \
+         their names imply: {}. See `src/fidelity/registry.rs` for what each one checks.\n",
+        gates.len(),
+        gates.join(", ")
+    )
 }
 
 /// The passing gates the fidelity registry records as `Heuristic` or `Partial`.
 ///
 /// A gate can pass on a keyword scan; the registry is where that is written
-/// down. Naming them next to the score is what stops "72/72" from being read
-/// as 72 measurements.
+/// down. Naming them next to the score is what stops a full-marks total from
+/// being read as that many measurements.
 ///
 /// `Aspirational` is excluded rather than merely absent in practice.
 /// `withhold_aspirational_passes` turns such a gate's pass into `NotMeasured`
@@ -129,6 +146,21 @@ fn low_fidelity_passing_gates(report: &PreMergeCertificationReport) -> Vec<Strin
             fidelity_for(gate_id).is_some_and(|f| f.may_report_pass() && f < Fidelity::Measured)
         })
         .map(|(gate_id, _)| gate_name(gate_id))
+        .collect()
+}
+
+/// The gates that passed on this change, as the proof registry names them.
+///
+/// Deliberately the raw `gate_id`, not `gate_name`: the registry keys on the
+/// id, and translating to a display name here would mean two spellings of the
+/// same gate had to agree forever. `low_fidelity_passing_gates` above renders
+/// display names because it only ever prints them; this list is matched.
+fn passing_gate_ids(report: &PreMergeCertificationReport) -> Vec<String> {
+    report
+        .named_statuses()
+        .into_iter()
+        .filter(|(_, status)| matches!(status, GateStatus::Passed | GateStatus::AutoUpdated))
+        .map(|(gate_id, _)| gate_id.to_string())
         .collect()
 }
 
@@ -151,6 +183,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
     // hiding it entirely is how a corpus quietly stops measuring anything.
     let mut findings: Vec<String> = Vec::new();
     let mut declared_absent: Vec<String> = Vec::new();
+    let mut understated_findings: Vec<String> = Vec::new();
     for (gate_id, status) in report.named_statuses() {
         let line = match status {
             GateStatus::Failed(r) => Some(finding_line(gate_id, "failed", r)),
@@ -176,6 +209,9 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         };
         if let Some(l) = line {
             findings.push(l);
+            if understates_itself(gate_id) {
+                understated_findings.push(gate_name(gate_id));
+            }
         }
     }
 
@@ -208,10 +244,10 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
             qualifiers.push(format!("{} warned", counts.warned));
         }
         if counts.unmeasured > 0 {
-            // Said as what it is. "unmeasured" alone invites a reader to
-            // discount a real measurement failure alongside a capability this
-            // deployment simply does not have.
-            let blocking_absences = counts.unmeasured - declared_absent.len();
+            // Declared absences combine missing capability and empty subject;
+            // subtract them from both count buckets, not unmeasured alone.
+            let blocking_absences =
+                counts.unmeasured + counts.not_applicable - declared_absent.len();
             if blocking_absences > 0 {
                 qualifiers.push(format!("{blocking_absences} unmeasured"));
             }
@@ -230,7 +266,7 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         // `Warning` is `is_acceptable()`, so a report whose only findings are
         // warnings certifies -- the warning could not reach the blocked branch
         // by itself, and was discarded on the only branch it could reach. All
-        // seventy-two gates were exposed: the two capped scanner gates, and
+        // the whole corpus was exposed: the two capped scanner gates, and
         // `trace_context_guard`, which chose `Warning` over `Passed` in so many
         // words *to avoid* rendering as a bare tick.
         //
@@ -245,10 +281,11 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
             ));
             s.push_str(&findings.join("\n"));
             s.push('\n');
+            s.push_str(&understatement_note(&understated_findings));
         }
-        // A passing gate produces no finding line, so it never carried the
-        // fidelity note that `finding_line` attaches. That put the disclosure
-        // only on the failure path -- and the green path is the one moment a
+        // A passing gate produces no finding line, so `understatement_note`
+        // says nothing about it. Without the line below the disclosure would
+        // reach only the failure path -- and the green path is the one moment a
         // reader decides whether to trust the score. What is behind the number
         // is load-bearing precisely when the number is good.
         let understated = low_fidelity_passing_gates(report);
@@ -298,6 +335,45 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
         ));
         s.push_str(&findings.join("\n"));
         s.push('\n');
+        s.push_str(&understatement_note(&understated_findings));
+
+        // The prevention ledger, where a reader is already acting.
+        //
+        // It records each defect CLASS, the layer each remedy sits at and
+        // whether that remedy is mechanical or semantic -- and it was
+        // unreachable from production, running only from a pre-push test. A
+        // ledger nobody reads does not change what anyone does, which is the
+        // same defect as a gate nothing calls.
+        //
+        // On the BLOCKED path only. Three guards refused this line on the
+        // certified scorecard and were right to: a certified verdict is one
+        // counted line by contract, and this measures the state of the
+        // repository rather than anything about the change. Published rather
+        // than gated, for the same reason -- a finding a change cannot act on
+        // must not withhold it.
+        s.push('\n');
+        s.push_str(&crate::postmortem::prevention_debt_line());
+        s.push('\n');
+
+        // What the passing half of this score is worth.
+        //
+        // `gate_proof` was complete, ratcheted and called by nothing: it knew
+        // which gates have been seeded with their own defect and which have only
+        // ever been green, and no pull request was ever told. A gate that has
+        // never been shown to fire still prints a tick indistinguishable from
+        // a gate that has, which is precisely how four checks written in one
+        // session stayed green for the defect they existed to catch.
+        //
+        // Published, not gated, and on the blocked path only -- the same two
+        // constraints `prevention_debt_line` above is under, for the same two
+        // reasons. An author cannot act on a gate their change never touched,
+        // and a certified verdict is one counted line by contract.
+        let ids = passing_gate_ids(report);
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        if let Some(line) = super::proof_line::qualifier(&refs) {
+            s.push_str(&line);
+            s.push('\n');
+        }
     }
 
     s.push_str(&absence_note(declared_absent.len() != 1));
@@ -307,7 +383,16 @@ pub fn render(report: &PreMergeCertificationReport) -> String {
     } else {
         AnvilAction::Blocked
     };
-    body(action, &s)
+    // The report already carries the sha it judged; publishing without it
+    // would leave the verdict unanchored across a force-push.
+    // The subject carries the sha the run was performed against. A report with
+    // no subject was not produced by a certification run over a commit, so it
+    // is NotRevisionScoped rather than anchored to a sha invented here.
+    let judged = match report.subject() {
+        Some(s) => crate::publish::Judged::Rev(s.head_sha.clone()),
+        None => crate::publish::Judged::NotRevisionScoped,
+    };
+    body(action, &s, judged).to_string()
 }
 
 #[cfg(test)]
@@ -339,8 +424,15 @@ mod tests {
 
     #[test]
     fn low_fidelity_gates_are_flagged_so_a_verdict_is_not_overtrusted() {
-        let l = finding_line("coverage_status", "failed", "x");
-        assert!(l.contains("aspirational fidelity"));
+        // Both halves: a gate the registry records below `Measured` reaches
+        // the disclosure, and one recorded as `Measured` does not -- a note
+        // naming every gate discloses nothing.
+        assert!(understates_itself("coverage_status"));
+        assert!(!understates_itself("shape_status"));
+        let note = understatement_note(&[gate_name("coverage_status")]);
+        assert!(note.contains("do not fully measure"), "{note}");
+        assert!(note.contains("coverage"), "{note}");
+        assert!(understatement_note(&[]).is_empty());
     }
 
     #[test]

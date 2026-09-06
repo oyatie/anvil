@@ -14,8 +14,33 @@ pub struct BlueGreenHandoverConfig {
 
 pub struct BlueGreenSupervisor;
 
+/// The two ends of a binary swap, named so they cannot be transposed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinarySwap {
+    /// The new build, read from.
+    pub green: PathBuf,
+    /// The binary in place, written over.
+    pub installed: PathBuf,
+}
+
 impl BlueGreenSupervisor {
     /// Executes an atomic, zero-downtime binary swap by staging to a temporary location and fs::rename
+    /// Which binary is the new build and which is the one being replaced.
+    ///
+    /// Named, and returned rather than passed positionally, because the CLI had
+    /// them the wrong way round: `anvil swap` called
+    /// `execute_atomic_binary_swap(&current_exe, &green_binary)`, so the
+    /// RUNNING binary was copied over the NEW build and the upgrade destroyed
+    /// the artifact it was installing -- then printed "Self-Replacement
+    /// Successful". Two `&Path` arguments of the same type cannot be
+    /// transposed by accident when they arrive in a named struct.
+    pub fn plan(new_build: PathBuf, running: PathBuf) -> BinarySwap {
+        BinarySwap {
+            green: new_build,
+            installed: running,
+        }
+    }
+
     pub async fn execute_atomic_binary_swap(
         staged_green_binary: &Path,
         target_installed_binary: &Path,
@@ -65,25 +90,13 @@ impl BlueGreenSupervisor {
 
     /// Spawns the green child process in a detached process group and waits for native readiness health check
     pub async fn spawn_green_and_drain_blue(
-        new_binary_path: &Path,
-        args: &[String],
         health_check_host_port: &str,
         drain_timeout: Duration,
     ) -> Result<()> {
-        info!(
-            "🌱 [Blue/Green Supervisor] Spawning detached Green instance: {:?} {:?}",
-            new_binary_path, args
-        );
+        info!("🌱 [Blue/Green Supervisor] Restarting the installed Anvil binary");
 
-        let mut cmd = tokio::process::Command::new(new_binary_path);
-        cmd.args(args);
-
-        #[cfg(unix)]
-        {
-            cmd.process_group(0); // Detach process group so child survives parent exit
-        }
-
-        let mut child = cmd.spawn().context("Failed to spawn Green process")?;
+        let mut child =
+            crate::exec::spawn_replacement_binary().context("Failed to spawn Green process")?;
 
         let mut is_ready = false;
         let start = std::time::Instant::now();

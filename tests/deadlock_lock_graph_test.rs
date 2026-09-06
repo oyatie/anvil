@@ -606,7 +606,7 @@ fn no_finding_on_this_repository_s_own_source_tree() {
 #[test]
 fn the_real_tree_scan_would_catch_an_inversion_injected_into_it() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let body = std::fs::read_to_string(root.join("src/state.rs")).expect("state.rs is readable");
+    let body = anvil::source_scan::paths::module_source("src/state", &root);
     let seeded = format!(
         "{body}\nfn seeded_one() {{\n    let a = self.alpha.lock();\n    let b = self.beta.lock();\n}}\n\
          fn seeded_two() {{\n    let b = self.beta.lock();\n    let a = self.alpha.lock();\n}}\n"

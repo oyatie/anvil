@@ -15,7 +15,18 @@ pub struct RuleVerdict {
     /// Keys present now and in the reference (tolerated debt).
     pub tolerated: BTreeSet<String>,
     /// Keys in the reference and absent now.
+    ///
+    /// Empty when the rule was withdrawn: nothing ran, so nothing was fixed.
     pub fixed: BTreeSet<String>,
+    /// The frozen baseline blocks on this rule and the head spec no longer
+    /// declares it, so it produced no measurement at all.
+    ///
+    /// Distinct from "measured and clean", which is indistinguishable from it
+    /// in the key map alone -- both are simply absent. Without the
+    /// distinction, deleting a rule from the change's own spec reports every
+    /// baselined key as `fixed` and the ratchet passes: laundering that reads
+    /// as progress.
+    pub withdrawn: bool,
     pub fails: bool,
 }
 
@@ -31,11 +42,19 @@ pub struct RatchetVerdict {
 /// `current` holds every measured key per rule. A rule measured now but
 /// absent from the frozen baseline takes `default_mode(rule)`; with no mode at
 /// all it is advisory — a rule nobody declared cannot block.
+///
+/// `declared_now` is the rule set the HEAD spec declares. It is required
+/// because `current` cannot answer "did this rule run": a rule that ran and
+/// found nothing and a rule that never ran are both simply absent from the key
+/// map. The frozen baseline pins the keys and the mode, but the rule SET is
+/// read from the change, so without this a change withdraws the rule that
+/// blocks it and the baselined keys are counted as fixed.
 pub fn compare(
     frozen: &Baseline,
     current: &BTreeMap<String, BTreeSet<String>>,
     signoff: &Signoff,
     default_mode: impl Fn(&str) -> Option<(Mode, bool)>,
+    declared_now: &BTreeSet<String>,
 ) -> RatchetVerdict {
     let mut per_rule = BTreeMap::new();
     let mut rules: BTreeSet<&String> = frozen.rules.keys().collect();
@@ -63,8 +82,15 @@ pub fn compare(
                 regressions.insert(k.clone());
             }
         }
-        let fixed: BTreeSet<String> = reference.difference(now).cloned().collect();
-        let fails = mode == Mode::BlockOnNew && !regressions.is_empty();
+        // A rule the head spec no longer declares produced no measurement.
+        // Its baselined keys are not fixed; they are unexamined.
+        let withdrawn = !declared_now.contains(rule.as_str()) && !reference.is_empty();
+        let fixed: BTreeSet<String> = if withdrawn {
+            BTreeSet::new()
+        } else {
+            reference.difference(now).cloned().collect()
+        };
+        let fails = mode == Mode::BlockOnNew && (!regressions.is_empty() || withdrawn);
         per_rule.insert(
             rule.clone(),
             RuleVerdict {
@@ -73,6 +99,7 @@ pub fn compare(
                 signed_off,
                 tolerated,
                 fixed,
+                withdrawn,
                 fails,
             },
         );

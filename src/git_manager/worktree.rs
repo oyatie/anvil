@@ -1,8 +1,9 @@
 use anyhow::Result;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+
+use super::subject::SubjectRoot;
 use tokio::process::Command;
-use tracing::{info, warn};
+use tracing::info;
 
 /// RAII Guard for an Ephemeral Git Worktree.
 /// Guarantees that the worktree is cleanly pruned and removed when dropped.
@@ -10,54 +11,7 @@ pub struct EphemeralWorktree {
     pub repo: String,
     pub pr_number: u64,
     pub worktree_path: PathBuf,
-    pub repo_dir: PathBuf,
-}
-
-/// Synchronous bound for the `Drop` path.
-///
-/// `crate::exec::run_bounded` is `async` and cannot be awaited from `Drop`, but
-/// an unbounded `std::process::Command::output()` in a destructor blocks the
-/// dropping thread for as long as git hangs, which is exactly the failure mode
-/// invariant I5 exists to prevent. Spawn, poll, and kill at the deadline so the
-/// destructor still gets a timeout and reaps its child.
-///
-/// The caller previously discarded the `Output`, so stdout/stderr are sent to
-/// `/dev/null` rather than captured; nothing observable changes.
-fn run_sync_bounded(cmd: &mut std::process::Command, limit: Duration, what: &str) {
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            warn!("{} failed to run during drop: {}", what, e);
-            return;
-        }
-    };
-
-    let deadline = Instant::now() + limit;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => {}
-            Err(e) => {
-                warn!("{} could not be waited on during drop: {}", what, e);
-                return;
-            }
-        }
-        if Instant::now() >= deadline {
-            warn!(
-                "{} exceeded its {}s drop-path timeout and was killed",
-                what,
-                limit.as_secs()
-            );
-            let _ = child.kill();
-            let _ = child.wait();
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    pub repo_dir: SubjectRoot,
 }
 
 impl EphemeralWorktree {
@@ -117,6 +71,21 @@ impl EphemeralWorktree {
         Ok(())
     }
 
+    /// The tree, proven to be at `head_sha`, as a type a gate can be handed.
+    ///
+    /// [`Self::verify_at`] answers the question; this carries the answer. A
+    /// gate taking [`CertifiedTree`] cannot be given the shared clone, which
+    /// is never checked out at the head under review -- so a filesystem read
+    /// inside it is a read of this pull request rather than of whichever one
+    /// the fixer last touched.
+    pub async fn verified_at(&self, head_sha: &str) -> Result<crate::git_manager::CertifiedTree> {
+        self.verify_at(head_sha).await?;
+        Ok(crate::git_manager::CertifiedTree::proven(
+            self.repo_dir.clone(),
+            head_sha.to_string(),
+        ))
+    }
+
     /// Explicit asynchronous cleanup of the ephemeral worktree
     pub async fn cleanup(&self) -> Result<()> {
         info!(
@@ -168,11 +137,13 @@ impl Drop for EphemeralWorktree {
                 "--force",
                 self.worktree_path.to_str().unwrap(),
             ]);
-            run_sync_bounded(
-                &mut remove_cmd,
+            if let Err(error) = crate::exec::run_sync_bounded(
+                remove_cmd,
                 crate::exec::ExecClass::Vcs.timeout(),
                 "git worktree remove (drop)",
-            );
+            ) {
+                tracing::warn!("git worktree removal during drop failed: {error:#}");
+            }
 
             let _ = std::fs::remove_dir_all(&self.worktree_path);
 
@@ -180,11 +151,49 @@ impl Drop for EphemeralWorktree {
             prune_cmd
                 .current_dir(&self.repo_dir)
                 .args(["worktree", "prune"]);
-            run_sync_bounded(
-                &mut prune_cmd,
+            if let Err(error) = crate::exec::run_sync_bounded(
+                prune_cmd,
                 crate::exec::ExecClass::Quick.timeout(),
                 "git worktree prune (drop)",
-            );
+            ) {
+                tracing::warn!("git worktree prune during drop failed: {error:#}");
+            }
+        }
+    }
+}
+
+impl super::GitManager {
+    /// A worktree at `head_sha`, proven to be there.
+    ///
+    /// Both certification paths need it and neither may fall back to the shared
+    /// clone: that clone is never checked out at the head under review, so a
+    /// filesystem-reading gate in it measures the base branch or whichever pull
+    /// request the fixer last touched. The report would still carry a genuine
+    /// provenance mark and a subject naming this head, so `subject_refusal`
+    /// admits it and Anvil signs an approval over a tree it never read.
+    ///
+    /// `Err` withholds the whole certification. A withheld certification is
+    /// retried; a certification of the wrong tree is signed.
+    pub async fn certified_tree_at(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        head_sha: &str,
+    ) -> Result<super::CertifiedTree> {
+        let worktree = self
+            .create_ephemeral_worktree(repo, pr_number, head_sha)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "no tree at {head_sha} for {repo}#{pr_number}, so nothing was certified: {e:#}"
+                )
+            })?;
+        match worktree.verified_at(head_sha).await {
+            Ok(tree) => Ok(tree),
+            Err(e) => {
+                let _ = worktree.cleanup().await;
+                Err(e)
+            }
         }
     }
 }

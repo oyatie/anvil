@@ -1,10 +1,14 @@
-//! The fleet sweep: measure every watched repository's trunk on a cadence,
-//! record the trend, and write the ranked move plan to disk for the
-//! delivery step to consume. Report-only (I25): the sweep mutates nothing
-//! in any repository and blocks nobody.
+//! The fleet sweep: measure every watched repository's trunk on a cadence and
+//! record the trend. Report-only (I25): mutates nothing in any repository and
+//! blocks nobody.
+//!
+//! Measurement only. Turning a report into a move plan is delivery's job, and
+//! doing it here made `shape` import `change_delivery` while
+//! `change_delivery` imports `shape` -- a two-member dependency cycle whose
+//! every edge is individually legal, which is why no per-edge rule can see it.
+//! The composition root holds both halves.
 
 use super::measure::{MeasureRequest, measure_repo};
-use crate::change_delivery::facade::plan::plan_from_report;
 use crate::exec::{ExecClass, run_bounded};
 use crate::git_manager::GitManager;
 use crate::shape::adapters::GitTreeAtRev;
@@ -41,6 +45,19 @@ pub async fn trunk_rev(repo_dir: &Path) -> Result<String, String> {
     ))
 }
 
+/// What one sweep of one repository produced.
+///
+/// `Skipped` is not a failure and not a measurement: a repository with no
+/// adopted spec has nothing to measure against, and reporting that as a clean
+/// sweep would be an absence read as a pass.
+pub enum Swept {
+    Measured {
+        report: crate::shape::ports::ShapeReport,
+        summary: String,
+    },
+    Skipped(String),
+}
+
 pub struct SweepDeps {
     pub git_mgr: Arc<GitManager>,
     pub telemetry: Arc<TelemetryStore>,
@@ -50,7 +67,7 @@ pub struct SweepDeps {
 /// Measures one repository's trunk. Returns the one-line summary that is
 /// logged; a repository without an adopted spec is reported as skipped —
 /// visibly, never as a zero.
-pub async fn sweep_repo(deps: &SweepDeps, repo: &str) -> Result<String, String> {
+pub async fn sweep_repo(deps: &SweepDeps, repo: &str) -> Result<Swept, String> {
     let repo_dir = deps
         .git_mgr
         .ensure_repo_cloned(repo)
@@ -68,10 +85,10 @@ pub async fn sweep_repo(deps: &SweepDeps, repo: &str) -> Result<String, String> 
     {
         Ok(r) => r,
         Err(e) if e.to_string().contains("pass --spec-override") => {
-            return Ok(format!(
+            return Ok(Swept::Skipped(format!(
                 "{repo} @ {}: no shape spec adopted; not measured",
                 &rev[..12]
-            ));
+            )));
         }
         Err(e) => return Err(e.to_string()),
     };
@@ -95,21 +112,14 @@ pub async fn sweep_repo(deps: &SweepDeps, repo: &str) -> Result<String, String> 
         })
         .await;
 
-    let plan = plan_from_report(&report, "adopted");
-    let dir = deps.data_dir.join("shape");
-    let _ = tokio::fs::create_dir_all(&dir).await;
-    let path = dir.join(format!("{}.moveplan.json", repo.replace('/', "-")));
-    tokio::fs::write(&path, format!("{}\n", plan.to_json()))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(format!(
-        "{repo} @ {}: distance {} ({}/{} units conformant, {} move(s) planned -> {})",
-        &report.rev[..12],
-        d.findings_total,
-        d.units_conformant,
-        d.units_total,
-        plan.moves.len(),
-        path.display()
-    ))
+    Ok(Swept::Measured {
+        summary: format!(
+            "{repo} @ {}: distance {} ({}/{} units conformant)",
+            &report.rev[..12],
+            d.findings_total,
+            d.units_conformant,
+            d.units_total
+        ),
+        report,
+    })
 }

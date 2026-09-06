@@ -102,9 +102,9 @@
 //! `SpanTracker::scan_detached_tasks` (`span_tracker.rs:28`) matches the single
 //! regex `tokio::spawn\s*\(`. It therefore does not see `tokio::task::spawn`,
 //! `tokio::task::spawn_blocking`, `JoinSet::spawn`, or `std::thread::spawn`.
-//! That last one is not hypothetical: `src/predictive_test_selector/workspace_dag.rs`
-//! spawns two uninstrumented reader threads (verified on this checkout at lines
-//! 38 and 45), and the gate reports a file containing them as clean. The fixture
+//! That last one is not hypothetical: `src/exec/non_model/transport.rs` spawns
+//! two uninstrumented reader threads (verified on this checkout at lines 137
+//! and 144), and the gate reports a file containing them as clean. The fixture
 //! for that case is lifted out of the live file at test time rather than copied,
 //! so it cannot quietly go stale.
 //!
@@ -335,7 +335,10 @@ fn diff_of(files: &[(&str, &str)]) -> PrDiffContext {
         head_sha: "bbbbbbb".to_string(),
         diff_content,
         changed_files: files.iter().map(|(p, _)| p.to_string()).collect(),
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }
@@ -370,8 +373,10 @@ fn as_crlf(body: &str) -> String {
 /// be a statement about this repository has to be lifted out of it at test time,
 /// or it stops being one the moment the source moves.
 fn live_lines_ending_at(path: &str, needle: &str, lead: usize) -> String {
-    let source = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("{path} must be readable to build this fixture: {e}"));
+    let source = anvil::source_scan::paths::module_source(
+        path,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let lines: Vec<&str> = source.lines().collect();
     let at = lines
         .iter()
@@ -620,7 +625,7 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
     // widening fails every pull request touching `src/cli/server.rs`. The second
     // of the two matters more than the first, because it takes arguments and the
     // empty-parens rule that saves `Command::spawn()` does not save it.
-    const LIVE_CALLERS: &str = "src/cli/server.rs";
+    const LIVE_CALLERS: &str = "src/cli/server";
     let spawn_prefixed_methods = format!(
         "{}\n{}",
         live_lines_ending_at(LIVE_CALLERS, "spawn_monitoring_daemon", 1),
@@ -692,9 +697,9 @@ fn every_form_of_task_spawn_in_use_here_is_inspected_and_an_instrumented_one_is_
         ),
         (
             // A child process is not a traced task and will never carry
-            // `.instrument(...)`. This line is live at
-            // `src/predictive_test_selector/workspace_dag.rs:28`, so a matcher
-            // that reads the word alone fails every pull request touching it.
+            // `.instrument(...)`. A child-process spawn is live at
+            // `src/exec/non_model/transport.rs:133`, so a matcher that reads the
+            // word alone fails every pull request touching it.
             "std::process::Command::spawn",
             "pub fn build() -> std::io::Result<()> {\n    let mut child = std::process::Command::new(\"cargo\").spawn()?;\n    let _ = child.wait()?;\n    Ok(())\n}",
             NotABoundary,
@@ -1169,9 +1174,14 @@ fn a_multi_line_spawn_with_no_span_is_reported_at_the_line_that_opens_it() {
 fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     // Not a synthetic fixture: the hunk is cut out of the real file at run
     // time, so it tracks the source instead of drifting away from it.
-    const LIVE_FILE: &str = "src/predictive_test_selector/workspace_dag.rs";
-    let source = std::fs::read_to_string(LIVE_FILE)
-        .unwrap_or_else(|e| panic!("{LIVE_FILE} must be readable to build this fixture: {e}"));
+    // The module names the subject; the diff the gate reads needs a path, and
+    // it must end in the Rust extension or the gate reads no Rust hunk at all.
+    const LIVE_MODULE: &str = "src/predictive_test_selector/workspace_dag";
+    let live_file = format!("{LIVE_MODULE}.rs");
+    let source = anvil::source_scan::paths::module_source(
+        LIVE_MODULE,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
 
     let lines: Vec<&str> = source.lines().collect();
     let spawn_lines: Vec<usize> = lines
@@ -1182,9 +1192,9 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
         .collect();
 
     assert!(
-        spawn_lines.len() >= 2,
-        "fixture drawn from live source has rotted: {LIVE_FILE} no longer \
-         contains at least two `std::thread::spawn` calls (found {}). Re-cut \
+        spawn_lines.len() == 1,
+        "fixture drawn from live source has rotted: {live_file} no longer \
+         contains exactly one `std::thread::spawn` call (found {}). Re-cut \
          this fixture from a file that still spawns uninstrumented threads, or \
          drop it if none remain.",
         spawn_lines.len()
@@ -1194,7 +1204,7 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     let end = (spawn_lines[spawn_lines.len() - 1] + 8).min(lines.len());
     let cut = lines[start..end].join("\n");
     // The half of the rot guard the count above does not cover. Other lanes are
-    // working this repository; one that attaches a span to these two threads
+    // working this repository; one that attaches a span to this metadata thread
     // makes the cut window correct code, and every assertion below then fails
     // reading like a gate defect -- "the gate reported 0 finding(s)" -- which
     // invites the next agent to weaken a test that was right. If that happens
@@ -1202,36 +1212,36 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     assert!(
         !cut.contains(".instrument("),
         "fixture drawn from live source has rotted: the thread spawns in \
-         {LIVE_FILE} now carry a span, so this hunk is no longer an example of \
+         {live_file} now carry a span, so this hunk is no longer an example of \
          a dropped trace context. Re-cut it from a file that still has one, or \
          drop the row."
     );
     let hunk = as_added(&cut);
 
-    let report = run(&diff_of(&[(LIVE_FILE, &hunk)]));
+    let report = run(&diff_of(&[(live_file.as_str(), &hunk)]));
 
     assert!(
-        report.detached_findings.len() >= 2,
-        "{LIVE_FILE} spawns {} reader threads with no span attached, and the \
+        report.detached_findings.len() == 1,
+        "{live_file} spawns {} metadata threads with no span attached, and the \
          gate reported {} finding(s). Summary was: {}",
         spawn_lines.len(),
         report.detached_findings.len(),
         report.summary
     );
     assert!(
-        report.tasks_scanned >= 2,
-        "the two live thread spawns must be counted among the boundaries \
+        report.tasks_scanned == 1,
+        "the one live thread spawn must be counted among the boundaries \
          inspected; `tasks_scanned` was {}",
         report.tasks_scanned
     );
     assert!(
         !report.is_propagated,
-        "a file that drops trace context across two real thread boundaries \
+        "a file that drops trace context across a real thread boundary \
          must not be reported as propagating it"
     );
     assert!(
         !accusations_in(&report.summary).is_empty(),
-        "two real detached boundaries were measured here, so the sentence a \
+        "one real detached boundary was measured here, so the sentence a \
          reviewer reads must name them. A summary that reports an absence -- or \
          says nothing at all -- conceals a defect the gate did find, which is \
          the same false assurance as claiming a verification it did not \
@@ -1251,14 +1261,13 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     );
 
     // A finding is a locator or it is nothing: the file, the line, and the code
-    // that was flagged. Two findings against a file that spawns two threads
-    // eighty lines apart, both reporting line 0 with an empty snippet, are
-    // unactionable.
+    // that was flagged. The location must be the actual spawn in this cut,
+    // not a default line zero or a location outside the inspected hunk.
     assert!(
         report
             .detached_findings
             .iter()
-            .any(|f| f.file_path.contains("workspace_dag.rs")),
+            .any(|f| f.file_path == live_file),
         "a finding must name the file it is in so a reviewer can go to it; \
          got {:?}",
         report
@@ -1274,15 +1283,10 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
         .collect();
     reported_lines.sort_unstable();
     reported_lines.dedup();
-    assert!(
-        reported_lines.len() >= 2,
-        "the two spawns are at different places in the file, so their findings \
-         must carry different line numbers; got {:?}",
-        report
-            .detached_findings
-            .iter()
-            .map(|f| f.line_number)
-            .collect::<Vec<_>>()
+    assert_eq!(
+        reported_lines,
+        [spawn_lines[0] - start + 1],
+        "the finding must locate the one actual spawn in the inspected cut"
     );
     assert!(
         report
@@ -1565,9 +1569,14 @@ fn the_outer_task_of_a_nested_spawn_is_cleared_by_the_span_attached_at_its_own_c
     // boundary the span at the outer close belongs to: the outer one, whose
     // parenthesis it is written inside, and not the inner one, which keeps its
     // own verdict.
-    const LIVE_FILE: &str = "src/cli/server.rs";
-    let source = std::fs::read_to_string(LIVE_FILE)
-        .unwrap_or_else(|e| panic!("{LIVE_FILE} must be readable to build this fixture: {e}"));
+    // The module names the subject; the diff the gate reads needs a path, and
+    // it must end in the Rust extension or the gate reads no Rust hunk at all.
+    const LIVE_MODULE: &str = "src/cli/server";
+    let live_file = format!("{LIVE_MODULE}.rs");
+    let source = anvil::source_scan::paths::module_source(
+        LIVE_MODULE,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let lines: Vec<&str> = source.lines().collect();
 
     let opens = lines
@@ -1575,7 +1584,7 @@ fn the_outer_task_of_a_nested_spawn_is_cleared_by_the_span_attached_at_its_own_c
         .position(|l| l.trim() == "tokio::spawn(async move {")
         .unwrap_or_else(|| {
             panic!(
-                "fixture drawn from live source has rotted: {LIVE_FILE} no longer \
+                "fixture drawn from live source has rotted: {live_file} no longer \
                  opens a spawn on a line of its own. Re-cut this fixture from a \
                  file that still nests one spawn inside another, or drop it."
             )
@@ -1589,7 +1598,7 @@ fn the_outer_task_of_a_nested_spawn_is_cleared_by_the_span_attached_at_its_own_c
         .unwrap_or_else(|| {
             panic!(
                 "fixture drawn from live source has rotted: the comment that \
-                 followed the outage-recovery block in {LIVE_FILE} is gone, so \
+                 followed the outage-recovery block in {live_file} is gone, so \
                  this cut can no longer find the end of the block. Re-cut it."
             )
         });
@@ -1608,20 +1617,20 @@ fn the_outer_task_of_a_nested_spawn_is_cleared_by_the_span_attached_at_its_own_c
             .count(),
         2,
         "fixture drawn from live source has rotted: the block cut from \
-         {LIVE_FILE} no longer contains one spawn nested inside another, which \
+         {live_file} no longer contains one spawn nested inside another, which \
          is the whole of what this test is about. Re-cut it or drop it."
     );
     assert!(
         !cut.iter().any(|l| l.contains(".instrument(")),
         "fixture drawn from live source has rotted: the block cut from \
-         {LIVE_FILE} now attaches a span of its own, so this test can no longer \
+         {live_file} now attaches a span of its own, so this test can no longer \
          control which spans are present. Re-cut it or drop it."
     );
     assert_eq!(
         cut[cut.len() - 1].trim(),
         "});",
         "fixture drawn from live source has rotted: the block cut from \
-         {LIVE_FILE} does not end at the parenthesis that closes the outer \
+         {live_file} does not end at the parenthesis that closes the outer \
          spawn, so replacing that line no longer instruments the outer task."
     );
 
@@ -1629,7 +1638,10 @@ fn the_outer_task_of_a_nested_spawn_is_cleared_by_the_span_attached_at_its_own_c
     // gate reports where each one is. The inner spawn's reported position is
     // read off this run rather than written down, so nothing here depends on how
     // the gate numbers its lines or on where in `server.rs` the block sits.
-    let bare = run(&diff_of(&[(LIVE_FILE, &as_added(&cut.join("\n")))]));
+    let bare = run(&diff_of(&[(
+        live_file.as_str(),
+        &as_added(&cut.join("\n")),
+    )]));
     assert_eq!(
         bare.detached_findings.len(),
         2,
@@ -1656,7 +1668,7 @@ fn the_outer_task_of_a_nested_spawn_is_cleared_by_the_span_attached_at_its_own_c
     let last = instrumented.len() - 1;
     instrumented[last] = "    }.instrument(tracing::info_span!(\"outage_recovery\")));".to_string();
     let report = run(&diff_of(&[(
-        LIVE_FILE,
+        live_file.as_str(),
         &as_added(&instrumented.join("\n")),
     )]));
 

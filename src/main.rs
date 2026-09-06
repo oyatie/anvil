@@ -2,6 +2,9 @@
 //!
 //! Entrypoint for `anvil` CLI commands and background lifecycle daemons.
 
+#![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -86,12 +89,10 @@ use anvil::state::StateManager;
 use anvil::supply_chain_guard::SupplyChainGuard;
 use anvil::trace_context_guard::TraceContextGuard;
 use anvil::unresolved_review_guard::UnresolvedReviewGuard;
-use anvil::upgrade_train::ProactiveUpgradeTrain;
 use anvil::vex_scanner::OpenVexReachabilityScanner;
 use anvil::wasm_sandbox::WasmPolicySandbox;
 use anvil::webhook::AppState;
 use anvil::zero_day_patcher::ZeroDayAutoPatcher;
-use anvil::zero_trust_workload::ZeroTrustWorkloadGate;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -144,7 +145,10 @@ async fn main() -> Result<()> {
     // and the fleet sweep produce, recorded at boot so the trend starts here.
     {
         let req = anvil::shape::facade::measure::MeasureRequest {
-            repo_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            repo_dir: anvil::git_manager::SubjectRoot::asserted(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                anvil::git_manager::Uncloned::SelfMeasurement,
+            ),
             rev: "HEAD".to_string(),
             repo: config.self_repo.clone(),
             spec_override: None,
@@ -223,10 +227,8 @@ async fn main() -> Result<()> {
     let wasm_sandbox = Arc::new(WasmPolicySandbox::new());
     let consistency_guard = Arc::new(ActiveActiveConsistencyGuard::new());
     let flake_quarantine = Arc::new(FlakeQuarantineLifecycle::new());
-    let zero_trust_workload = Arc::new(ZeroTrustWorkloadGate::new());
     let carbon_aware = Arc::new(CarbonAwareComputeRatchet::new());
     let replay_harness = Arc::new(DeterministicReplayHarness::new());
-    let upgrade_train = Arc::new(ProactiveUpgradeTrain::new());
     let chaos_mutation_guard = Arc::new(ChaosMutationGuard::new());
     let feature_flag_ratchet = Arc::new(FeatureFlagRatchet::new());
     let criterion_bench_ratchet = Arc::new(CriterionBenchRatchet::new());
@@ -326,10 +328,8 @@ async fn main() -> Result<()> {
         wasm_sandbox: wasm_sandbox.clone(),
         consistency_guard: consistency_guard.clone(),
         flake_quarantine: flake_quarantine.clone(),
-        zero_trust_workload: zero_trust_workload.clone(),
         carbon_aware: carbon_aware.clone(),
         replay_harness: replay_harness.clone(),
-        upgrade_train: upgrade_train.clone(),
         chaos_mutation_guard: chaos_mutation_guard.clone(),
         feature_flag_ratchet: feature_flag_ratchet.clone(),
         criterion_bench_ratchet: criterion_bench_ratchet.clone(),
@@ -346,6 +346,12 @@ async fn main() -> Result<()> {
         broadcaster,
         telemetry_store,
         fleet_observer,
+        // The CONFIGURED data directory, not a hardcoded relative "data": an
+        // operator who set DATA_DIR would otherwise touch a PAUSE file nothing
+        // reads.
+        pause: Arc::new(anvil::pause::Pause::in_dir(config.data_dir.clone())),
+        cloud_native_guard: Arc::new(anvil::cloud_native_guard::CloudNativeGuard::new()),
+        stack_whitelist_guard: Arc::new(anvil::stack_whitelist_guard::StackWhitelistGuard::new()),
     };
 
     let res = handle_cli(app_state).await;

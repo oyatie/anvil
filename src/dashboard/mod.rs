@@ -3,12 +3,14 @@ pub mod escape;
 pub mod panel_formatters;
 pub mod ssr_renderer;
 pub mod styles;
+pub mod view_model;
 
 use axum::extract::State;
 use axum::response::{Html, IntoResponse, Json};
-pub use ssr_renderer::{
+pub use ssr_renderer::LeptosDashboardRenderer;
+pub use view_model::{
     ActivityEventView, DashboardStateView, DoraMetricsView, FleetRepoView, GateHeatmapItem,
-    LeptosDashboardRenderer, MergeTrainItemView,
+    MergeTrainItemView,
 };
 
 use crate::webhook::AppState;
@@ -87,32 +89,37 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
         })
         .collect();
 
-    // Dynamically build Speculative Merge Train from real live open PRs across watched repos
+    // Built from live open PRs. A repo whose query failed is recorded as
+    // unobserved rather than dropped: a rate-limited fetch and an idle queue
+    // produce the same empty vector, and only one of them is a measurement.
     let mut merge_train = Vec::new();
+    let mut unobserved_merge_train_repos = Vec::new();
     for repo in &state.config.watched_repos {
-        if let Ok(open_prs) = state.github_client.list_open_prs(repo).await {
-            for pr in open_prs.into_iter().take(2) {
-                let short_head = if pr.head_ref_oid.len() >= 7 {
-                    pr.head_ref_oid[..7].to_string()
-                } else {
-                    pr.head_ref_oid
-                };
-                let short_base = if pr.base_ref_oid.len() >= 7 {
-                    pr.base_ref_oid[..7].to_string()
-                } else {
-                    pr.base_ref_oid
-                };
-                merge_train.push(MergeTrainItemView {
-                    repo: repo.clone(),
-                    pr_number: pr.number,
-                    title: pr.title,
-                    speculative_base: short_base,
-                    head_sha: short_head,
-                    state: "SPECULATIVE_PRE_SUBMIT".to_string(),
-                    gates_completed: crate::pre_merge_guard::report::TOTAL_GATES - 1,
-                    total_gates: crate::pre_merge_guard::report::TOTAL_GATES,
-                });
-            }
+        let Ok(open_prs) = state.github_client.list_open_prs(repo).await else {
+            unobserved_merge_train_repos.push(repo.clone());
+            continue;
+        };
+        for pr in open_prs.into_iter().take(2) {
+            let short_head = if pr.head_ref_oid.len() >= 7 {
+                pr.head_ref_oid[..7].to_string()
+            } else {
+                pr.head_ref_oid
+            };
+            let short_base = if pr.base_ref_oid.len() >= 7 {
+                pr.base_ref_oid[..7].to_string()
+            } else {
+                pr.base_ref_oid
+            };
+            merge_train.push(MergeTrainItemView {
+                repo: repo.clone(),
+                pr_number: pr.number,
+                title: pr.title,
+                speculative_base: short_base,
+                head_sha: short_head,
+                state: "SPECULATIVE_PRE_SUBMIT".to_string(),
+                gates_completed: crate::pre_merge_guard::report::TOTAL_GATES - 1,
+                total_gates: crate::pre_merge_guard::report::TOTAL_GATES,
+            });
         }
     }
 
@@ -162,6 +169,7 @@ async fn fetch_current_dashboard_state(state: &AppState) -> DashboardStateView {
             },
         ],
         merge_train,
+        unobserved_merge_train_repos,
         account_quotas,
     }
 }

@@ -453,10 +453,22 @@ fn cfg_test_item_end(code: &[char], attr: usize) -> usize {
 }
 
 /// Reads production source: no comments, no string contents, no test modules.
+///
+/// Resolved as a MODULE, not a path. `merge_enlister.rs` became
+/// `merge_enlister/` to satisfy the oversized-file ratchet, and this read --
+/// which names the file -- stopped finding its subject. It failed loudly only
+/// because of the `expect`; a scan that returned an empty string would have
+/// reported the module clean. `module_source` reads whichever form exists, so
+/// the next split changes nothing here.
+///
+/// Line numbers below are within the module's concatenated source when it is a
+/// directory. These checks are about what is published and by whom, not about
+/// a coordinate, so that is a report detail rather than a lost fact.
 fn production(rel: &str) -> Production {
-    let path = repo_path(rel);
-    let text =
-        fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let text = anvil::source_scan::paths::module_source(
+        rel.trim_end_matches(".rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let src: Vec<char> = text.chars().collect();
     let mut code: Vec<char> = Vec::with_capacity(src.len());
     let mut literals: Vec<(usize, String)> = Vec::new();
@@ -667,6 +679,13 @@ fn rust_sources_under(dir: &str) -> Vec<String> {
             }
         }
     }
+    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(&root)
+        .expect("source corpus classification must succeed");
+    out.retain(|relative| {
+        !classifier
+            .classify(&root.join(relative))
+            .expect("classify source role")
+    });
     out.sort();
     out
 }
@@ -853,11 +872,67 @@ fn discards_call_result(text: &str, call: &Call) -> bool {
         return true;
     }
     let prefix = text[statement_start(text, call.idx)..call.idx].trim_end();
-    if prefix.ends_with("drop(") || prefix.contains("_ =") {
+    // `contains`, not `ends_with`: the door is reached through a receiver, so
+    // the text between `drop(` and the call is `self.merge_enlister.`.
+    if prefix.contains("drop(") || prefix.contains("_ =") {
         return true;
     }
+    let stmt = statement(text, call.idx);
     // `let _ignored = ..` is `let _ = ..` with a comment attached to it.
-    binder(&statement(text, call.idx)).is_some_and(|b| b.starts_with('_'))
+    if binder(&stmt).is_some_and(|b| b.starts_with('_')) {
+        return true;
+    }
+    binder(&stmt).is_some_and(|name| {
+        binder_is_thrown_away_later(text, statement_end(text, call.close), &name)
+    })
+}
+
+/// The end of the block holding `from`: the first bracket that closes something
+/// `from` is inside.
+///
+/// Bounds a search to the rest of the enclosing function body. Searched over
+/// the whole file instead, a binding of the same name in an unrelated function
+/// would answer a question about this one.
+fn block_end(text: &str, from: usize) -> usize {
+    let mut depth = 0i32;
+    for (off, c) in text[from..].char_indices() {
+        match c {
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => {
+                depth -= 1;
+                if depth < 0 {
+                    return from + off;
+                }
+            }
+            _ => {}
+        }
+    }
+    text.len()
+}
+
+/// Whether `name` is thrown away later in the block that holds `from`.
+///
+/// `let outcome = door().await; let _ = outcome;` is `let _ = door().await`
+/// with one identifier in between, and it is the shape a scan anchored to the
+/// call's own statement cannot see: that statement binds a name, so it reads as
+/// handled, and the value dies a line later. `drop(outcome)` is the same move
+/// spelled differently. Both compile without a `must_use` warning, which is
+/// what makes them the silencer to reach for.
+fn binder_is_thrown_away_later(text: &str, from: usize, name: &str) -> bool {
+    let from = from.min(text.len());
+    statements_in(text, from, block_end(text, from))
+        .iter()
+        .any(|s| {
+            let compact = s.split_whitespace().collect::<Vec<_>>().join(" ");
+            if compact.contains(&format!("drop({name})")) {
+                return true;
+            }
+            let Some(rest) = compact.strip_prefix("let _") else {
+                return false;
+            };
+            rest.split_once('=')
+                .is_some_and(|(_, value)| value.trim().trim_end_matches(';').trim() == name)
+        })
 }
 
 /// The end of the statement starting at `start`, following `else` chains.
@@ -1470,7 +1545,7 @@ impl MergeQueueDoor {
 /// failure mode this pins is a door *disappearing* from the scan: a shrinking
 /// list of offenders reads like progress.
 const KNOWN_DOOR_FILES: [&str; 4] = [
-    "src/cli/handlers.rs",
+    "src/cli/enlist.rs",
     "src/queue_healer.rs",
     "src/webhook/manual_handlers.rs",
     "src/webhook/pipelines/review.rs",
@@ -2544,6 +2619,56 @@ fn no_path_drops_a_merge_queue_refusal_on_the_floor() {
     );
 }
 
+/// What `no_path_drops_a_merge_queue_refusal_on_the_floor` must read as a
+/// discard, and what it must not.
+///
+/// Calibrated in both directions, on literals, before it is pointed at
+/// production. A scan that misses the launder passes a door that swallows its
+/// refusal; a scan that reads `?` or a logged `Err` as a discard accuses every
+/// correct door and gets deleted. Neither failure is visible from the green
+/// this test's subject reports over four call sites that are currently fine.
+#[test]
+fn the_discard_scan_reads_a_laundered_outcome_as_discarded_and_a_handled_one_as_handled() {
+    const NEEDLE: &str = "enlist_into_merge_queue(";
+    let discarded = |body: &str| {
+        let call = find_call(body, NEEDLE, 0).expect("the sample calls the door");
+        discards_call_result(body, &call)
+    };
+
+    for thrown_away in [
+        "fn f() { let _ = e.enlist_into_merge_queue(r, n, x).await; }",
+        "fn f() { drop(e.enlist_into_merge_queue(r, n, x).await); }",
+        "fn f() { e.enlist_into_merge_queue(r, n, x).await.ok(); }",
+        // The launder: bound, so the call's own statement reads as handled,
+        // and discarded one statement later.
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; let _ = out; Ok(()) }",
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; drop(out); Ok(()) }",
+    ] {
+        assert!(
+            discarded(thrown_away),
+            "the discard scan reads this as handling the enlistment outcome, and \
+             nothing in it does: {thrown_away}"
+        );
+    }
+
+    for handled in [
+        "fn f() { e.enlist_into_merge_queue(r, n, x).await?; Ok(()) }",
+        "fn f() { e.enlist_into_merge_queue(r, n, x).await }",
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; out }",
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; \
+         if let Err(e) = out { warn!(\"{e}\"); } Ok(()) }",
+        // A binder discarded inside another function is not this one's outcome.
+        "fn f() { let out = e.enlist_into_merge_queue(r, n, x).await; out } \
+         fn g() { let out = h(); let _ = out; }",
+    ] {
+        assert!(
+            !discarded(handled),
+            "the discard scan accuses a door that handles its outcome, which is \
+             how a scan gets deleted rather than fixed: {handled}"
+        );
+    }
+}
+
 /// P3, one layer out. The refusal not being dropped at the call site is a third
 /// of the problem: `manual_enlist_handler` spawns the enlistment into a
 /// detached task and answers `202 ACCEPTED` with `success: true` before the
@@ -2563,7 +2688,7 @@ fn no_path_drops_a_merge_queue_refusal_on_the_floor() {
 fn the_enlist_api_does_not_answer_success_for_an_enlistment_it_has_not_performed() {
     const HANDLER: &str = "fn manual_enlist_handler(";
     const ENLIST: &str = "enlist_into_merge_queue(";
-    let source = production_source("src/webhook/manual_handlers.rs");
+    let source = production_source("src/webhook/manual_handlers");
 
     let Some(body) = find_fn(&source, HANDLER) else {
         // Dropping the endpoint is an honest way to close this half of #17 —
@@ -3113,7 +3238,7 @@ fn nothing_anvil_publishes_is_written_by_a_function_that_holds_no_report() {
     // own. See `assert_the_merge_queue_path_still_fails_closed`.
     assert_the_merge_queue_path_still_fails_closed();
 
-    let source = production_source("src/merge_enlister.rs");
+    let source = production_source("src/merge_enlister");
     for publisher in &PUBLISHERS {
         assert_publication_is_derived(&source, publisher);
     }
@@ -3246,55 +3371,121 @@ fn assert_the_merge_queue_path_still_fails_closed() {
         noted.join("\n")
     );
 
-    // 3. Unresolved review threads still withhold the merge, followed from the
-    //    fetch rather than from a wording: whatever the comments are bound to,
-    //    the emptiness test on it has to end in a refusal.
-    const COMMENTS: &str = "fetch_review_comments(";
-    let asked = corpus
-        .iter()
-        .filter(|rel| !production_source(rel).contains(&format!("fn {COMMENTS}")))
-        .find_map(|rel| {
-            let code = production_source(rel);
-            find_call(&code, COMMENTS, 0).map(|call| (rel.clone(), code, call))
-        });
-    let Some((rel, code, call)) = asked else {
-        panic!(
-            "nothing on the path that enlists a pull request asks for its review \
-             comments any more. Issue #18 says to keep the unresolved-thread \
-             refusal; without the fetch there is nothing to refuse on. Scanned: \
-             {corpus:?}"
-        )
-    };
-    let held = value_aliases(&code, &call);
-    let mut from = call.close;
-    let verdict = loop {
-        let Some(off) = code[from..].find("is_empty()") else {
-            break None;
-        };
-        let at = from + off;
-        from = at + 1;
-        let stmt = statement(&code, at);
-        if held.iter().any(|a| mentions_ident(&stmt, a)) {
-            break Some((stmt, decision_withholds(&code, at)));
-        }
-    };
-    match verdict {
-        None => panic!(
-            "{rel} asks for the review comments and never tests whether any are \
-             unresolved: what `{COMMENTS}` returned is bound as {held:?} and \
-             nothing downstream asks whether it is empty. Fetching the threads \
-             and merging anyway is the refusal removed with the appearance of \
-             keeping it."
-        ),
-        Some((stmt, false)) => panic!(
-            "{rel} finds unresolved review threads and does not withhold the \
-             merge:\n  {}\n\
-             Issue #18 says to keep this refusal. A count that reaches a log line \
-             and not a `bail!` has been noticed, not obeyed.",
-            stmt.split_whitespace().collect::<Vec<_>>().join(" ")
-        ),
-        Some((_, true)) => {}
-    }
+    // 3. Unresolved review threads still withhold the merge. The refusal is
+    //    not on this path any more, and must not be: `merge_enlister` can only
+    //    read comment bodies, and a comment body cannot say whether a thread is
+    //    resolved. The refusal is followed to where it holds — GitHub's own
+    //    `isResolved`, through the certification report, into
+    //    `admission_refusal` — rather than declared missing because the fetch
+    //    that could never have decided it is gone.
+    assert_the_unresolved_thread_refusal_holds_where_it_lives();
+}
+
+/// The unresolved-thread refusal, followed to the three places it now passes
+/// through.
+///
+/// Issue #18 asks that unresolved review threads withhold the merge. It does not
+/// ask that they be judged from comment text, and they cannot be: Anvil's own
+/// fixer replies open with `✅` (`fixer::reply_to_thread`), so any rule keyed to
+/// comment bodies lets Anvil resolve its own threads. The three links checked
+/// here are the whole chain, and each is checked by what it does rather than by
+/// where it sits.
+fn assert_the_unresolved_thread_refusal_holds_where_it_lives() {
+    use anvil::unresolved_review_guard::parse_review_threads;
+
+    // Link 1: the decision comes from GitHub's `isResolved`, and an answer that
+    // did not arrive is an error rather than an empty list. Both halves, so the
+    // check cannot be satisfied by a function that always errors or one that
+    // always returns nothing.
+    const OPEN: &str = r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{
+        "pageInfo":{"hasNextPage":false},
+        "nodes":[{"id":"T_1","isResolved":false,"comments":{"nodes":[
+            {"body":"\u2705 Fixed: Resolved:","path":"src/main.rs","line":1,
+             "author":{"login":"anvil"}}]}}]}}}}}"#;
+    let open =
+        parse_review_threads(true, OPEN.as_bytes(), "").expect("a well-formed answer parses");
+    assert_eq!(
+        open.len(),
+        1,
+        "a thread GitHub reports as unresolved is unresolved, whatever its          comment body says. The words in that fixture are the three the old          substring resolver accepted."
+    );
+    parse_review_threads(false, b"", "gh: HTTP 502")
+        .expect_err("an answer that did not arrive establishes nothing about the threads");
+
+    // Link 2: an unresolved thread makes the gate FAIL, not merely log.
+    //
+    // Built from what Link 1 just returned and run through the conversion the
+    // evaluator uses, in both directions. This read `assert!(!report.is_clean)`
+    // against a struct literal whose own initialiser said `is_clean: false` --
+    // it restated its fixture, exercised nothing, and would have passed with
+    // the conversion inverted.
+    use anvil::pre_merge_guard::evaluator::unresolved_review_gate;
+    use anvil::unresolved_review_guard::UnresolvedReviewReport;
+
+    let unresolved = UnresolvedReviewReport::from_threads(open);
+    assert!(
+        matches!(unresolved_review_gate(&unresolved), GateStatus::Failed(_)),
+        "the thread GitHub reported as unresolved produced {:?}. A gate that \
+         does not fail on it leaves Link 3 nothing to refuse.",
+        unresolved_review_gate(&unresolved)
+    );
+
+    // And the evaluator still reaches it. Extracting the conversion made it
+    // reachable by a test; it did not make the pipeline use it. Without this,
+    // inlining `if report.is_clean { Passed } else { Failed }` back into
+    // `evaluate_pre_merge_gates` and inverting it leaves all three links green
+    // while the gate passes on an unresolved thread -- the test would be
+    // exercising a function the product no longer calls.
+    let evaluator = anvil::source_scan::code_only(&anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    ));
+    assert!(
+        evaluator.contains("unresolved_review_gate("),
+        "`evaluate_pre_merge_gates` does not call `unresolved_review_gate`, so \
+         the conversion this test exercises is not the one the pipeline uses."
+    );
+    // Keyed to the CALL, not to a count of occurrences in one file. The first
+    // spelling required two — "the definition and the call" — so moving the
+    // definition into `pre_merge_guard::gates` to satisfy the oversized-file
+    // ratchet broke a check about wiring that was still perfectly wired. That
+    // is the same path-keyed defect `gate_proof_sites` carried, in a test
+    // written to close a different one.
+    let gates = anvil::source_scan::code_only(&anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/gates",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    ));
+    assert!(
+        gates.contains("pub fn unresolved_review_gate"),
+        "the conversion the pipeline calls is not defined where this test can \
+         find it; if it moved, follow it"
+    );
+
+    // The other direction, so the gate is not simply always `Failed` -- which
+    // would satisfy the assertion above and refuse every pull request.
+    let clean = UnresolvedReviewReport::from_threads(Vec::new());
+    assert!(
+        matches!(unresolved_review_gate(&clean), GateStatus::Passed),
+        "no unresolved threads produced {:?}, so this gate withholds every \
+         merge whatever GitHub reports",
+        unresolved_review_gate(&clean)
+    );
+
+    // Link 3: the failing gate withholds the merge at the entry point every
+    // door goes through.
+    let mut certification = every_gate_passing();
+    certification.unresolved_review_status =
+        GateStatus::Failed("one unresolved review thread".into());
+    seal_like_a_run(&mut certification);
+    let err = MergeEnlister::admission_refusal(Some(&certification)).expect_err(
+        "an unresolved review thread must withhold the merge. Issue #18 says to \
+         keep this refusal; if it moved again, this test must follow it — a scan \
+         that stops finding its subject is not a fix.",
+    );
+    assert!(
+        !err.to_string().trim().is_empty(),
+        "the refusal must say why"
+    );
 }
 
 fn assert_publication_is_derived(source: &str, publisher: &Publisher) {

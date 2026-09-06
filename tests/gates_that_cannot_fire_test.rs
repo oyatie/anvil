@@ -115,7 +115,10 @@ fn ctx(diff: &str, changed: &[&str]) -> PrDiffContext {
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
         previous_head_sha: None,
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: diff.to_string(),
         changed_files: changed.iter().map(|s| s.to_string()).collect(),
         is_incremental: false,
@@ -135,38 +138,20 @@ fn ctx(diff: &str, changed: &[&str]) -> PrDiffContext {
 /// impossible, which is the opposite of what these checks are for. String
 /// literals are kept: a published sentence is code, and it is where a
 /// fabricated claim would live.
-fn production_source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-    let production = match s.find("#[cfg(test)]") {
-        Some(i) => &s[..i],
-        None => &s[..],
-    };
-    production
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
         .lines()
         .map(code_only)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// The code on a line, with any trailing `//` comment removed. A `//` inside a
-/// string literal is code, not commentary, so the scan tracks whether it is
-/// inside a `"` before treating one as a comment opener.
-fn code_only(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut in_string = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if in_string => i += 1,
-            b'"' => in_string = !in_string,
-            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => return &line[..i],
-            _ => {}
-        }
-        i += 1;
-    }
-    line
-}
+use anvil::source_scan::without_commentary as code_only;
 
 #[test]
 fn code_only_strips_commentary_but_keeps_published_sentences() {
@@ -185,10 +170,13 @@ fn code_only_strips_commentary_but_keeps_published_sentences() {
 /// than the named file, because the cheapest evasion of P3 is moving the
 /// constant one file sideways.
 fn module_sources(module_dir: &str) -> Vec<(String, String)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(module_dir);
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = repository.join(module_dir);
     if root.is_file() {
         return vec![(module_dir.to_string(), production_source(module_dir))];
     }
+    let test_modules = anvil::source_scan::paths::declared_test_module_files(repository)
+        .expect("classify declared test modules once");
     let mut out = Vec::new();
     let mut stack = vec![root.clone()];
     while let Some(dir) = stack.pop() {
@@ -196,7 +184,7 @@ fn module_sources(module_dir: &str) -> Vec<(String, String)> {
             let path = entry.expect("dir entry").path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
+            } else if path.extension().is_some_and(|e| e == "rs") && !test_modules.contains(&path) {
                 let rel = format!(
                     "{}/{}",
                     module_dir,
@@ -468,7 +456,7 @@ fn feature_flag_source_carries_no_invented_flag_vocabulary() {
     const INVENTED: &[&str] = &["@deprecated_flag", "@stale_flag", "EXPIRATION:", "202[0-5]"];
 
     let mut offenders = Vec::new();
-    for (rel, src) in module_sources("src/feature_flag_ratchet.rs") {
+    for (rel, src) in module_sources("src/feature_flag_ratchet") {
         for (n, line) in src.lines().enumerate() {
             for token in INVENTED {
                 if line.contains(token) {
@@ -747,7 +735,14 @@ fn local_probe_is_unmeasured_when_every_subject_is_ignored() {
 #[test]
 fn local_probe_source_assigns_no_literal_latency_or_commit_message() {
     let mut offenders = Vec::new();
-    for (rel, src) in module_sources("src/local_inner_loop") {
+    // The WHOLE tree, not `src/local_inner_loop`. This guard was correct and
+    // scoped to where the defect had been found rather than where it can occur,
+    // so it watched the module while the surviving instance sat in
+    // `src/cli/handlers.rs`: the `probe` subcommand passed the literal
+    // "chore: probe check" to `validate_pre_commit` and graded it. A caller
+    // outside the module is exactly the caller the module cannot police, which
+    // makes the narrow scope the one scope guaranteed to miss.
+    for (rel, src) in module_sources("src") {
         for (n, line) in src.lines().enumerate() {
             let squashed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
             let literal_latency = squashed
@@ -1023,7 +1018,7 @@ fn chaos_source_declares_no_fault_it_cannot_inject_and_no_recovery_it_did_not_ti
 /// they could not find. The evaluator is where it was written.
 #[test]
 fn no_gate_blocks_a_merge_by_naming_a_sandbox_that_does_not_exist() {
-    let src = production_source("src/pre_merge_guard/evaluator.rs");
+    let src = production_source("src/pre_merge_guard/evaluator");
     assert!(
         !src.contains("preview sandbox"),
         "the chaos gate blocked with \"provoked unhandled panic/outage in preview \
@@ -1041,7 +1036,7 @@ fn no_gate_blocks_a_merge_by_naming_a_sandbox_that_does_not_exist() {
 /// from a boolean, which collapses `NotMeasured` into `Passed`.
 #[test]
 fn the_evaluator_reads_these_three_verdicts_instead_of_rebuilding_them() {
-    let code: String = production_source("src/pre_merge_guard/evaluator.rs")
+    let code: String = production_source("src/pre_merge_guard/evaluator")
         .lines()
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
@@ -1075,7 +1070,7 @@ fn the_evaluator_reads_these_three_verdicts_instead_of_rebuilding_them() {
 /// coat: the argument is a literal that is empty on every pull request forever.
 #[test]
 fn the_pipeline_reads_commit_subjects_rather_than_passing_an_empty_slice() {
-    let src = production_source("src/webhook/pipelines/certify.rs");
+    let src = production_source("src/webhook/pipelines/certify");
     let flat: String = src.chars().filter(|c| !c.is_whitespace()).collect();
 
     assert!(
@@ -1088,30 +1083,6 @@ fn the_pipeline_reads_commit_subjects_rather_than_passing_an_empty_slice() {
         "the certification pipeline must obtain the commit subjects it hands the \
          probe; `PrDiffContext` carries none, and `git log <base>..<head>` in the \
          clone the pipeline already has is where they come from"
-    );
-}
-
-/// Catches P6. A title is published on the PR scorecard, so it is a claim. None
-/// of these three capabilities exists: there is no AST anywhere in
-/// `src/local_inner_loop`, and no packet is dropped, no DNS query delayed and no
-/// database leader failed over anywhere in `src/chaos_injector`.
-#[test]
-fn the_matrix_claims_no_capability_these_three_gates_do_not_have() {
-    let src = production_source("src/pre_merge_guard/matrix.rs");
-    let offenders: Vec<&str> = [
-        "AST linting",
-        "Synthetic packet loss, DNS jitter & DB failover certification",
-        "Zero stale or dead toggle fallback branches",
-    ]
-    .into_iter()
-    .filter(|claim| src.contains(claim))
-    .collect();
-
-    assert!(
-        offenders.is_empty(),
-        "the scorecard publishes {} capability claim(s) with no implementation behind \
-         them: {offenders:?}",
-        offenders.len()
     );
 }
 

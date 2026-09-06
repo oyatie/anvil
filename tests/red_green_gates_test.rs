@@ -24,9 +24,7 @@ use anvil::rust_language_policy::RustLanguagePolicy;
 use anvil::schema_evolution::SchemaEvolutionRatchet;
 use anvil::trace_context_guard::TraceContextGuard;
 use anvil::unresolved_review_guard::{ThreadScanner, UnresolvedReviewThread};
-use anvil::upgrade_train::{DependencyUpgradeCandidate, ProactiveUpgradeTrain};
 use anvil::wasm_sandbox::WasmPolicySandbox;
-use anvil::zero_trust_workload::ZeroTrustWorkloadGate;
 use std::path::PathBuf;
 
 fn create_test_diff_context(file_path: &str, diff_content: &str) -> PrDiffContext {
@@ -42,7 +40,10 @@ fn create_test_diff_context(file_path: &str, diff_content: &str) -> PrDiffContex
         base_sha: "base123".to_string(),
         head_sha: "head456".to_string(),
         previous_head_sha: None,
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         diff_content: full_diff,
         changed_files: vec![file_path.to_string()],
         is_incremental: false,
@@ -248,24 +249,22 @@ fn test_consistency_guard_green_vector_clock_update() {
 
 #[test]
 fn test_zero_trust_red_flag_plaintext_internal_http() {
-    let gate = ZeroTrustWorkloadGate::new();
     // RED: Plaintext internal HTTP connection without mTLS
     let bad_diff = "+ let client = reqwest::Client::new();\n+ let resp = client.get(\"http://payment-service.internal:8080/charge\").send().await?;";
-    let report = gate.evaluate_cleartext_transport(bad_diff);
+    let violations = cleartext_violations(bad_diff);
     assert!(
-        !report.passed,
+        !violations.is_empty(),
         "Expected False Green prevention: Plaintext internal HTTP must FAIL"
     );
 }
 
 #[test]
 fn test_zero_trust_green_spiffe_mtls_transport() {
-    let gate = ZeroTrustWorkloadGate::new();
     // GREEN: SPIFFE ID SAN validation over encrypted TLS
     let good_diff = "+ let tls_config = spiffe::load_spiffe_tls_client_config(\"spiffe://oyatie.internal/ns/prod/sa/payment\").await?;\n+ let client = reqwest::Client::builder().use_preconfigured_tls(tls_config).build()?;";
-    let report = gate.evaluate_cleartext_transport(good_diff);
+    let violations = cleartext_violations(good_diff);
     assert!(
-        report.passed,
+        violations.is_empty(),
         "Expected False Red prevention: SPIFFE mTLS connection must PASS"
     );
 }
@@ -564,41 +563,6 @@ fn test_psa_admission_green_enforce_restricted() {
 // =========================================================================
 // 16. Proactive Upgrade Train Guard
 // =========================================================================
-
-#[test]
-fn test_upgrade_train_red_flag_breaking_major_upgrade() {
-    let train = ProactiveUpgradeTrain::new();
-    // RED: Major semver upgrade with breaking changes
-    let candidate = vec![DependencyUpgradeCandidate {
-        package_name: "tokio".to_string(),
-        current_version: "1.38.0".to_string(),
-        target_version: "2.0.0".to_string(),
-        is_major_breaking: true,
-    }];
-    let report = train.evaluate_upgrade_train(&candidate);
-    assert!(
-        !report.passed,
-        "Expected False Green prevention: Breaking major upgrade must be flagged"
-    );
-    assert_eq!(report.breaking_major_upgrades, 1);
-}
-
-#[test]
-fn test_upgrade_train_green_compatible_patch_upgrade() {
-    let train = ProactiveUpgradeTrain::new();
-    // GREEN: Compatible patch release
-    let candidate = vec![DependencyUpgradeCandidate {
-        package_name: "serde".to_string(),
-        current_version: "1.0.200".to_string(),
-        target_version: "1.0.204".to_string(),
-        is_major_breaking: false,
-    }];
-    let report = train.evaluate_upgrade_train(&candidate);
-    assert!(
-        report.passed,
-        "Expected False Red prevention: Compatible semver patch must PASS"
-    );
-}
 
 // =========================================================================
 // 17. Rust Skills Guard (Upstream 390 Rust Rules)
@@ -1251,7 +1215,10 @@ fn test_slo_canary_red_flag_high_burn_rate() {
         "service.openslo.yaml",
         "+ apiVersion: openslo/v1\n+ kind: SLO\n+ spec:\n+   objectives: []",
     );
-    bad_diff.repo_working_dir = temp_dir.path().to_path_buf();
+    bad_diff.repo_working_dir = anvil::git_manager::SubjectRoot::asserted(
+        temp_dir.path().to_path_buf(),
+        anvil::git_manager::Uncloned::TestFixture,
+    );
     let report = guard
         .evaluate_slo_canary_health(temp_dir.path(), &bad_diff)
         .unwrap();
@@ -1376,4 +1343,14 @@ fn test_subtle_review_enforcement_dismissed_or_historical_request_changes() {
         decision, "CHANGES_REQUESTED",
         "Must strictly identify CHANGES_REQUESTED even if other reviews approved"
     );
+}
+
+/// The lint the retired `ZeroTrustWorkloadGate` wrapped, called directly.
+///
+/// The gate is gone: `zero_trust_workload` is `Superseded` in
+/// `migration::registry` against oyatie's SPIFFE implementation, and the
+/// CWE-319 text lint that shared its module moved into the harness. The
+/// judgement these two tests exercise is unchanged.
+fn cleartext_violations(diff: &str) -> Vec<String> {
+    anvil::harness::cleartext_scan::IdentityAuditor::new().audit_cleartext_transport(diff)
 }

@@ -107,6 +107,44 @@ impl IssueAuditor {
     }
 }
 
+/// Issues whose recorded state no longer matches reality, as work.
+///
+/// `Active` raises nothing: an open issue that is genuinely open is not a
+/// defect. The other three are all the same class — the tracker and the
+/// repository disagree — and each says which way.
+pub fn work_items(findings: &[IssueAuditFinding], repo: &str) -> Vec<crate::intake::WorkItem> {
+    use crate::intake::{Remedy, Source, WorkItem, sources::subject};
+    findings
+        .iter()
+        .filter(|f| !matches!(f.status, IssueAuditStatus::Active))
+        .map(|f| WorkItem {
+            source: Source::Drift,
+            subject: subject(repo, &format!("issue #{}", f.issue_number)),
+            what: match f.status {
+                IssueAuditStatus::ResolvedByCommit => {
+                    format!("open, but resolved by a commit: {}", f.title)
+                }
+                IssueAuditStatus::ContradictedByADR => {
+                    format!("open, but contradicted by an ADR: {}", f.title)
+                }
+                IssueAuditStatus::StaleDuplicate => {
+                    format!("open, but a stale duplicate: {}", f.title)
+                }
+                IssueAuditStatus::Active => unreachable!("filtered above"),
+            },
+            consequence: format!(
+                "the tracker and the repository disagree, so the backlog \
+                 overstates what is outstanding: {}",
+                f.resolution_reason
+            ),
+            class: None,
+            remedy: Remedy::Mechanical {
+                how: "close the issue, citing the resolution".to_string(),
+            },
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

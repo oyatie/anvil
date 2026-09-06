@@ -59,7 +59,10 @@ fn certify(chunks: &[String]) -> SemanticAbiReport {
         head_sha: "head".to_string(),
         previous_head_sha: None,
         is_incremental: false,
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         changed_files: Vec::new(),
         diff_content,
     };

@@ -305,6 +305,14 @@ mod tests {
 
     /// Catches: a `reserved` form parsed into the wrong numbers, and `max`
     /// treated as an unparseable token so the whole range is dropped.
+    // 1.98's clippy adds `single_range_in_vec_init`, which fires on a Vec
+    // holding exactly one RangeInclusive and suggests collecting it. Here that
+    // suggestion is wrong: `reserved 9 to 11` in protobuf is ONE range, and
+    // `(9..=11).collect::<Vec<u32>>()` is a different type carrying a
+    // different meaning -- three numbers rather than one span. The assertion
+    // on the line above holds two ranges and does not fire, which is what
+    // shows the lint is keying on arity rather than intent.
+    #[allow(clippy::single_range_in_vec_init)]
     #[test]
     fn reserved_covers_numbers_ranges_names_and_max() {
         assert_eq!(

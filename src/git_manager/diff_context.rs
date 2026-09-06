@@ -1,4 +1,15 @@
-use std::path::PathBuf;
+use super::subject::SubjectRoot;
+mod change_kind;
+use change_kind::Observation;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileChangeKind {
+    Added,
+    Deleted,
+    Modified,
+    Renamed,
+    Copied,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrDiffContext {
@@ -11,121 +22,191 @@ pub struct PrDiffContext {
     pub previous_head_sha: Option<String>,
     pub diff_content: String,
     pub changed_files: Vec<String>,
-    pub repo_working_dir: PathBuf,
+    pub repo_working_dir: SubjectRoot,
 }
 
-/// One file's portion of a unified diff, split by what the change does.
+/// Why a rule needs the side of the diff a change REMOVES.
 ///
-/// Three gates each carried their own copy of this parsing, and all three
-/// copies were wrong in the same two ways, because they were the same lines
-/// pasted three times.
-pub struct FileDiff {
-    /// Repo-relative path, taken from the `+++ b/` header.
-    pub path: String,
-    /// Only the lines this change ADDS, without their `+`.
-    pub added: String,
-    /// Every line of this file's hunk, additions and context alike, without
-    /// the leading marker.
-    ///
-    /// Separate from `added` because the two answer different questions. "Does
-    /// this change introduce a mutating route" is about `added`; "does the file
-    /// reference an Idempotency-Key" is about `all`, since a key already
-    /// present is context the diff never adds.
-    pub all: String,
-    /// This file's hunk lines exactly as the diff spells them, `+` and `-`
-    /// markers intact.
-    ///
-    /// For the rules whose subject IS the removal -- `removed_required_fields`
-    /// compares the two sides of a wire contract, and a field disappearing is
-    /// the entire finding. Reaching for this is opting out of the added/removed
-    /// distinction on purpose, and a rule that takes it should say why.
-    pub raw: String,
+/// A closed set, so asking for both sides is a named, reviewable act rather
+/// than a field access. Adding a variant is a diff someone can challenge --
+/// which is the whole mechanism: seven times a scanner read the removed side
+/// by accident, and once (#115) a fresh scanner arrived with the same defect
+/// after the first two were fixed. Reading the whole diff is what you get by
+/// NOT thinking about it, so the type stops being silent about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BothSides {
+    /// A wire contract is compared before and after: a `required` field that
+    /// disappears IS the finding, so the rule cannot work from additions.
+    ContractComparesRemovedFields,
 }
 
-/// Split a unified diff into its files, attributing each line to the path the
-/// diff names for it.
-///
-/// The one place this parsing lives. What it replaces, verbatim from three
-/// gates:
-///
-/// ```text
-/// let mut current_file = "unknown.rs".to_string();
-/// if let Some(first_line) = lines.first()
-///     && let Some(path) = first_line.split_whitespace().last()
-/// { current_file = path.trim_start_matches("b/").to_string(); }
-/// ```
-///
-/// That block guesses a path from the last whitespace-delimited token of a
-/// chunk's first line. Measured, on a chunk whose first line is ordinary code,
-/// it reported the file as `registry.rs_lookup("a.rs");` -- a finding filed
-/// against a path invented out of a fragment of the code it was reading. When
-/// the first line yields nothing it reported `unknown.rs`, a file that does not
-/// exist in any repository.
-///
-/// Here the path comes from the `+++ b/` header, which is the only thing in a
-/// diff that states it. A hunk with no header is attributed to nothing and
-/// returned to no caller, because a finding that cannot name its file is not a
-/// finding an author can act on.
+mod file_diff;
+mod post_image;
+pub use file_diff::FileDiff;
+pub use post_image::AddedPostImageLine;
+
+/// The sole diff walk: content projections and change identity share section
+/// boundaries. Unsupported sections reset state; missing evidence is not Modified.
 pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
-    let mut out: Vec<FileDiff> = Vec::new();
-    let mut current: Option<usize> = None;
-
+    let mut out = Vec::new();
+    let mut current: Option<FileDiff> = None;
+    let mut observed = Observation::default();
+    let mut in_hunk = false;
     for line in diff.lines() {
-        // Both spellings state the path; neither guesses it. `diff --git` is
-        // taken from the ` b/` side rather than by splitting on whitespace,
-        // so a path containing a space survives. `+++ b/` wins where both are
-        // present, because it is the one git writes per hunk.
-        let header = line.strip_prefix("+++ b/").map(str::to_string).or_else(|| {
-            line.strip_prefix("diff --git ")
+        if line.starts_with("diff ") {
+            finish_section(&mut out, current.take(), &observed);
+            observed = Observation::default();
+            in_hunk = false;
+            if let Some((old, new)) = line
+                .strip_prefix("diff --git a/")
                 .and_then(|rest| rest.split_once(" b/"))
-                .map(|(_, b)| b.to_string())
-        });
-        if let Some(path) = header {
-            let path = path.trim().to_string();
-            if path.is_empty() {
+            {
+                observed.invalid = old.is_empty()
+                    || new.is_empty()
+                    || old.contains(['"', '\\', '\t'])
+                    || new.contains(['"', '\\', '\t'])
+                    || new.contains(" b/");
+                observed.header = Some((old.to_string(), new.to_string()));
+                current = Some(FileDiff::new(new.to_string()));
+            } else {
+                observed.invalid = true;
+            }
+            continue;
+        }
+        if let Some(file) = current.as_mut() {
+            file.positions.observe(line);
+        }
+        if !in_hunk {
+            if let Some(endpoint) = line.strip_prefix("+++ ") {
+                // Preserve repeated plus-header-only attribution without
+                // carrying the preceding section's metadata forward.
+                if observed.after.is_some() {
+                    let invalid = observed.header.is_some();
+                    observed.invalid |= invalid;
+                    finish_section(&mut out, current.take(), &observed);
+                    observed = Observation {
+                        invalid,
+                        ..Observation::default()
+                    };
+                }
+                let value = if endpoint == "/dev/null" {
+                    Some("")
+                } else {
+                    endpoint.strip_prefix("b/")
+                };
+                if let Some(value) = value {
+                    observed.set(1, value.to_string());
+                    let path = if value.is_empty() {
+                        observed.before.clone()
+                    } else {
+                        Some(value.to_string())
+                    };
+                    if let Some(path) = path.filter(|p| !p.is_empty()) {
+                        let file = current.get_or_insert_with(|| FileDiff::new(path.clone()));
+                        file.path = path;
+                    }
+                } else {
+                    observed.invalid = true;
+                }
                 continue;
             }
-            current = Some(match out.iter().position(|f| f.path == path) {
-                Some(i) => i,
-                None => {
-                    out.push(FileDiff {
-                        path,
-                        added: String::new(),
-                        all: String::new(),
-                        raw: String::new(),
-                    });
-                    out.len() - 1
+            if let Some(endpoint) = line.strip_prefix("--- ") {
+                let value = if endpoint == "/dev/null" {
+                    Some("")
+                } else {
+                    endpoint.strip_prefix("a/")
+                };
+                if let Some(value) = value {
+                    observed.set(0, value.to_string());
+                    if current.is_none() && !value.is_empty() {
+                        current = Some(FileDiff::new(value.to_string()));
+                    }
+                } else {
+                    observed.invalid = true;
                 }
-            });
+                continue;
+            }
+            let marker = if line.starts_with("new file mode ") {
+                Some(FileChangeKind::Added)
+            } else if line.starts_with("deleted file mode ") {
+                Some(FileChangeKind::Deleted)
+            } else {
+                None
+            };
+            if let Some(kind) = marker {
+                observed.hint(kind);
+                continue;
+            }
+            if line.starts_with("old mode ") {
+                observed.old_mode = true;
+                continue;
+            }
+            if line.starts_with("new mode ") {
+                observed.new_mode = true;
+                continue;
+            }
+            let movement = [
+                ("rename from ", FileChangeKind::Renamed, 2),
+                ("rename to ", FileChangeKind::Renamed, 3),
+                ("copy from ", FileChangeKind::Copied, 2),
+                ("copy to ", FileChangeKind::Copied, 3),
+            ]
+            .into_iter()
+            .find_map(|(prefix, kind, field)| line.strip_prefix(prefix).map(|p| (kind, field, p)));
+            if let Some((kind, field, path)) = movement {
+                observed.hint(kind);
+                observed.set(field, path.to_string());
+                continue;
+            }
+        }
+        if line.starts_with("@@") {
+            in_hunk = true;
             continue;
         }
-        // Headers are not content. `---` and `+++` are skipped before the
-        // add/remove test, or `+++ b/x` would read as an added line beginning
-        // with `++`.
-        if line.starts_with("--- ") || line.starts_with("+++ ") {
-            continue;
-        }
-        let Some(i) = current else {
+        let Some(file) = current.as_mut() else {
             continue;
         };
-        if line.starts_with("@@") {
+        // Header metadata is not hunk content, including for empty/binary files.
+        if !line.starts_with(['+', '-', ' ', '\\']) {
             continue;
         }
-        out[i].raw.push_str(line);
-        out[i].raw.push('\n');
-
+        file.raw.push_str(line);
+        file.raw.push('\n');
         if let Some(body) = line.strip_prefix('+') {
-            out[i].added.push_str(body);
-            out[i].added.push('\n');
-            out[i].all.push_str(body);
-            out[i].all.push('\n');
+            file.net_lines += 1;
+            file.added.push_str(body);
+            file.added.push('\n');
+            file.all.push_str(body);
+            file.all.push('\n');
         } else if let Some(body) = line.strip_prefix(' ') {
-            // Context: present in the file, not introduced by this change.
-            out[i].all.push_str(body);
-            out[i].all.push('\n');
+            file.all.push_str(body);
+            file.all.push('\n');
+        } else if line.starts_with('-') {
+            file.net_lines -= 1;
         }
-        // A `-` line is what the change REMOVES. It belongs to neither: a gate
-        // that reads it accuses the pull request of the thing it deletes.
     }
+    finish_section(&mut out, current, &observed);
     out
+}
+
+fn finish_section(out: &mut Vec<FileDiff>, file: Option<FileDiff>, observed: &Observation) {
+    let Some(mut file) = file else { return };
+    file.positions.finish();
+    file.kind = observed.resolve(&file.path);
+    file.previous = observed.previous(file.kind, &file.path);
+    if let Some(existing) = out.iter_mut().find(|existing| existing.path == file.path) {
+        // Unknown/contradictory repeated sections stay unknown; later evidence
+        // may not overwrite the ambiguity with a falsely definite verdict.
+        if existing.kind != file.kind || existing.previous != file.previous {
+            existing.kind = None;
+            existing.previous = None;
+        }
+        existing.positions.invalidate("repeated file sections");
+        existing.added.push_str(&file.added);
+        existing.all.push_str(&file.all);
+        existing.raw.push_str(&file.raw);
+        existing.net_lines += file.net_lines;
+    } else {
+        out.push(file);
+    }
 }

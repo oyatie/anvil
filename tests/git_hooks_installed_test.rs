@@ -32,7 +32,10 @@ fn every_required_hook_template_is_tracked() {
 
 #[test]
 fn installer_writes_common_dir_not_core_hooks_path() {
-    let src = fs::read_to_string("src/git_manager/mod.rs").expect("git_manager source");
+    let src = anvil::source_scan::paths::module_source(
+        "src/git_manager",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     let code: String = src
         .lines()
         .filter(|l| !l.trim_start().starts_with("//"))

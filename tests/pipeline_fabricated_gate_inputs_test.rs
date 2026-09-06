@@ -88,13 +88,13 @@ use std::path::{Path, PathBuf};
 
 /// The production half of a source file: everything before the first
 /// `#[cfg(test)]`.
-fn production_source(rel: &str) -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
-    match s.find("#[cfg(test)]") {
-        Some(i) => s[..i].to_string(),
-        None => s,
-    }
+/// Keyed to the module rather than to a path. Splitting an oversized file into
+/// a directory is routine here, and a path-keyed read finds nothing the day it
+/// happens: blind rather than failing, because a scan that reads nothing
+/// reports nothing wrong. `module_source` reads whichever form the module
+/// takes, strips its test modules, and refuses one that is absent.
+fn production_source(module: &str) -> String {
+    anvil::source_scan::paths::module_source(module, Path::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 /// Blanks the contents of double-quoted strings and drops `//` line comments and
@@ -111,67 +111,7 @@ fn production_source(rel: &str) -> String {
 /// Neither appears in any file scanned by this test file (verified by grep), and
 /// either could only hide a hit, never invent one. Stated rather than implied,
 /// because the point of this lane is to not overclaim what a mechanism covers.
-fn code_only(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
-    let mut chars = src.chars().peekable();
-    let mut in_str = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-    let mut escaped = false;
-
-    while let Some(c) = chars.next() {
-        if c == '\n' {
-            in_line_comment = false;
-            out.push('\n');
-            continue;
-        }
-        if in_line_comment {
-            out.push(' ');
-            continue;
-        }
-        if in_block_comment {
-            if c == '*' && chars.peek() == Some(&'/') {
-                chars.next();
-                in_block_comment = false;
-                out.push_str("  ");
-            } else {
-                out.push(' ');
-            }
-            continue;
-        }
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_str = false;
-                out.push('"');
-                continue;
-            }
-            out.push(' ');
-            continue;
-        }
-        if c == '"' {
-            in_str = true;
-            out.push('"');
-            continue;
-        }
-        if c == '/' && chars.peek() == Some(&'/') {
-            in_line_comment = true;
-            out.push(' ');
-            continue;
-        }
-        if c == '/' && chars.peek() == Some(&'*') {
-            chars.next();
-            in_block_comment = true;
-            out.push_str("  ");
-            continue;
-        }
-        out.push(c);
-    }
-    out
-}
+use anvil::source_scan::code_only;
 
 /// Every `.rs` file under a directory, as (repo-relative path, production half
 /// with strings and comments blanked).
@@ -587,7 +527,7 @@ fn stacked_diffs_publishes_not_measured_without_stack_information() {
 // =========================================================================
 
 fn evaluator_production_source() -> String {
-    code_only(&production_source("src/pre_merge_guard/evaluator.rs"))
+    code_only(&production_source("src/pre_merge_guard/evaluator"))
 }
 
 /// Catches P4, the failure mode the parent lane explicitly warned about: the

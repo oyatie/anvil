@@ -15,7 +15,10 @@ fn test_cloud_native_guard_violations() {
         head_sha: "bbb".to_string(),
         diff_content: r#"+ let role = "arn:aws:iam::123456789012:role/MyRole";"#.to_string(),
         changed_files: vec!["crates/iam/src/lib.rs".to_string()],
-        repo_working_dir: std::path::PathBuf::from("/tmp"),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("/tmp"),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };
@@ -36,9 +39,12 @@ fn test_cloud_native_guard_violations() {
         base_branch: "dev".to_string(),
         base_sha: "aaa".to_string(),
         head_sha: "bbb".to_string(),
-        diff_content: "+ print('hello')".to_string(),
+        diff_content: "diff --git a/scripts/deploy.py b/scripts/deploy.py\nnew file mode 100644\n--- /dev/null\n+++ b/scripts/deploy.py\n@@ -0,0 +1 @@\n+print('hello')\n".to_string(),
         changed_files: vec!["scripts/deploy.py".to_string()],
-        repo_working_dir: std::path::PathBuf::from("/tmp"),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("/tmp"),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };
@@ -61,7 +67,10 @@ fn test_cloud_native_guard_violations() {
         head_sha: "bbb".to_string(),
         diff_content: "+ pub trait ObjectStore { async fn get(&self) -> Vec<u8>; }".to_string(),
         changed_files: vec!["storage/ports/src/lib.rs".to_string()],
-        repo_working_dir: std::path::PathBuf::from("/tmp"),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from("/tmp"),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     };

@@ -110,6 +110,15 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
         }
     }
 
+    if let Some(t) = &spec.naming.adapter_name
+        && super::adapter_naming::template_separator(t).is_none()
+    {
+        problems.push(format!(
+            "naming.adapter_name {t:?} must name two components separated by a literal, \
+             as in \"<a>-<b>\"; the adapter naming rule has nothing to measure otherwise"
+        ));
+    }
+
     for (unit, over) in &spec.units {
         if unit.trim().is_empty() {
             problems.push("units has an empty unit name".into());

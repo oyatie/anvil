@@ -12,11 +12,11 @@
 //! Both bugs live in the *wiring*, not the guards, so guard-level tests could
 //! not see them. This scans the wiring itself.
 
-use std::fs;
-
 fn evaluator_source() -> String {
-    let text =
-        fs::read_to_string("src/pre_merge_guard/evaluator.rs").expect("evaluator.rs must exist");
+    let text = anvil::source_scan::paths::module_source(
+        "src/pre_merge_guard/evaluator",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
     text.lines()
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect::<Vec<_>>()

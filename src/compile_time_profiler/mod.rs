@@ -54,7 +54,9 @@ impl CompileTimeProfiler {
             // rule asks what the file says after this change, and a line the
             // change DELETES is not part of that.
 
-            let file_findings = self.scanner.scan_heavy_dependencies(&file.path, &file.all);
+            let file_findings = self
+                .scanner
+                .scan_heavy_dependencies(&file.path, file.after_change());
             findings.extend(file_findings);
         }
 
@@ -91,7 +93,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ serde = { version = \"1.0\" }".to_string(),
             changed_files: vec!["Cargo.toml".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

@@ -12,14 +12,51 @@
 use std::collections::BTreeSet;
 use std::fs;
 
-/// Direct dependencies at the time this ratchet was set.
-const DIRECT_DEPENDENCY_CEILING: usize = 22;
+/// Direct dependencies after three reviewed additions to the 22-crate set.
+///
+/// `syn` and `proc-macro2` move from test dependencies to the production source
+/// classifier, and `quote` supplies AST token rendering. The model-process
+/// dependency census independently pins the exact production dependency set,
+/// so these are named decisions rather than blanket slots.
+const DIRECT_DEPENDENCY_CEILING: usize = 25;
+
+const DIRECT_DEPENDENCIES_BEFORE_NAMED_ADDITIONS: &[&str] = &[
+    "anyhow",
+    "async-trait",
+    "axum",
+    "chrono",
+    "clap",
+    "dotenvy",
+    "futures",
+    "hex",
+    "hmac",
+    "regex",
+    "serde",
+    "serde_json",
+    "serde_yaml",
+    "sha2",
+    "socket2",
+    "subtle",
+    "tempfile",
+    "tokio",
+    "tokio-stream",
+    "toml",
+    "tracing",
+    "tracing-subscriber",
+];
 
 /// Transitive crates at the time this ratchet was set.
 const LOCKFILE_CEILING: usize = 170;
 
 fn manifest() -> String {
     fs::read_to_string("Cargo.toml").expect("Cargo.toml")
+}
+
+fn parsed_toml(path: &str) -> toml::Value {
+    fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("{path} must be readable: {error}"))
+        .parse()
+        .unwrap_or_else(|error| panic!("{path} must parse as TOML: {error}"))
 }
 
 /// Direct `[dependencies]` crate names from a Cargo manifest.
@@ -60,6 +97,27 @@ fn direct_dependency_count_only_falls() {
 }
 
 #[test]
+fn direct_dependency_additions_are_the_three_reviewed_decisions() {
+    let baseline = DIRECT_DEPENDENCIES_BEFORE_NAMED_ADDITIONS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<BTreeSet<_>>();
+    let added = direct_dependencies()
+        .difference(&baseline)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        added,
+        BTreeSet::from([
+            "proc-macro2".to_string(),
+            "quote".to_string(),
+            "syn".to_string(),
+        ]),
+        "only the reviewed source-classifier parsing, span, and AST token rendering dependencies may exceed the prior 22-crate set"
+    );
+}
+
+#[test]
 fn transitive_crate_count_only_falls() {
     let lock = fs::read_to_string("Cargo.lock").expect("Cargo.lock");
     let total = lock.matches("\nname = ").count();
@@ -93,6 +151,57 @@ fn an_admission_policy_exists_and_denies_the_things_that_matter() {
             "deny.toml has no `{needle}` policy — {why}"
         );
     }
+}
+
+#[test]
+fn the_private_workspace_license_exception_is_narrow_and_paired() {
+    let cargo = parsed_toml("Cargo.toml");
+    let package = cargo
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .expect("Cargo.toml must have a [package] table");
+    assert_eq!(
+        package.get("publish").and_then(toml::Value::as_bool),
+        Some(false),
+        "cargo-deny may ignore the first-party workspace crate only when Cargo.toml explicitly \
+         marks it non-publishable with `publish = false`"
+    );
+
+    let deny = parsed_toml("deny.toml");
+    let licenses = deny
+        .get("licenses")
+        .and_then(toml::Value::as_table)
+        .expect("deny.toml must have a [licenses] table");
+    let private = licenses
+        .get("private")
+        .and_then(toml::Value::as_table)
+        .expect("[licenses] must narrowly configure private workspace crates");
+    assert_eq!(
+        private.get("ignore").and_then(toml::Value::as_bool),
+        Some(true),
+        "cargo-deny must ignore the explicitly non-publishable first-party workspace crate"
+    );
+    assert_eq!(
+        private.len(),
+        1,
+        "[licenses].private must contain only `ignore = true`; broadening this exception needs \
+         separate policy review"
+    );
+
+    assert!(
+        licenses
+            .get("allow")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|allowed| !allowed.is_empty()),
+        "the private-workspace exception must not disable the dependency license allowlist"
+    );
+    assert_eq!(
+        licenses
+            .get("confidence-threshold")
+            .and_then(toml::Value::as_float),
+        Some(0.8),
+        "the private-workspace exception must not weaken dependency license identification"
+    );
 }
 
 #[test]

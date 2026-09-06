@@ -1,4 +1,4 @@
-use crate::git_manager::diff_context::diffs_by_path;
+use crate::git_manager::diff_context::{BothSides, diffs_by_path};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -54,7 +54,12 @@ impl CrossServiceImpactEngine {
             // required field disappearing IS the finding, so it needs the markers.
 
             breaking_findings.extend(contract_scan::removed_required_fields(
-                &file.path, &file.raw,
+                &file.path,
+                // The only rule in the corpus whose SUBJECT is the removal: a
+                // `required` field that disappears is the breaking change, so
+                // it cannot work from additions. Naming the reason is what
+                // keeps that deliberate rather than accidental.
+                file.both_sides(BothSides::ContractComparesRemovedFields),
             ));
         }
 
@@ -116,7 +121,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ fn endpoint() {}".to_string(),
             changed_files: vec!["src/api.rs".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

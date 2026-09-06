@@ -1,43 +1,113 @@
+//! What a change did to a file, not what the file already was.
+//!
+//! Both checks here read the file from disk and judged its total state, so a
+//! pull request that touched a large file inherited its size, and one that
+//! fixed a typo in a core file inherited every I/O import already there. Anvil
+//! has 57 files over the 300-line budget; charging every toucher made those
+//! files unmergeable, including by the decomposition the gate was asking for.
+//!
+//! A gate on a pre-existing condition is a ratchet, not a threshold: a file
+//! already over budget may not grow, and a line the change did not add is
+//! not the change's fault.
+
 use super::MonorepoViolation;
+use anyhow::{Context, Result};
 use std::path::Path;
+
+/// What this change did to one file, as the diff reports it.
+pub struct FileChange<'a> {
+    diff: &'a crate::git_manager::diff_context::FileDiff,
+}
+
+impl<'a> FileChange<'a> {
+    /// Construction now requires shared parser evidence, not raw-line literals.
+    pub fn from_diff(diff: &'a crate::git_manager::diff_context::FileDiff) -> Self {
+        Self { diff }
+    }
+
+    fn grew(&self) -> bool {
+        self.diff.net_lines() > 0
+    }
+}
 
 pub struct WholeFileExpansion;
 
 impl WholeFileExpansion {
     pub const MAX_WHOLE_FILE_LINES: usize = 300;
 
-    /// Evaluates the entire file content on disk for all touched files in a PR
-    pub fn evaluate_whole_file(repo_dir: &Path, file_path: &str) -> Vec<MonorepoViolation> {
+    /// Judges what `change` did to `file_path`.
+    ///
+    /// The file on disk is still read, because "is this file over budget" and
+    /// "does this line import I/O" are properties of the file. What changed is
+    /// who is charged: only a file this change GREW, and only a line this
+    /// change ADDED.
+    pub fn evaluate_whole_file(
+        repo_dir: &Path,
+        file_path: &str,
+        change: &FileChange<'_>,
+    ) -> Result<Vec<MonorepoViolation>> {
         let mut violations = Vec::new();
         let full_path = repo_dir.join(file_path);
 
         if !full_path.exists() || !full_path.is_file() {
-            return violations;
+            return Ok(violations);
         }
 
         // Only evaluate Rust source files and documentation
         let is_rust = file_path.ends_with(".rs");
         let is_doc = file_path.ends_with(".md") || file_path.ends_with(".yaml");
+        let is_test = is_rust
+            && crate::source_scan::is_cfg_test_module_file(repo_dir, &full_path)
+                .map_err(anyhow::Error::msg)?;
 
         if !is_rust && !is_doc {
-            return violations;
+            return Ok(violations);
         }
 
-        let content = match std::fs::read_to_string(&full_path) {
-            Ok(c) => c,
-            Err(_) => return violations,
-        };
+        let content = std::fs::read_to_string(&full_path)
+            .with_context(|| format!("cannot read changed source {}", full_path.display()))?;
 
         let lines: Vec<&str> = content.lines().collect();
         let line_count = lines.len();
+        let added = if is_rust {
+            if change.diff.path != file_path {
+                anyhow::bail!("changed source path disagrees with diff evidence");
+            }
+            let added = change
+                .diff
+                .added_post_image_lines()
+                .map_err(|reason| anyhow::Error::msg(reason.to_owned()))
+                .with_context(|| format!("cannot attribute changed source {file_path}"))?;
+            for occurrence in added {
+                if lines.get(occurrence.line() - 1).copied() != Some(occurrence.text()) {
+                    anyhow::bail!(
+                        "changed source {} disagrees at line {}",
+                        file_path,
+                        occurrence.line()
+                    );
+                }
+            }
+            added
+        } else {
+            &[]
+        };
 
         // 1. Whole-file line limit check
-        if line_count > Self::MAX_WHOLE_FILE_LINES && is_rust && !file_path.contains("test") {
+        // Over budget AND made worse here. A change that shrinks an oversized
+        // file is the remedy this gate asks for and must not be refused for
+        // arriving mid-way.
+        //
+        // Test code is exempt by Cargo's layout, not by whether the word
+        // "test" appears in the path. The substring spelling exempted
+        // `attestation_guard.rs` and `predictive_test_selector/workspace_dag.rs`
+        // -- both production, both already past this ceiling -- because
+        // "attestation" and "predictive_test_selector" contain it.
+        if line_count > Self::MAX_WHOLE_FILE_LINES && change.grew() && is_rust && !is_test {
             violations.push(MonorepoViolation {
                 category: "OVERSIZED_WHOLE_FILE".to_string(),
                 description: format!(
-                    "Modified file '{}' has {} total lines, exceeding the module-size ceiling of {}. Decompose into cohesive submodules.",
-                    file_path, line_count, Self::MAX_WHOLE_FILE_LINES
+                    "File '{}' is {} lines and this change grew it by {}, past the module-size ceiling of {}. Split it into more modules inside the same crate.",
+                    file_path, line_count, change.diff.net_lines(), Self::MAX_WHOLE_FILE_LINES
                 ),
                 snippet: format!("Total lines: {}", line_count),
             });
@@ -53,14 +123,15 @@ impl WholeFileExpansion {
                 "std::net::",
                 "redis::",
             ];
-            for (idx, line) in lines.iter().enumerate() {
+            for occurrence in added {
+                let line = occurrence.text();
                 for kw in &banned_io_keywords {
                     if line.contains(kw) {
                         violations.push(MonorepoViolation {
                             category: "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION".to_string(),
                             description: format!(
                                 "Domain Core file '{}' imports direct I/O library '{}' at line {}. Domain Core must be 100% pure business logic with zero I/O drivers.",
-                                file_path, kw, idx + 1
+                                file_path, kw, occurrence.line()
                             ),
                             snippet: line.trim().to_string(),
                         });
@@ -69,15 +140,33 @@ impl WholeFileExpansion {
             }
         }
 
-        // 3. Rust Safety check: raw unwrap in production
-        if is_rust && !file_path.contains("test") && !file_path.starts_with("tests/") {
-            for (idx, line) in lines.iter().enumerate() {
-                if line.contains(".unwrap()") && !line.trim_start().starts_with("//") {
+        // 3. Raw `unwrap` in production code this change added.
+        //
+        // Three strippers, none of which this rule had. `without_test_modules`
+        // removes `#[cfg(test)]` blocks, which is where `tempdir().unwrap()`
+        // lives and why a production file was charged for its own fixtures.
+        // `code_only` removes comments and string literals, without which the
+        // rule read its own error message and its own comparison line as
+        // findings -- it reported itself, three times, on this pull request.
+        // And a path substring test is not a test check: it skipped
+        // `src/latest_state.rs` for containing "test" while scanning every
+        // `#[cfg(test)]` block in every other file.
+        if is_rust && !is_test {
+            let production = crate::source_scan::try_without_test_modules(&content)
+                .map_err(anyhow::Error::msg)?;
+            let production = crate::source_scan::code_only(&production);
+            let projected: Vec<_> = production.lines().collect();
+            if projected.len() != lines.len() {
+                anyhow::bail!("production projection changed source line coordinates");
+            }
+            for occurrence in added {
+                let line = projected[occurrence.line() - 1];
+                if line.contains(".unwrap()") {
                     violations.push(MonorepoViolation {
                         category: "PRODUCTION_UNWRAP_DETECTED".to_string(),
                         description: format!(
-                            "Production file '{}' contains raw .unwrap() at line {}. Use '?' operator, 'unwrap_or_default()', or explicit error handling.",
-                            file_path, idx + 1
+                            "Production file '{}' gains a raw unwrap at line {}. Use `?`, `unwrap_or_default()`, or explicit error handling.",
+                            file_path, occurrence.line()
                         ),
                         snippet: line.trim().to_string(),
                     });
@@ -85,7 +174,7 @@ impl WholeFileExpansion {
             }
         }
 
-        violations
+        Ok(violations)
     }
 }
 
@@ -93,6 +182,17 @@ impl WholeFileExpansion {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn creation(path: &str, source: &str) -> Vec<crate::git_manager::diff_context::FileDiff> {
+        let body = source
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        crate::git_manager::diff_context::diffs_by_path(&format!(
+            "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{} @@\n{body}",
+            source.lines().count()
+        ))
+    }
 
     #[test]
     fn test_catches_oversized_file_and_core_io() {
@@ -106,8 +206,16 @@ mod tests {
         }
         std::fs::write(core_path.join("order.rs"), &code).unwrap();
 
-        let violations =
-            WholeFileExpansion::evaluate_whole_file(dir.path(), "billing/core/src/order.rs");
+        // A change that CREATES the file: every line is added, and the net
+        // growth is the whole file. Both findings are this change's.
+        let files = creation("billing/core/src/order.rs", &code);
+        let change = FileChange::from_diff(&files[0]);
+        let violations = WholeFileExpansion::evaluate_whole_file(
+            dir.path(),
+            "billing/core/src/order.rs",
+            &change,
+        )
+        .expect("evaluate source");
         assert!(
             violations
                 .iter()
@@ -117,6 +225,40 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.category == "CLEAN_ARCHITECTURE_CORE_IO_VIOLATION")
+        );
+    }
+
+    #[test]
+    fn production_include_under_tests_is_not_exempt_from_whole_file_policy() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname='shipping-role'\nversion='0.0.0'\nedition='2024'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "include!(\"../tests/shipping.rs\");\n",
+        )
+        .unwrap();
+        let source = (0..=WholeFileExpansion::MAX_WHOLE_FILE_LINES)
+            .map(|index| format!("pub fn shipping_{index}() {{}}\n"))
+            .collect::<String>();
+        std::fs::write(dir.path().join("tests/shipping.rs"), &source).unwrap();
+        let files = creation("tests/shipping.rs", &source);
+        let violations = WholeFileExpansion::evaluate_whole_file(
+            dir.path(),
+            "tests/shipping.rs",
+            &FileChange::from_diff(&files[0]),
+        )
+        .unwrap();
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.category == "OVERSIZED_WHOLE_FILE"),
+            "production role must override the tests/ directory name"
         );
     }
 }

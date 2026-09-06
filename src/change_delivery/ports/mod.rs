@@ -3,10 +3,16 @@
 //! will implement the traits declared here.
 
 pub use crate::change_delivery::core::{
-    Admission, DeliveryLedger, LABEL_SHAPE_MOVE, LABEL_STRUCTURE_ONLY, LandingInputs, LandingMode,
-    LandingPolicy, LedgerEntry, MOVE_PLAN_SCHEMA_V1, Move, MoveKind, NameStatus, OwnerMap,
-    PurityViolation, ShapeMovePlan, Shard, ShardKey, ShardState, Withheld, admit, branch_name,
-    conflict_pairs, diff_is_structure_only, pr_marker, select_independent, shard_key, shard_plan,
+    Admission, DeliveryLedger, Held, LABEL_SHAPE_MOVE, LABEL_STRUCTURE_ONLY, LandingInputs,
+    LandingMode, LandingPolicy, LedgerEntry, MOVE_PLAN_SCHEMA_V1, Move, MoveKind, NameStatus,
+    OwnerMap, PurityViolation, Sequenced, ShapeMovePlan, Shard, ShardKey, ShardState, Withheld,
+    admit, branch_name, conflict_pairs, diff_is_structure_only, pr_marker, select_independent,
+    sequence, shard_key, shard_plan,
+};
+
+pub use crate::change_delivery::core::shard::occupancy::{
+    Hop, HubBaseFreshness, SpawnKind, SpawnRefused, admit_in_queue, admit_in_queue_with_freshness,
+    admit_spawn, ahead_of, anvil_hubs, path_sets_disjoint,
 };
 
 use async_trait::async_trait;

@@ -94,11 +94,23 @@ async fn a_trunk_is_measured_recorded_and_planned() {
         ),
         data_dir: tmp.path().join("data"),
     };
-    let summary = sweep_repo(&deps, "fixture/shaped").await.expect("sweeps");
+    // The sweep MEASURES; delivery turns the report into a plan. Composing
+    // them here mirrors the composition root, and is what broke the
+    // shape <-> change_delivery cycle: neither unit knows the other.
+    let swept = sweep_repo(&deps, "fixture/shaped").await.expect("sweeps");
+    let anvil::shape::facade::sweep::Swept::Measured { report, summary } = swept else {
+        panic!("the fixture carries a spec, so it must be measured, not skipped");
+    };
     assert!(summary.contains("distance 1"), "{summary}");
     let latest = deps.telemetry.latest_shape_measurements().await;
     assert_eq!(latest["fixture/shaped"].findings_total, 1);
-    let plan_path = tmp.path().join("data/shape/fixture-shaped.moveplan.json");
+    let plan_path = anvil::change_delivery::facade::plan::write_move_plan(
+        &deps.data_dir,
+        "fixture/shaped",
+        &report,
+    )
+    .await
+    .expect("plan written");
     let raw = std::fs::read(&plan_path).expect("move plan written");
     let plan = anvil::change_delivery::ports::ShapeMovePlan::parse(&raw).expect("parses");
     assert_eq!(plan.moves.len(), 1);
@@ -118,10 +130,13 @@ async fn a_repo_without_a_spec_is_skipped_visibly_not_zeroed() {
         ),
         data_dir: tmp.path().join("data"),
     };
-    let summary = sweep_repo(&deps, "fixture/bare")
+    let swept = sweep_repo(&deps, "fixture/bare")
         .await
         .expect("skips cleanly");
-    assert!(summary.contains("no shape spec adopted"), "{summary}");
+    let anvil::shape::facade::sweep::Swept::Skipped(why) = swept else {
+        panic!("a repository with no adopted spec has nothing to measure against");
+    };
+    assert!(why.contains("no shape spec adopted"), "{why}");
     assert!(
         deps.telemetry.latest_shape_measurements().await.is_empty(),
         "no fabricated zero"

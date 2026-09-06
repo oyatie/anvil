@@ -3,6 +3,7 @@
 //! unit registry, read dependency edges, and run the engine.
 
 use super::cli::SPEC_PATH;
+use crate::git_manager::SubjectRoot;
 use crate::shape::adapters::{
     BuckLabelDeps, CargoManifestDeps, GitTreeAtRev, RustUseDeps, TsImportDeps,
 };
@@ -15,7 +16,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub struct MeasureRequest {
-    pub repo_dir: PathBuf,
+    pub repo_dir: SubjectRoot,
     pub rev: String,
     /// Label for the report (e.g. `oyatie/oyatie`).
     pub repo: String,
@@ -27,8 +28,10 @@ pub struct MeasureRequest {
 
 /// Which tree paths the engine needs loaded for `spec`: its own config, the
 /// registry, every profile's manifests and markers, and the source files the
-/// dependency and port rules read (every `.rs` under an adapters face; every
-/// `.rs` under a module-tree root).
+/// dependency and port rules read: every `.rs` under an adapters face or a
+/// module-tree root, and every TypeScript or JavaScript source under a unit
+/// root where the tenant declares that profile. A reader whose files are never
+/// loaded reports Unavailable forever, which is a rule that never runs.
 pub fn selector(spec: &ShapeSpec) -> impl Fn(&str) -> bool {
     let mut basenames: BTreeSet<String> = spec
         .profiles
@@ -53,22 +56,28 @@ pub fn selector(spec: &ShapeSpec) -> impl Fn(&str) -> bool {
         .filter_map(|s| s.faces.get("adapters"))
         .map(|d| format!("/{}/", d.trim_end_matches('/')))
         .collect();
-    let module_roots: Vec<String> = if spec.profiles.contains(&LanguageProfile::RustModuleTree) {
-        spec.unit_kinds
-            .values()
-            .filter_map(|k| k.root.split_once("<name>").map(|(p, _)| p.to_string()))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let module_roots = unit_roots(spec, LanguageProfile::RustModuleTree);
+    let ts_roots = unit_roots(spec, LanguageProfile::TsWorkspace);
     move |p: &str| {
+        let under = |roots: &[String]| roots.iter().any(|r| p.starts_with(r.as_str()));
         p == SPEC_PATH
             || registry_path.as_deref() == Some(p)
             || p.rsplit('/').next().is_some_and(|b| basenames.contains(b))
             || (p.ends_with(".rs")
-                && (adapters_dirs.iter().any(|d| p.contains(d.as_str()))
-                    || module_roots.iter().any(|r| p.starts_with(r.as_str()))))
+                && (adapters_dirs.iter().any(|d| p.contains(d.as_str())) || under(&module_roots)))
+            || (crate::shape::adapters::ts_import_deps::is_source(p) && under(&ts_roots))
     }
+}
+
+/// The path prefixes a spec's unit kinds sit under, when `profile` is declared.
+fn unit_roots(spec: &ShapeSpec, profile: LanguageProfile) -> Vec<String> {
+    if !spec.profiles.contains(&profile) {
+        return Vec::new();
+    }
+    spec.unit_kinds
+        .values()
+        .filter_map(|k| k.root.split_once("<name>").map(|(p, _)| p.to_string()))
+        .collect()
 }
 
 pub async fn measure_repo(req: &MeasureRequest) -> Result<ShapeReport> {

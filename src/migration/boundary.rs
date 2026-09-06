@@ -37,6 +37,17 @@
 
 use crate::migration::{MIGRATION_LEDGER, Verdict};
 
+/// Module identity shared by ledger labels such as `reviewer.rs` and
+/// `reviewer (dir)`. The labels preserve distinct audit evidence while verdict
+/// lookup deliberately treats the root file and directory as one module.
+pub fn ledger_component_identity(component: &str) -> &str {
+    component
+        .split(' ')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(".rs")
+}
+
 /// One forbidden edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundaryViolation {
@@ -68,12 +79,7 @@ pub fn verdict_for(module_path: &str) -> Option<Verdict> {
     let mut best: Option<(usize, Verdict)> = None;
 
     for entry in MIGRATION_LEDGER {
-        let candidate = entry
-            .component
-            .split(' ')
-            .next()
-            .unwrap_or("")
-            .trim_end_matches(".rs");
+        let candidate = ledger_component_identity(entry.component);
         if candidate.is_empty() {
             continue;
         }

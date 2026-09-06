@@ -2,7 +2,7 @@
 //!
 //! DEFECT UNDER TEST
 //! -----------------
-//! `src/clean_architecture_guard.rs` enforces the Core -> Ports -> Adapters ->
+//! `src/clean_architecture_guard/` enforces the Core -> Ports -> Adapters ->
 //! Facade dependency direction on *other people's* repositories only. Its single
 //! public entrypoint is `evaluate_architecture(&PrDiffContext)`, which consumes
 //! `diff_ctx.repo` / `diff_ctx.diff_content` from an inbound pull request, and its
@@ -76,6 +76,31 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Every source file of the guard, concatenated.
+///
+/// The guard was one 928-line file until ADR-0719 D-35 forced the split; a test
+/// that reads a single path would silently read nothing once it moved, and a
+/// structural assertion over an empty string passes.
+fn guard_source() -> String {
+    let dir = anvil_src().join("clean_architecture_guard");
+    let mut files: Vec<_> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        .collect();
+    assert!(
+        !files.is_empty(),
+        "no guard sources under {}",
+        dir.display()
+    );
+    files.sort();
+    files
+        .iter()
+        .map(|f| non_comment_source(f))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Source lines with whole-line `//` comments removed, so that a doc comment
 /// mentioning an identifier cannot satisfy a structural assertion about code.
 fn non_comment_source(path: &Path) -> String {
@@ -140,7 +165,10 @@ fn anvil_tree_as_diff() -> (PrDiffContext, Vec<String>) {
             previous_head_sha: None,
             diff_content: diff,
             changed_files: rels.clone(),
-            repo_working_dir: root,
+            repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+                root,
+                anvil::git_manager::Uncloned::TestFixture,
+            ),
         },
         rels,
     )
@@ -152,7 +180,7 @@ fn anvil_tree_as_diff() -> (PrDiffContext, Vec<String>) {
 ///
 /// A self-check cannot exist until the guard can read a directory, so this is the
 /// structural precondition for tests 2-4. It requires two things of
-/// `src/clean_architecture_guard.rs`, both outside comments: a function signature
+/// `src/clean_architecture_guard/`, both outside comments: a function signature
 /// that accepts a filesystem path, and an actual filesystem read.
 ///
 /// Prompting would not prevent this: the missing capability is invisible at the
@@ -160,8 +188,7 @@ fn anvil_tree_as_diff() -> (PrDiffContext, Vec<String>) {
 /// nothing about it announces that the only reachable inputs are foreign repos.
 #[test]
 fn guard_exposes_an_entrypoint_that_scans_a_source_tree() {
-    let guard_src = anvil_src().join("clean_architecture_guard.rs");
-    let code = non_comment_source(&guard_src);
+    let code = guard_source();
 
     let takes_a_path = code
         .lines()
@@ -303,7 +330,7 @@ fn self_conformance_check_is_wired_into_production_code() {
         let code = non_comment_source(&f);
         let mentions_guard = code.contains("CleanArchitectureGuard")
             || code.contains("clean_architecture_guard")
-            || rel.ends_with("clean_architecture_guard.rs");
+            || rel.contains("clean_architecture_guard/");
         if !mentions_guard {
             continue;
         }
@@ -341,8 +368,7 @@ fn self_conformance_check_is_wired_into_production_code() {
 /// the type -- it produces no warning, no error, and a plausible-looking green.
 #[test]
 fn guard_can_report_not_measured_when_no_layering_exists() {
-    let guard_src = anvil_src().join("clean_architecture_guard.rs");
-    let code = non_comment_source(&guard_src);
+    let code = guard_source();
 
     let has_third_state = code.contains("NotMeasured")
         || code.contains("not_measured")
@@ -356,4 +382,238 @@ fn guard_can_report_not_measured_when_no_layering_exists() {
          Adopt the repo's existing NotMeasured vocabulary (src/pre_merge_guard/report.rs) \
          so Anvil's own result is recorded as unmeasured rather than passed."
     );
+}
+
+/// A synthetic tree with one deliberate bypass, for proving the rule fires.
+///
+/// Anvil's own tree carried the fixture until today: these tests asserted on
+/// real violations in `git_manager` and elsewhere. With the seal at zero there
+/// is nothing left to assert against, and re-introducing a violation to keep a
+/// test green would invert the whole exercise. A constructed subject is what a
+/// proof needs anyway — `Rule::fixture` makes the same argument for the
+/// harness.
+fn tree_with_a_bypass() -> tempfile::TempDir {
+    let d = tempfile::tempdir().expect("tempdir");
+    let w = |rel: &str, body: &str| {
+        let p = d.path().join("src").join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    };
+    w("alpha/mod.rs", "pub mod core;\npub mod facade;\n");
+    w("alpha/core/mod.rs", "pub fn seed() {}\n");
+    w("alpha/facade/mod.rs", "pub use super::core::seed;\n");
+    w("beta/mod.rs", "pub mod facade;\n");
+    // The bypass: beta reaches past alpha's facade into its core.
+    w(
+        "beta/facade/mod.rs",
+        "use crate::alpha::core::seed;\npub fn go() { seed() }\n",
+    );
+    // A conformant self-reach: alpha's facade using alpha's own core, above.
+    d
+}
+
+/// The rule fires on a cross-unit reach past a facade.
+///
+/// Constructed, not observed: with anvil's own seal at zero there is no real
+/// bypass left to point at, and a check nobody has watched fire is a check
+/// that proves nothing.
+/// straight into another module's `adapters`. Only `facade` is importable from
+/// outside a unit -- that is the whole point of the four faces, and it is the
+/// edge that closes anvil's `change_delivery -> git_manager -> shape` cycle.
+///
+/// The guard classifies a file by ITS OWN path, so an unclassified importer is
+/// invisible to it and this edge is reported as clean.
+#[test]
+fn a_cross_unit_reach_past_a_facade_is_a_violation() {
+    let d = tree_with_a_bypass();
+    let r = CleanArchitectureGuard::new()
+        .evaluate_source_tree(&d.path().join("src"))
+        .unwrap();
+    let bypass = r
+        .violations
+        .iter()
+        .any(|v| v.file_path.contains("beta") && v.description.contains("reaches past"));
+    assert!(
+        bypass,
+        "beta/facade reaches past alpha's facade into its core and must be \
+         refused. Guard reported {} violation(s).",
+        r.violations.len()
+    );
+}
+
+/// The ratchet. Exact: a bypass that disappears must be noticed as much as one
+/// that appears, because a count that drops for an unknown reason is a count
+/// nobody is reading.
+#[test]
+fn facade_bypasses_do_not_exceed_the_recorded_ceiling() {
+    let r = CleanArchitectureGuard::new().self_conformance().unwrap();
+    let bypasses = r
+        .violations
+        .iter()
+        .filter(|v| v.description.contains("reaches past"))
+        .count();
+    // The ratchet reached its terminus. At zero a ceiling and an equality are
+    // the same statement: the count cannot fall further, so any change is a
+    // rise, and the number no lane needs to edit is the number that stays.
+    assert_eq!(
+        bypasses,
+        anvil::clean_architecture_guard::FACADE_BYPASSES_IN_ANVIL,
+        "cross-unit facade bypasses rose from zero. Only a unit's facade is \
+         importable from outside it; if the facade lacks what a consumer \
+         legitimately needs, widen the facade rather than reach around it. \
+         Offenders:\n{}",
+        r.violations
+            .iter()
+            .filter(|v| v.description.contains("reaches past"))
+            .map(|v| format!("  {} -> {}", v.file_path, v.target_layer))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// The other half of a proof: the rule must SPARE a conformant subject. A check
+/// that only ever fires is indistinguishable from one that always fires.
+///
+/// A unit reaching into its OWN interior is the normal, correct case -- it is
+/// how a facade uses its adapters -- and `shape/facade` does exactly that.
+#[test]
+fn a_unit_reaching_into_its_own_interior_is_spared() {
+    // Same constructed tree: `alpha/facade` uses `alpha/core`, which is how a
+    // facade is supposed to reach its own interior, while `beta` reaches into
+    // alpha's. One subject, both halves of the proof.
+    let d = tree_with_a_bypass();
+    let r = CleanArchitectureGuard::new()
+        .evaluate_source_tree(&d.path().join("src"))
+        .unwrap();
+    let self_reach = r
+        .violations
+        .iter()
+        .find(|v| v.file_path.contains("alpha") && v.description.contains("reaches past"));
+    assert!(
+        self_reach.is_none(),
+        "a unit was flagged for using its own faces: {self_reach:?}"
+    );
+    // And the rule is not inert: it is finding real cross-unit edges.
+    assert!(
+        r.violations
+            .iter()
+            .any(|v| v.description.contains("reaches past")),
+        "rule fired on nothing at all, so sparing proves nothing"
+    );
+}
+
+/// The bound that holds: removing a bypass is progress and needs no edit.
+///
+/// The guard's entry point takes a filesystem path, so the merge-base tree is
+/// materialised and judged by the same binary. One implementation, two trees.
+#[test]
+fn facade_bypasses_do_not_grow_against_the_merge_base() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let derived = rt.block_on(anvil::ratchet::facade::derived::at_merge_base_on_disk(
+        repo,
+        "origin/dev",
+        "HEAD",
+        |p| p.starts_with("src/") && p.ends_with(".rs"),
+        |root| {
+            CleanArchitectureGuard::new()
+                .evaluate_source_tree(&root.join("src"))
+                .map(|r| {
+                    r.violations
+                        .iter()
+                        .filter(|v| v.description.contains("reaches past"))
+                        .count()
+                })
+                .unwrap_or(usize::MAX)
+        },
+    ));
+    let Ok(base) = derived else {
+        eprintln!("skipped: no merge-base against origin/dev");
+        return;
+    };
+    if base.at_merge_base == usize::MAX {
+        eprintln!("skipped: the guard could not read the materialised merge-base tree");
+        return;
+    }
+    let now = CleanArchitectureGuard::new()
+        .self_conformance()
+        .unwrap()
+        .violations
+        .iter()
+        .filter(|v| v.description.contains("reaches past"))
+        .count();
+    assert!(
+        now <= base.at_merge_base,
+        "cross-unit facade bypasses grew from {} at merge-base {} to {}. Only a \
+         unit's facade is importable from outside it.",
+        base.at_merge_base,
+        &base.merge_base[..12],
+        now
+    );
+}
+
+/// The two entry points must measure the same subject.
+///
+/// `evaluate_source_tree` reads `src/` alone, so it never sees a test. The PR
+/// path analyses whatever the diff carries, so it saw four test files reaching
+/// into a unit's core and reported four violations against a tree the other
+/// mode called clean. One guard, two scopes, two answers.
+///
+/// The seal governs the dependency structure that ships. A test reaching into
+/// the unit under test is what a unit test is.
+#[test]
+fn a_test_reaching_into_a_units_core_is_out_of_scope() {
+    let diff = "\
++++ b/tests/d8_load_bearing_test.rs
++use anvil::shape::core::load_bearing::LoadIndex;
+";
+    let r = CleanArchitectureGuard::new()
+        .evaluate_architecture(&diff_ctx(diff))
+        .unwrap();
+    assert!(
+        r.violations.is_empty(),
+        "a test importing the module it tests is not a boundary violation: {:?}",
+        r.violations
+    );
+}
+
+#[test]
+fn the_same_import_in_a_production_file_is_still_a_violation() {
+    // The other half: scoping tests out must not scope production out with
+    // them, or the fix would be a hole rather than a correction.
+    let diff = "\
++++ b/src/beta/facade/mod.rs
++use crate::shape::core::load_bearing::LoadIndex;
+";
+    let r = CleanArchitectureGuard::new()
+        .evaluate_architecture(&diff_ctx(diff))
+        .unwrap();
+    assert!(
+        !r.violations.is_empty(),
+        "production code reaching past a facade must still be refused"
+    );
+}
+
+/// A pull-request context carrying just the diff under test.
+fn diff_ctx(diff: &str) -> anvil::git_manager::PrDiffContext {
+    anvil::git_manager::PrDiffContext {
+        repo: "oyatie/anvil".to_string(),
+        pr_number: 1,
+        base_branch: "dev".to_string(),
+        base_sha: "aaa".to_string(),
+        head_sha: "bbb".to_string(),
+        diff_content: diff.to_string(),
+        changed_files: vec![],
+        // Anvil's own tree, and on purpose: this test asks whether anvil
+        // conforms to the architecture it publishes. `SelfMeasurement` rather
+        // than `TestFixture` so it reads differently from the defect it
+        // resembles -- a gate that meant the subject and reached for
+        // `CARGO_MANIFEST_DIR`.
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            anvil::git_manager::Uncloned::SelfMeasurement,
+        ),
+        is_incremental: false,
+        previous_head_sha: None,
+    }
 }

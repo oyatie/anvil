@@ -79,9 +79,7 @@ const SUPERSEDED_OFF_LIMITS: &[&str] = &[
     "predictive_test_selector",
     "cross_service_impact",
     "supply_chain_guard",
-    "upgrade_train",
     "corpus_auditor",
-    "zero_trust_workload",
     "account_pool",
     "cli",
 ];
@@ -144,7 +142,9 @@ fn production_sources() -> Vec<(String, String)> {
         let Ok(body) = std::fs::read_to_string(&file) else {
             continue;
         };
-        out.push((rel, strip_cfg_test_items(&body).0));
+        let production = anvil::source_scan::try_without_test_modules(&body)
+            .unwrap_or_else(|reason| panic!("cannot classify production source {rel}: {reason}"));
+        out.push((rel, production));
     }
     out
 }
@@ -161,79 +161,6 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
-}
-
-/// Blanks every `#[cfg(test)]`-annotated item. Returns the stripped source and
-/// how many items were removed.
-///
-/// The item's extent is found by indentation: a `#[cfg(test)]` at indentation
-/// `n` is closed by the first later line whose indentation is `n` and which
-/// begins with `}`. An annotated item with no brace before its first `;` (e.g.
-/// `#[cfg(test)] use super::*;`) is a single statement and only that line goes.
-fn strip_cfg_test_items(source: &str) -> (String, usize) {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut keep = vec![true; lines.len()];
-    let mut removed = 0usize;
-
-    let mut i = 0usize;
-    while i < lines.len() {
-        let trimmed = lines[i].trim_start();
-        if !trimmed.starts_with("#[cfg(test)]") && !trimmed.starts_with("#[cfg(all(test") {
-            i += 1;
-            continue;
-        }
-        let indent = lines[i].len() - trimmed.len();
-
-        // Find where the annotated item opens a block, or ends as a statement.
-        let mut j = i;
-        let mut open_line: Option<usize> = None;
-        while j < lines.len() {
-            let body = lines[j].trim_start();
-            if body.contains('{') {
-                open_line = Some(j);
-                break;
-            }
-            if body.ends_with(';') && j > i {
-                break;
-            }
-            j += 1;
-        }
-
-        let end = match open_line {
-            None => j.min(lines.len().saturating_sub(1)),
-            Some(open) => {
-                let mut k = open + 1;
-                let mut found = open;
-                while k < lines.len() {
-                    let t = lines[k].trim_start();
-                    let ind = lines[k].len() - t.len();
-                    if ind == indent && t.starts_with('}') {
-                        found = k;
-                        break;
-                    }
-                    k += 1;
-                }
-                if found == open {
-                    lines.len() - 1
-                } else {
-                    found
-                }
-            }
-        };
-
-        for slot in keep.iter_mut().take(end + 1).skip(i) {
-            *slot = false;
-        }
-        removed += 1;
-        i = end + 1;
-    }
-
-    let out: Vec<&str> = lines
-        .iter()
-        .zip(keep.iter())
-        .map(|(l, k)| if *k { *l } else { "" })
-        .collect();
-    (out.join("\n"), removed)
 }
 
 /// Every violation the production gate finds in production source, with no
@@ -531,6 +458,33 @@ fn ledger_verdict(component: &str) -> Option<Verdict> {
 /// the repository and lands in someone else's pull request, which makes it the
 /// part that must be checked mechanically rather than the part that can be left
 /// to taste.
+/// The exemption is narrow, and this is where that is measured.
+#[test]
+fn a_type_name_is_exempt_and_a_prose_stamp_is_not() {
+    // Names a thing.
+    assert!(is_identifier_shaped("CloudNativeGuard"));
+    assert!(is_identifier_shaped("DualTrackBuildGuard"));
+    assert!(is_identifier_shaped("hyperscaler_consensus_guard"));
+    // Names a thing: the third of Rust's three conventions.
+    assert!(is_identifier_shaped("GH_ENTERPRISE_TOKEN"));
+    assert!(is_identifier_shaped("GITHUB_WEBHOOK_SECRET"));
+    // Asserts a thing.
+    assert!(!is_identifier_shaped("Cloud-Native"));
+    assert!(!is_identifier_shaped("ENTERPRISE APPROVED"));
+    assert!(!is_identifier_shaped("HYPERSCALER"));
+    assert!(!is_identifier_shaped("Hyperscalers"));
+    assert!(!is_identifier_shaped("cloud"));
+    // And the whole rule, on the two shapes that matter:
+    assert!(stamp_occurs_only_as_an_identifier(
+        "CloudNativeGuard",
+        "cloud native"
+    ));
+    assert!(!stamp_occurs_only_as_an_identifier(
+        "Cloud-Native violations found",
+        "cloud native"
+    ));
+}
+
 #[test]
 fn no_pr_visible_display_string_carries_an_aspiration_stamp() {
     let offenders: Vec<BrandViolation> = scan_production()
@@ -604,7 +558,54 @@ fn is_identifier_shaped(token: &str) -> bool {
             || IDENTIFIER_EXTRAS.contains(&c)
     });
     let has_separator = token.chars().any(|c| IDENTIFIER_SEPARATORS.contains(&c));
-    all_machine && has_separator
+    (all_machine && has_separator) || is_a_rust_type_name(token) || is_a_rust_constant_name(token)
+}
+
+/// A `SCREAMING_SNAKE_CASE` word: `GITHUB_WEBHOOK_SECRET`, `GH_ENTERPRISE_TOKEN`.
+///
+/// The third of Rust's three conventions, and the one an environment variable
+/// name always takes. `is_a_rust_type_name` below was added because the
+/// separator rule covered only `snake_case`; this closes the same gap for
+/// constants, on the same grounds -- it NAMES a thing rather than asserts one.
+///
+/// Deliberately narrow, and narrower than it looks: prose is not written in
+/// this shape. `ENTERPRISE APPROVED` is two words and stays flagged, and a
+/// single shouted word like `HYPERSCALER` has no separator and stays flagged
+/// too. What passes is a token that could only ever be a constant or an
+/// environment variable.
+fn is_a_rust_constant_name(token: &str) -> bool {
+    token.contains('_')
+        && token
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// A bare `UpperCamelCase` word: `CloudNativeGuard`, `DualTrackBuildGuard`.
+///
+/// The separator rule above covers only half of Rust's own naming convention.
+/// Values are `snake_case` and types are `UpperCamelCase`, and both NAME a
+/// thing rather than assert one -- which is the distinction the exemption is
+/// for. Without this, `gate_proof`'s `exercises: "CloudNativeGuard"` reads as a
+/// vendor stamp, and that field must be the guard's type name: it is what stops
+/// a proof citation being satisfied by any test with a plausible title.
+///
+/// Deliberately narrow. One token, no whitespace, at least one internal capital,
+/// and no punctuation. `Cloud-Native violations` and `Hyperscalers Approved`
+/// are two words and stay flagged; `CloudNative` alone would pass, which is the
+/// same evasion the doc comment above already admits is possible and visible in
+/// review.
+fn is_a_rust_type_name(token: &str) -> bool {
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_uppercase()
+        && token.chars().all(|c| c.is_ascii_alphanumeric())
+        && token.chars().skip(1).any(|c| c.is_ascii_uppercase())
+        // Real `UpperCamelCase` has lowercase in it. Without this, any shouted
+        // word passes as a type name -- `HYPERSCALER` did, and a single
+        // all-caps claim is the plainest form of the stamp this scan is for.
+        && token.chars().any(|c| c.is_ascii_lowercase())
 }
 
 // ---------------------------------------------------------------------------
@@ -925,10 +926,11 @@ fn the_cfg_test_stripper_removes_test_modules_and_keeps_production_code() {
          result here would prove nothing"
     );
 
-    let (stripped, removed) = strip_cfg_test_items(&raw);
+    let stripped = anvil::source_scan::try_without_test_modules(&raw)
+        .expect("the shared AST/span stripper accepts valid Rust");
 
     assert!(
-        removed >= 1,
+        stripped != raw,
         "the stripper removed nothing from a file that demonstrably contains a #[cfg(test)] \
          module"
     );

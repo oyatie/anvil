@@ -56,7 +56,7 @@ impl EphemeralSecretInjector {
 
             let file_findings = self
                 .validator
-                .validate_workflow_secrets(&file.path, &file.all);
+                .validate_workflow_secrets(&file.path, file.after_change());
             findings.extend(file_findings);
         }
 
@@ -93,7 +93,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ permissions:\n+   id-token: write".to_string(),
             changed_files: vec![".github/workflows/deploy.yaml".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

@@ -110,6 +110,44 @@ impl CorpusAuditor {
     }
 }
 
+impl CorpusAuditReport {
+    /// Corpus findings, as work items.
+    ///
+    /// Declared here rather than in `intake` so the vocabulary stays a leaf.
+    ///
+    /// Only the lists become work. `freshness_ratio` and `dormant_files_count`
+    /// are measurements of the corpus, not defects in it: raising them would
+    /// put a number in the backlog that no change can close.
+    pub fn work_items(&self, repo: &str) -> Vec<crate::intake::WorkItem> {
+        use crate::intake::{Remedy, Source, WorkItem, sources::subject};
+        let claims = self.unauthorized_ssot_claims.iter().map(|path| WorkItem {
+            source: Source::Audit,
+            subject: subject(repo, path),
+            what: "claims to be a source of truth without authority to".to_string(),
+            consequence: "two documents each assert they are canonical, so a \
+                          reader has no way to tell which one a change must follow"
+                .to_string(),
+            class: None,
+            remedy: Remedy::NeedsJudgement {
+                why: "which document is canonical is a decision, not an edit".to_string(),
+            },
+        });
+        let frontmatter = self.frontmatter_violations.iter().map(|path| WorkItem {
+            source: Source::Audit,
+            subject: subject(repo, path),
+            what: "frontmatter does not conform".to_string(),
+            consequence: "the document is not indexable, so it is invisible to \
+                          every sweep that reads frontmatter"
+                .to_string(),
+            class: None,
+            remedy: Remedy::Mechanical {
+                how: "rewrite the frontmatter to the declared schema".to_string(),
+            },
+        });
+        claims.chain(frontmatter).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

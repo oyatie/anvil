@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
+use crate::merge_enlister::disarm::unless_enlisting;
 use crate::webhook::AppState;
+
+use super::record;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_pr_review(
@@ -22,6 +25,12 @@ pub async fn execute_pr_review(
         pr_number
     );
 
+    // Read before anything is spent: a run that starts while Anvil is held
+    // costs a model turn and a clone before it discovers it may not finish.
+    if state.pause.holds(repo, pr_number, "starting a review") {
+        return Ok(());
+    }
+
     // Acquire exclusive per-PR lock to prevent TOCTOU race conditions from rapid webhook bursts
     let pr_lock = state.state_mgr.acquire_pr_lock(repo, pr_number).await;
     let _guard = pr_lock.lock().await;
@@ -33,14 +42,9 @@ pub async fn execute_pr_review(
         .as_ref()
         .map(|s| s.last_reviewed_head_sha.as_str());
 
-    if !force
-        && let Some(last_sha) = prev_sha
-        && last_sha == head_sha
-    {
-        info!(
-            "PR {}#{} HEAD {} was already reviewed. Skipping.",
-            repo, pr_number, head_sha
-        );
+    let admission = super::admit::admit(force, state_entry.as_ref(), head_sha);
+    info!("{repo}#{pr_number} at {head_sha}: {}", admission.reason());
+    if admission.is_skip() {
         return Ok(());
     }
 
@@ -68,11 +72,19 @@ pub async fn execute_pr_review(
         "Submitting AI Code Review to GitHub for {}#{}...",
         repo, pr_number
     );
-    state
+    // Preserve the anchoring diff and distinguish summary-only publication.
+    let publication = state
         .github_client
-        .submit_pr_review(repo, pr_number, head_sha, &review_resp)
+        .submit_pr_review_with_diff(
+            repo,
+            pr_number,
+            head_sha,
+            &review_resp,
+            &diff_ctx.diff_content,
+        )
         .await?;
 
+    publication.report(repo, pr_number);
     state
         .state_mgr
         .update_pr_state(
@@ -83,13 +95,15 @@ pub async fn execute_pr_review(
         )
         .await?;
 
-    // The repository's own verification gate, run rather than assumed, and run
-    // against `head_sha` rather than against whatever the shared clone happens
-    // to be on. This used to be a literal `Some(true)` for a suite nothing in
-    // this pipeline ran, which the corpus turned into `test_suite_status:
-    // Passed` and the approving review published as a measured pass.
-    let test_suite_passed =
-        super::certify::local_verification_gate(&state.git_mgr, repo, pr_number, head_sha).await;
+    // Measure the repository's verification gate against this exact head;
+    // an assumed pass must never become evidence in an approving review.
+    let test_suite_passed = super::local_verification::local_verification_gate(
+        &state.git_mgr,
+        repo,
+        pr_number,
+        head_sha,
+    )
+    .await;
 
     // 2..69. The gate corpus, run for this pull request.
     let cert_report = match super::certify::certify_pull_request(
@@ -99,7 +113,6 @@ pub async fn execute_pr_review(
         title,
         body,
         head_sha,
-        &repo_dir,
         &diff_ctx,
         &review_resp.verdict,
         test_suite_passed,
@@ -108,12 +121,7 @@ pub async fn execute_pr_review(
     {
         Ok(report) => report,
         Err(e) => {
-            // Roll back the reviewed-SHA stamp so this PR is retried rather
-            // than stranded: the stamp is set above, and the early-exit guard
-            // would otherwise skip every later webhook for this SHA. The stamp
-            // belongs to this pipeline, so the rollback does too — the corpus
-            // is shared with the enlistment paths, and an enlist attempt must
-            // not be able to un-stamp a pull request.
+            // Retried rather than stranded; `clear_reviewed_sha` says why.
             state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
             return Err(e);
         }
@@ -159,7 +167,7 @@ pub async fn execute_pr_review(
     }
 
     // Post or amend the scorecard in place, keyed on its marker (Zero Clutter).
-    state
+    if let Err(e) = state
         .github_client
         .upsert_pr_comment(
             repo,
@@ -167,7 +175,12 @@ pub async fn execute_pr_review(
             "<!-- ANVIL_SCORECARD_RECEIPT -->",
             &scorecard_comment(&cert_report),
         )
-        .await?;
+        .await
+    {
+        // Was a bare `?`: a rate-limited forge stranded the head for good.
+        state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+        return Err(e);
+    }
 
     info!(
         "Pre-Merge, GitOps, CI Velocity & Security Certification completed for {}#{}. Ready: {}",
@@ -304,67 +317,113 @@ pub async fn execute_pr_review(
             );
         }
     }
-    let enlistment = state
-        .merge_enlister
-        .enlist_into_merge_queue(repo, pr_number, Some(&cert_report))
-        .await;
-    if let Err(e) = &enlistment {
-        warn!("Automatic merge queue enlistment notice: {}", e);
+    // What happens next is decided from the verdict, not left implicit.
+    //
+    // `next_phase` has existed, documented and tested, with no caller anywhere
+    // in `src/` -- so the approve arm enlisted unconditionally and the reject
+    // arm did nothing at all. A pull request anvil asked to change sat until a
+    // person noticed. Wiring it is the whole of this change.
+    //
+    // The fork question fails closed. `fetch_pr_metadata` can fail, and
+    // reading that as "not a fork" would have anvil push a rewritten branch at
+    // a repository it does not own. An unknown answer halts.
+    let is_cross_repository = match state.github_client.fetch_pr_metadata(repo, pr_number).await {
+        Ok(meta) => meta.is_cross_repository,
+        Err(e) => {
+            warn!(
+                "Could not determine whether {}#{} is a fork ({}); treating it as one, so                  nothing is pushed.",
+                repo, pr_number, e
+            );
+            true
+        }
+    };
+    // Bound to a local: the decision borrows it, so a temporary would be
+    // dropped before `next_phase` reads it.
+    let pr_state_now = state.state_mgr.get_pr_state(repo, pr_number).await;
+    let situation = crate::webhook::next_phase::Situation {
+        verdict: &review_resp.verdict,
+        admissible: cert_report.admission_refusal().map_err(|e| e.to_string()),
+        head_sha,
+        is_cross_repository,
+        actionable_comments: review_resp.comments.len(),
+        state: pr_state_now.as_ref(),
+    };
+    let phase = crate::webhook::next_phase::next_phase(&situation);
+
+    if let Some(outcome) = unless_enlisting(&state.merge_enlister, &phase, repo, pr_number).await {
+        outcome.report(repo, pr_number);
     }
 
-    // Record which head this run certified, and whether it went into the queue.
-    //
-    // `StateManager::record_certification` and the two fields it writes have
-    // existed all along with no writer anywhere in `src/`, while two live
-    // readers depend on them: the `pull_request` webhook's anti-loop filter
-    // (`webhook_handlers.rs`) drops a webhook only for a head already certified
-    // and queued, and the outage-recovery sweep
-    // (`recovery/reconciliation_sweep.rs`) decides a pull request needs
-    // certification when the recorded head is not its current one. With nothing
-    // writing them, the filter never fired and the sweep re-certified every open
-    // pull request on every pass. That is the same defect class as the rest of
-    // this change from the other side: a decision taken on a field that no
-    // measurement ever reaches.
-    //
-    // This is the one writer, and it is the review pipeline rather than the
-    // enlist doors, because this is the path that has both run the corpus and
-    // seen what the merge queue did with it. `CertifiedSubject` on the report
-    // answers "is this report about this commit" for one enlistment; this
-    // answers "which head has been certified for this pull request" across
-    // process restarts. They are not two spellings of one fact, and only this
-    // one is durable.
-    //
-    // Written only for a head the corpus certified AND the merge queue took.
-    // Stamped for a refused head it would tell the recovery sweep that a
-    // blocked pull request needs no further certification -- recording the
-    // field on a run that refused would be the field asserting something the
-    // run did not find.
-    //
-    // `enlistment.is_ok()` is part of the condition and not only the value.
-    // `needs_cert` in `recovery/reconciliation_sweep.rs` is
-    // `last_certified_head_sha != head_sha`, and `cli/server.rs` dispatches
-    // `execute_pr_review` for exactly the pull requests the sweep marks
-    // uncertified. Written for a certified head whose `gh pr merge` failed -- a
-    // rate limit, a `--match-head-commit` race, the queue temporarily disabled
-    // -- the field would remove that pull request from the outage-recovery
-    // dispatch set on every subsequent daemon start, permanently, at that head:
-    // the anti-loop filter in `webhook_handlers.rs` also requires
-    // `is_enlisted_in_merge_queue`, so nothing else would pick it back up once
-    // the contributor stopped pushing. Before this writer existed the sweep
-    // retried on every pass; a new writer must not silently disable the retry
-    // path.
-    if cert_report.admission_refusal().is_ok()
-        && enlistment.is_ok()
-        && let Err(e) = state
-            .state_mgr
-            .record_certification(repo, pr_number, head_sha, enlistment.is_ok())
-            .await
-    {
-        warn!(
-            "Could not persist the certification record for {}#{}: {}",
-            repo, pr_number, e
-        );
+    let mut enlisted = false;
+    match phase {
+        crate::webhook::next_phase::NextPhase::Enlist => {
+            // Read again, immediately before the only irreversible step on
+            // this path: certification takes minutes, and a switch sampled
+            // only at the start of a long run cannot be used during it.
+            if state.pause.holds(repo, pr_number, "enlisting") {
+                // Without this the pause is a one-way door.
+                state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+                return Ok(());
+            }
+            let enlistment = state
+                .merge_enlister
+                .enlist_into_merge_queue(repo, pr_number, Some(&cert_report))
+                .await;
+            match &enlistment {
+                Ok(_) => enlisted = true,
+                Err(e) => {
+                    warn!("Automatic merge queue enlistment notice: {}", e);
+                    // Falls through rather than returns, so no earlier
+                    // rollback covers it, and the sweep record.rs relies on
+                    // dispatches with `force: false`. See `clear_reviewed_sha`.
+                    state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+                }
+            }
+        }
+        crate::webhook::next_phase::NextPhase::AutoFix { attempt } => {
+            info!(
+                "{}#{} review asked for changes; running the fixer (attempt {} of {}).",
+                repo,
+                pr_number,
+                attempt,
+                crate::webhook::next_phase::MAX_AUTO_FIX_ATTEMPTS
+            );
+            // Not a report: reaches the same clone, model turn and push the
+            // fixer door refuses, on a read minutes stale. See `pause`.
+            if state.pause.holds(repo, pr_number, "running the fixer") {
+                state.state_mgr.clear_reviewed_sha(repo, pr_number).await;
+                return Ok(());
+            }
+
+            // Counted before the run, not after. A fixer that panics or times
+            // out must still consume its attempt, or a crashing fixer loops
+            // forever -- the bound only holds if it counts tries.
+            if let Err(e) = state
+                .state_mgr
+                .record_auto_fix_attempt(repo, pr_number, head_sha)
+                .await
+            {
+                warn!(
+                    "Could not record the auto-fix attempt for {}#{}: {}. Refusing to run the                      fixer, because an uncounted attempt is an unbounded loop.",
+                    repo, pr_number, e
+                );
+            } else if let Err(e) = super::execute_pr_fix(state, repo, pr_number).await {
+                warn!(
+                    "Auto-fixer for {}#{} did not complete: {}",
+                    repo, pr_number, e
+                );
+            }
+        }
+        crate::webhook::next_phase::NextPhase::Halt { reason } => {
+            info!(
+                "{}#{} stops here, and the reason is stated rather than left to be inferred: {}",
+                repo, pr_number, reason
+            );
+        }
     }
+
+    record::certification(state, repo, pr_number, head_sha, &cert_report, enlisted).await;
+    record::completion(state, repo, pr_number, head_sha).await;
 
     Ok(())
 }

@@ -111,6 +111,7 @@
     "face_edge_denied": { "mode": "baseline-block-on-new" },
     "cross_unit_non_facade": { "mode": "baseline-block-on-new" },
     "port_defined_in_adapter": { "mode": "baseline-block-on-new" },
+    "adapter_not_port_plus_technology": { "mode": "baseline-block-on-new" },
     "root_file_unallowlisted": { "mode": "baseline-block-on-new", "frozen_empty": true },
     "unit_root_file_unallowlisted": { "mode": "baseline-block-on-new" },
     "legacy_root_growth": { "mode": "baseline-block-on-new" },

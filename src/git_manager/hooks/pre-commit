@@ -1,27 +1,236 @@
 #!/bin/sh
-# Staged *.rs: rustfmt --check on that file list. Also refuse agent-dir
-# and gitignored paths in the index.
+# Commit-time installed-hook guardrail, not write-time containment. There is no
+# production scope producer here; the declaration is working-tree run state.
+# Other Git operations depend on their installed hook set. No claim of tamper
+# resistance, alternate-route coverage, or race-free declaration identity.
 set -eu
+
+# BEGIN ANVIL SCOPE POLICY FUNCTIONS
+# State statuses: 0 enforce, 10 genuinely absent/skip, 2 unsupported/refuse.
+anvil_scope_state() {
+  case "$1" in
+    readable_regular) return 0 ;;
+    absent) return 10 ;;
+    *) printf '%s\n' 'pre-commit: invalid run-scope declaration state' >&2; return 2 ;;
+  esac
+}
+
+# Git query statuses are not booleans: only 1 is a successful non-match.
+anvil_ignore_status() {
+  case "$1" in
+    1) return 0 ;;
+    0) printf '%s\n' 'pre-commit: gitignored path is staged' >&2; return 1 ;;
+    *) printf '%s\n' 'pre-commit: ignore query failed' >&2; return 2 ;;
+  esac
+}
+
+# Literal repository-relative path grammar. The subshell confines locale and
+# scratch state; neither argument is interpreted as shell syntax or a glob.
+anvil_scope_literal() (
+  LC_ALL=C
+  export LC_ALL
+  anvil_literal=$1
+  case "$2" in
+    declaration) anvil_literal=${anvil_literal%/} ;;
+    staged) ;;
+    *) return 2 ;;
+  esac
+  case "$anvil_literal" in
+    ''|/*|[A-Za-z]:*|*\\*|*\"*|*[[:cntrl:]]*) return 2 ;;
+  esac
+  case "/$anvil_literal/" in *//*|*/./*|*/../*) return 2 ;; esac
+  return 0
+)
+
+# Input is a complete control-checked declaration argument plus staged records
+# on stdin. Status: 0 permitted, 1 outside scope, 2 unsupported representation.
+# Empty lines and column-zero # comments grant nothing. No trimming/decoding.
+anvil_scope_check() {
+  anvil_declaration=$1
+  anvil_line=0
+  anvil_prefix=''
+  while IFS= read -r anvil_prefix || [ -n "$anvil_prefix" ]; do
+    anvil_line=$((anvil_line + 1))
+    case "$anvil_prefix" in ''|'#'*) continue ;; esac
+    if anvil_scope_literal "$anvil_prefix" declaration; then
+      :
+    else
+      printf 'pre-commit: invalid run-scope declaration at line %s\n' "$anvil_line" >&2
+      return 2
+    fi
+  done <<ANVIL_SCOPE_DECLARATION
+$anvil_declaration
+ANVIL_SCOPE_DECLARATION
+
+  # This loop starts only after the whole declaration has been validated.
+  anvil_staged=''
+  while IFS= read -r anvil_staged || [ -n "$anvil_staged" ]; do
+    [ -z "$anvil_staged" ] && continue
+    case "$anvil_staged" in
+      \"*) printf '%s\n' 'pre-commit: unsupported quoted staged record' >&2; return 2 ;;
+    esac
+    if anvil_scope_literal "$anvil_staged" staged; then
+      :
+    else
+      printf '%s\n' 'pre-commit: unsupported staged pathname' >&2
+      return 2
+    fi
+    anvil_match=''
+    anvil_prefix=''
+    while IFS= read -r anvil_prefix || [ -n "$anvil_prefix" ]; do
+      case "$anvil_prefix" in ''|'#'*) continue ;; esac
+      anvil_prefix=${anvil_prefix%/}
+      case "$anvil_staged" in
+        "$anvil_prefix"|"$anvil_prefix"/*) anvil_match=1; break ;;
+      esac
+    done <<ANVIL_SCOPE_DECLARATION
+$anvil_declaration
+ANVIL_SCOPE_DECLARATION
+    if [ -z "$anvil_match" ]; then
+      printf '%s\n  %.160s\n' 'pre-commit: staged path outside the declared run scope:' "$anvil_staged" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+# END ANVIL SCOPE POLICY FUNCTIONS
+
 if [ -n "${ANVIL_SKIP_HOOKS:-}" ]; then exit 0; fi
 if [ -n "$(git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' || true)" ]; then
   echo "pre-commit: staged path under an agent directory" >&2
   git diff --cached --name-only --diff-filter=ACM | grep -E '^\.(claude|codex|cursor|grok|agents|beads|omc|omx)/' >&2
   exit 1
 fi
-git diff --cached --name-only --diff-filter=ACM | while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  if git check-ignore -q "$f" 2>/dev/null; then
-    echo "pre-commit: gitignored path is staged: $f" >&2
+
+# The snapshot and enumeration outputs are private ordinary temporary files.
+# Cleanup names only resources beneath the successfully created directory.
+anvil_scope_tmp=$(mktemp -d) || exit 1
+anvil_scope_cleanup() {
+  rm -f -- "$anvil_scope_tmp/declaration" "$anvil_scope_tmp/filtered" \
+    "$anvil_scope_tmp/staged" "$anvil_scope_tmp/ignored"
+  rmdir -- "$anvil_scope_tmp"
+}
+trap 'anvil_scope_cleanup' 0
+trap 'exit 1' HUP INT TERM
+
+scope_parent=".anvil"
+scope_file=".anvil/run-scope"
+# Test links before existence, including dangling links. This is a setup-state
+# check, not protection against a declaration concurrently replaced after it.
+# A linked, non-directory or unsearchable .anvil is unsupported, not absence.
+if [ -L "$scope_parent" ]; then
+  anvil_scope_observed=parent_symlink
+elif [ -e "$scope_parent" ] && [ ! -d "$scope_parent" ]; then
+  anvil_scope_observed=parent_non_directory
+elif [ -d "$scope_parent" ] && [ ! -x "$scope_parent" ]; then
+  anvil_scope_observed=parent_unsearchable
+elif [ -L "$scope_file" ]; then
+  anvil_scope_observed=symlink
+elif [ ! -e "$scope_file" ]; then
+  anvil_scope_observed=absent
+elif [ ! -f "$scope_file" ]; then
+  anvil_scope_observed=non_regular
+elif [ ! -r "$scope_file" ]; then
+  anvil_scope_observed=unreadable
+else
+  anvil_scope_observed=readable_regular
+fi
+if anvil_scope_state "$anvil_scope_observed"; then
+  if cat -- "$scope_file" > "$anvil_scope_tmp/declaration"; then
+    :
+  else
+    printf '%s\n' 'pre-commit: cannot read run-scope declaration' >&2
     exit 1
   fi
-done
+  # LF frames records. Reject all other ASCII control bytes, including NUL,
+  # BEFORE command substitution: shell variables cannot retain NUL bytes.
+  if LC_ALL=C tr -d '\000-\011\013-\037\177' < "$anvil_scope_tmp/declaration" > "$anvil_scope_tmp/filtered"; then
+    :
+  else
+    printf '%s\n' 'pre-commit: declaration byte check failed' >&2
+    exit 1
+  fi
+  if cmp -s "$anvil_scope_tmp/declaration" "$anvil_scope_tmp/filtered"; then
+    :
+  else
+    anvil_compare_rc=$?
+    case "$anvil_compare_rc" in
+      1) printf '%s\n' 'pre-commit: unsupported declaration control bytes' >&2 ;;
+      *) printf '%s\n' 'pre-commit: declaration comparison failed' >&2 ;;
+    esac
+    exit 1
+  fi
+  if anvil_scope_text=$(cat "$anvil_scope_tmp/declaration"); then
+    :
+  else
+    printf '%s\n' 'pre-commit: declaration snapshot read failed' >&2
+    exit 1
+  fi
+  # No status filter, and no rename folding: every scope-affected path counts.
+  # Git quotes unsupported record forms; non-ASCII literal paths stay literal.
+  if git -c core.quotepath=false diff --cached --name-only --no-renames > "$anvil_scope_tmp/staged"; then
+    :
+  else
+    printf '%s\n' 'pre-commit: staged scope enumeration failed' >&2
+    exit 1
+  fi
+  if anvil_scope_check "$anvil_scope_text" < "$anvil_scope_tmp/staged"; then
+    :
+  else
+    exit 1
+  fi
+else
+  anvil_scope_rc=$?
+  [ "$anvil_scope_rc" -eq 10 ] || exit 1
+fi
+
+# The ignore policy is from the working tree, independently of index membership.
+# Keep the existing ACM candidate set; do not prevent ignored-file deletion.
+if git -c core.quotepath=false diff --cached --name-only --diff-filter=ACM > "$anvil_scope_tmp/ignored"; then
+  :
+else
+  printf '%s\n' 'pre-commit: staged ignore enumeration failed' >&2
+  exit 1
+fi
+f=''
+while IFS= read -r f || [ -n "$f" ]; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    \"*) printf '%s\n' 'pre-commit: unsupported quoted staged record' >&2; exit 1 ;;
+  esac
+  if anvil_scope_literal "$f" staged; then
+    :
+  else
+    printf '%s\n' 'pre-commit: unsupported staged pathname' >&2
+    exit 1
+  fi
+  if git check-ignore --no-index -q -- "$f" 2>/dev/null; then
+    anvil_ignore_rc=0
+  else
+    anvil_ignore_rc=$?
+  fi
+  if anvil_ignore_status "$anvil_ignore_rc"; then
+    :
+  else
+    printf '  %.160s\n' "$f" >&2
+    exit 1
+  fi
+done < "$anvil_scope_tmp/ignored"
 if ! git diff --cached --name-only --diff-filter=ACMR -- '*.rs' | grep -q .; then
   exit 0
 fi
+# rustfmt is a standalone binary: invoked on a file list it never reads
+# Cargo.toml, so it parses as Rust 2015 unless told otherwise. This repo is
+# edition 2024, so every file holding `async fn` or a let-chain FAILED TO
+# PARSE -- the check reported errors rather than formatting, on every modern
+# file, and had done since the edition moved. Derived from the manifest rather
+# than hardcoded so it cannot drift from it again.
+edition=$(sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([0-9]*\)".*/\1/p' Cargo.toml | head -1)
+[ -n "$edition" ] || edition=2015
 if [ -f rustfmt.toml ]; then
   git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' \
-    | xargs -0 rustfmt --check --config-path rustfmt.toml --
+    | xargs -0 rustfmt --check --edition "$edition" --config-path rustfmt.toml --
 else
   git diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' \
-    | xargs -0 rustfmt --check --
+    | xargs -0 rustfmt --check --edition "$edition" --
 fi

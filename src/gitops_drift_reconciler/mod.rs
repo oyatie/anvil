@@ -4,6 +4,7 @@ use std::path::Path;
 use tracing::info;
 
 use crate::git_manager::PrDiffContext;
+use crate::git_manager::diff_context::diffs_by_path;
 
 pub mod orphan_sweeper;
 pub use orphan_sweeper::{OrphanManifestFinding, OrphanSweeper};
@@ -51,6 +52,31 @@ impl GitOpsDriftReconciler {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
+        let files = diffs_by_path(&diff_ctx.diff_content);
+        let scoped = diff_ctx
+            .changed_files
+            .iter()
+            .map(String::as_str)
+            .filter(|path| OrphanSweeper::is_gitops_manifest(path))
+            .collect::<std::collections::BTreeSet<_>>();
+        for path in &scoped {
+            let direct = files.iter().any(|file| file.path == **path);
+            let matches: Vec<_> = files
+                .iter()
+                .filter(|file| {
+                    if direct {
+                        file.path == **path
+                    } else {
+                        file.previous_path() == Some(*path)
+                    }
+                })
+                .collect();
+            if matches.len() != 1 || matches[0].change_kind().is_none() {
+                return Err(anyhow::anyhow!(
+                    "GitOps manifest change kind is not observable for {path}"
+                ));
+            }
+        }
         let orphan_findings = self
             .sweeper
             .scan_orphan_risk(&diff_ctx.changed_files, &diff_ctx.diff_content);
@@ -72,11 +98,7 @@ impl GitOpsDriftReconciler {
         // explicitly. That is the shape here. `NotMeasured` is
         // `is_acceptable()`, so the badge does not accuse the pull request of a
         // defect; `admission_refusal` withholds the merge.
-        if !diff_ctx
-            .changed_files
-            .iter()
-            .any(|f| OrphanSweeper::is_gitops_manifest(f))
-        {
+        if scoped.is_empty() {
             return Ok(GitOpsDriftReport {
                 status: GateStatus::NotMeasured {
                     gate_id: GATE_ID.to_string(),
@@ -112,6 +134,37 @@ impl GitOpsDriftReconciler {
     }
 }
 
+impl GitOpsDriftReport {
+    /// Orphan manifests, as work items.
+    ///
+    /// Declared here rather than in `intake` so that `intake` stays a leaf.
+    /// A finding belongs to the module that found it; the vocabulary it is
+    /// expressed in must not import that module back.
+    ///
+    /// An orphan is mechanical to resolve -- the manifest is either adopted by
+    /// a reconciler or removed -- so it is raised as such rather than as
+    /// something awaiting a decision.
+    pub fn work_items(&self, repo: &str) -> Vec<crate::intake::WorkItem> {
+        use crate::intake::{Remedy, Source, WorkItem, sources::subject};
+        self.orphan_findings
+            .iter()
+            .map(|f| WorkItem {
+                source: Source::Drift,
+                subject: subject(repo, &f.file_path),
+                what: format!("orphan {} manifest: {}", f.manifest_kind, f.reason),
+                consequence: "the manifest is applied by nothing, so what is \
+                              declared and what runs have drifted and neither \
+                              side reports it"
+                    .to_string(),
+                class: None,
+                remedy: Remedy::Mechanical {
+                    how: "adopt the manifest into a reconciler, or delete it".to_string(),
+                },
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,7 +180,10 @@ mod tests {
             head_sha: "bbb".to_string(),
             diff_content: "+ replicaCount: 3".to_string(),
             changed_files: vec!["infra/gitops/values.yaml".to_string()],
-            repo_working_dir: std::path::PathBuf::from("."),
+            repo_working_dir: crate::git_manager::SubjectRoot::asserted(
+                std::path::PathBuf::from("."),
+                crate::git_manager::Uncloned::TestFixture,
+            ),
             is_incremental: false,
             previous_head_sha: None,
         };

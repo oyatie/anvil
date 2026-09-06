@@ -85,7 +85,10 @@ fn ctx(diff: &str, changed: &[&str]) -> PrDiffContext {
         head_sha: "b".to_string(),
         diff_content: diff.to_string(),
         changed_files: changed.iter().map(|s| s.to_string()).collect(),
-        repo_working_dir: PathBuf::from("."),
+        repo_working_dir: anvil::git_manager::SubjectRoot::asserted(
+            PathBuf::from("."),
+            anvil::git_manager::Uncloned::TestFixture,
+        ),
         is_incremental: false,
         previous_head_sha: None,
     }
@@ -224,7 +227,13 @@ fn gitops_drift_still_passes_a_manifest_deleted_behind_a_finalizer() {
         .evaluate_gitops_drift(
             Path::new("."),
             &ctx(
-                "deleted file mode 100644\n-  finalizers:\n-  - resources-finalizer.argocd.argoproj.io",
+                concat!(
+                    "diff --git a/iac/apps/team-applicationset.yaml b/iac/apps/team-applicationset.yaml\n",
+                    "deleted file mode 100644\n",
+                    "--- a/iac/apps/team-applicationset.yaml\n+++ /dev/null\n",
+                    "@@ -1,2 +0,0 @@\n",
+                    "-  finalizers:\n-  - resources-finalizer.argocd.argoproj.io\n",
+                ),
                 &["iac/apps/team-applicationset.yaml"],
             ),
         )
@@ -233,7 +242,7 @@ fn gitops_drift_still_passes_a_manifest_deleted_behind_a_finalizer() {
     assert_eq!(
         rep.status,
         GateStatus::Passed,
-        "an ApplicationSet was in scope, was read, and carries cascade protection"
+        "the observed deletion meets the existing whole-diff finalizer exception; this does not prove cascade safety"
     );
     assert!(rep.is_safe);
 }
@@ -478,13 +487,18 @@ fn ghost_migration_still_fails_a_non_concurrent_index() {
 #[test]
 fn a_diff_in_every_scope_leaves_no_gate_unmeasured() {
     let d = ctx(
-        "diff --git a/migrations/003_x.sql b/migrations/003_x.sql\n\
-         +++ b/migrations/003_x.sql\n\
-         +-- PHASE: CONTRACT\n\
-         +ALTER TABLE users DROP COLUMN old_token;\n\
-         diff --git a/src/legacy/router.ts b/src/legacy/router.ts\n\
-         +++ b/src/legacy/router.ts\n\
-         -const dead = 1;\n",
+        concat!(
+            "diff --git a/migrations/003_x.sql b/migrations/003_x.sql\n",
+            "new file mode 100644\n--- /dev/null\n+++ b/migrations/003_x.sql\n",
+            "@@ -0,0 +1,2 @@\n+-- PHASE: CONTRACT\n",
+            "+ALTER TABLE users DROP COLUMN old_token;\n",
+            "diff --git a/src/legacy/router.ts b/src/legacy/router.ts\n",
+            "--- a/src/legacy/router.ts\n+++ b/src/legacy/router.ts\n",
+            "@@ -1 +0,0 @@\n-const dead = 1;\n",
+            "diff --git a/iac/apps/team-applicationset.yaml b/iac/apps/team-applicationset.yaml\n",
+            "--- a/iac/apps/team-applicationset.yaml\n+++ b/iac/apps/team-applicationset.yaml\n",
+            "@@ -1 +1,2 @@\n kind: ApplicationSet\n+metadata: {}\n",
+        ),
         &[
             "migrations/003_x.sql",
             "src/legacy/router.ts",

@@ -3,7 +3,7 @@ use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::github::GitHubClient;
 
@@ -37,15 +37,14 @@ pub struct CiTriageDiagnosis {
 pub struct CiTriager {
     #[allow(dead_code)]
     github_client: std::sync::Arc<GitHubClient>,
-    agy_effort: String,
 }
 
 impl CiTriager {
-    pub fn new(github_client: std::sync::Arc<GitHubClient>, agy_effort: String) -> Self {
-        Self {
-            github_client,
-            agy_effort,
-        }
+    // `agy_effort` is gone: the tier's effort comes from
+    // `config/model-routing.toml` now, so a triager holding one was state with
+    // no reader.
+    pub fn new(github_client: std::sync::Arc<GitHubClient>) -> Self {
+        Self { github_client }
     }
 
     /// Triages a failed CI workflow run on main or dev branch
@@ -197,24 +196,17 @@ impl CiTriager {
     }
 
     async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
-        let budget = crate::exec::ExecClass::Model.timeout();
-        let cmd = crate::exec::agy_agent(
-            &crate::exec::Posture::in_workspace(working_dir),
-            &self.agy_effort,
-            budget,
-            None,
-        )?;
-
-        let turn = crate::exec::turn::run(cmd, prompt, budget, "agy (ci triager)")
-            .await
-            .context("Failed to run agy command")?;
-
-        if !turn.status.success() {
-            error!("agy returned non-zero status in CiTriager: {}", turn.status);
-            warn!("agy stderr: {}", turn.stderr);
-        }
-
-        turn.into_result()
+        // The stage names what this is doing; `config/model-routing.toml`
+        // decides which model does it, and hands the next tier the turn when
+        // one fails. Naming a provider here would give triage one provider and
+        // no tier beneath it.
+        crate::ai_driver::run_stage(
+            crate::ai_driver::Stage::IssueTriage,
+            prompt,
+            working_dir,
+            "ci triager",
+        )
+        .await
     }
 }
 

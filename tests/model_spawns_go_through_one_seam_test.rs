@@ -255,6 +255,16 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "call:super::command:str:\"grok\"",
     ),
     (
+        "src/exec/agent/provider.rs",
+        "muse_agent",
+        "argv:cmd:args:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "muse_agent",
+        "call:super::command:str:\"muse\"",
+    ),
+    (
         "src/exec/agent/transport.rs",
         "",
         "import:super::AgentCommand->AgentCommand",
@@ -274,10 +284,48 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "",
         "type-alias:ReadTask",
     ),
+    // `deliver` appends `--prompt-file <path>` for `Framing::MusePromptFile`.
+    //
+    // This is a REAL widening: until now the transport chose a payload and
+    // never touched argv, and argv is the surface `ps` makes world-readable.
+    // It is admitted because the alternative is worse -- `muse exec` reads no
+    // prompt from STDIN (measured: "missing prompt") and refuses
+    // `--prompt-file /dev/stdin` as "not a regular file", so the only routes
+    // are a positional PROMPT, which puts contributor text directly in argv,
+    // or a file whose PATH goes in argv while the text does not. The path is
+    // to a 0600 file created with that mode, and the prompt itself never
+    // becomes an argument.
+    (
+        "src/exec/agent/transport.rs",
+        "deliver",
+        "argv:<non-path>:arg:<non-path>",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver",
+        "argv:command:arg:str:\"--prompt-file\"",
+    ),
+    ("src/exec/agent/transport.rs", "deliver", "assign:guard"),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver",
+        "command-method:command:arg",
+    ),
     (
         "src/exec/agent/transport.rs",
         "deliver",
         "destructure-agent:AgentCommand",
+    ),
+    // `PromptFile`'s own accessors. A tuple field read, not a command mutator.
+    (
+        "src/exec/agent/transport.rs",
+        "drop",
+        "raw-tuple-field:self.0",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "path",
+        "raw-tuple-field:self.0",
     ),
     (
         "src/exec/agent/transport.rs",

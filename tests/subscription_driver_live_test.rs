@@ -1,3 +1,6 @@
+//! Optional subscription/fallback smoke tests, not named-primary availability proof.
+//! A nonempty response can come from the router's configured fallback.
+
 use anvil::ai_driver::{ModelExecutionConfig, ModelProvider, SubscriptionExecutor};
 use anvil::model_prompt::{ModelPrompt, ModelPromptPurpose};
 use anvil::reviewer::untrusted::{Untrusted, UntrustedLabel};
@@ -29,12 +32,12 @@ async fn test_live_claude_opus5_high() {
     let executor = SubscriptionExecutor::new();
     let config = ModelExecutionConfig {
         provider: ModelProvider::AnthropicClaudeCode,
-        specific_model: Some("opus5".to_string()),
+        specific_model: Some("claude-opus-5".to_string()),
         reasoning_effort: "high".to_string(),
         print_timeout_secs: 60,
     };
 
-    assert_eq!(config.resolved_model(), "opus5");
+    assert_eq!(config.resolved_model(), "claude-opus-5");
     let prompt = live_probe("Respond strictly with: OPUS5_HIGH_OK");
     let res = executor
         .execute_prompt(&prompt, Path::new("."), &config)

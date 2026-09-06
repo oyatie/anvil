@@ -294,3 +294,67 @@ fn a_non_ascii_path_inside_the_scope_is_allowed() {
     );
     let _ = fs::remove_dir_all(&d);
 }
+
+/// The producer half of the guardrail, end to end.
+///
+/// Every test above writes `.anvil/run-scope` itself. That is what let #206
+/// merge with the check inert: the hook read a file nothing in production
+/// wrote, so the branch below `if [ -f "$scope_file" ]` never executed in a
+/// real checkout, and the tests passed because they supplied the input
+/// production never would.
+///
+/// This one declares the scope the way a run does -- through
+/// `ai_driver::chain`, from `config/model-routing.toml` -- and then attempts
+/// the commit the guardrail exists to refuse.
+#[test]
+fn a_scope_declared_the_way_a_run_declares_it_refuses_an_out_of_scope_commit() {
+    let d = lab("producer");
+    // No hand-written scope file. The declaration comes from the same call the
+    // dispatcher makes, against the tracked routing table.
+    let scope = anvil::ai_driver::chain::declare_run_scope_for_test(
+        &d,
+        anvil::ai_driver::Stage::Implementation,
+    )
+    .expect("a run must be able to declare its scope");
+
+    let declared = fs::read_to_string(d.join(".anvil/run-scope")).expect("declaration on disk");
+    assert!(
+        declared.lines().any(|l| l.trim() == "src/"),
+        "implementation declares src/, and the file must say so: {declared:?}"
+    );
+
+    let out = commit(
+        &d,
+        &["outside.txt"],
+        "out of scope under a real declaration",
+    );
+    refused_for_scope(&out, "outside.txt");
+
+    // A refused commit leaves its paths staged, and the next `git add` would
+    // carry them into the following commit. Unstage so the in-scope case is
+    // testing the in-scope path and not the leftovers of the previous one.
+    git(&d, &["reset", "-q"]);
+
+    let ok = commit(&d, &["src/inside.txt"], "in scope under a real declaration");
+    assert!(
+        ok.status.success(),
+        "an in-scope path must still commit: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+
+    // And the declaration is run state, not repository state: it goes when the
+    // run does, so ordinary work sees no constraint.
+    drop(scope);
+    assert!(
+        !d.join(".anvil/run-scope").exists(),
+        "the declaration must not outlive the run that made it"
+    );
+    git(&d, &["reset", "-q"]);
+    let after = commit(&d, &["outside.txt"], "unconstrained once the run ends");
+    assert!(
+        after.status.success(),
+        "with no run in flight the check is absent, not permissive: {}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+    let _ = fs::remove_dir_all(&d);
+}

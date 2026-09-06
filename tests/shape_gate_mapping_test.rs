@@ -143,11 +143,27 @@ fn blocking_regressions_fail_and_name_the_first_keys() {
     });
     match s {
         GateStatus::Failed(msg) => assert!(
-            msg.contains("1 regression(s)") && msg.contains("face_edge_denied"),
+            msg.contains("1 blocking refusal(s)") && msg.contains("face_edge_denied"),
             "{msg}"
         ),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn refusal_counts_do_not_claim_new_measured_keys() {
+    let outcome = ShapeGateOutcome::Judged {
+        measurement: measurement(0),
+        blocking: vec!["file_misplaced: withdrawn blocking rule with baselined debt".into()],
+    };
+    assert_eq!(outcome.measurement().unwrap().blocking_regressions, 0);
+    let summary = outcome.summary();
+    assert!(summary.contains("0 new on blocking rules"), "{summary}");
+    assert!(summary.contains("1 blocking refusal(s)"), "{summary}");
+    assert!(
+        matches!(shape_gate_status(&outcome), GateStatus::Failed(msg)
+        if msg.contains("1 blocking refusal(s)") && msg.contains("withdrawn"))
+    );
 }
 
 #[test]

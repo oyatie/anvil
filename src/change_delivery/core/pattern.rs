@@ -96,8 +96,8 @@ pub fn matches(pattern: &str, path: &str) -> bool {
 
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-    // No slash inside the pattern: a basename, or a directory name, anywhere.
-    if !bare.contains('/') {
+    // Only unanchored basenames or directory names match at any depth.
+    if !anchored && !bare.contains('/') {
         let toks = tokenize(bare);
         let hit = segments.iter().any(|s| segment_matches(&toks, s));
         return if dir_form {
@@ -108,6 +108,11 @@ pub fn matches(pattern: &str, path: &str) -> bool {
     }
 
     let pat = parse(bare);
+    if anchored && dir_form {
+        // Match a nonempty directory prefix, leaving at least one segment
+        // beneath it. A zero-length ** suffix would also own a terminal file.
+        return (1..segments.len()).any(|end| walk(&pat, &segments[..end]));
+    }
     // A directory form owns everything beneath it.
     let with_contents = |p: &[Seg]| {
         let mut v = p.to_vec();

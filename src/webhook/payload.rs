@@ -24,6 +24,10 @@ pub struct WebhookPullRequest {
     pub number: u64,
     pub title: String,
     pub body: Option<String>,
+    /// Only an explicit false establishes that the pull request is not a draft.
+    /// Missing or null status stays unknown, so shared event shapes still parse
+    /// without authorizing lifecycle review.
+    pub draft: Option<bool>,
     pub head: WebhookCommitRef,
     pub base: WebhookCommitRef,
 }
@@ -111,6 +115,113 @@ pub struct WebhookRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webhook::pr_admission::{PrAdmission, SkipReason, admit};
+
+    fn lifecycle_payload(action: &str, draft: Option<serde_json::Value>) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "action": action,
+            "repository": {"full_name": "example/project"},
+            "pull_request": {
+                "number": 1,
+                "title": "Update documentation",
+                "head": {"sha": "head", "ref": "documentation"},
+                "base": {"sha": "base", "ref": "dev"}
+            }
+        });
+        if let Some(draft) = draft {
+            value["pull_request"]["draft"] = draft;
+        }
+        value
+    }
+
+    fn parsed_admission(value: serde_json::Value) -> PrAdmission {
+        let payload: GitHubWebhookPayload =
+            serde_json::from_value(value).expect("ordinary lifecycle payload parses");
+        let pr = payload.pull_request.expect("fixture has a pull request");
+        admit(payload.action.as_deref().unwrap_or(""), pr.draft, &pr.title)
+    }
+
+    #[test]
+    fn explicit_draft_status_controls_every_reviewable_action() {
+        for action in ["opened", "synchronize", "reopened", "ready_for_review"] {
+            for (draft, expected) in [
+                (false, PrAdmission::Review),
+                (true, PrAdmission::Skip(SkipReason::Draft)),
+            ] {
+                assert_eq!(
+                    parsed_admission(lifecycle_payload(action, Some(draft.into()))),
+                    expected,
+                    "action {action}, draft {draft}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_draft_status_never_authorizes_lifecycle_review() {
+        for action in ["opened", "synchronize", "reopened", "ready_for_review"] {
+            assert_eq!(
+                parsed_admission(lifecycle_payload(action, None)),
+                PrAdmission::Skip(SkipReason::UnknownDraftStatus),
+                "missing draft status authorized {action}"
+            );
+        }
+    }
+
+    #[test]
+    fn null_draft_status_parses_but_never_authorizes_lifecycle_review() {
+        for action in ["opened", "synchronize", "reopened", "ready_for_review"] {
+            assert_eq!(
+                parsed_admission(lifecycle_payload(action, Some(serde_json::Value::Null))),
+                PrAdmission::Skip(SkipReason::UnknownDraftStatus),
+                "null draft status authorized {action}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrong_draft_types_are_parse_errors() {
+        for draft in [
+            serde_json::json!("false"),
+            serde_json::json!(0),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            assert!(
+                serde_json::from_value::<GitHubWebhookPayload>(lifecycle_payload(
+                    "opened",
+                    Some(draft)
+                ))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn parsed_unsupported_actions_remain_refused() {
+        for action in ["closed", "converted_to_draft", ""] {
+            assert_eq!(
+                parsed_admission(lifecycle_payload(action, Some(false.into()))),
+                PrAdmission::Skip(SkipReason::UnsupportedAction)
+            );
+        }
+    }
+
+    #[test]
+    fn shared_event_shapes_do_not_require_draft_evidence_to_parse() {
+        let comment_shape = lifecycle_payload("created", None);
+        let parsed: GitHubWebhookPayload =
+            serde_json::from_value(comment_shape).expect("shared PR shape parses");
+        assert_eq!(parsed.pull_request.expect("shared PR shape").draft, None);
+        let without_pr = serde_json::json!({
+            "action": "completed",
+            "repository": {"full_name": "example/project"},
+            "workflow_run": {"id": 1}
+        });
+        let parsed: GitHubWebhookPayload =
+            serde_json::from_value(without_pr).expect("non-PR shape parses");
+        assert!(parsed.pull_request.is_none());
+    }
 
     /// The typed fields arrive from the wire, under GitHub's own names.
     #[test]

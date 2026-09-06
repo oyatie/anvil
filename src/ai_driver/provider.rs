@@ -55,12 +55,8 @@ impl ModelProvider {
                 "Cursor Agent Subscription (Multi-Model Native - High Effort)"
             }
             ModelProvider::XAiGrok => "xAI Grok Subscription (Grok 4.6 - High Effort)",
-            ModelProvider::Antigravity => {
-                "Google Antigravity Subscription (Gemini 3.7 Flash - High Effort)"
-            }
-            ModelProvider::SubscriptionEnsemble => {
-                "Multi-Model Subscription Ensemble (Opus 5 + GPT-5.6sol + Grok 4.6 + Gemini 3.7 Flash)"
-            }
+            ModelProvider::Antigravity => "Google Antigravity Subscription (High Effort)",
+            ModelProvider::SubscriptionEnsemble => "Subscription Ensemble (Claude route)",
         }
     }
 }

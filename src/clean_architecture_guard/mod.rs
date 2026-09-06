@@ -99,11 +99,12 @@ impl CleanArchitectureGuard {
             diff_ctx.repo, diff_ctx.pr_number
         );
 
-        Ok(analyze::analyze_unified_diff(
+        analyze::analyze_unified_diff(
             &diff_ctx.diff_content,
             format!("{}#{}", diff_ctx.repo, diff_ctx.pr_number),
             &source_tree::workspace_members(&diff_ctx.repo_working_dir),
-        ))
+            &diff_ctx.repo_working_dir,
+        )
     }
 
     /// Evaluates the same layer boundaries against a source tree on disk.
@@ -144,7 +145,7 @@ impl CleanArchitectureGuard {
             // This is also what makes an inline `crate::x::adapters::Y`
             // reference visible without re-admitting the `beca|use` false
             // positive that `is_import_line` was introduced to stop.
-            let body = crate::source_scan::code_only(&fs::read_to_string(file).unwrap_or_default());
+            let body = crate::source_scan::code_only(&fs::read_to_string(file)?);
             for line in body.lines() {
                 diff.push('+');
                 diff.push_str(line);
@@ -152,11 +153,7 @@ impl CleanArchitectureGuard {
             }
         }
 
-        Ok(analyze::analyze_unified_diff(
-            &diff,
-            scope,
-            &source_tree::workspace_members(root),
-        ))
+        analyze::analyze_unified_diff(&diff, scope, &source_tree::workspace_members(root), base)
     }
 
     /// Runs the guard against Anvil's own source tree and records the finding.

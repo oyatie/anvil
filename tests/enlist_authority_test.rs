@@ -679,6 +679,13 @@ fn rust_sources_under(dir: &str) -> Vec<String> {
             }
         }
     }
+    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(&root)
+        .expect("source corpus classification must succeed");
+    out.retain(|relative| {
+        !classifier
+            .classify(&root.join(relative))
+            .expect("classify source role")
+    });
     out.sort();
     out
 }

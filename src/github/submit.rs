@@ -8,6 +8,7 @@
 
 use anyhow::{Result, bail};
 
+use super::reviews::publication::{RecordedReview, ReviewPublication};
 use super::{GitHubClient, reviews};
 use crate::reviewer::ReviewResponse;
 
@@ -25,7 +26,7 @@ impl GitHubClient {
         pr_number: u64,
         head_sha: &str,
         review: &ReviewResponse,
-    ) -> Result<()> {
+    ) -> Result<RecordedReview> {
         if !review.comments.is_empty() {
             bail!(
                 "{}#{}: this review carries {} inline comment(s) and no diff to anchor them in. \
@@ -48,7 +49,7 @@ impl GitHubClient {
         head_sha: &str,
         review: &ReviewResponse,
         diff: &str,
-    ) -> Result<()> {
+    ) -> Result<ReviewPublication> {
         reviews::submit_pr_review_with_diff(repo, pr_number, head_sha, review, diff).await
     }
 }

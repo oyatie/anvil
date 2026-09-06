@@ -1,7 +1,9 @@
-# CODE-CHANGES — specified, not applied
+# CODE-CHANGES — historical daemon plan and implemented workflow authentication
 
-The change the App unblocks, at `file:line` on `origin/dev` = `65f71fd`. Nothing here is
-applied; `SETUP.md` must complete first, because §2 needs the `<slug>[bot]` numeric id and
+The daemon/setup/ruleset plan remains unapplied; its historical references are at
+`file:line` on `origin/dev` = `65f71fd`. H1-11 workflow authentication is implemented
+in §7 and the workflow files in this branch, not evidence of daemon or ruleset rollout.
+For the remaining daemon plan, `SETUP.md` must complete first, because §2 needs the `<slug>[bot]` numeric id and
 §1 needs the App id, installation id and private key.
 
 Order matters and is not the order of the sections: **§3 must land in the same change as
@@ -303,13 +305,13 @@ Absent approval becomes a refusal to enlist, not an approval to manufacture. The
 
 ### 7a. `.github/workflows/promotion-open-next.yml`
 
-Line 57 today:
+Before H1-11, the workflow selected the Actions token (or a PAT) directly:
 
 ```yaml
 github-token: ${{ secrets.PROMOTION_PAT || secrets.GITHUB_TOKEN }}
 ```
 
-Add a token-minting step before the script step and consume its output:
+The H1-11 change adds a token-minting step before the script step and consumes its output:
 
 ```yaml
       - id: app-token
@@ -317,46 +319,63 @@ Add a token-minting step before the script step and consume its output:
         with:
           app-id: ${{ vars.ANVIL_APP_ID }}
           private-key: ${{ secrets.ANVIL_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
       - name: Open the next rung
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           github-token: ${{ steps.app-token.outputs.token }}
 ```
 
+Both permission inputs are load-bearing: supplying no `permission-*` inputs inherits every
+permission granted to the App installation. Omitting `owner` and `repositories` is also
+intentional; the action then defaults to the current repository.
+
 Then delete the `HAS_PAT` env (`:56`) and the `github-token` line (`:58`), and the
 `patWarning` text (`:91`) with **both** its uses — `:99` and `:113`. The second use is
 outside the block the text sits in (`body.push(..., \`> ${patWarning}\`)`), so deleting a
 contiguous range around the declaration leaves an undefined reference at `:113` and the
 inline script throws. Delete by identifier, not by line range; re-read the file first,
-because these numbers move. That warning exists because a `GITHUB_TOKEN`-opened pull request triggers no
-workflow runs; an App-opened one does, so leaving the warning in would publish a false
-statement on every promotion pull request — the class this repository calls a gate
-claiming more than it checks.
+because these numbers move. That warning describes obsolete behavior: for the `opened`,
+`synchronize`, and `reopened` events of a `GITHUB_TOKEN`-created pull request, GitHub creates
+workflow runs in an approval-required state. The App token lets those runs execute without
+manual approval. Leaving the warning would falsely describe held runs as nonexistent — the
+class this repository calls a gate claiming more than it checks.
 
 **Do not add `contents: write`.** `tests/promotion_ladder_test.rs:163-173` asserts its
 absence, and the reasoning there is right: opening a pull request needs only
 `pull-requests: write`.
 
-**The allow-list is unaffected.** `tests/promotion_ladder_test.rs:181-196` allow-lists
-exactly `github.rest.pulls.list`, `github.rest.pulls.create`,
-`github.rest.repos.compareCommitsWithBasehead` inside the inline script. A new *step*
-adds no `github.` call, and `inline_script` (`:90`) asserts there is exactly one
-`script: |` block — so do not add a second inline script.
+**The established boundary:** REST merge endpoints require `contents: write`, which this
+workflow's token does not have; it cannot push, delete refs, or REST-merge. The remaining
+`pull-requests: write` grant still permits PR and review mutation, and repository rules remain
+an external defense. A dot-form scan for `github.rest.*` is not a security boundary: bracket
+access, optional chaining, destructuring, `fetch`, and other JavaScript forms evade it. The
+durable ratchet in `tests/promotion_ladder_test.rs` therefore fingerprints the exact
+YAML-parsed `github-script` body and separately inventories its three reviewed canonical calls:
+`github.rest.pulls.list`, `github.rest.pulls.create`, and
+`github.rest.repos.compareCommitsWithBasehead`. Any executable change must update the
+fingerprint in review; the inventory remains explanatory rather than pretending to attenuate
+the credential.
 
-### 7b. Same defect, not yet observed: `.github/workflows/toolchain-weekly.yml`
+### 7b. Implemented App authentication: `.github/workflows/toolchain-weekly.yml`
 
-`:60` sets `GH_TOKEN: ${{ github.token }}` and `:76` runs `gh pr create`. That is the same
-403 waiting to happen, on the same org setting:
+The earlier diagnosis below is historical, not the current workflow: `:60` formerly set
+`GH_TOKEN: ${{ github.token }}` and `:76` ran `gh pr create`, a 403 waiting to happen on
+the same org setting:
 
 ```console
 $ gh api repos/oyatie/anvil/actions/permissions/workflow
 {"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}
 ```
 
-It has never fired — no `chore/toolchain-*` branch or pull request has ever existed
-(`git ls-remote --heads origin 'chore/toolchain-*'` → empty) — so there is no failing run
-to point at, only the same shape. Apply the same App-token step. Fixing 7a alone leaves
-the sibling, which is the instance-not-class pattern this plan is about.
+That console observation is historical too: it was recorded before this lane was exercised,
+so it described no failing run. The implemented workflow now mints a repository-scoped App
+token. The App token is passed to checkout; its contents access permits checkout, and the
+`contents: write` level is required to push the bump branch. `pull-requests: write` is used by
+`gh pr create`.
+There is no Actions-token or human-token fallback. Unlike promotion opener 7a, this lane
+needs `contents: write` because it pushes the branch; the grants are not identical.
 
 ---
 

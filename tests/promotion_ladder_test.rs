@@ -6,15 +6,23 @@
 //! and nothing but these tests makes them stay that way: a `next` that has
 //! drifted from `pred` opens promotion pull requests the guard is guaranteed
 //! to reject, which reads as a broken repository rather than as a broken map.
+//! The predecessor must also be the branch in this repository: a fork branch
+//! with the same short name is not a rung in this ladder.
 //!
 //! The ladder itself is `dev -> staging -> canary -> production`, with `dev`
 //! as the trunk. It went unexercised for its whole existence — `staging`,
 //! `canary` and `production` sat on the same commit, 43 behind, while work
 //! landed on `main` — so these are the first checks it has ever had.
 
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+
+const REVIEWED_OPENER_SCRIPT_SHA256: &str =
+    "dde564f3ed83d279e5a31b40f7a6ca00d169ac015e79a1b45165abb92d95777d";
+const REVIEWED_PREDECESSOR_SCRIPT_SHA256: &str =
+    "8ab4b706ee812ca2a849485264d9142012eb519daddf025033f92fcafa210acf";
 
 fn workflow(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -86,20 +94,55 @@ fn push_branches(src: &str, name: &str) -> Vec<String> {
     branches
 }
 
-/// The workflow's inline `script:` block, from `script: |` to end of file.
-fn inline_script(src: &str) -> &str {
-    let (before, script) = src
-        .split_once("script: |")
-        .expect("promotion-open-next.yml must carry an inline `script:` block");
-    assert!(
-        !before.contains("script: |") && !script.contains("script: |"),
-        "more than one inline `script:` block; this scan only reaches the last one"
+/// The exact JavaScript value GitHub Actions passes to one
+/// `actions/github-script` job.
+fn inline_script(src: &str, workflow_name: &str, job_name: &str) -> String {
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(src).unwrap_or_else(|error| panic!("{workflow_name}: {error}"));
+    let steps = doc["jobs"][job_name]["steps"]
+        .as_sequence()
+        .unwrap_or_else(|| panic!("{workflow_name} must declare jobs.{job_name}.steps"));
+    let found: Vec<&serde_yaml::Value> = steps
+        .iter()
+        .filter(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("actions/github-script@"))
+        })
+        .collect();
+    assert_eq!(
+        found.len(),
+        1,
+        "{workflow_name} must carry exactly one actions/github-script step"
     );
-    script
+    found[0]["with"]["script"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{workflow_name} github-script step must carry an inline script"))
+        .to_string()
 }
 
-/// Every `github.<path>` the inline script names, e.g. `github.rest.pulls.create`.
-fn api_calls(script: &str) -> BTreeSet<String> {
+fn script_fingerprint(script: &str) -> String {
+    hex::encode(Sha256::digest(script.as_bytes()))
+}
+
+fn normalized_words(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_predecessor_source(
+    current_repo: &str,
+    base_repo: Option<&str>,
+    head_repo: Option<&str>,
+    expected_ref: &str,
+    head_ref: &str,
+) -> bool {
+    base_repo == Some(current_repo) && head_repo == base_repo && head_ref == expected_ref
+}
+
+/// An inventory of canonical dot-form client paths in the already fingerprinted
+/// script. This is deliberately not a JavaScript parser or a security boundary:
+/// bracket access, optional chaining, aliases, and other transports evade it.
+fn dot_form_api_inventory(script: &str) -> BTreeSet<String> {
     let mut calls = BTreeSet::new();
     for (at, _) in script.match_indices("github.") {
         let rest = &script[at..];
@@ -108,12 +151,36 @@ fn api_calls(script: &str) -> BTreeSet<String> {
             .unwrap_or(rest.len());
         calls.insert(rest[..end].trim_end_matches('.').to_string());
     }
-    assert!(
-        !calls.is_empty(),
-        "the script names no `github.` call at all; this scanner has drifted from the workflow \
-         and would allow anything"
-    );
     calls
+}
+
+#[test]
+fn predecessor_lifecycle_includes_base_edits() {
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(&workflow("promotion-predecessor.yml")).unwrap();
+    let trigger = &doc["on"]["pull_request"];
+    let types = trigger["types"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        types,
+        BTreeSet::from(["opened", "reopened", "synchronize", "edited"])
+    );
+    assert_eq!(trigger["types"].as_sequence().unwrap().len(), 4);
+    assert!(doc["on"]["pull_request_target"].is_null());
+    let branches = trigger["branches"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        branches,
+        BTreeSet::from(["staging", "canary", "production"])
+    );
 }
 
 #[test]
@@ -154,31 +221,36 @@ fn the_opener_triggers_on_exactly_the_rungs_that_can_advance() {
 }
 
 #[test]
-fn the_opener_can_only_open_never_merge_approve_or_delete() {
+fn the_opener_has_no_ref_write_and_its_reviewed_script_is_pinned() {
     let src = workflow("promotion-open-next.yml");
 
-    // Stops a push to a rung and a branch deletion, and nothing else. It does
-    // NOT stop a merge: `pulls.merge`, `mergePullRequest` and
-    // `enablePullRequestAutoMerge` all run on `pull-requests: write` alone.
+    // REST merge endpoints require `contents: write`; this contents-read token
+    // therefore cannot push, delete a ref, or REST-merge. `pull-requests: write`
+    // still permits PR and review mutation, which keeps the executable script
+    // worth pinning exactly.
     assert!(
-        src.contains("contents: read"),
-        "promotion-open-next.yml must declare `contents: read`"
+        src.contains("permission-contents: read"),
+        "promotion-open-next.yml must request `permission-contents: read`"
     );
     assert!(
-        !src.contains("contents: write"),
-        "promotion-open-next.yml must never take `contents: write`; opening a pull request needs \
-         only `pull-requests: write`, and `contents: write` would let it push to a rung directly"
+        !src.contains("permission-contents: write"),
+        "promotion-open-next.yml must never request `permission-contents: write`; that would let \
+         its App token push to a rung directly"
     );
 
-    let script = inline_script(&src);
+    let script = inline_script(&src, "promotion-open-next.yml", "open-next");
+    assert_eq!(
+        script_fingerprint(&script),
+        REVIEWED_OPENER_SCRIPT_SHA256,
+        "promotion-open-next.yml's executable script changed. REST merge endpoints require \
+         `contents: write`, which this token lacks, but PR-write still grants mutation authority. \
+         Every script change needs line-by-line review and a deliberate fingerprint update."
+    );
 
-    // An allow-list, not a forbidden list. A forbidden list only stops the
-    // merges somebody thought to name: `enablePullRequestAutoMerge` was on no
-    // such list, needs only `pull-requests: write`, and -- with the
-    // repository's `allow_auto_merge: true` and no required status check on any
-    // rung -- would land the promotion the moment it was opened, unreviewed.
-    // Naming what the script MAY call leaves nothing to overlook.
-    let allowed: BTreeSet<String> = [
+    // This inventory makes the manually reviewed surface legible. The
+    // fingerprint above, not this intentionally narrow scanner, catches other
+    // JavaScript spellings and transports.
+    let reviewed_inventory: BTreeSet<String> = [
         "github.rest.pulls.list",
         "github.rest.pulls.create",
         "github.rest.repos.compareCommitsWithBasehead",
@@ -187,23 +259,151 @@ fn the_opener_can_only_open_never_merge_approve_or_delete() {
     .map(|call| call.to_string())
     .collect();
     assert_eq!(
-        api_calls(script),
-        allowed,
-        "promotion-open-next.yml calls a GitHub API it is not allowed to. It opens promotion \
-         pull requests and does nothing else: it may read what is already open, compare two \
-         rungs, and create a pull request. Merging, approving, enabling auto-merge, pushing and \
-         deleting are not its job, and `github.graphql` reaches every one of them."
+        dot_form_api_inventory(&script),
+        reviewed_inventory,
+        "the canonical API inventory changed along with the fingerprint; document the reviewed \
+         surface before accepting a new script fingerprint"
     );
+}
 
-    // The allow-list covers the octokit client only. `exec` and a `require`d
-    // module reach `gh pr merge`, which names no `github.` call at all.
-    for hatch in ["exec.", "require(", "import("] {
-        assert!(
-            !script.contains(hatch),
-            "promotion-open-next.yml uses `{hatch}`; that escapes the allow-list above and can \
-             reach a merge without naming one"
+#[test]
+fn alternate_javascript_pr_mutations_trip_the_script_fingerprint() {
+    let script = inline_script(
+        &workflow("promotion-open-next.yml"),
+        "promotion-open-next.yml",
+        "open-next",
+    );
+    let old_inventory = dot_form_api_inventory(&script);
+    let alternates = [
+        (
+            "bracket access",
+            format!(r#"{script}\nawait github["rest"]["pulls"]["update"]({{}});"#),
+        ),
+        (
+            "optional chaining",
+            format!("{script}\nawait github?.rest?.pulls?.update({{}});"),
+        ),
+        (
+            "destructured alias",
+            format!("{script}\nconst {{ rest }} = github; await rest.pulls.update({{}});"),
+        ),
+        (
+            "direct fetch",
+            format!(
+                "{script}\nconst token = core.getInput('github-token'); \
+                 await fetch('https://api.' + 'github' + '.com/repos/o/r/pulls/1', \
+                 {{ method: 'PATCH', headers: {{ authorization: 'Bearer ' + token }} }});"
+            ),
+        ),
+    ];
+
+    for (name, alternate) in alternates {
+        assert_ne!(alternate, script, "{name} seed did not alter the script");
+        assert_eq!(
+            dot_form_api_inventory(&alternate),
+            old_inventory,
+            "{name} must reproduce the bypass in the retired dot-form-only guard"
+        );
+        assert_ne!(
+            script_fingerprint(&alternate),
+            REVIEWED_OPENER_SCRIPT_SHA256,
+            "{name} escaped the whole-script fingerprint"
         );
     }
+}
+
+#[test]
+fn the_predecessor_guard_rejects_forks_and_missing_head_repositories() {
+    let script = inline_script(
+        &workflow("promotion-predecessor.yml"),
+        "promotion-predecessor.yml",
+        "promotion-predecessor",
+    );
+
+    for required in [
+        "const currentRepo = `${context.repo.owner}/${context.repo.repo}`;",
+        "const baseRepo = context.payload.pull_request.base.repo?.full_name;",
+        "const headRepo = context.payload.pull_request.head.repo?.full_name;",
+    ] {
+        assert!(
+            script.contains(required),
+            "promotion-predecessor.yml must derive repository provenance with {required:?}"
+        );
+    }
+
+    let normalized = normalized_words(&script);
+    let exact_predicate = "const sourceIsPredecessor = baseRepo === currentRepo && \
+                           headRepo === baseRepo && head === want;";
+    assert!(
+        normalized.contains(exact_predicate),
+        "promotion-predecessor.yml must derive its decision from the same repository-and-ref \
+         predicate exercised below"
+    );
+    assert!(
+        normalized.contains("if (!sourceIsPredecessor) { core.setFailed(")
+            && normalized.contains("return; }"),
+        "a source that fails the reviewed predicate must fail the check and return"
+    );
+
+    let current = "oyatie/anvil";
+    let cases = [
+        (
+            "same-repository predecessor",
+            Some(current),
+            Some(current),
+            "dev",
+            true,
+        ),
+        (
+            "same-named fork",
+            Some(current),
+            Some("attacker/anvil"),
+            "dev",
+            false,
+        ),
+        ("deleted fork", Some(current), None, "dev", false),
+        ("missing base repository", None, Some(current), "dev", false),
+        (
+            "foreign base and head",
+            Some("attacker/anvil"),
+            Some("attacker/anvil"),
+            "dev",
+            false,
+        ),
+        (
+            "same repository, wrong predecessor ref",
+            Some(current),
+            Some(current),
+            "feature",
+            false,
+        ),
+    ];
+    for (name, base_repo, head_repo, head_ref, accepted) in cases {
+        assert_eq!(
+            is_predecessor_source(current, base_repo, head_repo, "dev", head_ref),
+            accepted,
+            "unexpected predecessor decision for {name}"
+        );
+    }
+    let forged_head_ref = "dev";
+    let expected_ref = "dev";
+    let retired_ref_only_accepts = forged_head_ref == expected_ref;
+    assert!(
+        retired_ref_only_accepts,
+        "the retired ref-only predicate accepted attacker/anvil:dev"
+    );
+    assert!(
+        !is_predecessor_source(current, Some(current), Some("attacker/anvil"), "dev", "dev"),
+        "the repository-aware predicate must close the demonstrated ref-only false green"
+    );
+
+    assert_eq!(
+        script_fingerprint(&script),
+        REVIEWED_PREDECESSOR_SCRIPT_SHA256,
+        "promotion-predecessor.yml's executable script changed. Repository provenance and the \
+         predecessor ref are one reviewed decision; every script change needs line-by-line review \
+         and a deliberate fingerprint update."
+    );
 }
 
 #[test]

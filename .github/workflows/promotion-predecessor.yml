@@ -1,15 +1,14 @@
 # Promotion rungs: staging ← dev, canary ← staging, production ← canary.
 # Feature work enters at `dev`.
 #
-# What this check does: a pull request into a rung whose head is not that
-# rung's predecessor FAILS this check. That is all it does. It does not block
-# the merge. No branch in this repository is protected -- `dev`, `staging`,
-# `canary`, `production` and `main` all answer "Branch not protected" -- and
-# `allow_auto_merge` is on with zero required status checks, so a red
-# `promotion-predecessor` leaves the merge button live. A skipped rung is born
-# *failing*, not born *blocking*, and the difference is whether anybody has to
-# look. Making it blocking is branch protection with this check required, which
-# is repository configuration and cannot be done from any file here.
+# What this check does: a pull request into a rung whose head repository is not
+# this repository, or whose head ref is not that rung's predecessor, FAILS this
+# check. A fork branch named `dev` is not the protected `dev` rung, and missing
+# repository metadata is a refusal rather than guessed provenance. A skipped
+# rung is therefore born failing. Whether that failure blocks a merge is
+# deliberately not claimed here: repository rulesets and branch protection
+# assign required checks, and that mutable external configuration can change
+# independently of this file.
 #
 # `dev` is the trunk and the default branch. This header claimed as much from
 # the day it was written, but the repository did not practise it: work landed
@@ -31,7 +30,7 @@ name: promotion-predecessor
 on:
   pull_request:
     branches: [staging, canary, production]
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, edited]
 
 permissions:
   contents: read
@@ -48,14 +47,21 @@ jobs:
             const pred = { staging: "dev", canary: "staging", production: "canary" };
             const base = context.payload.pull_request.base.ref;
             const head = context.payload.pull_request.head.ref;
+            const currentRepo = `${context.repo.owner}/${context.repo.repo}`;
+            const baseRepo = context.payload.pull_request.base.repo?.full_name;
+            const headRepo = context.payload.pull_request.head.repo?.full_name;
             const want = pred[base];
             if (!want) {
               core.setFailed(`unexpected promotion base '${base}'`);
               return;
             }
-            if (head !== want) {
+            const sourceIsPredecessor =
+              baseRepo === currentRepo && headRepo === baseRepo && head === want;
+            if (!sourceIsPredecessor) {
               core.setFailed(
-                `promote ${base} only from ${want} (head is '${head}'). ` +
-                  `dev is the integration trunk; do not skip rungs.`
+                `promote ${base} only from ${currentRepo}:${want}; ` +
+                  `head is '${headRepo ?? "<missing>"}:${head}' and base repository is ` +
+                  `'${baseRepo ?? "<missing>"}'.`
               );
+              return;
             }

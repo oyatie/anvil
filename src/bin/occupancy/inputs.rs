@@ -1,13 +1,14 @@
 //! The wire format between the presubmit workflow and the rule.
 //!
 //! Newline lists produced from the forge REST API: this hop's paths, the open
-//! hops' paths tagged `pr-<n>`, whether the merge-base is trunk HEAD, and the
+//! hops' paths tagged `pr-<n>`, validated base freshness evidence, and the
 //! labels on this pull request. Every one of them fails closed -- a list that
 //! could not be read, a line that does not parse, an owner in a spelling this
 //! binary does not know -- because each of those, read as an empty set, is
 //! indistinguishable from "occupies nothing", which is indistinguishable from
 //! "no overlap".
 
+use super::freshness::{FreshnessProof, read_record};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -16,14 +17,17 @@ pub struct Inputs {
     pub this: BTreeSet<String>,
     pub this_pr: u64,
     pub in_flight: Vec<(String, BTreeSet<String>)>,
-    pub at_trunk: bool,
+    pub freshness: FreshnessProof,
     pub override_label: bool,
 }
 
 pub fn collect(args: &[String]) -> Result<Inputs, String> {
+    let evidence_path = freshness_flag(args)?;
+    let evidence = fs::File::open(&evidence_path)
+        .map_err(|_| "could not open freshness evidence".to_owned())?;
+    let freshness = read_record(evidence)?;
     let this = read(Path::new(&flag(args, "--this")?))?;
     let in_flight = read(Path::new(&flag(args, "--in-flight")?))?;
-    let at_trunk = parse_bool(&flag(args, "--merge-base-is-trunk")?)?;
     let this_pr = parse_pr_number(&flag(args, "--this-pr")?)?;
     // Optional, and absent means absent: a label file that could not be read
     // is an error, but no `--labels` at all is simply no override.
@@ -35,7 +39,7 @@ pub fn collect(args: &[String]) -> Result<Inputs, String> {
         this: parse_paths(&this),
         this_pr,
         in_flight: parse_in_flight(&in_flight)?,
-        at_trunk,
+        freshness,
         override_label,
     })
 }
@@ -84,14 +88,18 @@ pub fn flag(args: &[String], name: &str) -> Result<String, String> {
     Err(format!("missing {name}"))
 }
 
-pub fn parse_bool(raw: &str) -> Result<bool, String> {
-    match raw {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        other => Err(format!(
-            "--merge-base-is-trunk must be `true` or `false`, got `{other}`"
-        )),
+fn freshness_flag(args: &[String]) -> Result<String, String> {
+    if args.iter().any(|arg| arg == "--merge-base-is-trunk") {
+        return Err("obsolete --merge-base-is-trunk is not freshness evidence".to_owned());
     }
+    if args.iter().filter(|arg| *arg == "--freshness-file").count() != 1 {
+        return Err("exactly one --freshness-file is required".to_owned());
+    }
+    let path = flag(args, "--freshness-file")?;
+    if path.is_empty() || path.starts_with("--") {
+        return Err("--freshness-file requires a path".to_owned());
+    }
+    Ok(path)
 }
 
 pub fn parse_paths(body: &str) -> BTreeSet<String> {
@@ -150,14 +158,27 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_merge_base_answer_is_not_a_true() {
-        assert_eq!(parse_bool("true"), Ok(true));
-        assert_eq!(parse_bool("false"), Ok(false));
-        assert!(
-            parse_bool("").is_err(),
-            "an empty answer is absent evidence, not `at trunk HEAD`"
+    fn freshness_requires_one_record_and_rejects_obsolete_or_mixed_flags() {
+        for raw in [
+            vec![],
+            vec!["--freshness-file"],
+            vec!["--freshness-file", ""],
+            vec!["--freshness-file", "--this"],
+            vec!["--merge-base-is-trunk", "true"],
+            vec![
+                "--freshness-file",
+                "proof",
+                "--merge-base-is-trunk",
+                "false",
+            ],
+            vec!["--freshness-file", "first", "--freshness-file", "second"],
+        ] {
+            assert!(freshness_flag(&args(&raw)).is_err());
+        }
+        assert_eq!(
+            freshness_flag(&args(&["--freshness-file", "proof"])),
+            Ok("proof".to_owned())
         );
-        assert!(parse_bool("TRUE").is_err());
     }
 
     #[test]

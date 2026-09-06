@@ -99,7 +99,7 @@ pub fn command() -> Command {
 
 /// Applies the environment bound to a command the caller already holds.
 pub fn apply(cmd: &mut Command) {
-    cmd.env_clear();
+    super::non_model::clear_environment(cmd);
     for name in GH_INHERITED {
         if let Ok(value) = std::env::var(name) {
             cmd.env(name, value);

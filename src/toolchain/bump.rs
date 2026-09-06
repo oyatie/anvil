@@ -23,14 +23,13 @@
 //! bump applied without one is exactly the change this module exists to stop
 //! somebody making by hand.
 
-use crate::exec::{ExecClass, run_bounded};
 // `Fix` through the harness, which already re-exports it. Importing it
 // from `shape::core` directly would be a second cross-unit facade bypass,
 // and the seal counts them exactly.
+use crate::exec::{ExecClass, run_bounded};
 use crate::harness::{Finding, Fix};
 use crate::toolchain::Version;
 use std::path::Path;
-use tokio::process::Command;
 
 /// Whether the target toolchain can build and test this tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,7 +82,7 @@ pub async fn probe(repo_dir: &Path, toolchain: &str) -> Safety {
     ];
     let mut ran = Vec::new();
     for (label, args) in steps {
-        let mut cmd = Command::new("cargo");
+        let mut cmd = crate::exec::build_env::command("cargo");
         // Captured, not inherited. Without this the child's build log floods
         // A gate whose answer is buried in the build log of the thing it
         // judges has not reported.

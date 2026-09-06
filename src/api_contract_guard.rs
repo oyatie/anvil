@@ -61,7 +61,7 @@ impl ApiContractGuard {
         // of an intact contract, and no amount of auto-reconciliation clears it.
         let mut unverifiable: Option<String> = None;
         if check_script.exists() {
-            let mut cmd = Command::new("node");
+            let mut cmd = crate::exec::build_env::command("node");
             cmd.current_dir(repo_dir)
                 .arg("scripts/check-openapi-refs.mjs");
 
@@ -95,7 +95,7 @@ impl ApiContractGuard {
         // 2. Run union-openapi.py if available
         let union_script = repo_dir.join("scripts/union-openapi.py");
         if union_script.exists() {
-            let mut cmd = Command::new("python3");
+            let mut cmd = crate::exec::build_env::command("python3");
             cmd.current_dir(repo_dir).arg("scripts/union-openapi.py");
 
             match crate::exec::run_bounded(cmd, crate::exec::ExecClass::Build, "union-openapi.py")

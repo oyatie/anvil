@@ -1,4 +1,3 @@
-use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use anyhow::{Context, Result, bail};
 use regex::Regex;
 use std::path::Path;
@@ -9,11 +8,14 @@ use tracing::{error, info, warn};
 
 pub mod bisector;
 pub use bisector::{BisectionResult, MergeTrainBisector};
+mod prompt;
+pub use prompt::build_queue_repair_prompt;
 
 use crate::exec::ExecClass;
 use crate::git_manager::GitManager;
 use crate::github::{GitHubClient, PrMetadata};
 use crate::merge_enlister::MergeEnlister;
+use crate::model_prompt::{HarnessText, ModelPrompt};
 
 /// Upper bound for one agy repair turn, matching `ExecClass::Model`.
 ///
@@ -259,46 +261,20 @@ impl QueueHealer {
         )
         .await?;
 
-        let has_merge_conflict = !merge_out.status.success();
-        let conflict_details = if has_merge_conflict {
-            format!(
-                "Merge conflicts present.\n{}{}",
-                String::from_utf8_lossy(&merge_out.stdout),
-                String::from_utf8_lossy(&merge_out.stderr)
-            )
-        } else {
-            String::new()
-        };
+        let conflict_details = prompt::merge_conflict_details(&merge_out);
 
         // 4. Prompt Antigravity to repair the merge group failure / conflict
         info!(
             "Invoking Antigravity to repair merge train divergence in {:?}",
             work_dir
         );
-        let prompt = format!(
-            r#####"You are Oyatie's Principal Merge Train Resilience Engineer. Pull Request #{pr_number} on `{repo}` failed or was ejected from the GitHub Merge Queue due to train divergence or semantic conflict against trunk.
-
-**Context:**
-- **Repository**: {repo}
-- **Base Branch**: {base_branch}
-{head_ref}{conflict_status}
-
-**Task:**
-1. Inspect the workspace, resolve any git merge conflict markers (`<<<<<<<`), and fix any broken type definitions or API calls caused by upstream trunk changes.
-2. Ensure the codebase compiles and passes all tests.
-3. Do NOT commit; leave your changes in the working tree.
-"#####,
-            pr_number = pr_number,
-            repo = repo,
-            base_branch = base_branch,
-            head_ref = Untrusted::new(UntrustedLabel::PrHeadRef, &meta.head_ref_name).render(),
-            conflict_status = if has_merge_conflict {
-                Untrusted::new(UntrustedLabel::MergeConflict, &conflict_details).render()
-            } else {
-                "## Merge Conflict Status\nNo textual conflict; semantic or test divergence.\n"
-                    .to_string()
-            }
-        );
+        let prompt = build_queue_repair_prompt(
+            repo,
+            pr_number,
+            base_branch,
+            &meta.head_ref_name,
+            conflict_details.as_deref(),
+        )?;
 
         self.run_agy_prompt(&prompt, work_dir).await?;
 
@@ -309,8 +285,10 @@ impl QueueHealer {
                 "Gate `{}` failed after queue healing for {}#{}. Attempting self-correction...",
                 label, repo, pr_number
             );
-            let retry_prompt = "Tests failed after merging trunk. Inspect test output, fix the errors, and ensure all tests pass. Do NOT commit.";
-            self.run_agy_prompt(retry_prompt, work_dir).await?;
+            let mut retry_prompt = ModelPrompt::builder();
+            retry_prompt.push_harness(HarnessText::QueueRetryTask);
+            let retry_prompt = retry_prompt.finish()?;
+            self.run_agy_prompt(&retry_prompt, work_dir).await?;
             gate = Self::run_local_test_gate(work_dir).await;
         }
         match &gate {
@@ -533,7 +511,13 @@ impl QueueHealer {
     /// Split out so `heal_in_worktree` can hold the outcome as a value: the
     /// heal note is derived from it and the caller is answered with it, and a
     /// `?` in the middle of the push-comment-enlist sequence could do neither.
-    async fn certify_and_reenlist(
+    ///
+    /// `pub` for the reason `MergeEnlister::subject_refusal` is: this is the
+    /// re-enlist door, an integration test sees only `pub` items, and the only
+    /// public way in is `heal_ejected_pr`, which clones, writes and pushes
+    /// before it gets here. Left private the door was pinned by a source scan
+    /// and nothing else.
+    pub async fn certify_and_reenlist(
         &self,
         state: &crate::webhook::AppState,
         repo: &str,
@@ -777,9 +761,13 @@ impl QueueHealer {
             .unwrap_or(false)
     }
 
-    async fn run_agy_prompt(&self, prompt: &str, working_dir: &Path) -> Result<String> {
-        let mut cmd = crate::exec::agent("agy", &crate::exec::Posture::in_workspace(working_dir));
-        crate::exec::turn::agy_turn(&mut cmd, &self.agy_effort, AGY_TURN_LIMIT);
+    async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
+        let cmd = crate::exec::agy_agent(
+            &crate::exec::Posture::in_workspace(working_dir),
+            &self.agy_effort,
+            AGY_TURN_LIMIT,
+            None,
+        )?;
 
         let turn = crate::exec::turn::run(cmd, prompt, AGY_TURN_LIMIT, "agy (queue healer)")
             .await

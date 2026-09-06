@@ -2,6 +2,7 @@
 //! The count is `TOTAL_GATES`, never a number written in prose.
 
 pub mod admission;
+mod boundary_status;
 pub mod evaluator;
 pub mod gate_labels;
 pub mod gates;
@@ -13,6 +14,7 @@ pub mod shape_gate;
 pub mod status;
 
 pub use admission::{Absence, absence_blocks, absence_of};
+pub use boundary_status::migration_boundary_gate_status;
 pub use evaluator::PreMergeGuard;
 pub use matrix::MatrixRenderer;
 pub use report::{GateStatus, PreMergeCertificationReport};

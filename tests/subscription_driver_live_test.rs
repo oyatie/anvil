@@ -1,5 +1,15 @@
 use anvil::ai_driver::{ModelExecutionConfig, ModelProvider, SubscriptionExecutor};
+use anvil::model_prompt::{ModelPrompt, ModelPromptPurpose};
+use anvil::reviewer::untrusted::{Untrusted, UntrustedLabel};
 use std::path::Path;
+
+fn live_probe(text: &str) -> ModelPrompt {
+    let mut prompt = ModelPrompt::builder();
+    prompt.push_untrusted(Untrusted::new(UntrustedLabel::ReviewComment, text));
+    prompt
+        .finish_for(ModelPromptPurpose::SubscriptionProbe)
+        .expect("non-empty bounded live prompt")
+}
 
 fn is_agy_available() -> bool {
     std::process::Command::new("agy")
@@ -25,21 +35,15 @@ async fn test_live_claude_opus5_high() {
     };
 
     assert_eq!(config.resolved_model(), "opus5");
+    let prompt = live_probe("Respond strictly with: OPUS5_HIGH_OK");
     let res = executor
-        .execute_prompt(
-            "Respond strictly with: OPUS5_HIGH_OK",
-            Path::new("."),
-            &config,
-        )
+        .execute_prompt(&prompt, Path::new("."), &config)
         .await;
 
-    assert!(
-        res.is_ok(),
-        "Claude Code Opus 5 execution failed: {:?}",
-        res
-    );
-    let output = res.unwrap();
-    println!("Claude Opus 5 Live Output: {}", output);
+    let output = match res {
+        Ok(output) => output,
+        Err(_) => panic!("Claude Code Opus 5 execution failed"),
+    };
     assert!(!output.trim().is_empty());
 }
 
@@ -59,17 +63,15 @@ async fn test_live_gpt5_6sol_high_with_fallover() {
     };
 
     assert_eq!(config.resolved_model(), "gpt-5.6-sol");
+    let prompt = live_probe("Respond strictly with: GPT5_6SOL_HIGH_OK");
     let res = executor
-        .execute_prompt(
-            "Respond strictly with: GPT5_6SOL_HIGH_OK",
-            Path::new("."),
-            &config,
-        )
+        .execute_prompt(&prompt, Path::new("."), &config)
         .await;
 
-    assert!(res.is_ok(), "Codex GPT-5.6sol execution failed: {:?}", res);
-    let output = res.unwrap();
-    println!("GPT-5.6sol Live / Fallover Output: {}", output);
+    let output = match res {
+        Ok(output) => output,
+        Err(_) => panic!("Codex GPT-5.6sol execution failed"),
+    };
     assert!(!output.trim().is_empty());
 }
 
@@ -89,16 +91,14 @@ async fn test_live_gemini3_7_flash_high() {
     };
 
     assert_eq!(config.resolved_model(), "gemini-3.7-flash");
+    let prompt = live_probe("Respond strictly with: GEMINI3_7_FLASH_HIGH_OK");
     let res = executor
-        .execute_prompt(
-            "Respond strictly with: GEMINI3_7_FLASH_HIGH_OK",
-            Path::new("."),
-            &config,
-        )
+        .execute_prompt(&prompt, Path::new("."), &config)
         .await;
 
-    assert!(res.is_ok(), "Gemini 3.7 Flash execution failed: {:?}", res);
-    let output = res.unwrap();
-    println!("Gemini 3.7 Flash Live Output: {}", output);
+    let output = match res {
+        Ok(output) => output,
+        Err(_) => panic!("Gemini 3.7 Flash execution failed"),
+    };
     assert!(!output.trim().is_empty());
 }

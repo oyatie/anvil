@@ -2,7 +2,6 @@ use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
 use tracing::{info, warn};
 
 pub mod disposition;
@@ -87,7 +86,7 @@ impl MonorepoGuard {
             };
             violations.extend(WholeFileExpansion::evaluate_whole_file(
                 repo_dir, &fd.path, &change,
-            ));
+            )?);
         }
 
         // 4. Check for Non-Hermetic Path Escapes & Hardcoded Absolute Paths
@@ -131,7 +130,7 @@ impl MonorepoGuard {
         // violation, never a silent "no undeclared imports".
         let undeclared_script = repo_dir.join("scripts/check-undeclared-imports.mjs");
         if undeclared_script.exists() {
-            let mut cmd = Command::new("node");
+            let mut cmd = crate::exec::build_env::command("node");
             cmd.current_dir(repo_dir)
                 .arg("scripts/check-undeclared-imports.mjs");
 

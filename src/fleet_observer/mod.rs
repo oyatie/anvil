@@ -13,7 +13,13 @@ use crate::telemetry_store::{DoraMetricSnapshot, TelemetryStore};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoFleetSummary {
     pub repo_name: String,
-    pub active_branch_head_sha: String,
+    /// The head commit of the repo's active branch, or `None` when the branch
+    /// fetch resolved neither `dev` nor `main`.
+    ///
+    /// A `String` here has no way to spell "not observed", so a poll that
+    /// resolved nothing has to invent something a reader takes for a commit.
+    /// `Option` lets the surface render the absence.
+    pub active_branch_head_sha: Option<String>,
     pub open_pr_count: usize,
     pub merge_queue_depth: usize,
     pub pass_rate_percent: f64,
@@ -27,6 +33,21 @@ pub struct FleetOverviewReport {
     pub total_managed_repos: usize,
     pub repos: Vec<RepoFleetSummary>,
     pub global_dora: DoraMetricSnapshot,
+}
+
+/// The head commit of the branch a repo is worked on, or `None` when neither
+/// `dev` nor `main` was fetched.
+///
+/// The string `HEAD` is not a commit. It reached `active_branch_head_sha`
+/// whenever the branch fetch came back without either name -- a rate limit, an
+/// expired token, a repo that uses neither -- and every surface that publishes
+/// that field publishes it where a reader expects a SHA. A lookup that
+/// resolved nothing has no commit to name, which is what `None` says.
+pub fn resolve_head_sha(branch_shas: &HashMap<String, String>) -> Option<String> {
+    branch_shas
+        .get("dev")
+        .or_else(|| branch_shas.get("main"))
+        .cloned()
 }
 
 #[derive(Clone)]
@@ -131,11 +152,7 @@ impl FleetObserver {
                     }
                 }
 
-                let head_sha = branch_shas
-                    .get("dev")
-                    .or_else(|| branch_shas.get("main"))
-                    .cloned()
-                    .unwrap_or_else(|| "HEAD".to_string());
+                let head_sha = resolve_head_sha(&branch_shas);
 
                 let merge_queue_depth = gh
                     .fetch_merge_queue_depth(&repo_str, "main")

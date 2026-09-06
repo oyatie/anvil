@@ -151,98 +151,87 @@ pub async fn webhook_handler(
 
     let action = payload.action.as_deref().unwrap_or("");
 
-    // Case 1: Pull Request lifecycle events (opened, synchronize, reopened)
-    if event_type == "pull_request" {
-        let supported_actions = ["opened", "synchronize", "reopened"];
-        if !supported_actions.contains(&action) {
+    // Case 1: Pull Request lifecycle events. Which actions those are, and
+    // whether a draft is one, is `pr_admission`'s to say, not this handler's.
+    if event_type == "pull_request"
+        && let Some(pr) = payload.pull_request
+    {
+        let pr_number = pr.number;
+        let head_sha = pr.head.sha.clone();
+
+        // One pure decision, exercisable without a server.
+        if let crate::webhook::pr_admission::PrAdmission::Skip(why) =
+            crate::webhook::pr_admission::admit(action, pr.draft, &pr.title)
+        {
             return (
                 StatusCode::OK,
                 Json(ApiResponse {
                     success: true,
-                    message: format!("Ignored PR action: {}", action),
+                    message: format!("Skipped {}#{}: {}", repo_name, pr_number, why.as_str()),
                 }),
             );
         }
 
-        if let Some(pr) = payload.pull_request {
-            let pr_number = pr.number;
-            let head_sha = pr.head.sha.clone();
-
-            // Anti-Loop Filter 1: Ignore commits created by the automated governance sync
-            if pr.title.contains("[skip review]") {
-                return (
-                    StatusCode::OK,
-                    Json(ApiResponse {
-                        success: true,
-                        message: format!(
-                            "Skipped review for automated PR {}#{}",
-                            repo_name, pr_number
-                        ),
-                    }),
-                );
-            }
-
-            // Anti-Loop Filter 2: Check if already certified and in merge queue
-            if let Some(prior) = state.state_mgr.get_pr_state(&repo_name, pr_number).await
-                && prior.last_certified_head_sha.as_deref() == Some(&head_sha)
-                && prior.is_enlisted_in_merge_queue
-            {
-                info!(
-                    "PR {}#{} head {} is already 100% certified and in merge queue. Dropping webhook loop.",
-                    repo_name, pr_number, head_sha
-                );
-                return (
-                    StatusCode::OK,
-                    Json(ApiResponse {
-                        success: true,
-                        message: format!(
-                            "PR {}#{} is already certified and queued",
-                            repo_name, pr_number
-                        ),
-                    }),
-                );
-            }
-
-            let state_clone = state.clone();
-            let repo_clone = repo_name.clone();
-            let pr_title = pr.title.clone();
-            let pr_body = pr.body.unwrap_or_default();
-            let base_branch = pr.base.branch_ref.clone();
-            let base_sha = pr.base.sha.clone();
-
-            tokio::spawn(async move {
-                // Also read inside; a delegated read moves when the callee does.
-                if state_clone.pause.holds(&repo_clone, pr_number, "reviewing") {
-                    return;
-                }
-                if let Err(e) = execute_pr_review(
-                    &state_clone,
-                    &repo_clone,
-                    pr_number,
-                    &pr_title,
-                    &pr_body,
-                    &base_branch,
-                    &base_sha,
-                    &head_sha,
-                    false,
-                )
-                .await
-                {
-                    error!(
-                        "Failed to execute PR review for {}#{}: {:?}",
-                        repo_clone, pr_number, e
-                    );
-                }
-            });
-
+        // Anti-Loop Filter 2: Check if already certified and in merge queue
+        if let Some(prior) = state.state_mgr.get_pr_state(&repo_name, pr_number).await
+            && prior.last_certified_head_sha.as_deref() == Some(&head_sha)
+            && prior.is_enlisted_in_merge_queue
+        {
+            info!(
+                "PR {}#{} head {} is already 100% certified and in merge queue. Dropping webhook loop.",
+                repo_name, pr_number, head_sha
+            );
             return (
-                StatusCode::ACCEPTED,
+                StatusCode::OK,
                 Json(ApiResponse {
                     success: true,
-                    message: format!("Review queued for {}#{}", repo_name, pr.number),
+                    message: format!(
+                        "PR {}#{} is already certified and queued",
+                        repo_name, pr_number
+                    ),
                 }),
             );
         }
+
+        let state_clone = state.clone();
+        let repo_clone = repo_name.clone();
+        let pr_title = pr.title.clone();
+        let pr_body = pr.body.unwrap_or_default();
+        let base_branch = pr.base.branch_ref.clone();
+        let base_sha = pr.base.sha.clone();
+
+        tokio::spawn(async move {
+            // Also read inside; a delegated read moves when the callee does.
+            if state_clone.pause.holds(&repo_clone, pr_number, "reviewing") {
+                return;
+            }
+            if let Err(e) = execute_pr_review(
+                &state_clone,
+                &repo_clone,
+                pr_number,
+                &pr_title,
+                &pr_body,
+                &base_branch,
+                &base_sha,
+                &head_sha,
+                false,
+            )
+            .await
+            {
+                error!(
+                    "Failed to execute PR review for {}#{}: {:?}",
+                    repo_clone, pr_number, e
+                );
+            }
+        });
+
+        return (
+            StatusCode::ACCEPTED,
+            Json(ApiResponse {
+                success: true,
+                message: format!("Review queued for {}#{}", repo_name, pr.number),
+            }),
+        );
     }
 
     // Case 2: Inline Review Comment Created (pull_request_review_comment)
@@ -344,7 +333,7 @@ pub async fn webhook_handler(
             let repo_clone = repo_name.clone();
             let run_id = wf.id;
             let branch_str = branch.to_string();
-            let commit_sha = wf.head_sha.unwrap_or_default();
+            let commit_sha = wf.head_sha;
             let wf_name = wf.name.unwrap_or_else(|| "CI Workflow".to_string());
 
             tokio::spawn(async move {
@@ -352,18 +341,32 @@ pub async fn webhook_handler(
                 if state_clone.pause.holds(&repo_clone, 0, "triaging CI") {
                     return;
                 }
-                if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
-                    let _ = state_clone
-                        .ci_triager
-                        .triage_workflow_run(
-                            &repo_clone,
-                            run_id,
-                            &branch_str,
-                            &commit_sha,
-                            &wf_name,
-                            &repo_dir,
-                        )
-                        .await;
+                let repo_dir = match state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
+                    Ok(repo_dir) => repo_dir,
+                    Err(err) => {
+                        error!(
+                            "Workflow CI triage could not prepare {}: {:?}",
+                            repo_clone, err
+                        );
+                        return;
+                    }
+                };
+                if let Err(err) = state_clone
+                    .ci_triager
+                    .triage_workflow_run_with_optional_sha(
+                        &repo_clone,
+                        run_id,
+                        &branch_str,
+                        commit_sha.as_deref(),
+                        &wf_name,
+                        &repo_dir,
+                    )
+                    .await
+                {
+                    error!(
+                        "Workflow CI triage failed for run #{} on {}: {:?}",
+                        run_id, repo_clone, err
+                    );
                 }
             });
 

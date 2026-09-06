@@ -1,5 +1,5 @@
 use crate::dashboard::escape::{html as esc, html_truncated as esc_trunc};
-use crate::dashboard::ssr_renderer::DashboardStateView;
+use crate::dashboard::view_model::DashboardStateView;
 
 pub fn build_repo_cards(state: &DashboardStateView) -> String {
     state
@@ -45,15 +45,37 @@ pub fn build_repo_cards(state: &DashboardStateView) -> String {
         .join("\n")
 }
 
+/// The panel's header, naming any repo whose open-PR query never answered.
+///
+/// An idle queue is a measurement; a failed fetch is not, and both leave
+/// `merge_train` empty. Without this notice the panel reports the first when
+/// it observed the second.
+fn build_unobserved_notice(state: &DashboardStateView) -> String {
+    if state.unobserved_merge_train_repos.is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"<div class="empty-state">
+            <span class="icon">🚧</span>
+            <p>Open pull requests not observed for {}: the query did not answer, so the queue below is what was fetched rather than what exists.</p>
+        </div>"#,
+        esc(&state.unobserved_merge_train_repos.join(", "))
+    )
+}
+
 pub fn build_merge_train_rows(state: &DashboardStateView) -> String {
+    let notice = build_unobserved_notice(state);
     if state.merge_train.is_empty() {
+        if !notice.is_empty() {
+            return notice;
+        }
         r#"<div class="empty-state">
             <span class="icon">🚂</span>
             <p>No inflight speculative merge conflicts. Queue idle & ready for admission.</p>
         </div>"#
             .to_string()
     } else {
-        state
+        let rows = state
             .merge_train
             .iter()
             .map(|t| {
@@ -80,7 +102,8 @@ pub fn build_merge_train_rows(state: &DashboardStateView) -> String {
                 )
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        format!("{notice}{rows}")
     }
 }
 

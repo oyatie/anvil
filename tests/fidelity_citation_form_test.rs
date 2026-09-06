@@ -36,12 +36,15 @@ use std::sync::LazyLock;
 static LINE_CITATION: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9_/]+\.rs:[0-9]").expect("static pattern"));
 
-/// Line-number citations remaining. EXACT, and it must fall.
+/// Line-number citations remaining. Zero, and it may never rise.
 ///
-/// Not a ceiling. A ceiling would let a new coordinate be written under cover
-/// of an old one, which is the whole defect: the cost of this class is paid by
-/// whoever edits an unrelated file, so nobody who adds one ever feels it.
-const LINE_CITATIONS_REMAINING: usize = 124;
+/// Not a ceiling with slack in it. Slack is what lets a new coordinate be
+/// written under cover of an old one, which is the whole defect: the cost of
+/// this class is paid by whoever edits an unrelated file, so nobody who adds
+/// one ever feels it. The registry holds none on either side of the merge base,
+/// so this says what the derived bound below says -- and says it in a checkout
+/// with no merge base to ask.
+const LINE_CITATIONS_REMAINING: usize = 0;
 
 fn count() -> usize {
     AUDITED_GATES
@@ -50,12 +53,12 @@ fn count() -> usize {
         .sum()
 }
 
-/// A ceiling, not an equality. See the derived bound below.
+/// An equality, which at zero is the only form that bounds anything.
 #[test]
-fn line_number_citations_do_not_exceed_the_recorded_ceiling() {
-    let found = count();
-    assert!(
-        found <= LINE_CITATIONS_REMAINING,
+fn line_number_citations_match_the_recorded_count() {
+    assert_eq!(
+        count(),
+        LINE_CITATIONS_REMAINING,
         "line-number citations rose. Migrate the citation to `file.rs::symbol`: \
          a coordinate is a cached search result that the next unrelated \
          edit will invalidate."
@@ -75,6 +78,35 @@ fn the_symbol_form_is_in_real_use_and_not_merely_permitted() {
     );
 }
 
+/// Every `.rs` file under `src/fidelity/`, not one named file.
+///
+/// The subject is the registry corpus, and a single path is a proxy for it that
+/// stops being one the moment an entry moves. `registry.rs` held all of them
+/// until it was split across `registry/entries_*.rs`; a counter keyed to the
+/// old filename would have read zero on this side, reported a fall of 124 and
+/// been blind to every coordinate written into a new file afterwards. Both
+/// sides ask the same question of the directory, so a move inside it is not a
+/// change in the count.
+fn is_registry_source(path: &str) -> bool {
+    path.starts_with("src/fidelity/") && path.ends_with(".rs")
+}
+
+/// The line-citation count over the working tree's own registry sources.
+fn line_citations_in_the_tree(root: &Path, out: &mut usize) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            line_citations_in_the_tree(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            let body = std::fs::read_to_string(&path).expect("registry source is readable");
+            *out += LINE_CITATION.find_iter(&body).count();
+        }
+    }
+}
+
 /// The bound that holds without a committed literal.
 ///
 /// `LINE_CITATIONS_REMAINING` above stays as a floor for checkouts with no
@@ -85,7 +117,7 @@ fn line_citations_do_not_grow_against_the_merge_base() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let count = |path: &str, body: &str| {
-        if path != "src/fidelity/registry.rs" {
+        if !is_registry_source(path) {
             return 0;
         }
         LINE_CITATION.find_iter(body).count()
@@ -99,10 +131,8 @@ fn line_citations_do_not_grow_against_the_merge_base() {
         eprintln!("skipped: no merge-base against origin/dev");
         return;
     };
-    let now = count(
-        "src/fidelity/registry.rs",
-        &std::fs::read_to_string(repo.join("src/fidelity/registry.rs")).expect("registry"),
-    );
+    let mut now = 0usize;
+    line_citations_in_the_tree(&repo.join("src/fidelity"), &mut now);
     assert!(
         now <= base.at_merge_base,
         "line-number citations grew from {} at merge-base {} to {}. A \

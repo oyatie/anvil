@@ -81,15 +81,18 @@ work to it: a boundary you authored is not a boundary, and §7's scope check wou
 against your own list.
 
 `ACTIVE MILESTONE` is an id **exactly as a `ws-*.md` table writes it**. The plan uses three forms —
-`H1-3`, `H1-8a`, `WS14-H1b` — and 7 rows whose id cell is bare `H1`, which are named by file plus
-milestone text (`ws-05 "Enlist doors driven behaviourally (#52)"`). Of 43 H1 rows only 8 have a
-bare `H1-<n>` id, so a bare number usually does not identify one:
+`H1-3`, `H1-8a`, `WS14-H1b` — and some rows whose id cell is bare `H1`, which are named by file plus
+milestone text (`ws-05 "Enlist doors driven behaviourally (#52)"`). Only a minority of H1 rows have
+a bare `H1-<n>` id, so a bare number usually does not identify one. Every count below is measured,
+and the prose deliberately restates none of them — a number written twice goes stale once:
 
 ```
-grep -chE '^\| *H1-[0-9]+ *\|' docs/plan/ws-*.md | paste -sd+ - | bc     # 8
-grep -chE '^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|' docs/plan/ws-*.md | paste -sd+ - | bc   # 43
-grep -rnE '^\| *H1 *\|' docs/plan/ws-*.md        # the 7 bare-H1 rows, listed
+count '^\| *H1-[0-9]+ *\|' in docs/plan/ws-*.md     #= 12
+count '^\| *(WS[0-9]+-)?H1[-0-9a-z]* *\|' in docs/plan/ws-*.md   #= 47
+count '^\| *H1 *\|' in docs/plan/ws-*.md     #= 7
 ```
+
+To list the bare-`H1` rows rather than count them: `grep -rnE '^\| *H1 *\|' docs/plan/ws-*.md`.
 
 ## 3. Preconditions — verify, then stop if any fails
 

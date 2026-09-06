@@ -1176,7 +1176,7 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     // time, so it tracks the source instead of drifting away from it.
     // The module names the subject; the diff the gate reads needs a path, and
     // it must end in the Rust extension or the gate reads no Rust hunk at all.
-    const LIVE_MODULE: &str = "src/exec/non_model/transport";
+    const LIVE_MODULE: &str = "src/predictive_test_selector/workspace_dag";
     let live_file = format!("{LIVE_MODULE}.rs");
     let source = anvil::source_scan::paths::module_source(
         LIVE_MODULE,
@@ -1192,9 +1192,9 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
         .collect();
 
     assert!(
-        spawn_lines.len() >= 2,
+        spawn_lines.len() == 1,
         "fixture drawn from live source has rotted: {live_file} no longer \
-         contains at least two `std::thread::spawn` calls (found {}). Re-cut \
+         contains exactly one `std::thread::spawn` call (found {}). Re-cut \
          this fixture from a file that still spawns uninstrumented threads, or \
          drop it if none remain.",
         spawn_lines.len()
@@ -1204,7 +1204,7 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     let end = (spawn_lines[spawn_lines.len() - 1] + 8).min(lines.len());
     let cut = lines[start..end].join("\n");
     // The half of the rot guard the count above does not cover. Other lanes are
-    // working this repository; one that attaches a span to these two threads
+    // working this repository; one that attaches a span to this metadata thread
     // makes the cut window correct code, and every assertion below then fails
     // reading like a gate defect -- "the gate reported 0 finding(s)" -- which
     // invites the next agent to weaken a test that was right. If that happens
@@ -1221,27 +1221,27 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     let report = run(&diff_of(&[(live_file.as_str(), &hunk)]));
 
     assert!(
-        report.detached_findings.len() >= 2,
-        "{live_file} spawns {} reader threads with no span attached, and the \
+        report.detached_findings.len() == 1,
+        "{live_file} spawns {} metadata threads with no span attached, and the \
          gate reported {} finding(s). Summary was: {}",
         spawn_lines.len(),
         report.detached_findings.len(),
         report.summary
     );
     assert!(
-        report.tasks_scanned >= 2,
-        "the two live thread spawns must be counted among the boundaries \
+        report.tasks_scanned == 1,
+        "the one live thread spawn must be counted among the boundaries \
          inspected; `tasks_scanned` was {}",
         report.tasks_scanned
     );
     assert!(
         !report.is_propagated,
-        "a file that drops trace context across two real thread boundaries \
+        "a file that drops trace context across a real thread boundary \
          must not be reported as propagating it"
     );
     assert!(
         !accusations_in(&report.summary).is_empty(),
-        "two real detached boundaries were measured here, so the sentence a \
+        "one real detached boundary was measured here, so the sentence a \
          reviewer reads must name them. A summary that reports an absence -- or \
          says nothing at all -- conceals a defect the gate did find, which is \
          the same false assurance as claiming a verification it did not \
@@ -1261,9 +1261,8 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
     );
 
     // A finding is a locator or it is nothing: the file, the line, and the code
-    // that was flagged. Two findings against a file that spawns two threads
-    // eighty lines apart, both reporting line 0 with an empty snippet, are
-    // unactionable.
+    // that was flagged. The location must be the actual spawn in this cut,
+    // not a default line zero or a location outside the inspected hunk.
     assert!(
         report
             .detached_findings
@@ -1284,15 +1283,10 @@ fn the_uninstrumented_thread_spawns_living_in_this_repository_are_seen() {
         .collect();
     reported_lines.sort_unstable();
     reported_lines.dedup();
-    assert!(
-        reported_lines.len() >= 2,
-        "the two spawns are at different places in the file, so their findings \
-         must carry different line numbers; got {:?}",
-        report
-            .detached_findings
-            .iter()
-            .map(|f| f.line_number)
-            .collect::<Vec<_>>()
+    assert_eq!(
+        reported_lines,
+        [spawn_lines[0] - start + 1],
+        "the finding must locate the one actual spawn in the inspected cut"
     );
     assert!(
         report

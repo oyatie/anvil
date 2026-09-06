@@ -19,7 +19,7 @@ use syn::visit::Visit;
 
 const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
 const EXPECTED_PROVIDER_SEAM_TOKEN_SHA256: &str =
-    "029d05fcc1f50b8d9a750acabbf059837081df6b7f02a9608b2a273fa52b25f3";
+    "0d6dca38e9bcfbb71045dce507a1c6c89be2870eb238566849b1cc6a66e5b7a8";
 const MODEL_TRANSPORT: &str = "src/exec/agent/transport.rs";
 const NON_MODEL_TRANSPORT: &str = "src/exec/non_model.rs";
 const CLIPPY_CONFIG: &str = "clippy.toml";
@@ -74,6 +74,21 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     (
         "src/exec/agent.rs",
         "",
+        "import:construction::command_in->command_in",
+    ),
+    (
+        "src/exec/agent/construction.rs",
+        "",
+        "import:super::AgentCommand->AgentCommand",
+    ),
+    (
+        "src/exec/agent/construction.rs",
+        "",
+        "import:tokio::process::Command->Command",
+    ),
+    (
+        "src/exec/agent.rs",
+        "",
         "import:tokio::process::Command->Command",
     ),
     (
@@ -104,53 +119,57 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     ("src/exec/agent.rs", "command", "call:command_in:tool"),
     ("src/exec/agent.rs", "deliver", "reference:command"),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "prepare_command",
         "command-method:cmd:stderr",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "prepare_command",
         "command-method:cmd:stdout",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "prepare_command",
         "construct-agent:AgentCommand:command=cmd:framing=framing",
     ),
-    ("src/exec/agent.rs", "prepare_command", "mut-ref:cmd"),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
+        "prepare_command",
+        "mut-ref:cmd",
+    ),
+    (
+        "src/exec/agent/construction.rs",
         "prepare_command",
         "posture-method:posture:apply_from",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "trusted_provider_command_from",
         "bind-command-new:bound:std::process::Command::new:canonical",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "trusted_provider_command_from",
         "bind-command-new:requested:std::process::Command::new:tool",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "trusted_provider_command_from",
         "command-method:bound:arg0",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "trusted_provider_command_from",
         "command-method:requested:env_clear",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "trusted_provider_command_from",
         "command-new:std::process::Command::new:canonical",
     ),
     (
-        "src/exec/agent.rs",
+        "src/exec/agent/construction.rs",
         "trusted_provider_command_from",
         "command-new:std::process::Command::new:tool",
     ),
@@ -405,6 +424,21 @@ const EXPECTED_NONMODEL_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
     ),
 ];
 const EXPECTED_SAFE_ASSOCIATED_SPAWNS: &[(&str, &str, &str)] = &[
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "tokio::spawn",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver_with_stdin",
+        "tokio::spawn",
+    ),
+    (
+        "src/predictive_test_selector/workspace_dag.rs",
+        "discover_workspace_packages_sync",
+        "std::thread::spawn",
+    ),
     (
         "src/cli/server.rs",
         "run_server",
@@ -5638,12 +5672,13 @@ fn model_prompt_and_command_capabilities_keep_their_exact_private_shape() {
             ("as_std".to_owned(), "pub(crate)".to_owned()),
         ]
     );
-    for name in ["command", "command_in"] {
+    for (name, visibility) in [("command", "private"), ("command_in", "pub(super)")] {
         assert_eq!(
             visibility_name(&top_level_function(&agent_file, name).vis),
-            "private"
+            visibility
         );
     }
+    assert_canonical_external_module(&agent_file, "construction", "private");
     assert_canonical_external_module(&agent_file, "provider", "private");
     assert_canonical_external_module(&agent_file, "transport", "private");
 
@@ -5921,7 +5956,8 @@ fn agent_argv_mutation_is_exec_private_and_centralized() {
     assert!(!agent.contains("pub(crate) fn arg"));
     assert!(!agent.contains("pub(crate) fn args"));
 
-    let router = production(&repo().join("src/ai_driver/router.rs"));
+    let router =
+        anvil::source_scan::without_commentary(&module_source("src/ai_driver/router", &repo()));
     assert!(!router.contains(".arg("));
     assert!(!router.contains(".args("));
     for constructor in [
@@ -6073,7 +6109,7 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
             ),
             (
                 "src/exec/net.rs".to_owned(),
-                "apply".to_owned(),
+                "apply_from".to_owned(),
                 "call:super::clear_environment:arg0=cmd".to_owned(),
             ),
         ],
@@ -6084,6 +6120,7 @@ fn raw_runners_admit_only_a_finite_direct_nonmodel_tool_capability() {
         raw_env_clears,
         [
             ("src/exec/agent.rs".to_owned(), 1),
+            ("src/exec/agent/construction.rs".to_owned(), 1),
             ("src/exec/non_model.rs".to_owned(), 2),
         ],
         "direct env_clear calls bypass the canonical-command rebinder policy"
@@ -8198,9 +8235,143 @@ fn direct_known_provider_construction_remains_inside_the_finite_provider_seam() 
             }
         }
     }
-    assert!(
-        !bare.is_empty(),
-        "known-provider probe census found no subject"
+
+    // Reviewed structure-only extraction: pin complete parsed bodies so finite
+    // validation and canonical binding must dominate every returned command.
+    // This is inert AST evidence; none of these fixture expressions execute.
+    let actual_source = production(&repo().join("src/exec/agent/construction.rs"));
+    let actual = syn::parse_file(&actual_source).expect("private construction syntax");
+    let expected = syn::parse_file(
+        r#"
+use super::{AgentCommand, Framing, Posture, provider};
+use anyhow::{Result, bail};
+use tokio::process::Command;
+
+/// Applies the model-turn posture to a command chosen by the finite provider
+/// seam in the private `exec::agent::provider` child module.
+pub(super) fn command(tool: &str, posture: &Posture, framing: Framing) -> Result<AgentCommand> {
+    command_in(tool, posture, framing, std::env::vars())
+}
+
+/// [`command`], against a stated environment. Used by posture unit tests.
+pub(super) fn command_in<I>(
+    tool: &str,
+    posture: &Posture,
+    framing: Framing,
+    environment: I,
+) -> Result<AgentCommand>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let cmd = trusted_provider_command(tool)?;
+    Ok(prepare_command(cmd, posture, framing, environment))
+}
+
+pub(super) fn prepare_command<I>(
+    mut cmd: Command,
+    posture: &Posture,
+    framing: Framing,
+    environment: I,
+) -> AgentCommand
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    posture.apply_from(&mut cmd, environment);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    AgentCommand {
+        command: cmd,
+        framing,
+    }
+}
+
+pub(super) fn trusted_provider_command(tool: &str) -> Result<Command> {
+    if !provider::is_provider_program(std::ffi::OsStr::new(tool)) {
+        bail!("{tool:?} is outside the finite provider executable registry");
+    }
+    let search_path = std::env::var_os("PATH")
+        .ok_or_else(|| anyhow::anyhow!("service PATH is absent while resolving provider {tool}"))?;
+    trusted_provider_command_from(tool, &search_path)
+}
+
+/// Resolves and binds the provider using one captured service-PATH value.
+///
+/// The resulting absolute pathname is the deployment's trust boundary. This
+/// seam does not claim to stop the service owner from replacing that installed
+/// file after resolution and before the OS opens it; filesystem containment is
+/// explicitly outside the direct-turn contract.
+pub(super) fn trusted_provider_command_from(
+    tool: &str,
+    search_path: &std::ffi::OsStr,
+) -> Result<Command> {
+    if std::env::split_paths(search_path).any(|directory| !directory.is_absolute()) {
+        bail!("service PATH contains a relative entry; provider identity is not trustworthy");
+    }
+    let mut requested = std::process::Command::new(tool);
+    requested.env_clear().env("PATH", search_path);
+    let canonical = crate::exec::non_model::resolution::resolve_canonical_executable(&requested)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider executable {tool:?} is unavailable on the trusted service PATH"
+            )
+        })?;
+    let mut bound = std::process::Command::new(canonical);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        bound.arg0(tool);
+    }
+    Ok(Command::from(bound))
+}
+"#,
+    )
+    .expect("reviewed finite construction syntax");
+    let parent_source = production(&repo().join("src/exec/agent.rs"));
+    let parent = syn::parse_file(&parent_source).expect("agent parent syntax");
+    let parent_command = top_level_function(&parent, "command");
+    let actual_body = &parent_command.block;
+    let expected_body = &top_level_function(&expected, "command").block;
+    assert_eq!(
+        quote::quote!(#actual_body).to_string(),
+        quote::quote!(#expected_body).to_string()
+    );
+    assert_eq!(visibility_name(&parent_command.vis), "private");
+    for name in [
+        "command_in",
+        "prepare_command",
+        "trusted_provider_command",
+        "trusted_provider_command_from",
+    ] {
+        let actual = top_level_function(&actual, name);
+        let expected = top_level_function(&expected, name);
+        let actual_body = &actual.block;
+        let expected_body = &expected.block;
+        assert_eq!(
+            quote::quote!(#actual_body).to_string(),
+            quote::quote!(#expected_body).to_string(),
+            "{name} must preserve finite admission and canonical command handoff"
+        );
+        assert_eq!(
+            visibility_name(&actual.vis),
+            "pub(super)",
+            "{name} must remain private to the agent owner"
+        );
+    }
+    let provider_source = production(&repo().join(PROVIDER_SEAM));
+    let provider = syn::parse_file(&provider_source).expect("finite provider syntax");
+    let actual_body = &top_level_function(&provider, "agy_help_probe").block;
+    let expected_body: syn::Block = syn::parse_quote!({
+        let mut command = super::trusted_provider_command("agy")?;
+        let workspace = std::env::current_dir()
+            .map_err(|error| anyhow::anyhow!("resolve agy probe working directory: {error}"))?;
+        Posture::in_workspace(workspace).apply(&mut command);
+        command.args(agy_help_args());
+        Ok(ProviderProbeCommand(command))
+    });
+    assert_eq!(
+        quote::quote!(#actual_body).to_string(),
+        quote::quote!(#expected_body).to_string(),
+        "the finite probe must wrap the trusted command it constructed"
     );
     for (path, provider, _) in bare {
         assert!(

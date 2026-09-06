@@ -2,6 +2,7 @@
 //!
 //! Entrypoint for `anvil` CLI commands and background lifecycle daemons.
 
+#![forbid(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 
 use anyhow::Result;

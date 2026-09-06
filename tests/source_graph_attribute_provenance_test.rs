@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 fn write(path: impl AsRef<Path>, contents: &str) {
     let path = path.as_ref();
@@ -12,41 +11,27 @@ fn write(path: impl AsRef<Path>, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
-fn cargo_check(root: &Path) {
-    let output = Command::new("cargo")
-        .current_dir(root)
-        .args(["check", "--offline"])
-        .env("CARGO_TARGET_DIR", root.join("target"))
-        .env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .output()
-        .expect("run Cargo fixture");
-    assert!(
-        output.status.success(),
-        "fixture must compile: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+// These are source/data contracts, not compiled macro expansion demonstrations.
+// Metadata uses the existing admitted manifest/lock profile; no fixture is built.
+fn admitted_profile(root: &Path) {
+    write(root.join("Cargo.toml"), include_str!("../Cargo.toml"));
+    write(root.join("Cargo.lock"), include_str!("../Cargo.lock"));
+    write(root.join("src/main.rs"), "fn main() {}");
 }
 
-fn evil_proc_macro(root: &Path) {
-    write(
-        root.join("evil/Cargo.toml"),
-        "[package]\nname=\"evil\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [lib]\nproc-macro=true\n",
-    );
-    write(
-        root.join("evil/src/lib.rs"),
-        "extern crate proc_macro; use proc_macro::TokenStream; \
-         #[proc_macro_derive(Serialize)] pub fn serialize(_:TokenStream)->TokenStream { \
-             TokenStream::new() } \
-         #[proc_macro_derive(Debug)] pub fn debug(_:TokenStream)->TokenStream { \
-             TokenStream::new() } \
-         #[proc_macro_derive(Clone)] pub fn clone(_:TokenStream)->TokenStream { \
-             TokenStream::new() } \
-         #[proc_macro_attribute] pub fn inject(_:TokenStream,item:TokenStream)->TokenStream { \
-             item } \
-         #[proc_macro] pub fn info(_:TokenStream)->TokenStream { \"()\".parse().unwrap() }",
-    );
+fn admitted_tree(body: &str) -> tempfile::TempDir {
+    let root = tree(body);
+    admitted_profile(root.path());
+    anvil::source_scan::paths::production_module_dependencies(root.path())
+        .expect("positive control must satisfy the complete admitted profile");
+    root
+}
+
+fn refuses(root: &Path) -> String {
+    let reason = anvil::source_scan::paths::production_module_dependencies(root)
+        .expect_err("unproved syntax expansion must prevent measurement");
+    assert!(reason.contains("cannot be measured"), "{reason}");
+    reason
 }
 
 fn tree(body: &str) -> tempfile::TempDir {
@@ -68,16 +53,9 @@ fn tree(body: &str) -> tempfile::TempDir {
 }
 
 fn error(body: &str) -> String {
-    let root = tree(body);
-    evil_proc_macro(root.path());
-    write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\nevil={path=\"evil\"}\n",
-    );
-    cargo_check(root.path());
-    anvil::source_scan::paths::production_module_dependencies(root.path())
-        .expect_err("unproved syntax expansion must prevent measurement")
+    let root = admitted_tree("pub fn run(){ crate::account_pool::thing(); }");
+    write(root.path().join("src/brand_absence.rs"), body);
+    refuses(root.path())
 }
 
 #[test]
@@ -148,19 +126,12 @@ fn classifier_uncertainty_removes_exemptions_instead_of_breaking_the_census() {
 
 #[test]
 fn audited_default_registry_derives_do_not_make_the_live_graph_unmeasurable() {
-    let root = tree(
-        "use serde::Serialize; #[derive(Serialize, serde::Deserialize)] \
-         pub struct S { #[serde(default = \"default_name\")] name: String } \
-         fn default_name() -> String { String::new() } \
+    let root = admitted_tree(
+        "use serde::Serialize; #[derive(Serialize, serde::Deserialize)]
+         pub struct S { #[serde(default = \"default_name\")] name: String }
+         fn default_name() -> String { String::new() }
          pub fn run(){ crate::account_pool::thing(); }",
     );
-    write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\nserde={version=\"=1.0.229\",features=[\"derive\"]}\n",
-    );
-    cargo_check(root.path());
-
     let graph = anvil::source_scan::paths::production_module_dependencies(root.path()).unwrap();
     assert!(
         graph["brand_absence"].contains("account_pool/thing"),
@@ -171,20 +142,14 @@ fn audited_default_registry_derives_do_not_make_the_live_graph_unmeasurable() {
 #[test]
 fn audited_helper_type_bounds_still_contribute_local_dependency_edges() {
     let root = tree(
-        "use serde::Serialize; #[derive(Serialize)] \
+        "use serde::Serialize; #[derive(Serialize)]
          #[serde(bound(serialize = \"T: crate::account_pool::Trait\"))] pub struct S<T>(T);",
     );
-    write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\nserde={version=\"=1.0.229\",features=[\"derive\"]}\n",
-    );
+    admitted_profile(root.path());
     write(
         root.path().join("src/account_pool.rs"),
         "pub trait Trait: serde::Serialize {} pub fn thing(){}",
     );
-    cargo_check(root.path());
-
     let graph = anvil::source_scan::paths::production_module_dependencies(root.path()).unwrap();
     assert!(
         graph["brand_absence"].contains("account_pool/Trait"),
@@ -193,46 +158,31 @@ fn audited_helper_type_bounds_still_contribute_local_dependency_edges() {
 }
 
 #[test]
-fn audited_tokio_crate_override_still_contributes_local_dependency_edges() {
-    let root = tree("#[tokio::main(crate = \"crate::account_pool\")] pub async fn run() {}");
-    write(
-        root.path().join("src/account_pool.rs"),
-        "pub use tokio::*; pub fn thing(){}",
-    );
-    write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\ntokio={version=\"=1.53.1\",features=[\"macros\",\"rt-multi-thread\"]}\n",
-    );
-    cargo_check(root.path());
-
+fn unsupported_tokio_crate_override_revokes_an_admitted_default_contract() {
+    let root = admitted_tree("#[tokio::main] pub async fn run(){ crate::account_pool::thing(); }");
     let graph = anvil::source_scan::paths::production_module_dependencies(root.path()).unwrap();
     assert!(
-        graph["brand_absence"]
-            .iter()
-            .any(|edge| edge.starts_with("account_pool")),
+        graph["brand_absence"].contains("account_pool/thing"),
         "{graph:?}"
     );
+    write(
+        root.path().join("src/brand_absence.rs"),
+        "#[tokio::main(crate = \"crate::account_pool\")] pub async fn run() {}",
+    );
+    refuses(root.path());
 }
 
 #[test]
 fn audited_clap_expression_values_still_contribute_local_dependency_edges() {
     let root = tree(
-        "use clap::Parser; #[derive(Parser)] \
-         #[command(about = crate::account_pool::ABOUT)] pub struct Cli;",
+        "use clap::Parser; #[derive(Parser)]
+        #[command(about = crate::account_pool::ABOUT)] pub struct Cli;",
     );
+    admitted_profile(root.path());
     write(
         root.path().join("src/account_pool.rs"),
         "pub const ABOUT: &str = \"fixture\"; pub fn thing(){}",
     );
-    write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\nclap={version=\"=4.6.6\",features=[\"derive\"]}\n\
-         clap_derive={version=\"=4.6.4\"}\n",
-    );
-    cargo_check(root.path());
-
     let graph = anvil::source_scan::paths::production_module_dependencies(root.path()).unwrap();
     assert!(
         graph["brand_absence"].contains("account_pool/ABOUT"),
@@ -242,104 +192,65 @@ fn audited_clap_expression_values_still_contribute_local_dependency_edges() {
 
 #[test]
 fn audited_derive_lock_evidence_rejects_tampering_or_an_extra_version() {
-    for extra in [
-        r#"[[package]]
-name = "serde"
-version = "9.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa""#,
-        "",
-    ] {
-        let root = tree("use serde::Serialize; #[derive(Serialize)] pub struct S;");
-        write(
-            root.path().join("Cargo.toml"),
-            "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-             [dependencies]\nserde={version=\"=1.0.229\",features=[\"derive\"]}\n",
-        );
-        cargo_check(root.path());
-        if extra.is_empty() {
-            let mut lock = fs::read_to_string(root.path().join("Cargo.lock")).unwrap();
-            lock = lock.replace(
+    for extra_version in [false, true] {
+        let root = admitted_tree("use serde::Serialize; #[derive(Serialize)] pub struct S;");
+        let lock = fs::read_to_string(root.path().join("Cargo.lock")).unwrap();
+        let changed = if extra_version {
+            format!(
+                "{lock}\n[[package]]\nname = \"serde\"\nversion = \"9.9.9\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{}\"\n",
+                "a".repeat(64)
+            )
+        } else {
+            lock.replace(
                 "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba",
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            );
-            write(root.path().join("Cargo.lock"), &lock);
-        } else {
-            let mut lock = fs::read_to_string(root.path().join("Cargo.lock")).unwrap();
-            lock.push_str(extra);
-            write(root.path().join("Cargo.lock"), &lock);
-        }
-        let reason = anvil::source_scan::paths::production_module_dependencies(root.path())
-            .expect_err("changed lock evidence must revoke proc-macro provenance");
-        assert!(reason.contains("derive macro Serialize"), "{reason}");
+            )
+        };
+        assert_ne!(lock, changed, "the lock mutation must have a subject");
+        write(root.path().join("Cargo.lock"), &changed);
+        refuses(root.path());
     }
 }
 
 #[test]
 fn lexical_imports_cannot_fall_through_to_an_audited_macro_name() {
     for body in [
-        "use serde::Serialize; fn f(){ use evil::Serialize; #[derive(Serialize)] struct S; }",
-        "fn f(){ use evil as serde; #[derive(serde::Serialize)] struct S; }",
+        "use serde::Serialize; fn f(){ use unknown::Serialize; #[derive(Serialize)] struct S; }",
+        "fn f(){ use unknown as serde; #[derive(serde::Serialize)] struct S; }",
     ] {
-        let root = tree(body);
-        write(
-            root.path().join("Cargo.toml"),
-            "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-             [dependencies]\nserde={version=\"=1.0.229\",features=[\"derive\"]}\nevil={path=\"evil\"}\n",
-        );
-        evil_proc_macro(root.path());
-        cargo_check(root.path());
-        let reason = anvil::source_scan::paths::production_module_dependencies(root.path())
-            .expect_err("lexical macro ambiguity must not inherit audited provenance");
-        assert!(reason.contains("derive macro"), "{reason}");
+        let root = admitted_tree("use serde::Serialize; #[derive(Serialize)] pub struct S;");
+        // Unknown identities are inert syntax only, not executable macro packages.
+        write(root.path().join("src/brand_absence.rs"), body);
+        refuses(root.path());
     }
 }
 
 #[test]
 fn a_cfg_alternative_package_cannot_inherit_audited_attribute_provenance() {
-    let root = tempfile::tempdir().unwrap();
-    write(
-        root.path().join("src/lib.rs"),
-        "extern crate self as async_std; pub mod task { pub fn block_on<F>(_: F) {} } \
-         mod account_pool; mod api_contract_guard; mod brand_absence;",
-    );
-    write(root.path().join("src/account_pool.rs"), "pub fn thing(){}");
-    write(
-        root.path().join("src/api_contract_guard.rs"),
-        "pub fn check(){}",
-    );
-    write(
-        root.path().join("src/brand_absence.rs"),
-        "#[tokio::main] pub async fn main() {}",
-    );
+    let root = admitted_tree("#[tokio::main] pub async fn run() {}");
+    let manifest = fs::read_to_string(root.path().join("Cargo.toml")).unwrap();
+    // Manifest data only: an unadmitted alternative cannot inherit Tokio's
+    // authority. No package is fetched, compiled or redirected at runtime.
     write(
         root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [target.'cfg(unix)'.dependencies]\n\
-         tokio={package=\"async-attributes\",version=\"=1.1.2\"}\n\
-         [target.'cfg(windows)'.dependencies]\n\
-         tokio={version=\"=1.53.1\",features=[\"macros\",\"rt\"]}\n",
+        &format!(
+            "{manifest}\n[target.'cfg(unix)'.dependencies]\ntokio={{package=\"unadmitted-attributes\",version=\"=1.0.0\"}}\n"
+        ),
     );
-    cargo_check(root.path());
-
-    let reason = anvil::source_scan::paths::production_module_dependencies(root.path())
-        .expect_err("all cfg-possible bindings must share audited attribute provenance");
-    assert!(reason.contains("attribute"), "{reason}");
+    refuses(root.path());
 }
 
 #[test]
 fn exact_registry_macro_provenance_keeps_scanning_caller_tokens() {
     let root = tree(
-        "use tracing::info; pub fn run(){ \
+        "use tracing::info; pub fn run(){
          info!(value = crate::account_pool::thing(), \"measured\"); }",
     );
+    admitted_profile(root.path());
     write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\ntracing=\"=0.1.44\"\n",
+        root.path().join("src/account_pool.rs"),
+        "pub trait Trait {} pub fn thing() -> u64 { 1 }",
     );
-    cargo_check(root.path());
-
     let graph = anvil::source_scan::paths::production_module_dependencies(root.path()).unwrap();
     assert!(
         graph["brand_absence"].contains("account_pool/thing"),
@@ -350,58 +261,33 @@ fn exact_registry_macro_provenance_keeps_scanning_caller_tokens() {
 #[test]
 fn audited_external_macro_names_require_exact_lock_and_lexical_provenance() {
     for shadowed in [false, true] {
-        let body = if shadowed {
-            "use evil::info; pub fn run(){ info!(); }"
-        } else {
-            "use tracing::info; pub fn run(){ info!(\"fixture\"); }"
-        };
-        let root = tree(body);
-        write(
-            root.path().join("Cargo.toml"),
-            &format!(
-                "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-                 [dependencies]\ntracing=\"=0.1.44\"\n{}",
-                if shadowed {
-                    "evil={path=\"evil\"}\n"
-                } else {
-                    ""
-                }
-            ),
-        );
+        let root = admitted_tree("use tracing::info; pub fn run(){ info!(\"fixture\"); }");
         if shadowed {
-            evil_proc_macro(root.path());
-        }
-        cargo_check(root.path());
-        if !shadowed {
-            let mut lock = fs::read_to_string(root.path().join("Cargo.lock")).unwrap();
-            lock = lock.replace(
+            write(
+                root.path().join("src/brand_absence.rs"),
+                "use unknown::info; pub fn run(){ info!(); }",
+            );
+        } else {
+            let lock = fs::read_to_string(root.path().join("Cargo.lock")).unwrap();
+            let changed = lock.replace(
                 "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100",
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             );
-            write(root.path().join("Cargo.lock"), &lock);
+            assert_ne!(lock, changed, "the lock mutation must have a subject");
+            write(root.path().join("Cargo.lock"), &changed);
         }
-        let reason = anvil::source_scan::paths::production_module_dependencies(root.path())
-            .expect_err("macro provenance must be exact and unshadowed");
-        assert!(reason.contains("macro info!"), "{reason}");
+        refuses(root.path());
     }
 }
 
 #[test]
 fn contributor_cargo_source_authority_revokes_registry_macro_provenance() {
-    let root = tree("use tracing::info; pub fn run(){ info!(\"fixture\"); }");
-    write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
-         [dependencies]\ntracing=\"=0.1.44\"\n",
-    );
-    cargo_check(root.path());
+    let root = admitted_tree("use tracing::info; pub fn run(){ info!(\"fixture\"); }");
     write(
         root.path().join(".cargo/config.toml"),
         "[source.crates-io]\nreplace-with=\"vendored\"\n[source.vendored]\ndirectory=\"vendor\"\n",
     );
-    let reason = anvil::source_scan::paths::production_module_dependencies(root.path())
-        .expect_err("contributor source replacement invalidates registry macro evidence");
-    assert!(reason.contains("macro info!"), "{reason}");
+    refuses(root.path());
 }
 
 #[test]

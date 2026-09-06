@@ -661,8 +661,10 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // Pin the overinclusive scanned corpus, not a claim that every file ships.
     // Five newly covered occurrences are two child stdin shutdowns, a temporary
     // review-body file flush, DelimSpan::close, and a `close` variable in format!.
-    // The actual source classifier currently returns no test-only files; two
-    // external test-file occurrences are consequently retained conservatively.
+    // Declaration classification excludes the model_prompt external test
+    // occurrence. The stale git_manager/evidence_objects/tests.rs expectation
+    // names an absent file, not a newly classified test. These five production
+    // occurrences remain exact.
     let added_method_events = [
         (
             "src/clean_architecture_guard/scan.rs",
@@ -680,19 +682,9 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
             "network-instance-method:shutdown",
         ),
         (
-            "src/git_manager/evidence_objects/tests.rs",
-            "git_input",
-            "network-instance-method:write_all",
-        ),
-        (
             "src/github/reviews.rs",
             "submit_pr_review_with_diff",
             "network-instance-method:flush",
-        ),
-        (
-            "src/model_prompt/tests.rs",
-            "docguard_tail_escape_is_neutralised_and_trusted_instructions_follow_it",
-            "network-macro-outbound-method:close:99e8fac6f13bcef70d6434fffa7642e67dfaea1af3cadaaade19e87db286462e",
         ),
         (
             "src/source_scan/test_modules.rs",
@@ -724,19 +716,24 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // separate exact set instead of weakening the outbound-method policy.
     assert_eq!(
         conservative_method_events.len(),
-        45,
+        39,
         "{conservative_method_events:#?}"
     );
-    // Real inline-test stripping removes six `write` tokens in occupancy.rs's
-    // cfg(test) queue_tests module from the former stub-derived 44-entry pin.
-    // The remaining 38 entries were reviewed individually; no other old event
-    // is removed, and duplicate occurrences remain significant.
-    assert_eq!(prior_method_events.len(), 38);
+    // This complete current set was reviewed by owner and source expression:
+    // 39 occurrences = the five explicit production records above + 34 below.
+    // The former historical 38-entry digest could not be reproduced, so this
+    // is a current-set binding, not a claimed historical subtraction. Duplicate
+    // lock/file occurrences remain significant; Windows pair connect/write
+    // describe the already-reviewed local pipe and its writer open option.
+    assert_eq!(prior_method_events.len(), 34);
     assert_eq!(
         conservative_method_digest,
-        "3e3923cb7eb27a563166cdc0eb97a9c6b766c69bd0428cc644706f32ed1fe987",
+        "48595cd700ecfd02768022877572a4f91d0ee7973b9e5086117a11c121581844",
         "the conservative outbound-method spelling census changed: {conservative_method_events:#?}"
     );
+    // Complete current structural set: 18 existing records plus eight reviewed
+    // Windows local-IPC type/import/expression records, retaining duplicates.
+    // Four stale evaluate_corpus expectations name no current source operation.
     let structural_census = census
         .into_iter()
         .filter(|event| !conservative_method_events.contains(event))
@@ -810,6 +807,48 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
                 "finite-call:net::post_osv_batch".to_owned(),
             ),
             (
+                "src/exec/non_model/transport/sync_capture.rs".to_owned(),
+                "".to_owned(),
+                "network-type:tokio::net::windows::named_pipe::NamedPipeServer".to_owned(),
+            ),
+            (
+                "src/exec/non_model/transport/sync_capture.rs".to_owned(),
+                "".to_owned(),
+                "network-type:tokio::net::windows::named_pipe::NamedPipeServer".to_owned(),
+            ),
+            (
+                "src/exec/non_model/transport/sync_capture/windows.rs".to_owned(),
+                "".to_owned(),
+                "network-import:tokio::net::windows::named_pipe::NamedPipeServer->NamedPipeServer"
+                    .to_owned(),
+            ),
+            (
+                "src/exec/non_model/transport/sync_capture/windows.rs".to_owned(),
+                "".to_owned(),
+                "network-import:tokio::net::windows::named_pipe::PipeMode->PipeMode".to_owned(),
+            ),
+            (
+                "src/exec/non_model/transport/sync_capture/windows.rs".to_owned(),
+                "".to_owned(),
+                "network-import:tokio::net::windows::named_pipe::ServerOptions->ServerOptions"
+                    .to_owned(),
+            ),
+            (
+                "src/exec/non_model/transport/sync_capture/windows.rs".to_owned(),
+                "pair".to_owned(),
+                "network-expression:tokio::net::windows::named_pipe::PipeMode::Byte".to_owned(),
+            ),
+            (
+                "src/exec/non_model/transport/sync_capture/windows.rs".to_owned(),
+                "pair".to_owned(),
+                "network-expression:tokio::net::windows::named_pipe::ServerOptions::new".to_owned(),
+            ),
+            (
+                "src/exec/non_model/transport/sync_capture/windows.rs".to_owned(),
+                "pair".to_owned(),
+                "network-type:tokio::net::windows::named_pipe::NamedPipeServer".to_owned(),
+            ),
+            (
                 "src/recovery/blue_green_supervisor.rs".to_owned(),
                 "spawn_green_and_drain_blue".to_owned(),
                 "network-expression:tokio::net::TcpStream::connect".to_owned(),
@@ -834,34 +873,14 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
                 "is_loopback".to_owned(),
                 "network-type:std::net::IpAddr".to_owned(),
             ),
-            (
-                "src/webhook/pipelines/certify.rs".to_owned(),
-                "certify_pull_request".to_owned(),
-                "network-local-macro-invocation:ambiguous:evaluate_corpus:fbbffff51ca519750e5084bade29f8bf252285c68c82b94cf90d8b7f2597dc70"
-                    .to_owned(),
-            ),
-            (
-                "src/webhook/pipelines/certify.rs".to_owned(),
-                "certify_pull_request".to_owned(),
-                "network-local-macro-invocation:ambiguous:evaluate_corpus:fc74e3a0d44220316f002975f5735899b6b24a048aebb6ab80e51912fd01716e"
-                    .to_owned(),
-            ),
-            (
-                "src/webhook/pipelines/certify.rs".to_owned(),
-                "certify_pull_request".to_owned(),
-                "network-macro-ambiguous-definition:evaluate_corpus:925bb4bed7fad7bfd1ff8d3aec358e28e13626d5aa198089ed836d785ef8a42d"
-                    .to_owned(),
-            ),
-            (
-                "src/webhook/pipelines/certify.rs".to_owned(),
-                "certify_pull_request".to_owned(),
-                "network-macro-ambiguous:dynamic-path:4a08ad40ae3445b2af7b0370b1f679c0cdfd20161196989730f33e0f4ccc392b"
-                    .to_owned(),
-            ),
         ],
         "the finite OSV call graph or another direct network construction changed"
     );
+}
 
+// Kept separate so source-only verification never invokes compiler fixtures.
+#[test]
+fn network_capability_compiler_fixtures_remain_distinct_from_repository_census() {
     let bypass = network_capability_events(
         r#"
             use std::net as wire;

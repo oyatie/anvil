@@ -40,13 +40,10 @@ async fn test_live_claude_opus5_high() {
         .execute_prompt(&prompt, Path::new("."), &config)
         .await;
 
-    assert!(
-        res.is_ok(),
-        "Claude Code Opus 5 execution failed: {:?}",
-        res
-    );
-    let output = res.unwrap();
-    println!("Claude Opus 5 Live Output: {}", output);
+    let output = match res {
+        Ok(output) => output,
+        Err(_) => panic!("Claude Code Opus 5 execution failed"),
+    };
     assert!(!output.trim().is_empty());
 }
 
@@ -71,9 +68,10 @@ async fn test_live_gpt5_6sol_high_with_fallover() {
         .execute_prompt(&prompt, Path::new("."), &config)
         .await;
 
-    assert!(res.is_ok(), "Codex GPT-5.6sol execution failed: {:?}", res);
-    let output = res.unwrap();
-    println!("GPT-5.6sol Live / Fallover Output: {}", output);
+    let output = match res {
+        Ok(output) => output,
+        Err(_) => panic!("Codex GPT-5.6sol execution failed"),
+    };
     assert!(!output.trim().is_empty());
 }
 
@@ -98,8 +96,9 @@ async fn test_live_gemini3_7_flash_high() {
         .execute_prompt(&prompt, Path::new("."), &config)
         .await;
 
-    assert!(res.is_ok(), "Gemini 3.7 Flash execution failed: {:?}", res);
-    let output = res.unwrap();
-    println!("Gemini 3.7 Flash Live Output: {}", output);
+    let output = match res {
+        Ok(output) => output,
+        Err(_) => panic!("Gemini 3.7 Flash execution failed"),
+    };
     assert!(!output.trim().is_empty());
 }

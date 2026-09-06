@@ -93,6 +93,43 @@ fn occupancy_is_a_job_of_its_own() {
 }
 
 #[test]
+fn native_tests_collect_independent_failures_only_after_compilation() {
+    let native = steps("windows-capture");
+    let check = native
+        .iter()
+        .position(|step| step["id"].as_str() == Some("native-check"))
+        .expect("native compilation has an explicit prerequisite identity");
+    assert_eq!(
+        native[check]["run"].as_str(),
+        Some("cargo check --lib --locked")
+    );
+    assert!(native[check]["if"].is_null());
+    let tests = &native[check + 1..];
+    assert_eq!(
+        tests.len(),
+        9,
+        "the complete independent native inventory remains explicit"
+    );
+    for step in tests {
+        assert_eq!(
+            step["if"].as_str(),
+            Some("${{ !cancelled() && steps.native-check.outcome == 'success' }}")
+        );
+        assert!(
+            step["run"]
+                .as_str()
+                .is_some_and(|run| run.starts_with("cargo test "))
+        );
+    }
+    assert!(
+        native
+            .iter()
+            .all(|step| step["continue-on-error"].is_null())
+    );
+    assert!(job("windows-capture")["continue-on-error"].is_null());
+}
+
+#[test]
 fn occupancy_runs_on_pull_request_and_skips_merge_group() {
     let cond = job("occupancy")["if"]
         .as_str()

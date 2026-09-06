@@ -72,24 +72,34 @@ jobs:
         with:
           toolchain: "1.98.0"
       - name: Check native library
+        id: native-check
         run: cargo check --lib --locked
       - name: Test owned capture and deadline contracts
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --lib --locked exec::non_model::transport
       - name: Test provider-free argv contracts
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --lib --locked exec::agent::provider::tests
       - name: Test unavailable-primary fallback selection
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --lib --locked ai_driver::router::tests
       - name: Test turn parsing without providers
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --lib --locked exec::turn::tests
       - name: Test checked execution ownership
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --locked --test model_spawns_go_through_one_seam_test every_execution_site_is_downstream_of_its_typed_capability -- --exact
       - name: Test native source classification and workspace contracts
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --lib --locked source_scan
       - name: Test exact native production process census
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --locked --test model_spawns_go_through_one_seam_test current_process_execution_call_sites_are_the_private_exec_seams -- --exact
       - name: Test native zero-network-spawn census
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --locked --test network_spawns_go_through_one_seam_test no_network_tool_is_spawned_outside_the_seam -- --exact
       - name: Test native diff-parser classification ratchet
+        if: ${{ !cancelled() && steps.native-check.outcome == 'success' }}
         run: cargo test --locked --test diff_parsing_ratchet_test
 
   # The caller's `fast-checks` fan-in includes every job in this reusable lane.

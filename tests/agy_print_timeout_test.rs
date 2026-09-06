@@ -9,16 +9,59 @@ fn finite_agy_constructor_always_derives_an_explicit_print_timeout() {
         Path::new(env!("CARGO_MANIFEST_DIR")),
     );
     let src = anvil::source_scan::without_test_modules(&src);
-    let at = src
-        .find("pub fn agy_agent(")
-        .unwrap_or_else(|| panic!("the finite agy constructor moved; this ratchet must follow it"));
-    let body: String = src[at..].chars().take(1_500).collect();
-    assert!(body.contains("\"--print-timeout\""));
-    assert!(
-        body.contains("agy_print_timeout_arg(budget)"),
-        "agy's deadline must be derived from the same supervised turn budget"
+    use quote::ToTokens;
+    let file = syn::parse_file(&src).expect("provider syntax");
+    let body = |name: &str| {
+        file.items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == name => {
+                    Some(function.block.to_token_stream().to_string())
+                }
+                _ => None,
+            })
+            .expect("finite provider function")
+    };
+    let expected: syn::Block = syn::parse_quote!({
+        let args = agy_args(effort, budget, model)?;
+        let mut cmd = super::command("agy", posture, Framing::AgyStreamJson)?;
+        cmd.args(args);
+        Ok(cmd)
+    });
+    assert_eq!(
+        body("agy_agent"),
+        expected.to_token_stream().to_string(),
+        "the same budget-derived argv must reach the returned finite command"
     );
-    assert!(body.contains("\"--print\",\n        \"\""));
+    let args: syn::Block = syn::parse_quote!({
+        validate_effort(effort)?;
+        if let Some(model) = model {
+            validate_model_selector(model)?;
+        }
+        let timeout = crate::exec::agy_print_timeout_arg(budget);
+        let mut args = vec![
+            "--print".into(),
+            "".into(),
+            "--input-format".into(),
+            "stream-json".into(),
+            "--output-format".into(),
+            "stream-json".into(),
+            "--effort".into(),
+            effort.into(),
+            "--print-timeout".into(),
+            timeout,
+            "--dangerously-skip-permissions".into(),
+        ];
+        if let Some(model) = model {
+            args.extend(["--model".into(), model.into()]);
+        }
+        Ok(args)
+    });
+    assert_eq!(
+        body("agy_args"),
+        args.to_token_stream().to_string(),
+        "the timeout argument must occupy its exact slot in the returned argv"
+    );
 }
 
 #[test]

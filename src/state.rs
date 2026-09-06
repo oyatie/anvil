@@ -176,7 +176,7 @@ impl StateManager {
         entry.last_reviewed_at = chrono_iso_now();
         entry.review_count += 1;
         entry.last_review_verdict = verdict;
-
+        entry.last_completed_head_sha = None; // A new attempt has not completed yet.
         let updated = entry.clone();
 
         // 1. Append-only WAL entry with immediate flush

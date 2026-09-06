@@ -1,20 +1,11 @@
-//! A milestone run may write only what it was authorised to write, and that
-//! holds for whichever agent is driving.
-//!
-//! The rule lives in `pre-commit` rather than in a harness setting because the
-//! commit is the only thing every agent has in common. `.claude/settings.json`
-//! is read by one harness; this repository is also touched by codex, cursor,
-//! grok and agy, and by a human. A policy one harness enforces is a policy the
-//! others never see.
-//!
-//! It is also why the rule is not an enumeration of writing verbs. `cp`, `dd`,
-//! `mv`, `install`, `truncate`, a shell redirect, `python3 -c` -- a closed list
-//! goes stale in silence, which is the same reason `occupancy` keys hubs on a
-//! directory rather than a path list. Gating the artifact closes the class.
-//!
-//! Absent scope file means no constraint, deliberately: ordinary work is not a
-//! milestone run, and a check that fires when nobody declared a scope would
-//! teach the operator to disable it.
+//! Commit-time run-scope guardrail controls for the installed pre-commit
+//! template, not every harness or write-time containment. No production scope
+//! producer is supplied. Invocation depends on the installed hook set and Git
+//! operation; this does not prove other commit routes or tamper resistance.
+//! Genuine absence deliberately preserves ordinary work. Historical negative
+//! fixtures remain below; their earlier measurement narratives are not renewed
+//! evidence. The bounded correction selects only the documented positive and
+//! source-only controls, plus the separate inert policy owner.
 
 use std::fs;
 use std::path::Path;
@@ -24,19 +15,30 @@ fn git(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
         .args(args)
         .current_dir(dir)
+        .env_remove("ANVIL_SKIP_HOOKS")
         .output()
         .expect("git must run")
 }
 
+fn git_ok(dir: &Path, args: &[&str]) {
+    let out = git(dir, args);
+    assert!(out.status.success(), "fixture git {args:?} failed: {out:?}");
+}
+
 /// A throwaway repository with this repository's tracked hook installed.
 fn lab(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("anvil-scope-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = tempfile::Builder::new()
+        .prefix(&format!("anvil-scope-{name}-"))
+        .tempdir()
+        .expect("unique fixture directory")
+        .keep();
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::create_dir_all(dir.join(".anvil")).unwrap();
-    git(&dir, &["init", "-q"]);
-    git(&dir, &["config", "user.email", "t@t"]);
-    git(&dir, &["config", "user.name", "t"]);
+    git_ok(&dir, &["init", "-q"]);
+    git_ok(&dir, &["config", "user.email", "t@t"]);
+    git_ok(&dir, &["config", "user.name", "t"]);
+    git_ok(&dir, &["config", "commit.gpgsign", "false"]);
+    git_ok(&dir, &["config", "core.hooksPath", ".git/hooks"]);
 
     let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/git_manager/hooks/pre-commit");
     let hook = dir.join(".git/hooks/pre-commit");
@@ -51,12 +53,7 @@ fn lab(name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Refused *for the scope reason*, and naming the offending path.
-///
-/// Every one of these tests used to assert only `!status.success()`. Against a
-/// hook whose refusal message was replaced with unrelated text, all five stayed
-/// green -- they could not tell a right refusal from a wrong one, which is the
-/// "passes for the wrong reason" failure they exist to prevent.
+/// Refused for the scope reason, rather than an unrelated fixture failure.
 fn refused_for_scope(out: &std::process::Output, path: &str) {
     let err = String::from_utf8_lossy(&out.stderr);
     let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), err);
@@ -72,10 +69,15 @@ fn refused_for_scope(out: &std::process::Output, path: &str) {
 }
 
 fn commit(dir: &Path, paths: &[&str], msg: &str) -> std::process::Output {
-    let mut args = vec!["add"];
+    let mut args = vec!["add", "--"];
     args.extend_from_slice(paths);
-    git(dir, &args);
+    git_ok(dir, &args);
     git(dir, &["commit", "-m", msg])
+}
+
+fn seed(dir: &Path, paths: &[&str]) {
+    let out = commit(dir, paths, "seed");
+    assert!(out.status.success(), "fixture seed failed: {out:?}");
 }
 
 /// Ordinary work declares no scope, and is not constrained by one.
@@ -153,29 +155,25 @@ fn a_mixed_commit_is_refused_and_names_only_the_offender() {
     let _ = fs::remove_dir_all(&d);
 }
 
-/// The scope file is never committable: it is run state, not source.
+/// The tracked ignore policy names run state; this alone proves no hook refusal.
 #[test]
 fn the_scope_file_is_gitignored() {
     let ignore = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(".gitignore"))
         .expect(".gitignore must exist");
     assert!(
         ignore.lines().any(|l| l.trim() == "/.anvil/run-scope"),
-        ".anvil/run-scope must be gitignored, or a run could commit its own authorisation"
+        "the tracked ignore rule must name .anvil/run-scope"
     );
 }
 
-// ---------------------------------------------------------------------------
-// The review's attacks, as assertions. Each of these committed successfully
-// against the first revision of the hook; the exit code, not the message, is
-// what changed.
-// ---------------------------------------------------------------------------
+// Historical negative/transition fixtures, not selected by the bounded fix.
 
 /// Deleting a file is a write. `--diff-filter=ACMR` omitted `D`, so removing an
 /// out-of-scope file was authorised by a scope that did not mention it.
 #[test]
 fn deleting_an_out_of_scope_file_is_refused() {
     let d = lab("delete");
-    commit(&d, &["src/inside.txt", "outside.txt"], "seed");
+    seed(&d, &["src/inside.txt", "outside.txt"]);
     fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
     fs::remove_file(d.join("outside.txt")).unwrap();
     let out = commit(&d, &["outside.txt"], "delete out of scope");
@@ -188,7 +186,7 @@ fn deleting_an_out_of_scope_file_is_refused() {
 #[test]
 fn renaming_an_out_of_scope_file_into_scope_is_refused() {
     let d = lab("rename");
-    commit(&d, &["src/inside.txt", "outside.txt"], "seed");
+    seed(&d, &["src/inside.txt", "outside.txt"]);
     fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
     fs::rename(d.join("outside.txt"), d.join("src/moved.txt")).unwrap();
     let out = commit(&d, &["outside.txt", "src/moved.txt"], "rename into scope");
@@ -203,7 +201,7 @@ fn renaming_an_out_of_scope_file_into_scope_is_refused() {
 #[test]
 fn replacing_an_out_of_scope_file_with_a_symlink_is_refused() {
     let d = lab("typechange");
-    commit(&d, &["src/inside.txt", "outside.txt"], "seed");
+    seed(&d, &["src/inside.txt", "outside.txt"]);
     fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
     fs::remove_file(d.join("outside.txt")).unwrap();
     std::os::unix::fs::symlink("/etc/hosts", d.join("outside.txt")).unwrap();
@@ -271,7 +269,7 @@ fn a_path_containing_a_space_is_one_path_not_two() {
 fn a_path_containing_a_glob_character_is_not_expanded() {
     let d = lab("globchar");
     fs::write(d.join("s*"), "a\n").unwrap();
-    commit(&d, &["src/inside.txt", "s*"], "seed");
+    seed(&d, &["src/inside.txt", "s*"]);
     fs::write(d.join(".anvil/run-scope"), "src/\n").unwrap();
     fs::remove_file(d.join("s*")).unwrap();
     let out = commit(&d, &["s*"], "glob char");

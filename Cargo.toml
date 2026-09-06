@@ -33,6 +33,14 @@ hex = "0.4"
 subtle = "2.5"
 tempfile = "3.10"
 toml = "0.8"
+syn = { version = "2.0", features = ["full", "visit"] }
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+quote = "1.0"
 
 [dev-dependencies]
 tempfile = "3.10"
+
+# `clippy.toml` names process-execution methods globally. Test targets need to
+# launch fixtures, while each production crate root elevates this lint to deny.
+[lints.clippy]
+disallowed_methods = "allow"

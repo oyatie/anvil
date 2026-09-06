@@ -28,12 +28,16 @@
 //! -- a comment is not an AST node. gosec is explicit that a constant literal
 //! URL produces no G107 warning at all.
 //!
-//! This is a line scanner with no parser, so it approximates the property from
+//! This is a line scanner, so it approximates the property from
 //! the outside: it drops the line's comment tail, skips prose and test files,
 //! and requires the URL to name a concrete non-loopback host. That removes the
 //! false-positive classes that made the gate unshippable. It does not make the
 //! check sink-anchored, and a cleartext URL built from parts across lines, or
 //! read from configuration this diff does not touch, is invisible to it.
+//! A finite literal parser only establishes the reserved-invalid exception;
+//! unsupported value syntax retains the ordinary line-scanner finding.
+
+mod reserved_invalid;
 
 /// File extensions whose contents are prose. A link in a document is a link.
 const PROSE_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "rst", "adoc"];
@@ -84,8 +88,9 @@ impl IdentityAuditor {
             if !in_scope || !line.starts_with('+') || line.starts_with("+++") {
                 continue;
             }
-            let code = code_before_comment(&line[1..]);
-            if let Some(reason) = insecure_transport_in(code) {
+            let original = &line[1..];
+            let code = code_before_comment(original);
+            if let Some(reason) = insecure_transport_in(code, original) {
                 violations.push(format!("{}: {}", reason, code.trim()));
             }
         }
@@ -149,7 +154,7 @@ fn code_before_comment(line: &str) -> &str {
 }
 
 /// Why this line is a finding, or `None`.
-fn insecure_transport_in(code: &str) -> Option<&'static str> {
+fn insecure_transport_in(code: &str, original: &str) -> Option<&'static str> {
     let mut rest = code;
     while let Some(i) = rest.find(CLEARTEXT_SCHEME) {
         let after = &rest[i + CLEARTEXT_SCHEME.len()..];
@@ -164,10 +169,21 @@ fn insecure_transport_in(code: &str) -> Option<&'static str> {
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphanumeric());
-        if concrete && !LOOPBACK_HOSTS.contains(&host.as_str()) {
+        if concrete
+            && !LOOPBACK_HOSTS.contains(&host.as_str())
+            && !reserved_invalid::complete_value_at(original, code.len() - rest.len() + i)
+        {
             return Some("Cleartext http endpoint (CWE-319)");
         }
         rest = after;
+    }
+
+    // A complete standalone string literal is data, not a call. This narrow
+    // distinction uses the original line, never an incomplete comment prefix,
+    // and applies only here: endpoint literals above are still scanned.
+    let value = original.trim_end();
+    if syn::parse_str::<syn::LitStr>(value.strip_suffix(',').unwrap_or(value)).is_ok() {
+        return None;
     }
 
     // An explicit opt-out of transport security, named as a call. Requiring the
@@ -189,36 +205,4 @@ fn insecure_transport_in(code: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Assembled at runtime so this file is not a finding against itself; see
-    /// the same note in `tests/loose_blocking_patterns_test.rs`.
-    fn scheme() -> String {
-        format!("ht{}://", "tp")
-    }
-
-    #[test]
-    fn test_detects_insecure_remote_http() {
-        let auditor = IdentityAuditor::new();
-        let diff = format!(
-            "+ let client = HttpClient::connect(\"{}billing.internal:8080\");",
-            scheme()
-        );
-        assert_eq!(auditor.audit_cleartext_transport(&diff).len(), 1);
-    }
-
-    #[test]
-    fn test_passes_spiffe_mtls_transport() {
-        let auditor = IdentityAuditor::new();
-        let diff = "+ let client = SpiffeTlsClient::connect(\"https://billing.internal:8443\");";
-        assert!(auditor.audit_cleartext_transport(diff).is_empty());
-    }
-
-    #[test]
-    fn test_ignores_a_url_in_a_comment() {
-        let auditor = IdentityAuditor::new();
-        let diff = format!("+// see {}docs.internal/runbook", scheme());
-        assert!(auditor.audit_cleartext_transport(&diff).is_empty());
-    }
-}
+mod tests;

@@ -7,6 +7,39 @@
 
 use super::*;
 
+#[test]
+fn malformed_source_reports_unmeasured_brand_absence() {
+    let report = BrandAbsenceGate::new().scan_source("src/incomplete.rs", "pub fn unfinished(");
+    let crate::pre_merge_guard::report::GateStatus::NotMeasured { gate_id, reason } =
+        report.gate_status()
+    else {
+        panic!("malformed source must not publish a measured verdict");
+    };
+    assert_eq!(gate_id, "brand_absence_status");
+    assert!(reason.contains("src/incomplete.rs"), "{reason}");
+}
+
+#[test]
+fn tree_scan_reports_source_parse_and_read_failures() {
+    let root = tempfile::tempdir().expect("source tree");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    let subject = crate::git_manager::SubjectRoot::asserted(
+        root.path().to_path_buf(),
+        crate::git_manager::Uncloned::TestFixture,
+    );
+    for bytes in [b"pub fn unfinished(".as_slice(), &[0xff]] {
+        std::fs::write(root.path().join("src/incomplete.rs"), bytes).expect("fixture");
+        let report = BrandAbsenceGate::new().scan_tree(&subject);
+        let crate::pre_merge_guard::report::GateStatus::NotMeasured { gate_id, reason } =
+            report.gate_status()
+        else {
+            panic!("unreadable source must not publish a measured verdict");
+        };
+        assert_eq!(gate_id, "brand_absence_status");
+        assert!(reason.contains("src/incomplete.rs"), "{reason}");
+    }
+}
+
 /// Regenerates the ledger body. Run with:
 /// `cargo test -p anvil brand_absence::tests::print_ledger -- --ignored --nocapture`
 #[test]

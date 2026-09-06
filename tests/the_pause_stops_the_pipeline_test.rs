@@ -313,19 +313,52 @@ fn the_doors_that_share_the_clone_serialise_on_the_pull_request() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
     );
     let src = anvil::source_scan::code_only(&raw);
-
+    // Aggregation is path-sorted, not execution-ordered. The private child
+    // containing the fixer sorts before the parent containing its spawn.
     let at = src
-        .find("resolve_and_fix(")
-        .expect("the fixer door still exists; if it moved, this test must follow it");
+        .find("fix_entry::run(")
+        .expect("the parent still delegates to the locked fixer entry");
     let opened = src[..at]
         .rfind("tokio::spawn(")
         .expect("the fixer still runs detached");
-
+    let body = spawn_body(&src, opened).expect("the spawned task has a complete body");
+    let normalized = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let call = "fix_entry::run(state_clone, repo_clone, pr_number, head_branch,
+        head_sha, is_cross_repository, feedback_item,).await";
+    assert_eq!(src.matches("fix_entry::run(").count(), 1);
     assert!(
-        src[opened..at].contains("acquire_pr_lock("),
-        "the fixer door does not take the per-PR lock the review pipeline \
-         takes, and both work in the one shared clone. A fixer commit can then \
-         be built from a tree a concurrent review is moving, and pushed to the \
-         contributor's branch."
+        normalized(body).contains(&normalized(call)),
+        "the detached parent must await the locked entry with the actual PR inputs"
     );
+
+    let child = anvil::source_scan::paths::module_source(
+        "src/webhook/webhook_handlers/fix_entry",
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
+    let child = normalized(&anvil::source_scan::without_commentary(&child));
+    let locked_entry = normalized(
+        r#"
+        let lock = state.state_mgr.acquire_pr_lock(&repo, pr_number).await;
+        let _ = after_lock(
+            &lock,
+            || state.pause.holds(&repo, pr_number, "fixing"),
+            || async {
+                state.fixer.resolve_and_fix(
+                    &repo, pr_number, &head_branch, &head_sha,
+                    is_cross_repository, &[feedback],
+                ).await
+            },
+        ).await;
+    "#,
+    );
+    assert_eq!(child.matches(&locked_entry).count(), 1);
+    assert_eq!(child.matches(".resolve_and_fix(").count(), 1);
+    let guarded_work = normalized(
+        "
+        let _guard = lock.lock().await;
+        if paused() { return None; }
+        Some(work().await)
+    ",
+    );
+    assert_eq!(child.matches(&guarded_work).count(), 1);
 }

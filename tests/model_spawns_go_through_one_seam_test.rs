@@ -20,6 +20,9 @@ use syn::visit::Visit;
 #[path = "model_spawns/mixed_spawn_tests.rs"]
 mod mixed_spawn_tests;
 
+#[path = "model_spawns/qualified_attribute_tests.rs"]
+mod qualified_attribute_tests;
+
 const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
 const EXPECTED_PROVIDER_SEAM_TOKEN_SHA256: &str =
     "0d6dca38e9bcfbb71045dce507a1c6c89be2870eb238566849b1cc6a66e5b7a8";
@@ -1433,7 +1436,9 @@ fn expression_attributes(expression: &syn::Expr) -> &[syn::Attribute] {
 
 fn attribute_policy_violations(meta: &syn::Meta, violations: &mut Vec<String>) {
     let name = syn_path_name(meta.path());
-    if !APPROVED_ATTRIBUTES.contains(&name.as_str()) {
+    if !APPROVED_ATTRIBUTES.contains(&name.as_str())
+        && !APPROVED_ATTRIBUTE_IMPORTS.contains(&name.as_str())
+    {
         violations.push(format!("unapproved-attribute:{name}"));
         return;
     }

@@ -15,12 +15,15 @@ const MODEL_PROMPT: &str = "src/model_prompt.rs";
 const HARNESS: &str = "src/model_prompt/harness.rs";
 const RUBRIC: &str = "src/reviewer/rubric.rs";
 const TRANSPORT: &str = "src/exec/agent/transport.rs";
+const TRANSPORT_SESSION: &str = "src/exec/agent/transport/session.rs";
 
 const MODEL_PROMPT_SHA256: &str =
     "7707c32309fe867f1897ae4d879a55793e19b83b2d0fdc5497777afb6f2fc8d9";
 const HARNESS_SHA256: &str = "4fed353d75ecf43a47d85f03700248071fe905e388234fc40729e5b3d05c666c";
 const RUBRIC_SHA256: &str = "c9ba2aca89c5e2183318636befa317597e6ffc827d768fe0bfe416e07b799b4f";
-const TRANSPORT_SHA256: &str = "502df88f38c3b1c315fc765bd048d1624bd9d0e9fbbd05e03c63faa91588c435";
+const TRANSPORT_SHA256: &str = "d46bdfd1c32c368e977eadb43b5d2e72f2cc98c236c1a426eba5e26c93328d9a";
+const TRANSPORT_SESSION_SHA256: &str =
+    "585bbba3f6c211c8c452cfe347c687499455b6e0046faa513f624b5a245870ff";
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -244,6 +247,7 @@ fn transport_harness_and_trusted_tables_match_the_reviewed_bytes() {
         (HARNESS, HARNESS_SHA256),
         (RUBRIC, RUBRIC_SHA256),
         (TRANSPORT, TRANSPORT_SHA256),
+        (TRANSPORT_SESSION, TRANSPORT_SESSION_SHA256),
     ] {
         assert_eq!(
             raw_sha256(&source(path)),
@@ -269,20 +273,51 @@ fn transport_success_is_an_os_stdin_handoff_not_a_provider_consumption_claim() {
 #[test]
 fn conditional_transport_and_dynamic_harness_mutations_change_the_inventory() {
     let transport = source(TRANSPORT);
+    assert_eq!(
+        transport
+            .matches("Framing::Plain => Cow::Borrowed(rendered)")
+            .count(),
+        1
+    );
     let conditional = transport.replacen(
         "Framing::Plain => Cow::Borrowed(rendered)",
         "Framing::Plain => Cow::Borrowed(\"raw attacker payload\")",
         1,
     );
+    assert_ne!(conditional, transport);
     assert_ne!(raw_sha256(&conditional), TRANSPORT_SHA256);
 
     let harness = source(HARNESS);
+    assert_eq!(harness.matches("pub(crate) enum HarnessText {").count(), 1);
     let dynamic = harness.replacen(
         "pub(crate) enum HarnessText {",
         "pub(crate) enum HarnessText { Raw(String),",
         1,
     );
+    assert_ne!(dynamic, harness);
     assert_ne!(raw_sha256(&dynamic), HARNESS_SHA256);
+}
+
+#[test]
+fn transport_descendants_have_a_closed_inventory() {
+    assert_eq!(
+        declared_modules(&source(TRANSPORT)),
+        [("session".to_owned(), false), ("tests".to_owned(), true)]
+    );
+    assert_eq!(
+        declared_modules(&source(TRANSPORT_SESSION)),
+        [("tests".to_owned(), true)]
+    );
+}
+
+#[test]
+fn extracted_session_output_mutation_changes_the_inventory() {
+    let session = source(TRANSPORT_SESSION);
+    assert_eq!(raw_sha256(&session), TRANSPORT_SESSION_SHA256);
+    assert_eq!(session.matches("Ok((stdout, stderr))").count(), 1);
+    let swapped = session.replacen("Ok((stdout, stderr))", "Ok((stderr, stdout))", 1);
+    assert_ne!(swapped, session);
+    assert_ne!(raw_sha256(&swapped), TRANSPORT_SESSION_SHA256);
 }
 
 #[test]
@@ -344,7 +379,7 @@ fn rubric_tables_are_literal_only() {
 
 #[test]
 fn fingerprints_are_token_parseable_rust_not_an_opaque_text_fixture() {
-    for path in [MODEL_PROMPT, HARNESS, RUBRIC, TRANSPORT] {
+    for path in [MODEL_PROMPT, HARNESS, RUBRIC, TRANSPORT, TRANSPORT_SESSION] {
         source(path)
             .parse::<TokenStream>()
             .unwrap_or_else(|error| panic!("{path} is not Rust tokens: {error}"));

@@ -43,6 +43,10 @@ pub enum Stage {
     PlanReview,
     ArchitectSpec,
     SpecReview,
+    /// Tests written from the spec, BEFORE the implementation exists.
+    TestAuthoring,
+    /// Adversarial review of those tests, before any code can satisfy them.
+    TestAuthoringReview,
     Implementation,
     Falsification,
     CodeReviewAudit,
@@ -62,6 +66,8 @@ impl Stage {
         Stage::PlanReview,
         Stage::ArchitectSpec,
         Stage::SpecReview,
+        Stage::TestAuthoring,
+        Stage::TestAuthoringReview,
         Stage::Implementation,
         Stage::Falsification,
         Stage::CodeReviewAudit,
@@ -81,6 +87,8 @@ impl Stage {
             Stage::PlanReview => "plan_review",
             Stage::ArchitectSpec => "architect_spec",
             Stage::SpecReview => "spec_review",
+            Stage::TestAuthoring => "test_authoring",
+            Stage::TestAuthoringReview => "test_authoring_review",
             Stage::Implementation => "implementation",
             Stage::Falsification => "falsification",
             Stage::CodeReviewAudit => "code_review_audit",
@@ -92,6 +100,14 @@ impl Stage {
             Stage::IssueTriage => "issue_triage",
         }
     }
+}
+
+/// What a stage may write, and with which models.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagePlan {
+    pub tiers: Vec<Tier>,
+    /// Path prefixes this stage may stage for commit; empty means none.
+    pub writes: Vec<String>,
 }
 
 /// One tier of a stage's chain, exactly as the file declares it.
@@ -112,14 +128,21 @@ struct RawTier {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawMeta {
+    /// Path prefixes a turn at this stage may stage for commit.
+    ///
+    /// Required, and an empty list is a real answer: it means the stage may
+    /// commit nothing. Absent is a load error, because a stage with no declared
+    /// scope is absent evidence rather than an unrestricted one.
+    writes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RawFile {
     #[serde(default)]
     stage: BTreeMap<String, Vec<RawTier>>,
-    /// Prose about each stage. Accepted and ignored, rather than left to
-    /// `deny_unknown_fields` to reject as an unknown key.
     #[serde(default)]
-    #[allow(dead_code)]
-    stage_meta: Option<toml::Value>,
+    stage_meta: BTreeMap<String, RawMeta>,
 }
 
 /// The provider strings the file may use.
@@ -152,9 +175,9 @@ fn provider_named(s: &str) -> Option<ModelProvider> {
 }
 
 /// Parse and validate the declared table.
-pub fn parse(text: &str) -> Result<BTreeMap<Stage, Vec<Tier>>> {
+pub fn parse(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
     let raw: RawFile = toml::from_str(text).context("config/model-routing.toml does not parse")?;
-    let mut out: BTreeMap<Stage, Vec<Tier>> = BTreeMap::new();
+    let mut out: BTreeMap<Stage, StagePlan> = BTreeMap::new();
 
     for (key, tiers) in &raw.stage {
         let Some(stage) = Stage::ALL.iter().copied().find(|s| s.key() == key) else {
@@ -184,7 +207,27 @@ pub fn parse(text: &str) -> Result<BTreeMap<Stage, Vec<Tier>>> {
                 timeout: Duration::from_secs(t.timeout_secs),
             });
         }
-        out.insert(stage, built);
+        let Some(meta) = raw.stage_meta.get(key) else {
+            bail!(
+                "stage `{key}` declares no `[stage_meta.{key}] writes = [..]`. A stage with no \
+                 declared write scope is absent evidence, not an unrestricted stage: the run-scope \
+                 guardrail would have nothing to enforce and would silently pass."
+            );
+        };
+        for prefix in &meta.writes {
+            if prefix.starts_with('/') || prefix.contains("..") || prefix.trim().is_empty() {
+                bail!(
+                    "stage `{key}` declares write prefix {prefix:?}, which is not a relative path inside the repository"
+                );
+            }
+        }
+        out.insert(
+            stage,
+            StagePlan {
+                tiers: built,
+                writes: meta.writes.clone(),
+            },
+        );
     }
 
     for stage in Stage::ALL {
@@ -198,8 +241,8 @@ pub fn parse(text: &str) -> Result<BTreeMap<Stage, Vec<Tier>>> {
     Ok(out)
 }
 
-fn table() -> &'static BTreeMap<Stage, Vec<Tier>> {
-    static TABLE: OnceLock<BTreeMap<Stage, Vec<Tier>>> = OnceLock::new();
+fn table() -> &'static BTreeMap<Stage, StagePlan> {
+    static TABLE: OnceLock<BTreeMap<Stage, StagePlan>> = OnceLock::new();
     TABLE.get_or_init(|| {
         parse(DECLARED).unwrap_or_else(|e| {
             panic!("the compiled-in routing table is invalid, so no stage can dispatch: {e}")
@@ -209,10 +252,14 @@ fn table() -> &'static BTreeMap<Stage, Vec<Tier>> {
 
 /// The declared chain for `stage`, primary first.
 pub fn chain(stage: Stage) -> &'static [Tier] {
+    &plan(stage).tiers
+}
+
+/// The declared plan for `stage`: its chain and what it may write.
+pub fn plan(stage: Stage) -> &'static StagePlan {
     table()
         .get(&stage)
-        .map(Vec::as_slice)
-        .expect("every Stage has a chain; the loader refuses a table where one does not")
+        .expect("every Stage has a plan; the loader refuses a table where one does not")
 }
 
 /// Build the tier's command. The typed constructors are the only spawn seam.
@@ -265,6 +312,18 @@ pub async fn run_stage_within(
     what: &str,
     budget: Option<Duration>,
 ) -> Result<String> {
+    // Declare what this stage may write, for as long as the turn runs.
+    //
+    // The `pre-commit` hook reads `.anvil/run-scope` and refuses staged paths
+    // outside it. Until now nothing wrote that file, so in a real checkout the
+    // hook's scope branch never executed and the guardrail could not fire
+    // (#215). This is its producer, and it is here because this is the one
+    // place every stage-dispatched turn passes through.
+    //
+    // Fallible on purpose: a run whose scope cannot be declared must not run
+    // unconstrained. `Posture::apply` returns `()` and could only have
+    // swallowed this.
+    let _scope = RunScope::declare(working_dir, &plan(stage).writes)?;
     let posture = Posture::in_workspace(working_dir);
     let mut refusals = Vec::new();
 
@@ -294,4 +353,71 @@ pub async fn run_stage_within(
         stage.key(),
         refusals.join("\n  ")
     )
+}
+
+/// Declare a stage's scope the way `run_stage_within` does.
+///
+/// Exposed so a test can exercise the PRODUCER rather than fabricate its
+/// output: every existing run-scope test writes the file itself, which is how
+/// the guardrail merged inert.
+pub fn declare_run_scope_for_test(working_dir: &Path, stage: Stage) -> Result<impl Sized> {
+    RunScope::declare(working_dir, &plan(stage).writes)
+}
+
+/// A stage's write scope, declared on disk for the length of one turn.
+///
+/// Removed on drop so ordinary work outside a run sees no constraint at all --
+/// the hook treats an absent declaration as "not a milestone run", which is
+/// different from an empty one meaning "may write nothing".
+struct RunScope {
+    path: std::path::PathBuf,
+    dir_was_created: bool,
+}
+
+impl RunScope {
+    fn declare(working_dir: &Path, writes: &[String]) -> Result<Self> {
+        let dir = working_dir.join(".anvil");
+        let dir_was_created = !dir.exists();
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("could not create {}", dir.display()))?;
+        let path = dir.join("run-scope");
+        // `create_new`: a declaration already present is another run in this
+        // workspace, and silently overwriting its scope would widen or narrow a
+        // constraint it is relying on.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| {
+                format!(
+                    "could not declare the run scope at {}; a declaration already present means \
+                     another run holds this workspace",
+                    path.display()
+                )
+            })?;
+        use std::io::Write;
+        for prefix in writes {
+            writeln!(file, "{prefix}")
+                .with_context(|| format!("could not write the run scope at {}", path.display()))?;
+        }
+        file.flush()
+            .with_context(|| format!("could not flush the run scope at {}", path.display()))?;
+        Ok(Self {
+            path,
+            dir_was_created,
+        })
+    }
+}
+
+impl Drop for RunScope {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        if self.dir_was_created {
+            // Only the directory this run created, and only if nothing else
+            // landed in it.
+            if let Some(dir) = self.path.parent() {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+    }
 }

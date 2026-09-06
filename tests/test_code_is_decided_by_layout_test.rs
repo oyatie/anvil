@@ -36,18 +36,19 @@ fn repo_with(path: &str, lines: usize) -> tempfile::TempDir {
 
 fn oversized(path: &str) -> Vec<String> {
     let dir = repo_with(path, WholeFileExpansion::MAX_WHOLE_FILE_LINES + 50);
-    WholeFileExpansion::evaluate_whole_file(
-        dir.path(),
-        path,
-        &FileChange {
-            added: "pub struct X;\n",
-            net_lines: 60,
-        },
-    )
-    .expect("evaluate fixture")
-    .into_iter()
-    .map(|v| v.category)
-    .collect()
+    let files = growth(path);
+    WholeFileExpansion::evaluate_whole_file(dir.path(), path, &FileChange::from_diff(&files[0]))
+        .expect("evaluate fixture")
+        .into_iter()
+        .map(|v| v.category)
+        .collect()
+}
+
+fn growth(path: &str) -> Vec<anvil::git_manager::diff_context::FileDiff> {
+    anvil::git_manager::diff_context::diffs_by_path(&format!(
+        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,60 @@\n{}",
+        "+pub struct X;\n".repeat(60)
+    ))
 }
 
 /// The corpus the substring got wrong, as paths this repository really has.
@@ -143,13 +144,11 @@ fn the_ceiling_spares_an_external_module_declared_only_for_tests() {
         "pub struct X;\n".repeat(WholeFileExpansion::MAX_WHOLE_FILE_LINES + 50),
     )
     .expect("fixture source");
+    let files = growth("src/guard/fixtures.rs");
     let found = WholeFileExpansion::evaluate_whole_file(
         dir.path(),
         "src/guard/fixtures.rs",
-        &FileChange {
-            added: "pub struct X;\n",
-            net_lines: 60,
-        },
+        &FileChange::from_diff(&files[0]),
     )
     .expect("evaluate cfg-test fixture");
     assert!(

@@ -25,11 +25,6 @@ pub struct PrDiffContext {
     pub repo_working_dir: SubjectRoot,
 }
 
-/// One file's portion of a unified diff, split by what the change does.
-///
-/// Three gates each carried their own copy of this parsing, and all three
-/// copies were wrong in the same two ways, because they were the same lines
-/// pasted three times.
 /// Why a rule needs the side of the diff a change REMOVES.
 ///
 /// A closed set, so asking for both sides is a named, reviewable act rather
@@ -45,93 +40,10 @@ pub enum BothSides {
     ContractComparesRemovedFields,
 }
 
-pub struct FileDiff {
-    /// Destination path, or the before-path for a deletion.
-    pub path: String,
-    kind: Option<FileChangeKind>,
-    previous: Option<String>,
-    /// Only the lines this change ADDS, without their `+`.
-    added: String,
-    /// Every line of this file's hunk, additions and context alike, without
-    /// the leading marker.
-    ///
-    /// Separate from `added` because the two answer different questions. "Does
-    /// this change introduce a mutating route" is about `added`; "does the file
-    /// reference an Idempotency-Key" is about `all`, since a key already
-    /// present is context the diff never adds.
-    all: String,
-    /// Lines added minus lines removed for this file.
-    ///
-    /// Counted while parsing, so a rule asking "did this change grow the file"
-    /// needs neither the removed side nor a second parser. `both_sides` is
-    /// reserved for rules whose SUBJECT is a removal; size is not one.
-    net_lines: i64,
-    /// This file's hunk lines exactly as the diff spells them, `+` and `-`
-    /// markers intact.
-    ///
-    /// For the rules whose subject IS the removal -- `removed_required_fields`
-    /// compares the two sides of a wire contract, and a field disappearing is
-    /// the entire finding. Reaching for this is opting out of the added/removed
-    /// distinction on purpose, and a rule that takes it should say why.
-    raw: String,
-}
-
-impl FileDiff {
-    /// None means incomplete, unsupported, or contradictory observation.
-    pub fn change_kind(&self) -> Option<FileChangeKind> {
-        self.kind
-    }
-
-    pub fn previous_path(&self) -> Option<&str> {
-        self.previous.as_deref()
-    }
-
-    fn new(path: String) -> Self {
-        Self {
-            path,
-            kind: None,
-            previous: None,
-            added: String::new(),
-            all: String::new(),
-            net_lines: 0,
-            raw: String::new(),
-        }
-    }
-    /// Lines added minus lines removed. Negative means the file shrank.
-    pub fn net_lines(&self) -> i64 {
-        self.net_lines
-    }
-
-    /// The lines this change ADDS, without their `+`.
-    ///
-    /// What an ordinary rule wants. It contains no removed line, so a rule
-    /// working from it cannot refuse the change that deletes what it is
-    /// looking for.
-    pub fn added(&self) -> &str {
-        &self.added
-    }
-
-    /// The file as it stands AFTER this change: additions plus the context they
-    /// sit in, removals excluded.
-    ///
-    /// For a rule asking what the file says now -- "a Namespace declared
-    /// without the enforce label", "an image not pinned to a digest" -- where a
-    /// line the change does not touch still counts.
-    pub fn after_change(&self) -> &str {
-        &self.all
-    }
-
-    /// Both sides, markers intact.
-    ///
-    /// Requires naming a reason from [`BothSides`], because this is the only
-    /// corpus containing removed lines and reading it by accident is the
-    /// inversion defect. The parameter is deliberately unused at runtime: its
-    /// job is to make the caller state, in code a reviewer reads, that the
-    /// removal is the subject rather than something swept in.
-    pub fn both_sides(&self, _why: BothSides) -> &str {
-        &self.raw
-    }
-}
+mod file_diff;
+mod post_image;
+pub use file_diff::FileDiff;
+pub use post_image::AddedPostImageLine;
 
 /// The sole diff walk: content projections and change identity share section
 /// boundaries. Unsupported sections reset state; missing evidence is not Modified.
@@ -160,6 +72,9 @@ pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
                 observed.invalid = true;
             }
             continue;
+        }
+        if let Some(file) = current.as_mut() {
+            file.positions.observe(line);
         }
         if !in_hunk {
             if let Some(endpoint) = line.strip_prefix("+++ ") {
@@ -276,6 +191,7 @@ pub fn diffs_by_path(diff: &str) -> Vec<FileDiff> {
 
 fn finish_section(out: &mut Vec<FileDiff>, file: Option<FileDiff>, observed: &Observation) {
     let Some(mut file) = file else { return };
+    file.positions.finish();
     file.kind = observed.resolve(&file.path);
     file.previous = observed.previous(file.kind, &file.path);
     if let Some(existing) = out.iter_mut().find(|existing| existing.path == file.path) {
@@ -285,6 +201,7 @@ fn finish_section(out: &mut Vec<FileDiff>, file: Option<FileDiff>, observed: &Ob
             existing.kind = None;
             existing.previous = None;
         }
+        existing.positions.invalidate("repeated file sections");
         existing.added.push_str(&file.added);
         existing.all.push_str(&file.all);
         existing.raw.push_str(&file.raw);

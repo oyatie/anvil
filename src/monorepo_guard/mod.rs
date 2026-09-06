@@ -80,10 +80,7 @@ impl MonorepoGuard {
         // Charging a toucher for a file's existing size made 57 files in this
         // repository unmergeable, including by the split the gate demands.
         for fd in crate::git_manager::diff_context::diffs_by_path(&diff_ctx.diff_content) {
-            let change = crate::monorepo_guard::whole_file_expansion::FileChange {
-                added: fd.added(),
-                net_lines: fd.net_lines(),
-            };
+            let change = crate::monorepo_guard::whole_file_expansion::FileChange::from_diff(&fd);
             violations.extend(WholeFileExpansion::evaluate_whole_file(
                 repo_dir, &fd.path, &change,
             )?);

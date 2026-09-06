@@ -53,7 +53,7 @@ const REMEDIATION: &[(&str, &str)] = &[
     ),
     (
         "semantic_abi_status",
-        "restore the removed public item, or bump major and note it in CHANGELOG.md",
+        "for an unaccepted change, restore the declaration or record an explicitly reviewed exact transition",
     ),
     (
         "secret_scan_status",

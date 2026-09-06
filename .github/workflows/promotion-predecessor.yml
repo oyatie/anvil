@@ -30,7 +30,7 @@ name: promotion-predecessor
 on:
   pull_request:
     branches: [staging, canary, production]
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, edited]
 
 permissions:
   contents: read

@@ -43,9 +43,25 @@
 //! stated rather than implied, because the point of a mechanism is to not
 //! overclaim its coverage: either could hide a hit, and neither can invent one.
 
+mod cfg;
+#[doc(hidden)]
+pub use cfg::Truth as CfgAvailability;
 pub mod paths;
-use std::fs;
-use std::path::{Path, PathBuf};
+mod test_modules;
+use std::path::Path;
+
+/// Shared conservative cfg classifier for repository source-analysis gates.
+#[doc(hidden)]
+pub fn excludes_when_test_is_false(attributes: &[syn::Attribute]) -> bool {
+    cfg::excludes_when_test_is_false(attributes)
+}
+
+/// Shared tri-state counterpart used by provenance scanners that must retain
+/// bindings from every possibly active non-test configuration.
+#[doc(hidden)]
+pub fn availability_when_test_is_false(attributes: &[syn::Attribute]) -> CfgAvailability {
+    cfg::availability_when_test_is_false(attributes)
+}
 
 pub fn code_only(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
@@ -195,50 +211,8 @@ pub fn without_commentary(src: &str) -> String {
 /// became, to the diff-parsing ratchet, five new hand-rolled diff parsers.
 /// Twelve scanners in this tree strip `#[cfg(test)]` the same way, so the
 /// answer belongs here once rather than in each of them.
-pub fn is_cfg_test_module_file(path: &Path) -> bool {
-    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-        return false;
-    };
-    if stem == "mod" || stem == "lib" || stem == "main" {
-        return false;
-    }
-    let Some(dir) = path.parent() else {
-        return false;
-    };
-    // The parent module is `<dir>/mod.rs`, or the sibling `<dir>.rs` in the
-    // path form the Rust book prefers. Both are checked; only one will exist.
-    [
-        dir.join("mod.rs"),
-        PathBuf::from(format!("{}.rs", dir.display())),
-    ]
-    .iter()
-    .filter_map(|p| fs::read_to_string(p).ok())
-    .any(|src| declares_cfg_test_mod(&src, stem))
-}
-
-/// `#[cfg(test)]` followed by `mod <name>;`, allowing attributes and blank
-/// lines between them but nothing that would make it a different item.
-fn declares_cfg_test_mod(parent_src: &str, name: &str) -> bool {
-    let decl = format!("mod {name};");
-    let mut armed = false;
-    for line in parent_src.lines() {
-        let t = line.trim();
-        if t.starts_with("//") || t.is_empty() {
-            continue;
-        }
-        if t.starts_with("#[cfg(test)]") {
-            armed = true;
-            continue;
-        }
-        if armed && (t == decl || t == format!("pub {decl}")) {
-            return true;
-        }
-        // Any other item disarms: the attribute applied to that, not to us.
-        if !t.starts_with("#[") {
-            armed = false;
-        }
-    }
-    false
+pub fn is_cfg_test_module_file(repo_root: &Path, path: &Path) -> Result<bool, String> {
+    paths::try_is_test_source(repo_root, path)
 }
 
 /// Rust source with its `#[cfg(test)]` modules blanked out, line numbering
@@ -257,44 +231,11 @@ fn declares_cfg_test_mod(parent_src: &str, name: &str) -> bool {
 /// Lines are replaced rather than removed so every reported line number still
 /// points at the right line of the original file.
 pub fn without_test_modules(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut depth: i32 = 0;
-    let mut in_test = false;
-    let mut pending = false;
+    try_without_test_modules(source).unwrap_or_else(|reason| panic!("{reason}"))
+}
 
-    for line in source.lines() {
-        let trimmed = line.trim_start();
-
-        if !in_test && trimmed.starts_with("#[cfg(test)]") {
-            pending = true;
-            out.push('\n');
-            continue;
-        }
-
-        if pending && trimmed.starts_with("mod ") {
-            in_test = true;
-            pending = false;
-            depth = line.matches('{').count() as i32 - line.matches('}').count() as i32;
-            out.push('\n');
-            continue;
-        }
-        // An attribute on something that is not a module: not a test module.
-        if pending && !trimmed.is_empty() {
-            pending = false;
-        }
-
-        if in_test {
-            depth += line.matches('{').count() as i32;
-            depth -= line.matches('}').count() as i32;
-            if depth <= 0 {
-                in_test = false;
-            }
-            out.push('\n');
-            continue;
-        }
-
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
+/// Fallible form for production gates. Invalid Rust is absent evidence, not a
+/// test-free source file.
+pub fn try_without_test_modules(source: &str) -> Result<String, String> {
+    test_modules::strip(source)
 }

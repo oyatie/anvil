@@ -8,8 +8,10 @@ below them:
 - **H1-9** (`docs/plan/ws-06-autonomy-ladder.md`) — rung R0 made mechanically true:
   `dev` requires a human approval that Anvil cannot supply.
 
-Nothing in this directory is applied. It is the material a human needs to apply it, in
-the one order that is safe. See `SETUP.md` (human steps), `app-manifest.json` (the App),
+The daemon/setup/ruleset plan remains unapplied. H1-11 workflow authentication is implemented
+in `CODE-CHANGES.md` §7 and the workflow files in this branch; that does not establish
+daemon or ruleset rollout. The remaining historical plan records the order needed to apply it.
+See `SETUP.md` (human steps), `app-manifest.json` (the App),
 `CODE-CHANGES.md` (the daemon), `RULESET.md` (the gate).
 
 **Every claim below carries the command that produced it.** Commands were run on

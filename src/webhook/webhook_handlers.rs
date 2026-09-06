@@ -344,7 +344,7 @@ pub async fn webhook_handler(
             let repo_clone = repo_name.clone();
             let run_id = wf.id;
             let branch_str = branch.to_string();
-            let commit_sha = wf.head_sha.unwrap_or_default();
+            let commit_sha = wf.head_sha;
             let wf_name = wf.name.unwrap_or_else(|| "CI Workflow".to_string());
 
             tokio::spawn(async move {
@@ -352,18 +352,32 @@ pub async fn webhook_handler(
                 if state_clone.pause.holds(&repo_clone, 0, "triaging CI") {
                     return;
                 }
-                if let Ok(repo_dir) = state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
-                    let _ = state_clone
-                        .ci_triager
-                        .triage_workflow_run(
-                            &repo_clone,
-                            run_id,
-                            &branch_str,
-                            &commit_sha,
-                            &wf_name,
-                            &repo_dir,
-                        )
-                        .await;
+                let repo_dir = match state_clone.git_mgr.ensure_repo_cloned(&repo_clone).await {
+                    Ok(repo_dir) => repo_dir,
+                    Err(err) => {
+                        error!(
+                            "Workflow CI triage could not prepare {}: {:?}",
+                            repo_clone, err
+                        );
+                        return;
+                    }
+                };
+                if let Err(err) = state_clone
+                    .ci_triager
+                    .triage_workflow_run_with_optional_sha(
+                        &repo_clone,
+                        run_id,
+                        &branch_str,
+                        commit_sha.as_deref(),
+                        &wf_name,
+                        &repo_dir,
+                    )
+                    .await
+                {
+                    error!(
+                        "Workflow CI triage failed for run #{} on {}: {:?}",
+                        run_id, repo_clone, err
+                    );
                 }
             });
 

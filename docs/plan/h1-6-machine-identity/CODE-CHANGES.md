@@ -1,7 +1,9 @@
-# CODE-CHANGES — specified, not applied
+# CODE-CHANGES — historical daemon plan and implemented workflow authentication
 
-The change the App unblocks, at `file:line` on `origin/dev` = `65f71fd`. Nothing here is
-applied; `SETUP.md` must complete first, because §2 needs the `<slug>[bot]` numeric id and
+The daemon/setup/ruleset plan remains unapplied; its historical references are at
+`file:line` on `origin/dev` = `65f71fd`. H1-11 workflow authentication is implemented
+in §7 and the workflow files in this branch, not evidence of daemon or ruleset rollout.
+For the remaining daemon plan, `SETUP.md` must complete first, because §2 needs the `<slug>[bot]` numeric id and
 §1 needs the App id, installation id and private key.
 
 Order matters and is not the order of the sections: **§3 must land in the same change as

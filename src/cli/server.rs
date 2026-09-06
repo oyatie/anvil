@@ -240,7 +240,9 @@ pub async fn run_server(state: AppState) -> Result<()> {
                             if let Some(sec) = secret.as_deref() {
                                 fwd.args(["--secret", sec]);
                             }
-                            fwd.status().await.map(|st| st.code().unwrap_or(-1))
+                            crate::exec::run_unbounded_status(fwd, "gh webhook forward")
+                                .await
+                                .map(|status| status.code().unwrap_or(-1))
                         }
                     },
                 )
@@ -328,7 +330,7 @@ pub async fn start_forwarders(config: &Config) -> Result<()> {
             // See forwarder_supervisor: `status()` is Ok(status) when the child
             // ran and died, so an Err-only check made every real forwarder death
             // silent. Report the exit either way.
-            match cmd.status().await {
+            match crate::exec::run_unbounded_status(cmd, "gh webhook forward").await {
                 Ok(st) => error!(
                     "Webhook forwarder exited for {} with code {}",
                     repo_clone,
@@ -372,9 +374,7 @@ pub async fn check_environment(github_client: &GitHubClient, config: &Config) ->
     }
 
     print!("3. Antigravity CLI (`agy`): ");
-    let mut agy_help = Command::new("agy");
-    agy_help.arg("--help");
-    match crate::exec::run_bounded(agy_help, crate::exec::ExecClass::Quick, "agy --help").await {
+    match crate::exec::agent::probe_agy_help().await {
         Ok(out) if out.status.success() => println!("✅ Ready"),
         _ => println!("❌ 'agy' not found in PATH"),
     }

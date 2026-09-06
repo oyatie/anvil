@@ -33,7 +33,7 @@
 //! That is a weaker claim than the name suggests and is stated here rather
 //! than left for a reader to discover.
 
-use crate::source_scan::{code_only, without_test_modules};
+use crate::source_scan::{code_only, try_without_test_modules};
 
 /// One stage, and the evidence that anything runs it.
 #[derive(Debug, Clone, Copy)]
@@ -168,14 +168,21 @@ pub const STAGES_WITHOUT_A_CALLER: usize = 0;
 /// literals and `#[cfg(test)]` modules are removed first: a stage named in a
 /// doc comment is documented, not called, and `next_phase` appeared in exactly
 /// one place in `src/` — a doc comment.
-pub fn uninvoked(sources: &[(String, String)]) -> Vec<&'static Stage> {
-    STAGES
+pub fn uninvoked(sources: &[(String, String)]) -> Result<Vec<&'static Stage>, String> {
+    let production = sources
+        .iter()
+        .map(|(path, source)| {
+            try_without_test_modules(source)
+                .map(|source| (path, code_only(&source)))
+                .map_err(|reason| format!("{path}: {reason}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(STAGES
         .iter()
         .filter(|s| {
-            !sources.iter().any(|(path, text)| {
-                !path.contains(s.owns)
-                    && code_only(&without_test_modules(text)).contains(s.invocation)
-            })
+            !production
+                .iter()
+                .any(|(path, text)| !path.contains(s.owns) && text.contains(s.invocation))
         })
-        .collect()
+        .collect())
 }

@@ -298,6 +298,15 @@ fn validate_order(out: &BTreeMap<Stage, StagePlan>) -> Result<()> {
                     stage.key()
                 );
             }
+            if plan.runs_after.iter().filter(|k| *k == named).count() > 1 {
+                bail!(
+                    "stage `{}` lists `{named}` in `runs_after` more than once. Kahn's \
+                     in-degree counts the entries and the decrement fires once per \
+                     predecessor, so a repeat would be reported as a CYCLE -- a diagnostic \
+                     naming the wrong defect is worse than none.",
+                    stage.key()
+                );
+            }
             if plan.audits.as_deref() == Some(named.as_str()) {
                 bail!(
                     "stage `{}` both audits `{named}` and lists it in `runs_after`. Auditing \

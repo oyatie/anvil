@@ -1160,3 +1160,32 @@ fn test_module_classifier(root: &Path) -> anvil::source_scan::paths::TestSourceC
     anvil::source_scan::paths::TestSourceClassifier::new(root)
         .expect("the module graph must resolve, or test code cannot be told from production")
 }
+
+#[test]
+fn a_repeated_order_entry_is_a_load_error_and_not_a_cycle() {
+    // Kahn's algorithm counts a stage's declared predecessors as its in-degree
+    // and decrements once per predecessor that settles. A stage naming the same
+    // predecessor twice therefore has in-degree 2 and is decremented once, so
+    // it never reaches zero and comes out of the algorithm looking exactly like
+    // a cycle -- a diagnostic that names the wrong defect and sends the reader
+    // hunting for an edge that does not exist.
+    //
+    // It is also the duplicate-tier defect in another shape: one relation
+    // stated twice, which the loader already refuses for `audits`.
+    let twice = format!(
+        "{}{}",
+        one_stage("recon", ""),
+        one_stage("planning", "runs_after = [\"recon\", \"recon\"]\n")
+    );
+    let e = anvil::ai_driver::chain::parse_table_for_test(&twice)
+        .expect_err("a repeated ordering entry must be refused");
+    let msg = format!("{e:#}");
+    assert!(
+        msg.contains("more than once"),
+        "the error must name the repetition: {msg}"
+    );
+    assert!(
+        !msg.contains("cycle"),
+        "and must NOT report a cycle, which is the misdiagnosis this prevents: {msg}"
+    );
+}

@@ -116,6 +116,8 @@ impl Stage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagePlan {
     pub tiers: Vec<Tier>,
+    /// The stage this one judges, if any.
+    pub audits: Option<String>,
     /// Path prefixes this stage may stage for commit; empty means none.
     pub writes: Vec<String>,
 }

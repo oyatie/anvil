@@ -31,6 +31,9 @@ struct RawMeta {
     /// declaration ran `high`/600s where the old one was `low`/<=90s. A ceiling
     /// that lives in the file it bounds cannot be deleted without deleting the
     /// thing it bounds.
+    /// The stage this one judges, when it judges one.
+    #[serde(default)]
+    audits: Option<String>,
     #[serde(default)]
     max_effort: Option<String>,
     #[serde(default)]
@@ -189,8 +192,50 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
             StagePlan {
                 tiers: built,
                 writes: meta.writes.clone(),
+                audits: meta.audits.clone(),
             },
         );
+    }
+
+    // An auditing stage may not write into the scope of the stage it judges.
+    //
+    // The invariant was first stated as "audits implies writes = []", which the
+    // shipped config contradicted: `falsification` audits `implementation` and
+    // writes `tests/`, because it judges by CONSTRUCTING a counterexample rather
+    // than by reading. That is legitimate; the invariant was wrong.
+    //
+    // What must not happen is an auditor editing what it is judging. That was
+    //true for `falsification` only because `implementation` also claimed `tests/`
+    // -- which separately made "the implementer cannot quietly relax a test it
+    // fails" false by declaration. Implementation writes `src/`; the stages that
+    // author and harden tests write `tests/`; falsification writes its
+    // counterexample there too, and none of them overlaps what it audits.
+    for (stage, plan) in &out {
+        let Some(audited_key) = plan.audits.clone() else {
+            continue;
+        };
+        let Some(audited) = Stage::ALL.iter().copied().find(|s| s.key() == audited_key) else {
+            bail!(
+                "stage `{}` declares it audits `{audited_key}`, which no `Stage` names",
+                stage.key()
+            );
+        };
+        let Some(audited_plan) = out.get(&audited) else {
+            continue;
+        };
+        for w in &plan.writes {
+            for a in &audited_plan.writes {
+                let (w, a) = (w.trim_end_matches('/'), a.trim_end_matches('/'));
+                if w == a || w.starts_with(&format!("{a}/")) || a.starts_with(&format!("{w}/")) {
+                    bail!(
+                        "stage `{}` audits `{audited_key}` and both may write {w:?} / {a:?}. \
+                         An auditor that can edit what it judges is not an auditor: the finding \
+                         and the fix would come from one act.",
+                        stage.key()
+                    );
+                }
+            }
+        }
     }
 
     for stage in Stage::ALL {

@@ -284,7 +284,11 @@ timeout_secs = 600
 
 [stage_meta.implementation]
 runs_after = ["test_authoring_review"]
-writes = ["src/", "tests/"]
+# `src/` only. Tests are authored by `test_authoring`, hardened by
+# `test_hardening`, and falsified by `falsification`; an implementer that can
+# also write `tests/` can relax a test it fails, which is the thing the
+# authoring stage exists to prevent.
+writes = ["src/"]
 
 [[stage.implementation]]
 model = "gpt-6-astra"
@@ -386,7 +390,9 @@ effort = "max"
 timeout_secs = 600
 
 [stage_meta.remediation]
-writes = ["src/", "tests/"]
+# Same reason as implementation: remediation answers findings in the code, not
+# in the tests that produced them.
+writes = ["src/"]
 
 [[stage.remediation]]
 model = "gpt-6-astra"

@@ -776,9 +776,15 @@ impl QueueHealer {
 
     async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
         // The stage names the work; `config/model-routing.toml` names the model
-        // and the tier beneath it. `AGY_TURN_LIMIT` still caps every tier, so a
-        // chain declaring a longer timeout cannot outlive the healer's own
-        // bound.
+        // and the tier beneath it.
+        //
+        // This comment used to read "`AGY_TURN_LIMIT` still caps every tier, so
+        // a chain declaring a longer timeout cannot outlive the healer's own
+        // bound." Capping every tier is precisely what did NOT bound the
+        // healer: remediation declares five tiers at 300/420/420/600/600, and
+        // capping each at 600 sums to 2340s -- the healer believed ten minutes
+        // and could run thirty-nine. `run_stage_within` now spends the bound
+        // down across the chain, so the sentence is true as written.
         crate::ai_driver::run_stage_within(
             crate::ai_driver::Stage::Remediation,
             prompt,

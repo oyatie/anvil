@@ -561,7 +561,15 @@ fn tests_are_authored_and_reviewed_before_the_code_that_satisfies_them() {
     // Authoring the tests BEFORE the implementation is the structural fix:
     // tests that exist first cannot be shaped to fit code that does not exist
     // yet, and the implementer cannot quietly relax one it fails.
-    use anvil::ai_driver::chain::plan;
+    //
+    // SCOPE, stated because this test used to imply more than it proved. What
+    // follows is a property of the TABLE. No runner walks the order: measured
+    // by dispatch function rather than by grepping for `Stage::`, five of
+    // sixteen stages have a caller, and `test_authoring` is not one of them.
+    // `every_declared_stage_is_dispatched_or_named_as_not_yet` is where that
+    // gap is held; this test says only that the file, when a runner does walk
+    // it, cannot order these three wrongly.
+    use anvil::ai_driver::chain::{plan, runs_after_transitively};
 
     let authoring = plan(Stage::TestAuthoring);
     let review = plan(Stage::TestAuthoringReview);
@@ -595,6 +603,124 @@ fn tests_are_authored_and_reviewed_before_the_code_that_satisfies_them() {
     assert_ne!(
         reviewer, implementer,
         "the model that reviews the tests must not be the one they will judge"
+    );
+
+    // And the order itself, read from the file rather than asserted about it.
+    // `implementation` names only `test_authoring_review`; the edge back to
+    // `test_authoring` comes from that stage's `audits`, so a direct-edge check
+    // would conclude the implementer may go first.
+    assert!(
+        runs_after_transitively(Stage::Implementation, Stage::TestAuthoring),
+        "the implementation must be declared downstream of the stage that wrote \
+         the tests it has to satisfy"
+    );
+    assert!(
+        runs_after_transitively(Stage::Implementation, Stage::TestAuthoringReview),
+        "and downstream of the review of those tests"
+    );
+    assert!(
+        !runs_after_transitively(Stage::TestAuthoring, Stage::Implementation),
+        "and not, in the other direction, downstream of the code it is supposed \
+         to precede -- which the loader also refuses as a cycle"
+    );
+}
+
+#[test]
+fn every_declared_stage_is_dispatched_or_named_as_not_yet() {
+    // The table declares sixteen stages. Measured by dispatch function --
+    // `run_stage(` and `run_stage_within(` across `src/`, which finds a call
+    // through a variable that grepping for `Stage::` would miss -- five have a
+    // caller. The other eleven are rows in a file and nothing else.
+    //
+    // That is not a defect to fix in passing: the sequencer that walks the
+    // declared order is a feature with its own review loop. What IS a defect is
+    // that it was invisible, and that a twelfth inert stage could be added the
+    // same way. This list is the visibility, and it may only shrink: wiring a
+    // stage means deleting a line here, and adding a stage means either giving
+    // it a caller or writing it down where a reviewer sees it.
+    const NOT_YET_DISPATCHED: &[Stage] = &[
+        Stage::Recon,
+        Stage::Planning,
+        Stage::PlanReview,
+        Stage::ArchitectSpec,
+        Stage::TestAuthoring,
+        Stage::TestAuthoringReview,
+        Stage::Falsification,
+        Stage::SecurityAudit,
+        Stage::TestHardening,
+        Stage::TestAudit,
+        Stage::Orchestration,
+    ];
+
+    let mut dispatched = BTreeSet::new();
+    let mut sites = 0usize;
+    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("src listable") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable");
+            let code = anvil::source_scan::without_commentary(
+                &anvil::source_scan::without_test_modules(&text),
+            );
+            for call in ["run_stage(", "run_stage_within("] {
+                let mut from = 0;
+                while let Some(at) = code[from..].find(call) {
+                    let start = from + at + call.len();
+                    // The stage is the first argument. Take up to the comma.
+                    let arg = code[start..]
+                        .split(',')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .trim_start_matches("crate::ai_driver::")
+                        .trim_start_matches("anvil::ai_driver::");
+                    if let Some(name) = arg.strip_prefix("Stage::") {
+                        if let Some(s) = Stage::ALL.iter().find(|s| format!("{s:?}") == name) {
+                            dispatched.insert(*s);
+                            sites += 1;
+                        }
+                    }
+                    from = start;
+                }
+            }
+        }
+    }
+
+    // The instrument first: a census that found nothing would report every
+    // stage undispatched and pass this test by being blind.
+    assert!(
+        sites >= 5,
+        "the dispatch census found {sites} call sites, which is fewer than the \
+         five measured by hand -- the scan is broken, not the code"
+    );
+
+    let declared_inert: BTreeSet<Stage> = NOT_YET_DISPATCHED.iter().copied().collect();
+    let actually_inert: BTreeSet<Stage> = Stage::ALL
+        .iter()
+        .copied()
+        .filter(|s| !dispatched.contains(s))
+        .collect();
+
+    let newly_wired: Vec<&Stage> = declared_inert.difference(&actually_inert).collect();
+    assert!(
+        newly_wired.is_empty(),
+        "these stages now have a dispatcher and must come off the list -- the \
+         ratchet only counts if it tightens: {newly_wired:?}"
+    );
+
+    let newly_inert: Vec<&Stage> = actually_inert.difference(&declared_inert).collect();
+    assert!(
+        newly_inert.is_empty(),
+        "these stages are declared in config/model-routing.toml and nothing \
+         dispatches them: {newly_inert:?}. Give the stage a caller, or add it \
+         here so the gap is reviewed rather than discovered."
     );
 }
 
@@ -751,5 +877,130 @@ fn a_declaration_the_hook_would_refuse_is_a_load_error() {
             !e.to_string().contains("write prefix"),
             "{good:?} is a valid declaration and must not be refused as a prefix: {e}"
         );
+    }
+}
+
+/// One valid stage, so a fixture only has to add the thing under test.
+fn one_stage(key: &str, meta_extra: &str) -> String {
+    format!(
+        "[stage_meta.{key}]\n{meta_extra}writes = []\n\n\
+         [[stage.{key}]]\nmodel = \"gemini-3.8-flash\"\nprovider = \"agy\"\n\
+         effort = \"high\"\ntimeout_secs = 600\n"
+    )
+}
+
+#[test]
+fn a_key_the_loader_does_not_read_is_a_load_error() {
+    // The reason this exists, measured. `runs_after` was declared on four
+    // stages and `authored_before` on one, and the pull request that added them
+    // said "ordering is data in a validated file". serde dropped every one of
+    // them: the struct had no such field, unknown keys were accepted, and
+    // nothing anywhere read them.
+    //
+    // Turning that into a load error found FOUR MORE the same day, none of
+    // which had a reader either: `mode = "quorum"` on `code_review_audit` and
+    // on `security_audit` -- while `run_stage` takes the first tier that
+    // answers, so the file claimed a quorum and the dispatcher ran a fallback
+    // chain -- plus `mode = "deterministic"` and `residual_conditions` on
+    // `orchestration`, a stage nothing dispatches at all.
+    //
+    // A file that silently accepts decoration is a file whose claims cannot be
+    // trusted, and every one of those keys read as a promise to anyone opening
+    // it.
+    let decorated = one_stage("recon", "mode = \"quorum\"\n");
+    let e = anvil::ai_driver::chain::parse_table_for_test(&decorated)
+        .expect_err("a key with no reader must be refused, not ignored");
+    // `{e:#}` and not `{e}`: the serde failure is the CAUSE, behind a context
+    // line about the file. `to_string()` shows only "does not parse", which
+    // names neither the key nor the stage -- and this assertion passed on it
+    // the first time by failing for the right reason with the wrong evidence.
+    assert!(
+        format!("{e:#}").contains("unknown field `mode`"),
+        "the error must name the key that will not be read: {e:#}"
+    );
+
+    // A tier is deserialized by a different struct and needs its own proof.
+    let tier = "[stage_meta.recon]\nwrites = []\n\n[[stage.recon]]\n\
+                model = \"gemini-3.8-flash\"\nprovider = \"agy\"\neffort = \"high\"\n\
+                timeout_secs = 600\nweight = 3\n";
+    let e = anvil::ai_driver::chain::parse_table_for_test(tier)
+        .expect_err("a decorative TIER key must be refused too");
+    assert!(
+        format!("{e:#}").contains("unknown field `weight`"),
+        "the error must name it: {e:#}"
+    );
+}
+
+#[test]
+fn an_order_over_a_stage_that_does_not_exist_is_a_load_error() {
+    let ghost = one_stage("recon", "runs_after = [\"planing\"]\n");
+    let e = anvil::ai_driver::chain::parse_table_for_test(&ghost)
+        .expect_err("an order over a stage that does not exist must be refused");
+    assert!(
+        e.to_string().contains("planing") && e.to_string().contains("no `Stage` names"),
+        "the error must name the stage that does not exist -- a typo in an \
+         ordering key is exactly how an edge goes missing: {e}"
+    );
+}
+
+#[test]
+fn an_order_that_admits_no_sequence_is_a_load_error() {
+    // A cycle is not a style complaint. It means no sequence satisfies the
+    // file, so a runner walking it either loops or silently drops one edge --
+    // and which edge it drops is not written down anywhere.
+    let cycle = format!(
+        "{}{}",
+        one_stage("recon", "runs_after = [\"planning\"]\n"),
+        one_stage("planning", "runs_after = [\"recon\"]\n")
+    );
+    let e = anvil::ai_driver::chain::parse_table_for_test(&cycle)
+        .expect_err("a cyclic order must be refused");
+    let msg = e.to_string();
+    assert!(
+        msg.contains("cycle") && msg.contains("recon") && msg.contains("planning"),
+        "the error must NAME the stages in the cycle, not merely report that one \
+         exists -- a diagnostic that leaves the reader to find it is half a \
+         diagnostic: {e}"
+    );
+
+    // Self-reference is the one-node case and must not slip through.
+    let loop_one = one_stage("recon", "runs_after = [\"recon\"]\n");
+    assert!(
+        anvil::ai_driver::chain::parse_table_for_test(&loop_one).is_err(),
+        "a stage that runs after itself must be refused"
+    );
+}
+
+#[test]
+fn one_relation_may_not_be_spelled_two_ways() {
+    // `audits = X` IS an ordering claim: nothing can judge what has not run.
+    // Restating it as `runs_after` gives one relation two spellings, and two
+    // spellings drift -- which is precisely what happened. `test_authoring`
+    // carried `authored_before = "implementation"`; `implementation` carried
+    // `runs_after = ["test_authoring_review"]`; and `test_authoring_review`
+    // claimed no order at all. Read as written, the file did not say the test
+    // author ran before the implementer.
+    let both = format!(
+        "{}{}",
+        one_stage("recon", ""),
+        one_stage("planning", "audits = \"recon\"\nruns_after = [\"recon\"]\n")
+    );
+    let e = anvil::ai_driver::chain::parse_table_for_test(&both)
+        .expect_err("restating what `audits` implies must be refused");
+    assert!(
+        e.to_string().contains("both audits"),
+        "the error must say which relation is doubled: {e}"
+    );
+
+    // The shipped table has exactly one spelling per pair.
+    for stage in Stage::ALL {
+        let p = anvil::ai_driver::chain::plan(*stage);
+        if let Some(audited) = &p.audits {
+            assert!(
+                !p.runs_after.contains(audited),
+                "{} restates its `audits` edge in `runs_after`",
+                stage.key()
+            );
+        }
     }
 }

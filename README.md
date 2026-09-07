@@ -86,3 +86,25 @@ RULES_PATH=./rules.md
 AGY_EFFORT=high
 AUTO_FORWARD_WEBHOOKS=true
 ```
+
+Managed clones use an owner-qualified, ASCII-case-normalized key such as
+`repos/github!oyatie!anvil!`. Invalid repository names are errors, not sanitized
+aliases. Existing clones must be standalone primary checkouts with exactly one
+observed fetch URL and one push URL for the requested repository. Supported
+origins are `https://github.com/OWNER/NAME[.git]`,
+`git@github.com:OWNER/NAME[.git]`, and `ssh://git@github.com/OWNER/NAME[.git]`.
+Literal names ending `.git` require the additional transport suffix: `NAME.git.git`.
+Other hosts, local-file origins, extra destinations and unknown evidence are refused.
+
+A legacy `repos/<name>` without a valid new keyed clone causes `MigrationRequired`.
+Anvil does not move, delete, reuse, repair or install hooks in that legacy clone;
+managed-clone pruning also leaves legacy directories alone. An operator must
+separately decide how to preserve local commits, dirty files and linked worktrees,
+or choose a clean `REPOS_DIR`. Code installation is not permission to migrate
+existing clones or to change deployment configuration. A failed new clone is
+also left untouched for operator inspection.
+
+Origin admission assumes trusted Git/host configuration that stays stable during
+admission. It is not remote-server attestation or lasting push custody after
+contributor code runs. Refresh and hook installation remain best-effort; a
+returned clone is not evidence that its branch is current or its hooks installed.

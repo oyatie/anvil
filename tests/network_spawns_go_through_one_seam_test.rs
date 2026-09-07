@@ -712,6 +712,21 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
         // provider. No socket is constructed, imported or named anywhere in that
         // module -- which is why it is a module of its own and not part of the
         // transport.
+        // Reviewed for #215. `RunScope::declare` writes the stage's declared
+        // write scope to `.anvil/run-scope` for the length of one turn. Same
+        // shape as `PromptFile` above: the receiver is a `std::fs::File` /
+        // `OpenOptions`, no socket is constructed, imported or named in that
+        // module, and it is a module of its own for exactly that reason.
+        (
+            "src/ai_driver/chain/run_scope.rs",
+            "declare",
+            "network-instance-method:flush",
+        ),
+        (
+            "src/ai_driver/chain/run_scope.rs",
+            "declare",
+            "network-instance-method:write",
+        ),
         (
             "src/exec/agent/prompt_file.rs",
             "write",
@@ -772,11 +787,11 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // separate exact set instead of weakening the outbound-method policy.
     assert_eq!(
         conservative_method_events.len(),
-        42,
+        44,
         "{conservative_method_events:#?}"
     );
     // This complete current set was reviewed by owner and source expression:
-    // 42 occurrences = the eight explicit production records above + 34 below.
+    // 44 occurrences = the ten explicit production records above + 34 below.
     // The 34 and their digest are unchanged: newly reviewed occurrences go in
     // the explicit list, so adding one cannot perturb the historical set.
     // The former historical 38-entry digest could not be reproduced, so this

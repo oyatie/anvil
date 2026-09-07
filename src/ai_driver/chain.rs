@@ -17,12 +17,16 @@
 use crate::ai_driver::provider::ModelProvider;
 use crate::exec::Posture;
 use crate::model_prompt::ModelPrompt;
-use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use anyhow::{Result, bail};
+use run_scope::RunScope;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
+use table::parse_table;
+
+mod run_scope;
+mod table;
 
 /// The routing table, compiled in.
 ///
@@ -119,132 +123,10 @@ pub struct Tier {
     pub timeout: Duration,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawTier {
-    model: String,
-    provider: String,
-    effort: String,
-    timeout_secs: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawMeta {
-    /// Path prefixes a turn at this stage may stage for commit.
-    ///
-    /// Required, and an empty list is a real answer: it means the stage may
-    /// commit nothing. Absent is a load error, because a stage with no declared
-    /// scope is absent evidence rather than an unrestricted one.
-    writes: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawFile {
-    #[serde(default)]
-    stage: BTreeMap<String, Vec<RawTier>>,
-    #[serde(default)]
-    stage_meta: BTreeMap<String, RawMeta>,
-}
-
-/// The provider strings the file may use.
-///
-/// Exhaustive over `ModelProvider`, so adding a variant without giving it a
-/// spelling here fails to compile rather than becoming a provider no chain can
-/// name.
-fn provider_named(s: &str) -> Option<ModelProvider> {
-    let all = [
-        ModelProvider::AnthropicClaudeCode,
-        ModelProvider::OpenAiCodex,
-        ModelProvider::CursorAgent,
-        ModelProvider::XAiGrok,
-        ModelProvider::Antigravity,
-        ModelProvider::Muse,
-        ModelProvider::SubscriptionEnsemble,
-    ];
-    all.into_iter().find(|p| {
-        let name = match p {
-            ModelProvider::AnthropicClaudeCode => "claude",
-            ModelProvider::OpenAiCodex => "codex",
-            ModelProvider::CursorAgent => "cursor",
-            ModelProvider::XAiGrok => "grok",
-            ModelProvider::Antigravity => "agy",
-            ModelProvider::Muse => "muse",
-            ModelProvider::SubscriptionEnsemble => "ensemble",
-        };
-        name == s
-    })
-}
-
-/// Parse and validate the declared table.
-pub fn parse(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
-    let raw: RawFile = toml::from_str(text).context("config/model-routing.toml does not parse")?;
-    let mut out: BTreeMap<Stage, StagePlan> = BTreeMap::new();
-
-    for (key, tiers) in &raw.stage {
-        let Some(stage) = Stage::ALL.iter().copied().find(|s| s.key() == key) else {
-            bail!(
-                "config/model-routing.toml declares stage `{key}`, which no `Stage` variant \
-                 names. A chain nothing dispatches is not a routing decision."
-            );
-        };
-        if tiers.is_empty() {
-            bail!("stage `{key}` declares no tiers; a stage with an empty chain cannot run");
-        }
-        let mut built = Vec::new();
-        for t in tiers {
-            let Some(provider) = provider_named(&t.provider) else {
-                bail!(
-                    "stage `{key}` names provider `{}`, which is not one of claude, codex, cursor, grok, agy, ensemble",
-                    t.provider
-                );
-            };
-            if t.model.trim().is_empty() {
-                bail!("stage `{key}` has a tier with an empty model id");
-            }
-            built.push(Tier {
-                provider,
-                model: t.model.clone(),
-                effort: t.effort.clone(),
-                timeout: Duration::from_secs(t.timeout_secs),
-            });
-        }
-        let Some(meta) = raw.stage_meta.get(key) else {
-            bail!(
-                "stage `{key}` declares no `[stage_meta.{key}] writes = [..]`. A stage with no \
-                 declared write scope is absent evidence, not an unrestricted stage: the run-scope \
-                 guardrail would have nothing to enforce and would silently pass."
-            );
-        };
-        for prefix in &meta.writes {
-            if prefix.starts_with('/') || prefix.contains("..") || prefix.trim().is_empty() {
-                bail!(
-                    "stage `{key}` declares write prefix {prefix:?}, which is not a relative path inside the repository"
-                );
-            }
-        }
-        out.insert(
-            stage,
-            StagePlan {
-                tiers: built,
-                writes: meta.writes.clone(),
-            },
-        );
-    }
-
-    for stage in Stage::ALL {
-        if !out.contains_key(stage) {
-            bail!(
-                "`Stage::{stage:?}` has no chain in config/model-routing.toml. A stage with no \
-                 declared chain has no providers to try, and would fail on its first turn."
-            );
-        }
-    }
-    Ok(out)
-}
-
 fn table() -> &'static BTreeMap<Stage, StagePlan> {
     static TABLE: OnceLock<BTreeMap<Stage, StagePlan>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        parse(DECLARED).unwrap_or_else(|e| {
+        parse_table(DECLARED).unwrap_or_else(|e| {
             panic!("the compiled-in routing table is invalid, so no stage can dispatch: {e}")
         })
     })
@@ -362,62 +244,4 @@ pub async fn run_stage_within(
 /// the guardrail merged inert.
 pub fn declare_run_scope_for_test(working_dir: &Path, stage: Stage) -> Result<impl Sized> {
     RunScope::declare(working_dir, &plan(stage).writes)
-}
-
-/// A stage's write scope, declared on disk for the length of one turn.
-///
-/// Removed on drop so ordinary work outside a run sees no constraint at all --
-/// the hook treats an absent declaration as "not a milestone run", which is
-/// different from an empty one meaning "may write nothing".
-struct RunScope {
-    path: std::path::PathBuf,
-    dir_was_created: bool,
-}
-
-impl RunScope {
-    fn declare(working_dir: &Path, writes: &[String]) -> Result<Self> {
-        let dir = working_dir.join(".anvil");
-        let dir_was_created = !dir.exists();
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("could not create {}", dir.display()))?;
-        let path = dir.join("run-scope");
-        // `create_new`: a declaration already present is another run in this
-        // workspace, and silently overwriting its scope would widen or narrow a
-        // constraint it is relying on.
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .with_context(|| {
-                format!(
-                    "could not declare the run scope at {}; a declaration already present means \
-                     another run holds this workspace",
-                    path.display()
-                )
-            })?;
-        use std::io::Write;
-        for prefix in writes {
-            writeln!(file, "{prefix}")
-                .with_context(|| format!("could not write the run scope at {}", path.display()))?;
-        }
-        file.flush()
-            .with_context(|| format!("could not flush the run scope at {}", path.display()))?;
-        Ok(Self {
-            path,
-            dir_was_created,
-        })
-    }
-}
-
-impl Drop for RunScope {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-        if self.dir_was_created {
-            // Only the directory this run created, and only if nothing else
-            // landed in it.
-            if let Some(dir) = self.path.parent() {
-                let _ = std::fs::remove_dir(dir);
-            }
-        }
-    }
 }

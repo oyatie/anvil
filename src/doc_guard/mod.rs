@@ -313,7 +313,7 @@ impl DocGuard {
         let target = format!("{}#{}", repo, diff_ctx.pr_number);
         // The `Live` arm is what this line always did, verbatim. See
         // `with_probe_override` for why the other two answer from here.
-        let agy_effort = match &self.probe {
+        let _agy_effort = match &self.probe {
             Probe::Live(effort) => effort.clone(),
             // The stored outcome is answered HERE, at the point the probe's
             // judgement is produced and returned, so an overridden run and a
@@ -335,12 +335,6 @@ impl DocGuard {
             &target,
             DOC_PARITY_PROBE.supervisor(),
             move || async move {
-                let cmd = crate::exec::agy_agent(
-                    &crate::exec::Posture::in_workspace(&repo_dir_owned),
-                    &agy_effort,
-                    DOC_PARITY_PROBE.supervisor(),
-                    None,
-                )?;
                 // The prompt travels on STDIN. It carries the pull request's
                 // title, body and diff -- text an outsider wrote -- and argv is
                 // world-readable through `ps`.
@@ -351,15 +345,16 @@ impl DocGuard {
                 // `permissions.allow` in a settings.json rather than a flag,
                 // measured against the installed CLI, so it is not a change that
                 // can be made here.
-                match crate::exec::turn::run(
-                    cmd,
+                match crate::ai_driver::run_stage_within(
+                    crate::ai_driver::Stage::SpecReview,
                     &prompt_for_turn,
-                    DOC_PARITY_PROBE.supervisor(),
+                    &repo_dir_owned,
                     "doc parity probe",
+                    Some(DOC_PARITY_PROBE.supervisor()),
                 )
                 .await
                 {
-                    Ok(turn) => classify_probe_output(turn.status, &turn.response, &turn.stderr),
+                    Ok(response) => classify_probe_response(&response),
                     // `run` already distinguishes "failed to run"
                     // `run_bounded_for` already distinguishes "failed to run"
                     // from "timed out" in its message, and both stay errors.
@@ -501,6 +496,26 @@ fn stated_missing_reason(missing_doc_summary: Option<&str>) -> String {
     }
 }
 
+/// The success half of [`classify_probe_output`], for callers holding no status.
+///
+/// `run_stage` returns only the text of a turn that succeeded -- it walks to
+/// the next declared tier on a non-zero exit and errors when the chain is
+/// exhausted -- so a caller going through it has no `ExitStatus` to pass, and
+/// no failing status to classify.
+pub fn classify_probe_response(stdout: &str) -> Result<DocParityEvaluation> {
+    if let Some(json_str) = extract_json_block(stdout)
+        && let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
+    {
+        return Ok(eval);
+    }
+    // Ran successfully but produced nothing parseable: we have no judgement, so
+    // we must not claim sufficiency.
+    anyhow::bail!(
+        "doc parity probe returned no parseable evaluation (stdout {} bytes)",
+        stdout.len()
+    )
+}
+
 /// Decides whether a completed doc-parity probe run produced a judgement.
 ///
 /// SCAFFOLDING (`tdd/docguard-oracle-repair`): a byte-verbatim EXTRACTION of the
@@ -535,17 +550,7 @@ pub fn classify_probe_output(
     stderr: &str,
 ) -> Result<DocParityEvaluation> {
     if status.success() {
-        if let Some(json_str) = extract_json_block(stdout)
-            && let Ok(eval) = serde_json::from_str::<DocParityEvaluation>(&json_str)
-        {
-            return Ok(eval);
-        }
-        // Ran successfully but produced nothing parseable: we have no
-        // judgement, so we must not claim sufficiency.
-        anyhow::bail!(
-            "doc parity probe returned no parseable evaluation (stdout {} bytes)",
-            stdout.len()
-        )
+        return classify_probe_response(stdout);
     }
     anyhow::bail!(
         "doc parity probe exited with status {}: {}",

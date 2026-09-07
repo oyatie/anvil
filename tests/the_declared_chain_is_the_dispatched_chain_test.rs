@@ -136,6 +136,10 @@ fn no_production_site_reaches_a_provider_constructor_directly() {
         "cursor_agent(",
         "grok_agent(",
         "agy_agent(",
+        // Omitted when muse was added, so a new site reaching the provider this
+        // change introduces was admitted silently -- the ratchet was blind to
+        // exactly the thing it shipped with.
+        "muse_agent(",
     ];
     // The chain builds the tier's command, and the router still owns the
     // per-provider subscription paths it dispatches for `execute_prompt`.

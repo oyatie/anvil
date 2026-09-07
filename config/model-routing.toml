@@ -448,31 +448,39 @@ effort = "max"
 timeout_secs = 600
 
 [stage_meta.issue_triage]
+# Classification, not repair. `tests/issue_triage_routing_test.rs` enforced
+# `low` effort and a <=90s bound on `stage_router`'s hardcoded chain, and that
+# test was deleted along with the module without being mentioned. The constraint
+# matters MORE now: that table was dead, and `ci_triager` dispatches this one on
+# every failed CI run. A triage call allowed 600s has stopped being cheap, and
+# reasoning budget per issue at volume is the cost this bounds.
+max_effort = "low"
+max_timeout_secs = 90
 writes = []
 
 [[stage.issue_triage]]
 model = "gemini-3.8-flash"
 provider = "agy"
-effort = "high"
-timeout_secs = 600  # 166 steps
+effort = "low"
+timeout_secs = 90  # 166 steps
 
 [[stage.issue_triage]]
 model = "grok-4.6"
 provider = "grok"
-effort = "high"
-timeout_secs = 420  # 70 steps
+effort = "low"
+timeout_secs = 90  # 70 steps
 
 [[stage.issue_triage]]
 model = "claude-fable-5-1"
 provider = "claude"
-effort = "high"
-timeout_secs = 420  # 68 steps
+effort = "low"
+timeout_secs = 90  # 68 steps
 
 [[stage.issue_triage]]
 model = "muse-spark-1.3"
 provider = "muse"
-effort = "max"
-timeout_secs = 600
+effort = "low"
+timeout_secs = 90
 
 [stage_meta.security_audit]
 mode = "quorum"

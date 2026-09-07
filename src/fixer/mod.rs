@@ -26,7 +26,7 @@ impl Fixer {
         github_client: Arc<GitHubClient>,
         agy_effort: String,
     ) -> Self {
-        let engine = FixEngine::new(agy_effort.clone());
+        let engine = FixEngine::new();
         Self {
             git_mgr,
             github_client,

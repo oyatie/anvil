@@ -1,9 +1,9 @@
 use crate::model_prompt::{HarnessText, ModelPrompt};
 use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::path::Path;
 use tokio::process::Command;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use super::evaluator::{ItemEvaluation, ReviewFeedbackItem};
 
@@ -53,13 +53,19 @@ pub fn build_self_correction_prompt(diff: &str) -> Result<ModelPrompt> {
     prompt.finish()
 }
 
-pub struct FixEngine {
-    agy_effort: String,
+/// Stateless: the model, its effort and its timeout are the routing table's to
+/// decide, per tier.
+pub struct FixEngine;
+
+impl Default for FixEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FixEngine {
-    pub fn new(agy_effort: String) -> Self {
-        Self { agy_effort }
+    pub fn new() -> Self {
+        Self
     }
 
     pub async fn apply_code_fixes(
@@ -212,27 +218,15 @@ impl FixEngine {
     }
 
     async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
-        let budget = crate::exec::ExecClass::Model.timeout();
-        let cmd = crate::exec::agy_agent(
-            &crate::exec::Posture::in_workspace(working_dir),
-            &self.agy_effort,
-            budget,
-            None,
-        )?;
-
-        let turn = crate::exec::turn::run(cmd, prompt, budget, "agy fix prompt")
-            .await
-            .context("Failed to run agy command")?;
-
-        if !turn.status.success() {
-            error!("agy returned non-zero status: {}", turn.status);
-            warn!("agy stderr: {}", turn.stderr);
-        }
-
-        // Same rule as the queue healer, and for the same reason: this agent
-        // edits the workspace directly, so a run that died mid-edit has left
-        // the tree in a state nobody chose. Partial output is not partial
-        // success.
-        turn.into_result()
+        // Applying a fix is the Implementation stage; the file names the model
+        // and every tier beneath it. Naming `agy_agent` here meant a fix turn
+        // had one provider and no fallback.
+        crate::ai_driver::run_stage(
+            crate::ai_driver::Stage::Implementation,
+            prompt,
+            working_dir,
+            "fixer",
+        )
+        .await
     }
 }

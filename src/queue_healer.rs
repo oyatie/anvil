@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 pub mod bisector;
 pub use bisector::{BisectionResult, MergeTrainBisector};
@@ -55,7 +55,6 @@ pub struct QueueHealer {
     github_client: Arc<GitHubClient>,
     merge_enlister: Arc<MergeEnlister>,
     bisector: MergeTrainBisector,
-    agy_effort: String,
 }
 
 impl QueueHealer {
@@ -63,7 +62,6 @@ impl QueueHealer {
         git_mgr: Arc<GitManager>,
         github_client: Arc<GitHubClient>,
         merge_enlister: Arc<MergeEnlister>,
-        agy_effort: String,
     ) -> Self {
         let bisector = MergeTrainBisector::new();
         Self {
@@ -71,7 +69,6 @@ impl QueueHealer {
             github_client,
             merge_enlister,
             bisector,
-            agy_effort,
         }
     }
 
@@ -762,25 +759,18 @@ impl QueueHealer {
     }
 
     async fn run_agy_prompt(&self, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
-        let cmd = crate::exec::agy_agent(
-            &crate::exec::Posture::in_workspace(working_dir),
-            &self.agy_effort,
-            AGY_TURN_LIMIT,
-            None,
-        )?;
-
-        let turn = crate::exec::turn::run(cmd, prompt, AGY_TURN_LIMIT, "agy (queue healer)")
-            .await
-            .context("Failed to run agy command")?;
-
-        if !turn.status.success() {
-            error!(
-                "agy returned non-zero status in QueueHealer: {}",
-                turn.status
-            );
-            warn!("agy stderr: {}", turn.stderr.trim());
-        }
-        turn.into_result()
+        // The stage names the work; `config/model-routing.toml` names the model
+        // and the tier beneath it. `AGY_TURN_LIMIT` still caps every tier, so a
+        // chain declaring a longer timeout cannot outlive the healer's own
+        // bound.
+        crate::ai_driver::run_stage_within(
+            crate::ai_driver::Stage::Remediation,
+            prompt,
+            working_dir,
+            "queue healer",
+            Some(AGY_TURN_LIMIT),
+        )
+        .await
     }
 }
 

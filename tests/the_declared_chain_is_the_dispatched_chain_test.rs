@@ -701,11 +701,11 @@ fn every_declared_stage_is_dispatched_or_named_as_not_yet() {
                         .trim()
                         .trim_start_matches("crate::ai_driver::")
                         .trim_start_matches("anvil::ai_driver::");
-                    if let Some(name) = arg.strip_prefix("Stage::") {
-                        if let Some(s) = Stage::ALL.iter().find(|s| format!("{s:?}") == name) {
-                            dispatched.insert(*s);
-                            sites += 1;
-                        }
+                    if let Some(name) = arg.strip_prefix("Stage::")
+                        && let Some(s) = Stage::ALL.iter().find(|s| format!("{s:?}") == name)
+                    {
+                        dispatched.insert(*s);
+                        sites += 1;
                     }
                     from = start;
                 }
@@ -832,15 +832,23 @@ timeout_secs = 90
         .expect_err("effort above the declared ceiling must be refused");
     assert!(e.to_string().contains("caps effort"), "wrong refusal: {e}");
 
+    // The second ceiling, reached by bringing effort under its own ceiling so
+    // the refusal below can only be about the timeout.
+    //
+    // This carried a third `.replace` whose needle and replacement were the
+    // same string. It did nothing, and clippy's `no_effect_replace` is what
+    // said so -- which is the failure mode this file's own law names: a patch
+    // that silently no-ops makes a broken check look sound. The dead call is
+    // gone and both mutations are now ASSERTED rather than assumed, because a
+    // fixture that stops matching is exactly how a red test turns green
+    // without anyone changing the property.
     let slow = over
         .replace("effort = \"high\"", "effort = \"low\"")
-        .replace(
-            "timeout_secs = 90\n\n[[stage",
-            "timeout_secs = 90\n\n[[stage",
-        );
-    let slow = slow.replace(
-        "effort = \"low\"\ntimeout_secs = 90\n",
-        "effort = \"low\"\ntimeout_secs = 600\n",
+        .replace("timeout_secs = 90\n", "timeout_secs = 600\n");
+    assert!(
+        slow.contains("effort = \"low\"") && slow.contains("timeout_secs = 600"),
+        "the fixture must actually differ from the one above, or this asserts \
+         nothing: {slow}"
     );
     let e = anvil::ai_driver::chain::parse_table_for_test(&slow)
         .expect_err("a timeout above the declared ceiling must be refused");

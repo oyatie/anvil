@@ -43,7 +43,7 @@ pub struct Config {
 /// repository as, the tree the daemon is running from.
 ///
 /// Every write path (fixer, queue healer, change delivery) mutates
-/// `repos_dir/<name>` and pushes it. If that path resolves to the daemon's own
+/// `repos_dir/github!<owner>!<name>!` and pushes it. If that path resolves to the daemon's own
 /// checkout, Anvil edits its running source under itself. Today the two differ
 /// only by accident of layout: `repos/` is gitignored and each clone carries
 /// its own `.git`. This makes the separation a boot invariant.
@@ -183,7 +183,7 @@ impl Config {
             .unwrap_or_else(|| cwd.canonicalize().unwrap_or(cwd.clone()));
         let git_mgr = crate::git_manager::GitManager::new(self.repos_dir.clone());
         for repo in &self.watched_repos {
-            let clone = git_mgr.get_repo_dir(repo);
+            let clone = git_mgr.get_repo_dir(repo)?;
             let clone_canonical = clone.canonicalize().unwrap_or_else(|_| clone.clone());
             let clone_toplevel = if clone.is_dir() {
                 git_toplevel(&clone).await

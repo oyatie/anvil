@@ -1,10 +1,9 @@
 //! The daemon must never treat its own source tree as a managed clone.
 //!
 //! Every Anvil write path — fixer, queue healer, and now change delivery —
-//! mutates `repos_dir/<name>` and pushes it. Today `repos/` is gitignored and
+//! mutates `repos_dir/github!<owner>!<name>!` and pushes it. `repos/` is gitignored and
 //! each clone has its own `.git`, so the daemon's checkout and the clone of
-//! `oyatie/anvil` differ by accident of layout. One `REPOS_DIR=..` in an env
-//! file would make Anvil edit and push its running source from under itself.
+//! `oyatie/anvil` must remain distinct even if REPOS_DIR is misconfigured.
 //! The instruction "do not modify the running tree" cannot prevent that; a
 //! boot invariant can.
 
@@ -21,8 +20,7 @@ fn a_clone_that_is_the_daemon_tree_is_refused() {
 
 #[test]
 fn a_clone_that_contains_the_daemon_tree_is_refused() {
-    // REPOS_DIR=.. with the daemon checked out as <parent>/anvil: the "clone"
-    // named `anvil` resolves to the parent directory of the running tree.
+    // The guard also refuses any managed root containing the daemon checkout.
     let clone = Path::new("/srv");
     let daemon = Path::new("/srv/anvil");
     let err = managed_clone_overlaps_daemon_tree(clone, None, daemon)
@@ -32,10 +30,10 @@ fn a_clone_that_contains_the_daemon_tree_is_refused() {
 
 #[test]
 fn a_subdirectory_of_the_daemon_repository_is_refused() {
-    // repos/anvil exists but is not its own repository: `git rev-parse
+    // A keyed directory exists but is not its own repository: `git rev-parse
     // --show-toplevel` inside it answers with the daemon's toplevel. Writing
     // there writes into the running tree.
-    let clone = Path::new("/srv/anvil/repos/anvil");
+    let clone = Path::new("/srv/anvil/repos/github!oyatie!anvil!");
     let daemon = Path::new("/srv/anvil");
     let err = managed_clone_overlaps_daemon_tree(clone, Some(daemon), daemon)
         .expect_err("a clone inside the daemon's own git repository must be refused");
@@ -46,7 +44,7 @@ fn a_subdirectory_of_the_daemon_repository_is_refused() {
 fn a_separate_clone_under_repos_is_accepted() {
     // The real layout: repos/ under the daemon's cwd, gitignored, each clone
     // with its own toplevel.
-    let clone = Path::new("/srv/anvil/repos/anvil");
+    let clone = Path::new("/srv/anvil/repos/github!oyatie!anvil!");
     let daemon = Path::new("/srv/anvil");
     managed_clone_overlaps_daemon_tree(clone, Some(clone), daemon)
         .expect("a clone with its own git toplevel under repos/ is the intended layout");
@@ -54,7 +52,7 @@ fn a_separate_clone_under_repos_is_accepted() {
 
 #[test]
 fn a_not_yet_cloned_repository_is_checked_by_path_only() {
-    let clone = Path::new("/srv/anvil/repos/console");
+    let clone = Path::new("/srv/anvil/repos/github!oyatie!console!");
     let daemon = Path::new("/srv/anvil");
     managed_clone_overlaps_daemon_tree(clone, None, daemon)
         .expect("an absent clone cannot overlap the daemon tree");

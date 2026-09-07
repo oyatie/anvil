@@ -355,30 +355,6 @@ timeout_secs = 600
 }
 
 #[test]
-fn an_escaping_write_prefix_is_a_load_error() {
-    for bad in ["/etc", "../outside", "  "] {
-        let t = format!(
-            r#"
-[stage_meta.recon]
-writes = ["{bad}"]
-
-[[stage.recon]]
-model = "gemini-3.8-flash"
-provider = "agy"
-effort = "high"
-timeout_secs = 600
-"#
-        );
-        let e = anvil::ai_driver::chain::parse_table_for_test(&t)
-            .expect_err("an escaping write prefix must be refused");
-        assert!(
-            e.to_string().contains("relative path") || e.to_string().contains("no chain"),
-            "wrong refusal for {bad:?}: {e}"
-        );
-    }
-}
-
-#[test]
 fn every_site_that_commits_is_scoped_or_declared_exempt() {
     // This replaces an assertion that checked the WRONG PLACE.
     //
@@ -581,5 +557,117 @@ timeout_secs = 600
                 t.model
             );
         }
+    }
+}
+
+#[test]
+fn a_stage_may_cap_what_a_turn_there_costs() {
+    // `tests/issue_triage_routing_test.rs` enforced `low` effort and <=90s on
+    // the hardcoded chain. That module was deleted and the test went with it,
+    // unmentioned in any commit message, and the replacement table declared
+    // `high`/600s. The constraint matters more now, not less: the old table was
+    // dead, and `ci_triager` dispatches this one on every failed CI run.
+    //
+    // So the ceiling lives in the file it bounds. A test can be deleted quietly;
+    // a rule the loader enforces cannot be, because deleting it means deleting
+    // the stage.
+    use anvil::ai_driver::chain::plan;
+    let triage = plan(Stage::IssueTriage);
+    for t in &triage.tiers {
+        assert_eq!(
+            t.effort, "low",
+            "issue triage is classification, not repair: {} declares {:?}",
+            t.model, t.effort
+        );
+        assert!(
+            t.timeout.as_secs() <= 90,
+            "a triage call allowed {}s has stopped being cheap: {}",
+            t.timeout.as_secs(),
+            t.model
+        );
+    }
+
+    // And the ceiling refuses a table that exceeds it.
+    let over = r#"
+[stage_meta.issue_triage]
+max_effort = "low"
+max_timeout_secs = 90
+writes = []
+
+[[stage.issue_triage]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 90
+"#;
+    let e = anvil::ai_driver::chain::parse_table_for_test(over)
+        .expect_err("effort above the declared ceiling must be refused");
+    assert!(e.to_string().contains("caps effort"), "wrong refusal: {e}");
+
+    let slow = over
+        .replace("effort = \"high\"", "effort = \"low\"")
+        .replace(
+            "timeout_secs = 90\n\n[[stage",
+            "timeout_secs = 90\n\n[[stage",
+        );
+    let slow = slow.replace(
+        "effort = \"low\"\ntimeout_secs = 90\n",
+        "effort = \"low\"\ntimeout_secs = 600\n",
+    );
+    let e = anvil::ai_driver::chain::parse_table_for_test(&slow)
+        .expect_err("a timeout above the declared ceiling must be refused");
+    assert!(
+        e.to_string().contains("stopped being cheap"),
+        "wrong refusal: {e}"
+    );
+}
+
+#[test]
+fn a_declaration_the_hook_would_refuse_is_a_load_error() {
+    // These are the reviewer's measured forms. Each ACCEPTED by the loader's
+    // old three-clause check and then REFUSED by the hook -- which does not
+    // fail the run, it refuses every commit in it, because a declaration the
+    // consumer cannot parse is one under which nothing may be staged.
+    //
+    // The newline case is worse than refusal: the hook read it as two prefixes
+    // and silently granted more than the file showed.
+    for bad in [
+        "./src",        // "/./" component
+        "src//lib",     // empty component
+        "c:src",        // drive letter
+        "sr\\c",        // backslash
+        "src\"x",       // quote
+        "src\r",        // control byte
+        "src\t",        // control byte
+        "src ",         // trailing space, taken literally, matches nothing
+        "\u{feff}src/", // BOM
+        "docs/\nsrc/",  // newline: silently two prefixes
+        "..",
+        "/etc",
+        "",
+    ] {
+        let t = format!(
+            "[stage_meta.recon]\nwrites = [{}]\n\n[[stage.recon]]\nmodel = \"gemini-3.8-flash\"\nprovider = \"agy\"\neffort = \"high\"\ntimeout_secs = 600\n",
+            serde_json::to_string(bad).expect("quotable")
+        );
+        let r = anvil::ai_driver::chain::parse_table_for_test(&t);
+        assert!(
+            r.is_err(),
+            "the hook would refuse {bad:?}, so the loader must too -- otherwise \
+             every commit in the run fails, or the scope silently widens"
+        );
+    }
+
+    // And the forms the hook accepts still load.
+    for good in ["src/", "src", "docs/plan/", "tests/"] {
+        let t = format!(
+            "[stage_meta.recon]\nwrites = [\"{good}\"]\n\n[[stage.recon]]\nmodel = \"gemini-3.8-flash\"\nprovider = \"agy\"\neffort = \"high\"\ntimeout_secs = 600\n"
+        );
+        let e = anvil::ai_driver::chain::parse_table_for_test(&t)
+            .expect_err("this fixture declares only recon, so it fails on the missing chains");
+        assert!(
+            !e.to_string().contains("write prefix"),
+            "{good:?} is a valid declaration and must not be refused as a prefix: {e}"
+        );
     }
 }

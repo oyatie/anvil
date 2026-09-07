@@ -18,6 +18,7 @@ use crate::ai_driver::provider::ModelProvider;
 use crate::exec::Posture;
 use crate::model_prompt::ModelPrompt;
 use anyhow::{Result, bail};
+pub use budget::{MIN_TIER_ALLOTMENT, StageBudget};
 pub use run_scope::RunScope;
 
 /// Parse an arbitrary table, so a test can exercise the loader's refusals
@@ -31,6 +32,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use table::parse_table;
 
+pub mod budget;
 mod run_scope;
 mod table;
 
@@ -191,10 +193,12 @@ pub async fn run_stage(
     run_stage_within(stage, prompt, working_dir, what, None).await
 }
 
-/// [`run_stage`], with each tier's timeout capped at `budget`.
+/// [`run_stage`], bounded so the WHOLE stage fits inside `budget`.
 ///
-/// A caller already under a supervisor keeps its own bound: a tier declaring
-/// 600s must not outlive a watchdog that gives the whole probe less.
+/// A caller already under a supervisor keeps its own bound, and the bound is on
+/// the stage rather than on each attempt: five tiers declaring 600s apiece
+/// under a 600s watchdog get 600s between them, not 3000s. See [`StageBudget`]
+/// for what each caller believed before this, and what it was measured to do.
 pub async fn run_stage_within(
     stage: Stage,
     prompt: &ModelPrompt,
@@ -216,10 +220,24 @@ pub async fn run_stage_within(
     // `RunScope::declare`.
     let posture = Posture::in_workspace(working_dir);
     let mut refusals = Vec::new();
+    let mut left = StageBudget::of(budget);
 
     for (i, tier) in chain(stage).iter().enumerate() {
         let label = format!("{what} [{}/{} {}]", i + 1, chain(stage).len(), tier.model);
-        let timeout = budget.map_or(tier.timeout, |b| b.min(tier.timeout));
+        // The budget bounds the STAGE, so what a tier gets is what the table
+        // declares or what the stage has left, whichever is smaller. `None`
+        // means the rest of the chain was never reached -- which is a different
+        // fact from a tier that ran and refused, and I1 forbids collapsing the
+        // two.
+        let Some(timeout) = left.allot(tier.timeout) else {
+            for untried in &chain(stage)[i..] {
+                refusals.push(format!(
+                    "{}: not tried, the stage budget was spent first",
+                    untried.model
+                ));
+            }
+            break;
+        };
         let cmd = match command_for(tier, &posture, timeout) {
             Ok(c) => c,
             Err(e) => {
@@ -227,7 +245,10 @@ pub async fn run_stage_within(
                 continue;
             }
         };
-        match crate::exec::turn::run(cmd, prompt, timeout, &label).await {
+        let started = std::time::Instant::now();
+        let outcome = crate::exec::turn::run(cmd, prompt, timeout, &label).await;
+        left.spend(started.elapsed());
+        match outcome {
             Ok(turn) if turn.status.success() => match turn.into_result() {
                 Ok(text) if !text.trim().is_empty() => return Ok(text),
                 Ok(_) => refusals.push(format!("{}: answered with nothing", tier.model)),

@@ -10,9 +10,11 @@
 //! it is a loud error rather than a stage nobody dispatches, and no production
 //! site reaches a provider constructor without going through the chain.
 
+use anvil::ai_driver::chain::budget::{MIN_TIER_ALLOTMENT, StageBudget};
 use anvil::ai_driver::{Stage, chain};
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::time::Duration;
 
 fn repo(rel: &str) -> String {
     std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel))
@@ -253,48 +255,111 @@ fn every_declared_model_id_can_be_built_into_a_command() {
 }
 
 #[test]
-fn a_supplied_budget_caps_every_tier_and_reaches_the_provider() {
-    // The doc parity probe runs under a watchdog and hands the chain its
-    // budget. Two things must follow from that one value, and they used to be
-    // spelled separately at the call site: the process bound, and the deadline
-    // the provider is told in argv. Both now derive from the cap computed in
-    // `run_stage_within`, so this is where that is asserted.
-    // By MODULE, not by path. A path-keyed read goes blind the day the file
-    // moves or becomes a directory -- issue #179, 332 of them -- and
-    // `module_source` reads whichever form the module takes and refuses an
-    // absent one. This test was written the wrong way first and the ratchet
-    // caught it.
-    let src = anvil::source_scan::paths::module_source(
-        "src/ai_driver/chain",
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-    );
-    let code = anvil::source_scan::without_commentary(&src);
+fn a_supplied_budget_bounds_the_whole_stage_not_each_attempt() {
+    // What this replaced asserted that the source contained the literal
+    // `budget.map_or(tier.timeout, |b| b.min(tier.timeout))`. That is a
+    // spelling test: rewriting the same arithmetic as a `match` fails it while
+    // changing nothing, and -- worse -- it made a wrong SEMANTICS look
+    // guarded. `b.min(tier.timeout)` per tier is exactly the defect. Each of
+    // five tiers got the caller's whole bound.
+    //
+    // Measured against `config/model-routing.toml` and `queue_healer`'s
+    // AGY_TURN_LIMIT (`ExecClass::Model.timeout()`, 600s):
+    let bound = anvil::exec::ExecClass::Model.timeout();
+    assert_eq!(bound, Duration::from_secs(600), "the healer's bound moved");
 
+    let per_attempt: Duration = chain(Stage::Remediation)
+        .iter()
+        .map(|t| bound.min(t.timeout))
+        .sum();
     assert!(
-        code.contains("budget.map_or(tier.timeout, |b| b.min(tier.timeout))"),
-        "a supplied budget must CAP the tier's declared timeout, not replace or \
-         ignore it: a tier declaring 600s under a 300s watchdog must run 300s"
-    );
-    assert!(
-        code.contains("command_for(tier, &posture, timeout)"),
-        "the capped value must reach the provider constructor, or the CLI is \
-         told a deadline the process bound does not share"
+        per_attempt > bound,
+        "if the old reading were already within bound there would be nothing \
+         to fix; measured {per_attempt:?} against {bound:?}"
     );
 
-    // And it is a real cap in both directions, not just a source string.
-    let posture = anvil::exec::Posture::in_workspace(std::env::temp_dir());
-    let tier = &chain(Stage::SpecReview)[0];
-    // Same reason: absent on PATH is the machine. What must not happen is a
-    // rejection of the capped budget itself.
-    if let Err(e) =
-        anvil::ai_driver::chain::command_for(tier, &posture, std::time::Duration::from_secs(1))
-    {
-        assert!(
-            e.to_string()
-                .contains("unavailable on the trusted service PATH"),
-            "a capped budget must build a command wherever the provider exists: {e}"
-        );
+    // Worst case under the new reading: every tier burns its full allotment.
+    let mut left = StageBudget::of(Some(bound));
+    let mut allotted = Duration::ZERO;
+    let mut reached = 0usize;
+    for tier in chain(Stage::Remediation) {
+        let Some(t) = left.allot(tier.timeout) else {
+            break;
+        };
+        allotted += t;
+        left.spend(t);
+        reached += 1;
     }
+    assert!(
+        allotted <= bound,
+        "the stage must fit inside the bound its caller supplied: {allotted:?} \
+         allotted across {reached} tiers against {bound:?} (the per-attempt \
+         reading allotted {per_attempt:?})"
+    );
+
+    // The same number under `doc_guard`'s watchdog, which passes its own 120s
+    // from INSIDE that watchdog. Under the per-attempt reading tier 1 could
+    // consume the entire probe and tiers 2..5 were unreachable by construction.
+    let probe = Duration::from_secs(120);
+    let mut left = StageBudget::of(Some(probe));
+    let mut allotted = Duration::ZERO;
+    for tier in chain(Stage::SpecReview) {
+        let Some(t) = left.allot(tier.timeout) else {
+            break;
+        };
+        allotted += t;
+        left.spend(t);
+    }
+    assert!(
+        allotted <= probe,
+        "{allotted:?} allotted under a {probe:?} supervisor"
+    );
+
+    // A fast refusal must not strand the tiers behind it: the chain is charged
+    // what a tier TOOK, not what it was entitled to.
+    let mut left = StageBudget::of(Some(bound));
+    let first = &chain(Stage::Remediation)[0];
+    assert!(left.allot(first.timeout).is_some());
+    left.spend(Duration::from_secs(2));
+    assert_eq!(
+        left.remaining(),
+        Some(bound - Duration::from_secs(2)),
+        "a two-second refusal must cost two seconds, not the tier's declared \
+         timeout, or one fast failure ends the chain"
+    );
+
+    // No budget is unbounded: every tier gets exactly what the table declares.
+    let free = StageBudget::of(None);
+    for tier in chain(Stage::Remediation) {
+        assert_eq!(free.allot(tier.timeout), Some(tier.timeout));
+    }
+}
+
+#[test]
+fn a_remnant_too_small_to_produce_a_turn_is_not_tried() {
+    // `agy_print_timeout_arg` subtracts a 30s margin and clamps to at least 1s
+    // (`src/exec/tests.rs`: 5s and 0s both become "1s"). So a tier allotted
+    // less than that margin tells the CLI it has one second -- a turn that
+    // cannot happen, which under I1 must be reported as NOT TRIED rather than
+    // as a model that answered and had nothing to say.
+    assert!(
+        MIN_TIER_ALLOTMENT >= anvil::exec::AGY_PRINT_TIMEOUT_MARGIN,
+        "a tier may not be allotted less than the margin its own argv loses"
+    );
+
+    let mut left = StageBudget::of(Some(MIN_TIER_ALLOTMENT));
+    assert_eq!(
+        left.allot(Duration::from_secs(600)),
+        Some(MIN_TIER_ALLOTMENT),
+        "exactly the floor is still spendable"
+    );
+    left.spend(Duration::from_secs(1));
+    assert_eq!(
+        left.allot(Duration::from_secs(600)),
+        None,
+        "a remnant under the floor stops the chain rather than spawning a turn \
+         that is cut off before it can answer"
+    );
 }
 
 #[test]

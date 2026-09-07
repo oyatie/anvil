@@ -315,22 +315,39 @@ fn every_stage_declares_what_it_may_write() {
             );
         }
     }
-    for auditing in [
-        Stage::PlanReview,
-        Stage::SpecReview,
-        Stage::CodeReviewAudit,
-        Stage::SecurityAudit,
-        Stage::TestAudit,
-    ] {
-        assert!(
-            plan(auditing).writes.is_empty(),
-            "`{}` audits another stage and must not be able to commit",
-            auditing.key()
-        );
+    // No hand-list. There are SEVEN `audits =` declarations, not the five this
+    // once enumerated, and `falsification` legitimately writes `tests/` because
+    // it judges by constructing a counterexample. The property is not "an
+    // auditor writes nothing" -- it is that an auditor may not write what it
+    // judges, which the loader now enforces for every declared pair.
+    for stage in Stage::ALL {
+        let p = plan(*stage);
+        let Some(audited_key) = &p.audits else {
+            continue;
+        };
+        let audited = Stage::ALL
+            .iter()
+            .copied()
+            .find(|s| s.key() == audited_key)
+            .unwrap_or_else(|| panic!("`{}` audits an unknown stage", stage.key()));
+        for w in &p.writes {
+            for a in &plan(audited).writes {
+                let (w, a) = (w.trim_end_matches('/'), a.trim_end_matches('/'));
+                assert!(
+                    w != a && !w.starts_with(&format!("{a}/")) && !a.starts_with(&format!("{w}/")),
+                    "`{}` audits `{audited_key}` and both may write {w:?}/{a:?}",
+                    stage.key()
+                );
+            }
+        }
     }
-    assert!(
-        !plan(Stage::Implementation).writes.is_empty(),
-        "a stage that produces code must declare where it may put it"
+
+    // And the implementer may not write tests, which is what makes the
+    // authoring stage mean anything.
+    assert_eq!(
+        plan(Stage::Implementation).writes,
+        vec!["src/".to_string()],
+        "an implementer that can write tests/ can relax a test it fails"
     );
 }
 

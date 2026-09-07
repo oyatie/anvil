@@ -122,6 +122,43 @@ pub struct StagePlan {
     pub audits: Option<String>,
     /// Path prefixes this stage may stage for commit; empty means none.
     pub writes: Vec<String>,
+    /// Stages that must have run before this one, as declared.
+    ///
+    /// Order WITHOUT judgement; `audits` carries the rest. See
+    /// [`runs_after_transitively`] for the closure, which is what a caller
+    /// asking "is this stage downstream of that one" actually wants.
+    pub runs_after: Vec<String>,
+}
+
+/// Whether `later` must run after `earlier`, following the declared order
+/// through as many hops as it takes.
+///
+/// The direct question is almost never the useful one: `implementation` does
+/// not name `test_authoring`, it names `test_authoring_review`, which audits
+/// `test_authoring`. A caller that asked only about direct edges would conclude
+/// the implementer may run first.
+///
+/// The loader refuses a cyclic table, so this terminates.
+#[must_use]
+pub fn runs_after_transitively(later: Stage, earlier: Stage) -> bool {
+    let mut seen = BTreeMap::new();
+    let mut frontier = vec![later];
+    while let Some(stage) = frontier.pop() {
+        if seen.insert(stage, ()).is_some() {
+            continue;
+        }
+        let p = plan(stage);
+        for key in p.runs_after.iter().chain(p.audits.iter()) {
+            let Some(next) = Stage::ALL.iter().find(|s| s.key() == key) else {
+                continue;
+            };
+            if *next == earlier {
+                return true;
+            }
+            frontier.push(*next);
+        }
+    }
+    false
 }
 
 /// One tier of a stage's chain, exactly as the file declares it.
@@ -221,6 +258,7 @@ pub async fn run_stage_within(
     let posture = Posture::in_workspace(working_dir);
     let mut refusals = Vec::new();
     let mut left = StageBudget::of(budget);
+    let mut stopped_by_budget = false;
 
     for (i, tier) in chain(stage).iter().enumerate() {
         let label = format!("{what} [{}/{} {}]", i + 1, chain(stage).len(), tier.model);
@@ -236,6 +274,7 @@ pub async fn run_stage_within(
                     untried.model
                 ));
             }
+            stopped_by_budget = true;
             break;
         };
         let cmd = match command_for(tier, &posture, timeout) {
@@ -259,6 +298,18 @@ pub async fn run_stage_within(
         }
     }
 
+    // "Exhausted" and "ran out of time" are different facts, and a caller that
+    // reads the first when the second happened will retry the same chain under
+    // the same bound. Untried tiers are not exhausted tiers.
+    if stopped_by_budget {
+        bail!(
+            "stage `{}` ran out of the {:?} its caller allowed before a tier \
+             answered, so the rest of the chain was never reached:\n  {}",
+            stage.key(),
+            budget.unwrap_or_default(),
+            refusals.join("\n  ")
+        )
+    }
     bail!(
         "stage `{}` exhausted every declared tier, so nothing answered:\n  {}",
         stage.key(),

@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawTier {
     model: String,
     provider: String,
@@ -22,6 +23,7 @@ struct RawTier {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawMeta {
     /// A ceiling on every tier's effort for this stage, when the stage's job is
     /// cheap by definition.
@@ -34,6 +36,22 @@ struct RawMeta {
     /// The stage this one judges, when it judges one.
     #[serde(default)]
     audits: Option<String>,
+    /// Stages that must have run before this one.
+    ///
+    /// `audits = X` already implies "after X" and the loader derives that edge,
+    /// so naming it here as well is the duplicate-tier defect in another shape
+    /// and is refused. This key is for order WITHOUT judgement.
+    ///
+    /// Neither this nor `audits` had a reader before: `runs_after` was declared
+    /// on four stages and `authored_before` on one, serde dropped both on the
+    /// floor, and the pull request that added them claimed "ordering is data in
+    /// a validated file". It was data in a file nothing parsed. `authored_before`
+    /// is gone -- one relation spelled two ways, in opposite directions, is how
+    /// the two spellings came to disagree (`test_authoring` claimed it ran
+    /// before `implementation`; `implementation` named only
+    /// `test_authoring_review`, which claimed nothing).
+    #[serde(default)]
+    runs_after: Vec<String>,
     #[serde(default)]
     max_effort: Option<String>,
     #[serde(default)]
@@ -47,6 +65,7 @@ struct RawMeta {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawFile {
     #[serde(default)]
     stage: BTreeMap<String, Vec<RawTier>>,
@@ -193,6 +212,7 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
                 tiers: built,
                 writes: meta.writes.clone(),
                 audits: meta.audits.clone(),
+                runs_after: meta.runs_after.clone(),
             },
         );
     }
@@ -238,6 +258,8 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
         }
     }
 
+    validate_order(&out)?;
+
     for stage in Stage::ALL {
         if !out.contains_key(stage) {
             bail!(
@@ -247,6 +269,86 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
         }
     }
     Ok(out)
+}
+
+/// Every ordering edge the file declares, explicit and derived.
+///
+/// `audits = X` IS an ordering claim -- you cannot judge what has not run -- so
+/// the edge is derived rather than restated. `test_audit` declared both, which
+/// is what made the redundancy visible.
+fn order_edges(plan: &StagePlan) -> impl Iterator<Item = &String> {
+    plan.runs_after.iter().chain(plan.audits.iter())
+}
+
+/// The declared order must name real stages, must not restate what `audits`
+/// already implies, and must admit an order at all.
+///
+/// A cycle is not a stylistic complaint: it means no sequence satisfies the
+/// file, so any runner walking it either loops or silently picks one edge to
+/// ignore. Refusing at load is the only point where that is still cheap.
+fn validate_order(out: &BTreeMap<Stage, StagePlan>) -> Result<()> {
+    let by_key: BTreeMap<&str, Stage> = out.keys().map(|s| (s.key(), *s)).collect();
+
+    for (stage, plan) in out {
+        for named in &plan.runs_after {
+            if !by_key.contains_key(named.as_str()) {
+                bail!(
+                    "stage `{}` declares it runs after `{named}`, which no `Stage` names. \
+                     An order over a stage that does not exist is not an order.",
+                    stage.key()
+                );
+            }
+            if plan.audits.as_deref() == Some(named.as_str()) {
+                bail!(
+                    "stage `{}` both audits `{named}` and lists it in `runs_after`. Auditing \
+                     it already means running after it; two spellings of one relation drift \
+                     apart, which is how `authored_before` and `runs_after` came to disagree.",
+                    stage.key()
+                );
+            }
+        }
+    }
+
+    // Kahn's algorithm. What is left when no node has zero remaining
+    // predecessors is exactly the cycle, and it is named rather than summarised
+    // -- a diagnostic that says "there is a cycle" leaves the reader to find it.
+    let mut pending: BTreeMap<Stage, usize> = out
+        .iter()
+        .map(|(s, p)| (*s, order_edges(p).count()))
+        .collect();
+    let mut ready: Vec<Stage> = pending
+        .iter()
+        .filter(|(_, n)| **n == 0)
+        .map(|(s, _)| *s)
+        .collect();
+
+    let mut settled = 0usize;
+    while let Some(done) = ready.pop() {
+        settled += 1;
+        pending.remove(&done);
+        for (stage, plan) in out {
+            if !pending.contains_key(stage) {
+                continue;
+            }
+            if order_edges(plan).any(|k| k.as_str() == done.key()) {
+                let left = pending.get_mut(stage).expect("still pending");
+                *left -= 1;
+                if *left == 0 {
+                    ready.push(*stage);
+                }
+            }
+        }
+    }
+
+    if settled != out.len() {
+        let stuck: Vec<&str> = pending.keys().map(|s| s.key()).collect();
+        bail!(
+            "the declared order has a cycle among {stuck:?}, so no sequence satisfies \
+             config/model-routing.toml. A runner walking it would loop, or would drop one \
+             edge without saying which."
+        );
+    }
+    Ok(())
 }
 
 /// The `pre-commit` hook's own declaration grammar, ported clause for clause.

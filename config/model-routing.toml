@@ -211,7 +211,6 @@ effort = "max"
 timeout_secs = 600
 
 [stage_meta.test_authoring]
-authored_before = "implementation"
 writes = ["tests/"]
 
 [[stage.test_authoring]]
@@ -355,7 +354,11 @@ effort = "max"
 timeout_secs = 600
 
 [stage_meta.code_review_audit]
-mode = "quorum"
+# This carried `mode = "quorum"`. Nothing read it -- serde dropped it silently,
+# the way it dropped `runs_after` and `authored_before` -- and `run_stage` takes
+# the FIRST tier that answers. So the file claimed a quorum and the dispatcher
+# ran a fallback chain. Removed rather than left as a claim the code contradicts;
+# a real quorum mode is a change to the dispatcher, not a word in a table.
 audits = "implementation"
 writes = []
 
@@ -425,8 +428,13 @@ effort = "max"
 timeout_secs = 600
 
 [stage_meta.orchestration]
-mode = "deterministic"
-residual_conditions = ["ambiguous_conflict", "progress_exhausted"]
+# `mode = "deterministic"` and
+# `residual_conditions = ["ambiguous_conflict", "progress_exhausted"]` were
+# here. Neither was deserialized, and no code dispatches this stage at all, so
+# they described a runner that does not exist. Kept as prose because the intent
+# is worth keeping and the claim was not: orchestration is meant to be
+# deterministic and to escalate only on an ambiguous conflict or exhausted
+# progress. When a runner exists, those become fields it reads.
 writes = []
 
 [[stage.orchestration]]
@@ -489,10 +497,16 @@ effort = "low"
 timeout_secs = 90
 
 [stage_meta.security_audit]
-mode = "quorum"
+# `mode = "quorum"` was here and nothing read it, while `run_stage` takes the
+# first tier that answers -- the file claimed a quorum and the dispatcher ran a
+# fallback chain.
 audits = "implementation"
 runs_after = ["code_review_audit", "spec_review"]
-same_provider_exception = "daybreak-blue IS gpt-5.6-sol, already code_review_audit's T2 against the same implementation -- the correlation is sol's, not a new one; claude-opus-5 behind it carries the cross-provider check"
+# Same-provider exception, which was a `same_provider_exception = "..."` key
+# holding a paragraph of prose. It is a comment, so it is one:
+# daybreak-blue IS gpt-5.6-sol, already code_review_audit's T2 against the same
+# implementation -- the correlation is sol's, not a new one, and claude-opus-5
+# behind it carries the cross-provider check.
 writes = []
 
 [[stage.security_audit]]
@@ -561,7 +575,6 @@ timeout_secs = 600
 
 [stage_meta.test_audit]
 audits = "test_hardening"
-runs_after = ["test_hardening"]
 writes = []
 
 [[stage.test_audit]]

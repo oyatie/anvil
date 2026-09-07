@@ -844,11 +844,23 @@ timeout_secs = 90
     // without anyone changing the property.
     let slow = over
         .replace("effort = \"high\"", "effort = \"low\"")
-        .replace("timeout_secs = 90\n", "timeout_secs = 600\n");
+        .replace(
+            "effort = \"low\"\ntimeout_secs = 90\n",
+            "effort = \"low\"\ntimeout_secs = 600\n",
+        );
+    // The needle is anchored to the TIER, and this is why. A bare
+    // `timeout_secs = 90` also matches inside `max_timeout_secs = 90` -- the
+    // ceiling itself -- so a loose replacement raises the bound along with the
+    // value it is supposed to exceed, and the loader has nothing to refuse.
+    // That is what happened: the test went red and the fixture, not the
+    // property, was wrong.
     assert!(
-        slow.contains("effort = \"low\"") && slow.contains("timeout_secs = 600"),
-        "the fixture must actually differ from the one above, or this asserts \
-         nothing: {slow}"
+        slow.contains("max_timeout_secs = 90"),
+        "the CEILING must stay where it was, or nothing exceeds it: {slow}"
+    );
+    assert!(
+        slow.contains("effort = \"low\"") && slow.contains("\ntimeout_secs = 600"),
+        "and the tier must actually exceed it, or this asserts nothing: {slow}"
     );
     let e = anvil::ai_driver::chain::parse_table_for_test(&slow)
         .expect_err("a timeout above the declared ceiling must be refused");

@@ -1,8 +1,9 @@
-//! The fleet sweep measures a trunk, records the trend, and writes the move
+//! Post-acquisition fleet behavior measures a trunk, records the trend, and writes the move
 //! plan — and a repository without a spec is reported as skipped, never as
 //! a zero-distance success.
 
-use anvil::shape::facade::sweep::{SweepDeps, sweep_repo};
+use super::{SweepDeps, sweep_acquired};
+use crate::git_manager::{SubjectRoot, Uncloned};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -39,11 +40,9 @@ const SPEC: &str = r#"{
   "rules": { "satellite_alias_used": { "mode": "baseline-block-on-new" } }
 }"#;
 
-/// A bare "origin" with one commit, cloned by ensure_repo_cloned's URL? The
-/// sweep only needs a clone directory that git can read, so we lay the clone
-/// where the GitManager expects it and give it an `origin` remote pointing at
-/// a local bare repo with a `main` branch.
-fn seed(repos_dir: &Path, name: &str, with_spec: bool) {
+/// Local Git fixture for the private post-acquisition seam, not evidence of
+/// production GitHub origin admission. Never enable local origins in that policy.
+fn seed(repos_dir: &Path, name: &str, with_spec: bool) -> SubjectRoot {
     let origin = repos_dir.join(format!("{name}-origin.git"));
     let work = repos_dir.join("seed");
     std::fs::create_dir_all(&work).unwrap();
@@ -79,6 +78,7 @@ fn seed(repos_dir: &Path, name: &str, with_spec: bool) {
         ],
     );
     std::fs::remove_dir_all(&work).unwrap();
+    SubjectRoot::asserted(clone, Uncloned::TestFixture)
 }
 
 #[tokio::test]
@@ -86,25 +86,27 @@ async fn a_trunk_is_measured_recorded_and_planned() {
     let tmp = tempfile::tempdir().unwrap();
     let repos_dir = tmp.path().join("repos");
     std::fs::create_dir_all(&repos_dir).unwrap();
-    seed(&repos_dir, "shaped", true);
+    let subject = seed(&repos_dir, "shaped", true);
     let deps = SweepDeps {
-        git_mgr: Arc::new(anvil::git_manager::GitManager::new(repos_dir.clone())),
+        git_mgr: Arc::new(crate::git_manager::GitManager::new(repos_dir.clone())),
         telemetry: Arc::new(
-            anvil::telemetry_store::TelemetryStore::new(tmp.path().join("data/telemetry")).await,
+            crate::telemetry_store::TelemetryStore::new(tmp.path().join("data/telemetry")).await,
         ),
         data_dir: tmp.path().join("data"),
     };
     // The sweep MEASURES; delivery turns the report into a plan. Composing
     // them here mirrors the composition root, and is what broke the
     // shape <-> change_delivery cycle: neither unit knows the other.
-    let swept = sweep_repo(&deps, "fixture/shaped").await.expect("sweeps");
-    let anvil::shape::facade::sweep::Swept::Measured { report, summary } = swept else {
+    let swept = sweep_acquired(&deps, "fixture/shaped", subject)
+        .await
+        .expect("sweeps");
+    let crate::shape::facade::sweep::Swept::Measured { report, summary } = swept else {
         panic!("the fixture carries a spec, so it must be measured, not skipped");
     };
     assert!(summary.contains("distance 1"), "{summary}");
     let latest = deps.telemetry.latest_shape_measurements().await;
     assert_eq!(latest["fixture/shaped"].findings_total, 1);
-    let plan_path = anvil::change_delivery::facade::plan::write_move_plan(
+    let plan_path = crate::change_delivery::facade::plan::write_move_plan(
         &deps.data_dir,
         "fixture/shaped",
         &report,
@@ -112,7 +114,7 @@ async fn a_trunk_is_measured_recorded_and_planned() {
     .await
     .expect("plan written");
     let raw = std::fs::read(&plan_path).expect("move plan written");
-    let plan = anvil::change_delivery::ports::ShapeMovePlan::parse(&raw).expect("parses");
+    let plan = crate::change_delivery::ports::ShapeMovePlan::parse(&raw).expect("parses");
     assert_eq!(plan.moves.len(), 1);
     assert_eq!(plan.moves[0].to, "iam/policy/rbac.json");
 }
@@ -122,18 +124,18 @@ async fn a_repo_without_a_spec_is_skipped_visibly_not_zeroed() {
     let tmp = tempfile::tempdir().unwrap();
     let repos_dir = tmp.path().join("repos");
     std::fs::create_dir_all(&repos_dir).unwrap();
-    seed(&repos_dir, "bare", false);
+    let subject = seed(&repos_dir, "bare", false);
     let deps = SweepDeps {
-        git_mgr: Arc::new(anvil::git_manager::GitManager::new(repos_dir.clone())),
+        git_mgr: Arc::new(crate::git_manager::GitManager::new(repos_dir.clone())),
         telemetry: Arc::new(
-            anvil::telemetry_store::TelemetryStore::new(tmp.path().join("data/telemetry")).await,
+            crate::telemetry_store::TelemetryStore::new(tmp.path().join("data/telemetry")).await,
         ),
         data_dir: tmp.path().join("data"),
     };
-    let swept = sweep_repo(&deps, "fixture/bare")
+    let swept = sweep_acquired(&deps, "fixture/bare", subject)
         .await
         .expect("skips cleanly");
-    let anvil::shape::facade::sweep::Swept::Skipped(why) = swept else {
+    let crate::shape::facade::sweep::Swept::Skipped(why) = swept else {
         panic!("a repository with no adopted spec has nothing to measure against");
     };
     assert!(why.contains("no shape spec adopted"), "{why}");

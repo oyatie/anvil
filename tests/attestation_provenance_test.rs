@@ -125,14 +125,24 @@ fn production_source(rel: &str) -> String {
 #[path = "support/attestation_provenance_scan.rs"]
 mod provenance_scan;
 
-fn rs_files(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
+fn rs_files(
+    dir: &Path,
+    classifier: &anvil::source_scan::paths::TestSourceClassifier,
+    out: &mut Vec<(PathBuf, String)>,
+) {
     let entries = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{} must be readable: {e}", dir.display()));
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            rs_files(&path, out);
+            rs_files(&path, classifier, out);
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            if classifier
+                .classify(&path)
+                .unwrap_or_else(|reason| panic!("cannot classify {}: {reason}", path.display()))
+            {
+                continue;
+            }
             let body = std::fs::read_to_string(&path).expect("source file is readable");
             out.push((path, body));
         }
@@ -337,8 +347,11 @@ fn the_receipt_body_names_no_attestation_engine() {
 /// literals are kept, because the fabricated summary sentence was one.
 #[test]
 fn no_fabricated_attestation_claim_survives_anywhere_in_src() {
+    let root = repo_root();
+    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(&root)
+        .expect("classify actual repository source");
     let mut files = Vec::new();
-    rs_files(&repo_root().join("src"), &mut files);
+    rs_files(&root.join("src"), &classifier, &mut files);
     assert!(!files.is_empty(), "src must be readable");
 
     let mut found: Vec<String> = Vec::new();
@@ -499,8 +512,11 @@ fn the_registry_records_what_this_gate_is_blocked_on() {
 /// `the_receipt_exclusion_pathspec_excludes_receipts_and_nothing_else`.
 #[test]
 fn no_production_site_spells_its_own_whole_tree_git_add() {
+    let root = repo_root();
+    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(&root)
+        .expect("classify actual repository source");
     let mut files = Vec::new();
-    rs_files(&repo_root().join("src"), &mut files);
+    rs_files(&root.join("src"), &classifier, &mut files);
     assert!(files.len() > 50, "the src scan found almost nothing");
 
     let mut offenders = Vec::new();
@@ -518,6 +534,45 @@ fn no_production_site_spells_its_own_whole_tree_git_add() {
         offenders.is_empty(),
         "a staging site sweeps the clone Anvil writes its receipts into, so the \
          receipt is committed onto the pull request: {offenders:#?}"
+    );
+}
+
+#[test]
+fn source_collection_keeps_the_production_parent_not_its_declared_test_child() {
+    let root = repo_root();
+    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(&root)
+        .expect("classify actual repository source");
+    let mut files = Vec::new();
+    rs_files(
+        &root.join("src/shape/facade/sweep"),
+        &classifier,
+        &mut files,
+    );
+    assert!(
+        !files
+            .iter()
+            .any(|(path, _)| path == &root.join("src/shape/facade/sweep/tests.rs"))
+    );
+    assert!(
+        classifier
+            .classify(&root.join("src/shape/facade/sweep/tests.rs"))
+            .unwrap()
+    );
+    assert!(
+        !classifier
+            .classify(&root.join("src/shape/facade/sweep.rs"))
+            .unwrap()
+    );
+    assert!(
+        provenance_scan::staging_violation("src/ordinary.rs", "cmd.args([\"add\", \"-A\"]);")
+            .is_some()
+    );
+    files.clear();
+    rs_files(&root.join("src/shape/facade"), &classifier, &mut files);
+    assert!(
+        files
+            .iter()
+            .any(|(path, _)| path == &root.join("src/shape/facade/sweep.rs"))
     );
 }
 

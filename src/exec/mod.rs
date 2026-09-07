@@ -39,7 +39,7 @@ mod replacement;
 pub mod turn;
 pub use agent::{
     AgentCommand, Posture, ProviderCredential, agy_agent, claude_agent, codex_agent, cursor_agent,
-    grok_agent,
+    grok_agent, muse_agent,
 };
 pub use gh::command as gh;
 pub use inherited::INHERITED;

@@ -333,6 +333,29 @@ fn a_supplied_budget_bounds_the_whole_stage_not_each_attempt() {
     for tier in chain(Stage::Remediation) {
         assert_eq!(free.allot(tier.timeout), Some(tier.timeout));
     }
+
+    // A LINKAGE check, and a source substring is the honest tool for one: the
+    // claim is "this argument is that variable", which has no runtime shape to
+    // observe from an integration test -- `AgentCommand::as_std` is
+    // `pub(crate)`, so argv cannot be read from here.
+    //
+    // What it guards: `command_for` must be handed the ALLOTTED value, not
+    // `tier.timeout`. Pass the latter and agy is told, via
+    // `agy_print_timeout_arg`, a deadline longer than anvil's own process
+    // bound -- so it is killed mid-turn instead of ending cleanly and saying
+    // why, and a turn that produced no measurement is reported as one that
+    // failed. The sum property above cannot see this: the arithmetic is
+    // correct and the result goes to the wrong place.
+    let src = anvil::source_scan::paths::module_source(
+        "src/ai_driver/chain",
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
+    let code = anvil::source_scan::without_commentary(&src);
+    assert!(
+        code.contains("command_for(tier, &posture, timeout)"),
+        "the capped value must reach the provider constructor, or the CLI is \
+         told a deadline the process bound does not share"
+    );
 }
 
 #[test]
@@ -474,6 +497,7 @@ fn every_site_that_commits_is_scoped_or_declared_exempt() {
     ];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let classifier = test_module_classifier(root);
     let mut sites: Vec<String> = Vec::new();
     let mut stack = vec![root.join("src")];
     while let Some(dir) = stack.pop() {
@@ -495,19 +519,15 @@ fn every_site_that_commits_is_scoped_or_declared_exempt() {
             // marker. That is verified against the parent, the way the spawn-seam
             // ratchet does it: a `tests.rs` the parent compiles unconditionally
             // is production code with a convenient name, and is scanned.
-            if path.file_name().is_some_and(|n| n == "tests.rs") {
-                let stem = path.parent().expect("has a parent");
-                let declared_test_only = [stem.with_extension("rs"), stem.join("mod.rs")]
-                    .iter()
-                    .any(|parent| {
-                        std::fs::read_to_string(parent).is_ok_and(|t| {
-                            t.contains("#[cfg(test)]\nmod tests;")
-                                || t.contains("#[cfg(test)]\npub mod tests;")
-                        })
-                    });
-                if declared_test_only {
-                    continue;
-                }
+            // This was hand-rolled here: `tests.rs` by name, two exact parent
+            // spellings, `#[cfg(test)]\nmod tests;` matched as a literal --
+            // so `#[cfg(test)]\n    pub(super) mod tests;`, or a module not
+            // called `tests`, read as production. `is_cfg_test_module_file` is
+            // the tree's one answer to this question and its doc comment counts
+            // twelve scanners that each got it slightly wrong. Two of them were
+            // in this file.
+            if classifier.classify(&path).unwrap_or(false) {
+                continue;
             }
             let code = anvil::source_scan::without_commentary(
                 &anvil::source_scan::without_test_modules(&text),
@@ -1003,4 +1023,120 @@ fn one_relation_may_not_be_spelled_two_ways() {
             );
         }
     }
+}
+
+#[test]
+fn the_one_lane_that_does_not_use_the_table_is_named_and_the_list_only_shrinks() {
+    // #244's body said the conversion covered "all six sites". Five were
+    // converted. The sixth, `reviewer/mod.rs`, still calls
+    // `AiRouter::execute_prompt` -- a SECOND dispatch system that lives beside
+    // the routing table:
+    //
+    //   execute_prompt   per-provider subscription paths, account pooling, and
+    //                    rate-limit cooldown (`mark_rate_limited`, six sites in
+    //                    `router.rs` and `router/claude.rs`)
+    //   run_stage        the declared chain, with tiers and fallback, and no
+    //                    contact with the account pool at all
+    //
+    // So converting this site would REGRESS it: the review lane would gain a
+    // fallback chain and lose every cooldown. That is not a conversion, it is a
+    // trade, and it is a change to the exec seam rather than to a call site.
+    //
+    // The honest close is to stop the claim being silently false. This lane is
+    // named, with the reason, and the list only shrinks: a second unrouted
+    // caller fails here rather than being discovered by a reviewer months later.
+    const NOT_ROUTED_THROUGH_THE_TABLE: &[(&str, &str)] = &[(
+        "src/reviewer/mod.rs",
+        "keeps the account pooling and rate-limit cooldown that the table path \
+         does not have; unifying the two dispatch systems is a follow-up, not a \
+         call-site edit",
+    )];
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let classifier = test_module_classifier(root);
+    let mut callers: Vec<String> = Vec::new();
+    let mut stack = vec![root.join("src")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("src listable") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            // Test code is excluded by ASKING, not by filename. An inline
+            // `#[cfg(test)] mod tests { .. }` is stripped from the text; a
+            // whole-file module carries its attribute on the PARENT's
+            // `mod tests;`, so the file itself has no marker and every scanner
+            // that looks only at the file reads unit tests as production.
+            // `is_cfg_test_module_file` is where this tree answers that once --
+            // its own doc comment counts twelve scanners that got it wrong --
+            // and this census read `router/tests.rs` as a production caller
+            // until it used it.
+            if classifier.classify(&path).unwrap_or(false) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable");
+            // Doc examples are commentary: `model_prompt.rs` documents this
+            // very call in a doc comment, and counting it would make the list
+            // unshrinkable for no reason.
+            let code = anvil::source_scan::without_commentary(
+                &anvil::source_scan::without_test_modules(&text),
+            );
+            if !code.contains(".execute_prompt(") {
+                continue;
+            }
+            callers.push(
+                path.strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+        }
+    }
+
+    // The instrument: a scan that found nothing would pass by being blind.
+    assert!(
+        !callers.is_empty(),
+        "the census found no `.execute_prompt(` caller at all, and there is at \
+         least one -- the scan is broken, not the code"
+    );
+
+    let named: BTreeSet<&str> = NOT_ROUTED_THROUGH_THE_TABLE
+        .iter()
+        .map(|(f, _)| *f)
+        .collect();
+    let found: BTreeSet<&str> = callers.iter().map(String::as_str).collect();
+
+    let unnamed: Vec<&&str> = found.difference(&named).collect();
+    assert!(
+        unnamed.is_empty(),
+        "these sites dispatch a model without going through the routing table, \
+         so they have no declared chain and no fallback: {unnamed:?}. Use \
+         `run_stage`, or name the site here with the reason it cannot."
+    );
+
+    let stale: Vec<&&str> = named.difference(&found).collect();
+    assert!(
+        stale.is_empty(),
+        "these sites are listed as unrouted but no longer call `execute_prompt` \
+         -- delete the line, the ratchet only counts if it tightens: {stale:?}"
+    );
+}
+
+// `TestSourceClassifier`, built ONCE and shared.
+//
+// `is_cfg_test_module_file` is the convenient spelling and is a trap in a loop:
+// it calls `TestSourceClassifier::new` on every invocation, and that walks every
+// crate root and resolves the whole module graph. Called once per file over this
+// tree it is quadratic -- measured here at over ten minutes without finishing,
+// against under a second for the same census with one classifier. The helper is
+// right about the QUESTION (a whole-file test module carries its `#[cfg(test)]`
+// on the parent's `mod tests;`, so the file itself has no marker) and wrong
+// about the shape, so this holds the answer rather than re-deriving it.
+fn test_module_classifier(root: &Path) -> anvil::source_scan::paths::TestSourceClassifier {
+    anvil::source_scan::paths::TestSourceClassifier::new(root)
+        .expect("the module graph must resolve, or test code cannot be told from production")
 }

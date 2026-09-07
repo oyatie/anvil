@@ -240,6 +240,22 @@ impl QueueHealer {
         base_branch: &str,
         work_dir: &Path,
     ) -> Result<String> {
+        // The run scope covers this WHOLE operation, not just the model turn.
+        //
+        // `pre-commit` reads `.anvil/run-scope` and refuses staged paths outside
+        // it. This function dispatches a turn, then stages and commits ~125
+        // lines later; a scope released when the turn ended was gone before the
+        // hook ever ran. The turn is also told "Do NOT commit", so the writes
+        // being constrained are the ones anvil itself stages from the tree the
+        // model left behind -- which is precisely what needs constraining.
+        //
+        // Fallible: a heal that cannot declare its scope must not run
+        // unconstrained.
+        let _scope = crate::ai_driver::chain::RunScope::declare(
+            work_dir,
+            &crate::ai_driver::chain::plan(crate::ai_driver::Stage::Remediation).writes,
+        )?;
+
         // 3. Speculatively merge origin/<base_branch> into the PR head
         info!(
             "Speculatively merging origin/{} into pr-{} for {}#{}...",

@@ -23,6 +23,7 @@ use tracing::warn;
 mod session;
 use session::ReaderTasks;
 
+use super::prompt_file::PromptFile;
 use super::{AgentCommand, Framing, ProviderProbeCommand};
 use crate::model_prompt::ModelPrompt;
 
@@ -46,14 +47,35 @@ pub(super) async fn deliver(
     limit: Duration,
     what: &str,
 ) -> Result<Output> {
-    let AgentCommand { command, framing } = command;
+    let AgentCommand {
+        mut command,
+        framing,
+    } = command;
     let permit = ModelPromptPermit(PrivatePermit);
     let rendered = prompt.as_str(&permit);
+    let mut guard: Option<PromptFile> = None;
     let payload = match framing {
         Framing::Plain => Cow::Borrowed(rendered),
         Framing::AgyStreamJson => Cow::Owned(agy_stream_input(rendered)),
+        Framing::MusePromptFile => {
+            // muse reads no prompt from STDIN, and refuses `/dev/stdin` as "not
+            // a regular file", so the prompt is written to one. 0600 before any
+            // content reaches it, and unlinked when `guard` drops at the end of
+            // this function -- after the await, so the child has it for the
+            // whole turn. The file holds contributor text.
+            let file = PromptFile::write(rendered)?;
+            command.arg("--prompt-file").arg(file.path());
+            guard = Some(file);
+            Cow::Borrowed("")
+        }
     };
-    deliver_with_stdin(command, payload.as_ref(), limit, what).await
+    // ONE call, whatever the framing. A second one here would be a second raw
+    // stdin transport caller, and `model_spawns_go_through_one_seam_test`
+    // refuses that: the census of sites that can reach a child process is the
+    // guarantee, and it is only a guarantee while it stays one.
+    let out = deliver_with_stdin(command, payload.as_ref(), limit, what).await;
+    drop(guard);
+    out
 }
 
 /// Executes a prompt-free provider probe whose complete argv was selected by

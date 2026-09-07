@@ -86,10 +86,21 @@ fn production_agy_callers_only_request_the_finite_constructor() {
             }
         }
     }
-    assert!(
-        callers.len() >= 6,
-        "agy caller census lost its subject: {callers:?}"
-    );
+    // The census names the sites it expects rather than counting them. The
+    // floor used to be `>= 6`, which encoded an architecture where five
+    // production sites each named `agy_agent` directly and had no tier beneath
+    // them. Routing those through `ai_driver::run_stage` removed all five, so
+    // the floor began failing BECAUSE the thing it guarded had improved --
+    // and the tempting fix, lowering 6 to 4, is how a check gets quieted into
+    // meaning nothing. A count is a proxy for "the scan found its subject";
+    // naming the subject is the thing itself.
+    for expected in ["src/ai_driver/chain.rs", "src/ai_driver/router.rs"] {
+        assert!(
+            callers.iter().any(|path| path == expected),
+            "agy caller census lost its subject: {expected} constructs an agy \
+             command and the scan did not see it. Census: {callers:?}"
+        );
+    }
     assert!(
         callers.iter().all(|path| path != "src/exec/agent.rs"),
         "generic AgentCommand construction absorbed agy argv again"

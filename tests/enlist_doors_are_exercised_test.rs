@@ -157,16 +157,12 @@ async fn doors() -> Doors {
             git_mgr.clone(),
             github_client.clone(),
             merge_enlister.clone(),
-            config.agy_effort.clone(),
         )),
         lockfile_reconciler: Arc::new(anvil::lockfile_reconciler::LockfileReconciler::new(
             git_mgr.clone(),
             github_client.clone(),
         )),
-        ci_triager: Arc::new(anvil::ci_triager::CiTriager::new(
-            github_client.clone(),
-            config.agy_effort.clone(),
-        )),
+        ci_triager: Arc::new(anvil::ci_triager::CiTriager::new(github_client.clone())),
         state_mgr: Arc::new(
             anvil::state::StateManager::load(&config.data_dir)
                 .await

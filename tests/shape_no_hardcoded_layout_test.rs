@@ -61,7 +61,10 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn rust_files(dir: &Path) -> Vec<PathBuf> {
+fn rust_files(
+    dir: &Path,
+    classifier: &anvil::source_scan::paths::TestSourceClassifier,
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -70,6 +73,12 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|e| e == "rs") {
+                if classifier
+                    .classify(&p)
+                    .unwrap_or_else(|reason| panic!("cannot classify {}: {reason}", p.display()))
+                {
+                    continue;
+                }
                 out.push(p);
             }
         }
@@ -149,10 +158,12 @@ fn string_literals(code: &str) -> Vec<String> {
 #[test]
 fn shape_program_source_carries_no_tenant_layout_literals() {
     let root = repo_root();
+    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(&root)
+        .expect("classify actual repository source");
     let mut offenders = Vec::new();
     let mut scanned = 0usize;
     for dir in SCANNED_DIRS {
-        for file in rust_files(&root.join(dir)) {
+        for file in rust_files(&root.join(dir), &classifier) {
             scanned += 1;
             let rel = file
                 .strip_prefix(&root)
@@ -183,6 +194,26 @@ fn shape_program_source_carries_no_tenant_layout_literals() {
         "tenant layout hardcoded in Anvil source (I13) — move the value into the shape spec:\n  {}",
         offenders.join("\n  ")
     );
+}
+
+#[test]
+fn source_collection_excludes_declared_test_files_without_weakening_literals() {
+    let root = repo_root();
+    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(&root)
+        .expect("classify actual repository source");
+    let files = rust_files(&root.join("src/shape"), &classifier);
+    assert!(!files.is_empty());
+    assert!(files.contains(&root.join("src/shape/facade/sweep.rs")));
+    assert!(!files.contains(&root.join("src/shape/facade/sweep/tests.rs")));
+    let literals = string_literals(&production_code(
+        "fn f() { let _ = \"iam/manifest.json\"; }",
+    ));
+    assert!(
+        literals
+            .iter()
+            .any(|literal| literal.contains("manifest.json"))
+    );
+    assert!(FORBIDDEN_LITERAL_FRAGMENTS.contains(&"manifest.json"));
 }
 
 #[test]

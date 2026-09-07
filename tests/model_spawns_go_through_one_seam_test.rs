@@ -44,9 +44,11 @@ const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
 ///   was `--provider echo --model X`, where an INCOMPATIBLE provider is named.
 ///   Measured again, three ways:
 ///
-///     muse exec --provider echo --model X  -> "--model requires --provider meta"
-///     muse exec --model X                  -> accepted; meta is the default
-///     muse exec --model X --provider meta  -> accepted; order irrelevant
+///   ```text
+///   muse exec --provider echo --model X  -> "--model requires --provider meta"
+///   muse exec --model X                  -> accepted; meta is the default
+///   muse exec --model X --provider meta  -> accepted; order irrelevant
+///   ```
 ///
 ///   `--provider meta` is still passed explicitly, because depending on a CLI
 ///   default is depending on something nothing here pins -- but that is a

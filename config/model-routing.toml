@@ -106,68 +106,8 @@ timeout_secs = 600
 [stage_meta.recon]
 writes = []
 
-[[stage.recon]]
-model = "gemini-3.8-flash"
-provider = "agy"
-effort = "high"
-timeout_secs = 600  # 166 steps
-
-[[stage.recon]]
-model = "grok-4.6"
-provider = "grok"
-effort = "high"
-timeout_secs = 420  # 70 steps
-
-[[stage.recon]]
-model = "claude-fable-5-1"
-provider = "claude"
-effort = "high"
-timeout_secs = 420  # 68 steps
-
-[[stage.recon]]
-model = "gpt-6-astra"
-provider = "codex"
-effort = "xhigh"
-timeout_secs = 300  # 29 steps
-
-[[stage.recon]]
-model = "muse-spark-1.3"
-provider = "muse"
-effort = "max"
-timeout_secs = 600
-
 [stage_meta.planning]
 writes = ["docs/plan/"]
-
-[[stage.planning]]
-model = "claude-fable-5-1"
-provider = "claude"
-effort = "high"
-timeout_secs = 420  # 68 steps
-
-[[stage.planning]]
-model = "gpt-6-astra"
-provider = "codex"
-effort = "xhigh"
-timeout_secs = 300  # 29 steps
-
-[[stage.planning]]
-model = "gemini-3.8-flash"
-provider = "agy"
-effort = "high"
-timeout_secs = 600  # 166 steps
-
-[[stage.planning]]
-model = "grok-4.6"
-provider = "grok"
-effort = "high"
-timeout_secs = 420  # 70 steps
-
-[[stage.planning]]
-model = "muse-spark-1.3"
-provider = "muse"
-effort = "max"
-timeout_secs = 600
 
 [stage_meta.plan_review]
 audits = "planning"

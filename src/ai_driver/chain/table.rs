@@ -115,6 +115,26 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
                 );
             }
         }
+        // A stage may not list the same (provider, model) twice.
+        //
+        // `recon` and `planning` shipped with ten tiers where five were unique:
+        // a regeneration script ran twice and nothing objected. Worst-case
+        // fallback latency doubled, 39 minutes to 78, and the tests could not
+        // see it -- one asserted only that a chain is non-empty, and the other
+        // read `text.split("[[stage.recon]]").nth(1)`, which is the FIRST copy.
+        // A duplicate tier is never intentional: the second is unreachable
+        // except as time spent failing the first again.
+        let mut seen_tier = std::collections::BTreeSet::new();
+        for t in &built {
+            if !seen_tier.insert((format!("{:?}", t.provider), t.model.clone())) {
+                bail!(
+                    "stage `{key}` lists {} on {:?} more than once; a repeated tier is \
+                     unreachable except as the time spent failing the first one again",
+                    t.model,
+                    t.provider
+                );
+            }
+        }
         out.insert(
             stage,
             StagePlan {

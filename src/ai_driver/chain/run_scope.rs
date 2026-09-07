@@ -15,13 +15,14 @@ use std::path::Path;
 /// Removed on drop so ordinary work outside a run sees no constraint at all --
 /// the hook treats an absent declaration as "not a milestone run", which is
 /// different from an empty one meaning "may write nothing".
-pub(super) struct RunScope {
+#[must_use = "the scope is released the moment this is dropped; hold it across the commit"]
+pub struct RunScope {
     path: std::path::PathBuf,
     dir_was_created: bool,
 }
 
 impl RunScope {
-    pub(super) fn declare(working_dir: &Path, writes: &[String]) -> Result<Self> {
+    pub fn declare(working_dir: &Path, writes: &[String]) -> Result<Self> {
         let dir = working_dir.join(".anvil");
         let dir_was_created = !dir.exists();
         std::fs::create_dir_all(&dir)

@@ -54,7 +54,8 @@ provider = "agy"
 effort = "high"
 timeout_secs = 600
 "#;
-    let e = anvil::ai_driver::chain::parse(bad).expect_err("a misspelled stage must be refused");
+    let e = anvil::ai_driver::chain::parse_table_for_test(bad)
+        .expect_err("a misspelled stage must be refused");
     assert!(
         e.to_string().contains("implementaton"),
         "the error must name the key it could not place: {e}"
@@ -78,7 +79,8 @@ provider = "agy"
 effort = "high"
 timeout_secs = 600
 "#;
-    let e = anvil::ai_driver::chain::parse(only_one).expect_err("a missing chain must be refused");
+    let e = anvil::ai_driver::chain::parse_table_for_test(only_one)
+        .expect_err("a missing chain must be refused");
     assert!(
         e.to_string().contains("no chain"),
         "the error must say a stage has no chain: {e}"
@@ -97,7 +99,8 @@ provider = "notaprovider"
 effort = "high"
 timeout_secs = 600
 "#;
-    let e = anvil::ai_driver::chain::parse(bad).expect_err("an unknown provider must be refused");
+    let e = anvil::ai_driver::chain::parse_table_for_test(bad)
+        .expect_err("an unknown provider must be refused");
     assert!(e.to_string().contains("notaprovider"), "{e}");
 }
 
@@ -343,7 +346,7 @@ provider = "agy"
 effort = "high"
 timeout_secs = 600
 "#;
-    let e = anvil::ai_driver::chain::parse(no_meta)
+    let e = anvil::ai_driver::chain::parse_table_for_test(no_meta)
         .expect_err("a stage with no writes declaration must be refused");
     assert!(
         e.to_string().contains("writes") || e.to_string().contains("no chain"),
@@ -366,7 +369,7 @@ effort = "high"
 timeout_secs = 600
 "#
         );
-        let e = anvil::ai_driver::chain::parse(&t)
+        let e = anvil::ai_driver::chain::parse_table_for_test(&t)
             .expect_err("an escaping write prefix must be refused");
         assert!(
             e.to_string().contains("relative path") || e.to_string().contains("no chain"),
@@ -376,36 +379,114 @@ timeout_secs = 600
 }
 
 #[test]
-fn the_dispatch_path_declares_the_run_scope() {
-    // The producer must be IN `run_stage_within`, not merely exist.
+fn every_site_that_commits_is_scoped_or_declared_exempt() {
+    // This replaces an assertion that checked the WRONG PLACE.
     //
-    // Measured: with `RunScope::declare` removed from the dispatch path, the
-    // end-to-end run-scope test still passed 14/14, because it calls the
-    // producer directly. A test that exercises a component without asserting
-    // it is REACHED is the defect this whole issue is about -- #206 shipped a
-    // hook whose input nothing produced, and its tests were green because they
-    // produced the input themselves.
-    let src = anvil::source_scan::paths::module_source(
-        "src/ai_driver/chain",
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-    );
-    let code = anvil::source_scan::without_commentary(&src);
+    // It used to assert `RunScope::declare` appeared in `run_stage_within`,
+    // which was both unverifiable (a source substring survives `let _ =`) and
+    // aimed at a window where nothing commits: every prompt says "Do NOT
+    // commit", and anvil stages and commits after the turn returns.
+    //
+    // The property that matters is about COMMIT sites, so this censuses them.
+    // A site either holds a run scope or is named here with a reason. Neither
+    // is optional: a seventh site added silently is the defect that put a
+    // guardrail in `dev` reading a file nothing wrote.
+    const EXEMPT: &[(&str, &str)] = &[
+        (
+            "src/pr_self_healer.rs",
+            "commits with --no-verify, so the hook cannot run at all. That is a \
+             defeat of the guardrail, recorded here rather than hidden: it is not \
+             scoped because it CANNOT be, and closing it means removing \
+             --no-verify, which is a separate decision",
+        ),
+        (
+            "src/lockfile_reconciler.rs",
+            "commits Cargo.lock, which no stage declares and which is a hub file; \
+             scoping it needs a stage whose writes include it",
+        ),
+        (
+            "src/webhook/pipelines/certify.rs",
+            "commits certification evidence, not model output; not a milestone run",
+        ),
+        (
+            "src/fixer/mod.rs",
+            "dispatches Implementation and commits, so it SHOULD be scoped; \
+             untouched here only because it is a separate change",
+        ),
+    ];
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sites: Vec<String> = Vec::new();
+    let mut stack = vec![root.join("src")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("src listable") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable");
+            // Test code is excluded, never by filename alone.
+            //
+            // `without_test_modules` strips inline `#[cfg(test)] mod tests { .. }`
+            // blocks, but a whole-file module carries its attribute on the
+            // PARENT's `mod tests;` declaration, so the file itself has no
+            // marker. That is verified against the parent, the way the spawn-seam
+            // ratchet does it: a `tests.rs` the parent compiles unconditionally
+            // is production code with a convenient name, and is scanned.
+            if path.file_name().is_some_and(|n| n == "tests.rs") {
+                let stem = path.parent().expect("has a parent");
+                let declared_test_only = [stem.with_extension("rs"), stem.join("mod.rs")]
+                    .iter()
+                    .any(|parent| {
+                        std::fs::read_to_string(parent).is_ok_and(|t| {
+                            t.contains("#[cfg(test)]\nmod tests;")
+                                || t.contains("#[cfg(test)]\npub mod tests;")
+                        })
+                    });
+                if declared_test_only {
+                    continue;
+                }
+            }
+            let code = anvil::source_scan::without_commentary(
+                &anvil::source_scan::without_test_modules(&text),
+            );
+            if !code.contains("\"commit\"") {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let scoped = code.contains("RunScope::declare");
+            let exempt = EXEMPT.iter().any(|(f, _)| *f == rel);
+            if !scoped && !exempt {
+                sites.push(rel);
+            }
+        }
+    }
     assert!(
-        code.contains("RunScope::declare(working_dir, &plan(stage).writes)"),
-        "`run_stage_within` must declare the stage's scope before the turn, or the \
-         pre-commit guardrail has nothing to read and passes silently"
+        sites.is_empty(),
+        "these sites run `git commit` without a declared run scope and are not \
+         listed as exempt:\n  {}\nEither hold a `RunScope` across the commit, or \
+         add it to EXEMPT with the reason it cannot be scoped.",
+        sites.join("\n  ")
     );
-    // ...and before the first tier runs, not after.
-    let declare = code
-        .find("RunScope::declare")
-        .expect("the declaration must be in the dispatch path");
-    let first_turn = code
-        .find("crate::exec::turn::run")
-        .expect("the dispatch path must run a turn");
-    assert!(
-        declare < first_turn,
-        "the scope must be declared before any turn starts, or the first turn runs unconstrained"
-    );
+
+    // The exempt list may not name a file that no longer commits: a stale
+    // exemption is a hole nobody is looking at.
+    for (file, _) in EXEMPT {
+        let text = std::fs::read_to_string(root.join(file))
+            .unwrap_or_else(|e| panic!("exempt file {file} must exist: {e}"));
+        assert!(
+            anvil::source_scan::without_commentary(&text).contains("\"commit\""),
+            "{file} is listed exempt from the run-scope census but no longer commits"
+        );
+    }
 }
 
 #[test]
@@ -457,4 +538,48 @@ fn tests_are_authored_and_reviewed_before_the_code_that_satisfies_them() {
         reviewer, implementer,
         "the model that reviews the tests must not be the one they will judge"
     );
+}
+
+#[test]
+fn a_stage_may_not_list_the_same_tier_twice() {
+    // `recon` and `planning` shipped with ten tiers, five unique, because a
+    // regeneration script ran twice. Worst-case fallback latency doubled and
+    // nothing objected: one test asserted only non-emptiness, the other read
+    // the first copy via `.nth(1)`.
+    let dup = r#"
+[stage_meta.recon]
+writes = []
+
+[[stage.recon]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600
+
+[[stage.recon]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600
+"#;
+    let e = anvil::ai_driver::chain::parse_table_for_test(dup)
+        .expect_err("a repeated tier must be refused");
+    assert!(
+        e.to_string().contains("more than once"),
+        "the error must name the repetition: {e}"
+    );
+
+    // And the shipped table has none.
+    use std::collections::BTreeSet;
+    for stage in Stage::ALL {
+        let mut seen = BTreeSet::new();
+        for t in chain(*stage) {
+            assert!(
+                seen.insert((format!("{:?}", t.provider), t.model.clone())),
+                "`{}` lists {} twice",
+                stage.key(),
+                t.model
+            );
+        }
+    }
 }

@@ -18,7 +18,13 @@ use crate::ai_driver::provider::ModelProvider;
 use crate::exec::Posture;
 use crate::model_prompt::ModelPrompt;
 use anyhow::{Result, bail};
-use run_scope::RunScope;
+pub use run_scope::RunScope;
+
+/// Parse an arbitrary table, so a test can exercise the loader's refusals
+/// without the compiled-in one.
+pub fn parse_table_for_test(text: &str) -> Result<std::collections::BTreeMap<Stage, StagePlan>> {
+    table::parse_table(text)
+}
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -194,18 +200,18 @@ pub async fn run_stage_within(
     what: &str,
     budget: Option<Duration>,
 ) -> Result<String> {
-    // Declare what this stage may write, for as long as the turn runs.
+    // NOT declared here, and that is the correction.
     //
-    // The `pre-commit` hook reads `.anvil/run-scope` and refuses staged paths
-    // outside it. Until now nothing wrote that file, so in a real checkout the
-    // hook's scope branch never executed and the guardrail could not fire
-    // (#215). This is its producer, and it is here because this is the one
-    // place every stage-dispatched turn passes through.
+    // A scope declared for the length of a turn is released when the turn ends,
+    // and no production turn commits: every prompt says "Do NOT commit; leave
+    // your changes in the working tree." `queue_healer` stages and commits 125
+    // lines AFTER its turn returns, so a scope held here was always gone by the
+    // time the hook ran -- the guardrail could not fire, which is exactly the
+    // defect this was meant to close.
     //
-    // Fallible on purpose: a run whose scope cannot be declared must not run
-    // unconstrained. `Posture::apply` returns `()` and could only have
-    // swallowed this.
-    let _scope = RunScope::declare(working_dir, &plan(stage).writes)?;
+    // The scope belongs to the OPERATION that commits, so its caller declares
+    // it and holds it across dispatch, staging and commit. See
+    // `RunScope::declare`.
     let posture = Posture::in_workspace(working_dir);
     let mut refusals = Vec::new();
 

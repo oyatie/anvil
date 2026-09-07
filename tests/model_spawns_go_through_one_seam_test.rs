@@ -36,10 +36,22 @@ const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
 /// - **Validation flow.** `muse_args` calls `validate_model_selector` and
 ///   `validate_effort` BEFORE building argv, so a rejected model or effort never
 ///   reaches a vector. Both were already the gate for `agy_args`.
-/// - **Argv order.** `exec --json --provider meta --model <m>
-///   --reasoning-effort <e>`. The order is load-bearing: `--model` is refused
-///   outright unless `--provider meta` precedes it, measured against the
-///   installed CLI, so a reordering here is a turn that never runs.
+/// - **Argv.** `exec --json --provider meta --model <m> --reasoning-effort <e>`.
+///
+///   CORRECTION. This comment previously claimed the ORDER is load-bearing and
+///   that `--model` is refused without `--provider meta`. Both are false. The
+///   second generalised one measurement past what it showed: what was measured
+///   was `--provider echo --model X`, where an INCOMPATIBLE provider is named.
+///   Measured again, three ways:
+///
+///     muse exec --provider echo --model X  -> "--model requires --provider meta"
+///     muse exec --model X                  -> accepted; meta is the default
+///     muse exec --model X --provider meta  -> accepted; order irrelevant
+///
+///   `--provider meta` is still passed explicitly, because depending on a CLI
+///   default is depending on something nothing here pins -- but that is a
+///   choice, not a constraint the tool imposes, and the difference is the whole
+///   value of this comment.
 /// - **`--prompt-file` is NOT here.** It is appended by the transport once the
 ///   prompt exists, because the path names a file that does not exist at
 ///   construction time. That is the one place this provider differs from the

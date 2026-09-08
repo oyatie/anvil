@@ -84,9 +84,34 @@ model = "muse-spark-1.3"
 provider = "muse"
 effort = "max"
 timeout_secs = 600
+#
+# WHAT EACH STAGE MAY WRITE.
+#
+# `writes` is the run scope: the path prefixes a turn at this stage may stage
+# for commit. `ai_driver::chain` declares it into `.anvil/run-scope` before the
+# turn and removes it after, and the `pre-commit` hook refuses anything outside
+# it. Before this, that hook read a file nothing wrote, so the guardrail could
+# not fire in a real checkout (#215).
+#
+# An empty list means the stage may commit NOTHING, and that is deliberate for
+# every auditing stage: an auditor that writes is an auditor that edited what it
+# was judging. `audits = ...` and `writes = []` are the same claim from two
+# directions.
+#
+# Every stage declares one. A stage with no `writes` is a load error rather than
+# an unrestricted stage, because an absent declaration is absent evidence, not
+# permission.
+
+
+[stage_meta.recon]
+writes = []
+
+[stage_meta.planning]
+writes = ["docs/plan/"]
 
 [stage_meta.plan_review]
 audits = "planning"
+writes = []
 
 [[stage.plan_review]]
 model = "gpt-5.6-sol"
@@ -117,6 +142,9 @@ model = "muse-spark-1.3"
 provider = "muse"
 effort = "max"
 timeout_secs = 600
+
+[stage_meta.architect_spec]
+writes = ["docs/"]
 
 [[stage.architect_spec]]
 model = "gpt-6-astra"
@@ -150,6 +178,7 @@ timeout_secs = 600
 
 [stage_meta.spec_review]
 audits = "architect_spec"
+writes = []
 
 [[stage.spec_review]]
 model = "claude-opus-5"
@@ -180,6 +209,85 @@ model = "muse-spark-1.3"
 provider = "muse"
 effort = "max"
 timeout_secs = 600
+
+[stage_meta.test_authoring]
+writes = ["tests/"]
+
+[[stage.test_authoring]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480
+
+[[stage.test_authoring]]
+model = "gpt-5.6-sol"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 420
+
+[[stage.test_authoring]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600
+
+[[stage.test_authoring]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420
+
+[[stage.test_authoring]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.test_authoring_review]
+audits = "test_authoring"
+writes = []
+
+# Primary is neither claude (which authors the tests) nor codex (which will
+# have to satisfy them). A reviewer that shares a provider with the author is
+# reviewing its own reasoning; one that shares with the implementer is judging
+# tests it will later be measured against.
+[[stage.test_authoring_review]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600
+
+[[stage.test_authoring_review]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420
+
+[[stage.test_authoring_review]]
+model = "gpt-6-astra"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 300
+
+[[stage.test_authoring_review]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "high"
+timeout_secs = 420
+
+[[stage.test_authoring_review]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.implementation]
+runs_after = ["test_authoring_review"]
+# `src/` only. Tests are authored by `test_authoring`, hardened by
+# `test_hardening`, and falsified by `falsification`; an implementer that can
+# also write `tests/` can relax a test it fails, which is the thing the
+# authoring stage exists to prevent.
+writes = ["src/"]
 
 [[stage.implementation]]
 model = "gpt-6-astra"
@@ -213,6 +321,7 @@ timeout_secs = 600
 
 [stage_meta.falsification]
 audits = "implementation"
+writes = ["tests/"]
 
 [[stage.falsification]]
 model = "claude-opus-5"
@@ -245,8 +354,13 @@ effort = "max"
 timeout_secs = 600
 
 [stage_meta.code_review_audit]
-mode = "quorum"
+# This carried `mode = "quorum"`. Nothing read it -- serde dropped it silently,
+# the way it dropped `runs_after` and `authored_before` -- and `run_stage` takes
+# the FIRST tier that answers. So the file claimed a quorum and the dispatcher
+# ran a fallback chain. Removed rather than left as a claim the code contradicts;
+# a real quorum mode is a change to the dispatcher, not a word in a table.
 audits = "implementation"
+writes = []
 
 [[stage.code_review_audit]]
 model = "claude-opus-5"
@@ -277,6 +391,11 @@ model = "muse-spark-1.3"
 provider = "muse"
 effort = "max"
 timeout_secs = 600
+
+[stage_meta.remediation]
+# Same reason as implementation: remediation answers findings in the code, not
+# in the tests that produced them.
+writes = ["src/"]
 
 [[stage.remediation]]
 model = "gpt-6-astra"
@@ -309,8 +428,14 @@ effort = "max"
 timeout_secs = 600
 
 [stage_meta.orchestration]
-mode = "deterministic"
-residual_conditions = ["ambiguous_conflict", "progress_exhausted"]
+# `mode = "deterministic"` and
+# `residual_conditions = ["ambiguous_conflict", "progress_exhausted"]` were
+# here. Neither was deserialized, and no code dispatches this stage at all, so
+# they described a runner that does not exist. Kept as prose because the intent
+# is worth keeping and the claim was not: orchestration is meant to be
+# deterministic and to escalate only on an ambiguous conflict or exhausted
+# progress. When a runner exists, those become fields it reads.
+writes = []
 
 [[stage.orchestration]]
 model = "claude-opus-5"
@@ -336,35 +461,53 @@ provider = "muse"
 effort = "max"
 timeout_secs = 600
 
+[stage_meta.issue_triage]
+# Classification, not repair. `tests/issue_triage_routing_test.rs` enforced
+# `low` effort and a <=90s bound on `stage_router`'s hardcoded chain, and that
+# test was deleted along with the module without being mentioned. The constraint
+# matters MORE now: that table was dead, and `ci_triager` dispatches this one on
+# every failed CI run. A triage call allowed 600s has stopped being cheap, and
+# reasoning budget per issue at volume is the cost this bounds.
+max_effort = "low"
+max_timeout_secs = 90
+writes = []
+
 [[stage.issue_triage]]
 model = "gemini-3.8-flash"
 provider = "agy"
-effort = "high"
-timeout_secs = 600  # 166 steps
+effort = "low"
+timeout_secs = 90  # 166 steps
 
 [[stage.issue_triage]]
 model = "grok-4.6"
 provider = "grok"
-effort = "high"
-timeout_secs = 420  # 70 steps
+effort = "low"
+timeout_secs = 90  # 70 steps
 
 [[stage.issue_triage]]
 model = "claude-fable-5-1"
 provider = "claude"
-effort = "high"
-timeout_secs = 420  # 68 steps
+effort = "low"
+timeout_secs = 90  # 68 steps
 
 [[stage.issue_triage]]
 model = "muse-spark-1.3"
 provider = "muse"
-effort = "max"
-timeout_secs = 600
+effort = "low"
+timeout_secs = 90
 
 [stage_meta.security_audit]
-mode = "quorum"
+# `mode = "quorum"` was here and nothing read it, while `run_stage` takes the
+# first tier that answers -- the file claimed a quorum and the dispatcher ran a
+# fallback chain.
 audits = "implementation"
 runs_after = ["code_review_audit", "spec_review"]
-same_provider_exception = "daybreak-blue IS gpt-5.6-sol, already code_review_audit's T2 against the same implementation -- the correlation is sol's, not a new one; claude-opus-5 behind it carries the cross-provider check"
+# Same-provider exception, which was a `same_provider_exception = "..."` key
+# holding a paragraph of prose. It is a comment, so it is one:
+# daybreak-blue IS gpt-5.6-sol, already code_review_audit's T2 against the same
+# implementation -- the correlation is sol's, not a new one, and claude-opus-5
+# behind it carries the cross-provider check.
+writes = []
 
 [[stage.security_audit]]
 model = "gpt-daybreak-blue-latest"
@@ -398,6 +541,7 @@ timeout_secs = 600
 
 [stage_meta.test_hardening]
 runs_after = ["falsification"]
+writes = ["tests/"]
 
 [[stage.test_hardening]]
 model = "claude-fable-5-1"
@@ -431,7 +575,7 @@ timeout_secs = 600
 
 [stage_meta.test_audit]
 audits = "test_hardening"
-runs_after = ["test_hardening"]
+writes = []
 
 [[stage.test_audit]]
 model = "gpt-5.6-sol"

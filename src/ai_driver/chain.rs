@@ -17,12 +17,27 @@
 use crate::ai_driver::provider::ModelProvider;
 use crate::exec::Posture;
 use crate::model_prompt::ModelPrompt;
-use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use anyhow::{Result, bail};
+pub use budget::{MIN_TIER_ALLOTMENT, StageBudget};
+pub use order::runs_after_transitively;
+pub use run_scope::RunScope;
+
+/// Parse an arbitrary table, so a test can exercise the loader's refusals
+/// without the compiled-in one.
+pub fn parse_table_for_test(text: &str) -> Result<std::collections::BTreeMap<Stage, StagePlan>> {
+    table::parse_table(text)
+}
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
+use table::parse_table;
+
+pub mod budget;
+mod order;
+mod run_scope;
+mod scope_grammar;
+mod table;
 
 /// The routing table, compiled in.
 ///
@@ -43,6 +58,10 @@ pub enum Stage {
     PlanReview,
     ArchitectSpec,
     SpecReview,
+    /// Tests written from the spec, BEFORE the implementation exists.
+    TestAuthoring,
+    /// Adversarial review of those tests, before any code can satisfy them.
+    TestAuthoringReview,
     Implementation,
     Falsification,
     CodeReviewAudit,
@@ -62,6 +81,8 @@ impl Stage {
         Stage::PlanReview,
         Stage::ArchitectSpec,
         Stage::SpecReview,
+        Stage::TestAuthoring,
+        Stage::TestAuthoringReview,
         Stage::Implementation,
         Stage::Falsification,
         Stage::CodeReviewAudit,
@@ -81,6 +102,8 @@ impl Stage {
             Stage::PlanReview => "plan_review",
             Stage::ArchitectSpec => "architect_spec",
             Stage::SpecReview => "spec_review",
+            Stage::TestAuthoring => "test_authoring",
+            Stage::TestAuthoringReview => "test_authoring_review",
             Stage::Implementation => "implementation",
             Stage::Falsification => "falsification",
             Stage::CodeReviewAudit => "code_review_audit",
@@ -94,6 +117,22 @@ impl Stage {
     }
 }
 
+/// What a stage may write, and with which models.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagePlan {
+    pub tiers: Vec<Tier>,
+    /// The stage this one judges, if any.
+    pub audits: Option<String>,
+    /// Path prefixes this stage may stage for commit; empty means none.
+    pub writes: Vec<String>,
+    /// Stages this one requires to have already run, as declared.
+    ///
+    /// Order WITHOUT judgement; `audits` carries the rest. See
+    /// [`runs_after_transitively`] for the closure, which is what a caller
+    /// asking "is this stage downstream of that one" actually wants.
+    pub runs_after: Vec<String>,
+}
+
 /// One tier of a stage's chain, exactly as the file declares it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tier {
@@ -103,105 +142,10 @@ pub struct Tier {
     pub timeout: Duration,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawTier {
-    model: String,
-    provider: String,
-    effort: String,
-    timeout_secs: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawFile {
-    #[serde(default)]
-    stage: BTreeMap<String, Vec<RawTier>>,
-    /// Prose about each stage. Accepted and ignored, rather than left to
-    /// `deny_unknown_fields` to reject as an unknown key.
-    #[serde(default)]
-    #[allow(dead_code)]
-    stage_meta: Option<toml::Value>,
-}
-
-/// The provider strings the file may use.
-///
-/// Exhaustive over `ModelProvider`, so adding a variant without giving it a
-/// spelling here fails to compile rather than becoming a provider no chain can
-/// name.
-fn provider_named(s: &str) -> Option<ModelProvider> {
-    let all = [
-        ModelProvider::AnthropicClaudeCode,
-        ModelProvider::OpenAiCodex,
-        ModelProvider::CursorAgent,
-        ModelProvider::XAiGrok,
-        ModelProvider::Antigravity,
-        ModelProvider::Muse,
-        ModelProvider::SubscriptionEnsemble,
-    ];
-    all.into_iter().find(|p| {
-        let name = match p {
-            ModelProvider::AnthropicClaudeCode => "claude",
-            ModelProvider::OpenAiCodex => "codex",
-            ModelProvider::CursorAgent => "cursor",
-            ModelProvider::XAiGrok => "grok",
-            ModelProvider::Antigravity => "agy",
-            ModelProvider::Muse => "muse",
-            ModelProvider::SubscriptionEnsemble => "ensemble",
-        };
-        name == s
-    })
-}
-
-/// Parse and validate the declared table.
-pub fn parse(text: &str) -> Result<BTreeMap<Stage, Vec<Tier>>> {
-    let raw: RawFile = toml::from_str(text).context("config/model-routing.toml does not parse")?;
-    let mut out: BTreeMap<Stage, Vec<Tier>> = BTreeMap::new();
-
-    for (key, tiers) in &raw.stage {
-        let Some(stage) = Stage::ALL.iter().copied().find(|s| s.key() == key) else {
-            bail!(
-                "config/model-routing.toml declares stage `{key}`, which no `Stage` variant \
-                 names. A chain nothing dispatches is not a routing decision."
-            );
-        };
-        if tiers.is_empty() {
-            bail!("stage `{key}` declares no tiers; a stage with an empty chain cannot run");
-        }
-        let mut built = Vec::new();
-        for t in tiers {
-            let Some(provider) = provider_named(&t.provider) else {
-                bail!(
-                    "stage `{key}` names provider `{}`, which is not one of claude, codex, cursor, grok, agy, ensemble",
-                    t.provider
-                );
-            };
-            if t.model.trim().is_empty() {
-                bail!("stage `{key}` has a tier with an empty model id");
-            }
-            built.push(Tier {
-                provider,
-                model: t.model.clone(),
-                effort: t.effort.clone(),
-                timeout: Duration::from_secs(t.timeout_secs),
-            });
-        }
-        out.insert(stage, built);
-    }
-
-    for stage in Stage::ALL {
-        if !out.contains_key(stage) {
-            bail!(
-                "`Stage::{stage:?}` has no chain in config/model-routing.toml. A stage with no \
-                 declared chain has no providers to try, and would fail on its first turn."
-            );
-        }
-    }
-    Ok(out)
-}
-
-fn table() -> &'static BTreeMap<Stage, Vec<Tier>> {
-    static TABLE: OnceLock<BTreeMap<Stage, Vec<Tier>>> = OnceLock::new();
+fn table() -> &'static BTreeMap<Stage, StagePlan> {
+    static TABLE: OnceLock<BTreeMap<Stage, StagePlan>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        parse(DECLARED).unwrap_or_else(|e| {
+        parse_table(DECLARED).unwrap_or_else(|e| {
             panic!("the compiled-in routing table is invalid, so no stage can dispatch: {e}")
         })
     })
@@ -209,10 +153,14 @@ fn table() -> &'static BTreeMap<Stage, Vec<Tier>> {
 
 /// The declared chain for `stage`, primary first.
 pub fn chain(stage: Stage) -> &'static [Tier] {
+    &plan(stage).tiers
+}
+
+/// The declared plan for `stage`: its chain and what it may write.
+pub fn plan(stage: Stage) -> &'static StagePlan {
     table()
         .get(&stage)
-        .map(Vec::as_slice)
-        .expect("every Stage has a chain; the loader refuses a table where one does not")
+        .expect("every Stage has a plan; the loader refuses a table where one does not")
 }
 
 /// Build the tier's command. The typed constructors are the only spawn seam.
@@ -254,10 +202,23 @@ pub async fn run_stage(
     run_stage_within(stage, prompt, working_dir, what, None).await
 }
 
-/// [`run_stage`], with each tier's timeout capped at `budget`.
+/// [`run_stage`], bounded so the WHOLE stage fits inside `budget`.
 ///
-/// A caller already under a supervisor keeps its own bound: a tier declaring
-/// 600s must not outlive a watchdog that gives the whole probe less.
+/// A caller already under a supervisor keeps its own bound, and the bound is on
+/// the stage rather than on each attempt: five tiers declaring 600s apiece
+/// under a 600s watchdog get 600s between them, not 3000s. [`StageBudget`]
+/// carries the measurement behind that.
+///
+/// # No run scope is declared here
+///
+/// A scope held for the length of a turn is released when the turn ends, and no
+/// production turn commits -- every prompt says "Do NOT commit; leave your
+/// changes in the working tree." `queue_healer` stages and commits 125 lines
+/// AFTER its turn returns, so a scope held here is gone by the time the hook
+/// runs and the guardrail cannot fire.
+///
+/// The scope belongs to the OPERATION that commits: its caller declares it and
+/// holds it across dispatch, staging and commit. See [`RunScope::declare`].
 pub async fn run_stage_within(
     stage: Stage,
     prompt: &ModelPrompt,
@@ -267,10 +228,24 @@ pub async fn run_stage_within(
 ) -> Result<String> {
     let posture = Posture::in_workspace(working_dir);
     let mut refusals = Vec::new();
+    let mut left = StageBudget::of(budget);
+    let mut stopped_by_budget = false;
 
     for (i, tier) in chain(stage).iter().enumerate() {
         let label = format!("{what} [{}/{} {}]", i + 1, chain(stage).len(), tier.model);
-        let timeout = budget.map_or(tier.timeout, |b| b.min(tier.timeout));
+        // `None` means the rest of the chain was never reached, which is a
+        // different fact from a tier that ran and refused. I1 forbids
+        // collapsing the two.
+        let Some(timeout) = left.allot(tier.timeout) else {
+            for untried in &chain(stage)[i..] {
+                refusals.push(format!(
+                    "{}: not tried, the stage budget was spent first",
+                    untried.model
+                ));
+            }
+            stopped_by_budget = true;
+            break;
+        };
         let cmd = match command_for(tier, &posture, timeout) {
             Ok(c) => c,
             Err(e) => {
@@ -278,7 +253,10 @@ pub async fn run_stage_within(
                 continue;
             }
         };
-        match crate::exec::turn::run(cmd, prompt, timeout, &label).await {
+        let started = std::time::Instant::now();
+        let outcome = crate::exec::turn::run(cmd, prompt, timeout, &label).await;
+        left.spend(started.elapsed());
+        match outcome {
             Ok(turn) if turn.status.success() => match turn.into_result() {
                 Ok(text) if !text.trim().is_empty() => return Ok(text),
                 Ok(_) => refusals.push(format!("{}: answered with nothing", tier.model)),
@@ -289,9 +267,30 @@ pub async fn run_stage_within(
         }
     }
 
+    // "Exhausted" and "ran out of time" are different facts, and a caller that
+    // reads the first when the second happened will retry the same chain under
+    // the same bound. Untried tiers are not exhausted tiers.
+    if stopped_by_budget {
+        bail!(
+            "stage `{}` ran out of the {:?} its caller allowed before a tier \
+             answered, so the rest of the chain was never reached:\n  {}",
+            stage.key(),
+            budget.unwrap_or_default(),
+            refusals.join("\n  ")
+        )
+    }
     bail!(
         "stage `{}` exhausted every declared tier, so nothing answered:\n  {}",
         stage.key(),
         refusals.join("\n  ")
     )
+}
+
+/// Declare a stage's scope the way `run_stage_within` does.
+///
+/// Exposed so a test can exercise the PRODUCER rather than fabricate its
+/// output: every existing run-scope test writes the file itself, which is how
+/// the guardrail merged inert.
+pub fn declare_run_scope_for_test(working_dir: &Path, stage: Stage) -> Result<impl Sized> {
+    RunScope::declare(working_dir, &plan(stage).writes)
 }

@@ -299,3 +299,87 @@ fn a_directory_is_a_separate_checkout_when_it_holds_a_git_entry_of_either_kind()
         "the marker belongs to the directory that holds it, not to its children"
     );
 }
+
+/// A repository walk must skip `.git` and not `.github`.
+///
+/// The three walkers over a contributor's repository -- the corpus auditor, the
+/// freshness ledger and the archival sweeper -- each spelled the skip
+/// `rel.starts_with(".git")` against a `String`. That is `str::starts_with`,
+/// not `Path::starts_with`, so it does not stop at a path boundary: `.github/`,
+/// `.gitignore` and `.gitattributes` all matched `.git`, and `targets/` matched
+/// `target`.
+///
+/// `.github/` routinely holds `ISSUE_TEMPLATE`, `PULL_REQUEST_TEMPLATE` and
+/// `CONTRIBUTING.md` -- markdown the corpus auditor exists to audit and never
+/// saw. It is latent in anvil's own tree, which has no markdown under
+/// `.github/` at all, which is exactly why nothing caught it: the walkers scan
+/// the repository UNDER REVIEW, and anvil is not that repository.
+#[test]
+fn a_repository_walk_skips_dot_git_and_not_dot_github() {
+    use anvil::source_scan::repository_walk_skips;
+
+    let fixture = tempfile::tempdir().expect("fixture");
+    let repo = fixture.path();
+    for d in [
+        ".git",
+        ".github/ISSUE_TEMPLATE",
+        "target",
+        "targets",
+        "docs",
+    ] {
+        std::fs::create_dir_all(repo.join(d)).unwrap();
+    }
+    std::fs::write(repo.join(".gitignore"), "x\n").unwrap();
+
+    // Skipped, and these are the ones that were always right.
+    assert!(repository_walk_skips(repo, &repo.join(".git")));
+    assert!(repository_walk_skips(repo, &repo.join("target")));
+
+    // The defect: a string prefix swallowed all of these.
+    for spared in [
+        ".github",
+        ".github/ISSUE_TEMPLATE",
+        ".gitignore",
+        "targets",
+        "docs",
+    ] {
+        assert!(
+            !repository_walk_skips(repo, &repo.join(spared)),
+            "{spared} is not `.git` or `target`, and a walk that skips it is \
+             blind to files it exists to read"
+        );
+    }
+
+    // Matching is by component, so a skipped name anywhere in the path skips
+    // it -- but only as a whole component.
+    assert!(repository_walk_skips(repo, &repo.join("docs/target/x.md")));
+    assert!(!repository_walk_skips(
+        repo,
+        &repo.join("docs/targets/x.md")
+    ));
+}
+
+/// And the same walk must not descend into another checkout.
+///
+/// #218 one domain over: a contributor with a worktree or a vendored clone
+/// inside their repository had every file in it audited as their own.
+#[test]
+fn a_repository_walk_skips_a_nested_checkout() {
+    use anvil::source_scan::repository_walk_skips;
+
+    let fixture = tempfile::tempdir().expect("fixture");
+    let repo = fixture.path();
+    let vendored = repo.join("vendored");
+    std::fs::create_dir_all(vendored.join("docs")).unwrap();
+    std::fs::write(vendored.join(".git"), "gitdir: /elsewhere\n").unwrap();
+
+    assert!(
+        repository_walk_skips(repo, &vendored),
+        "a directory holding its own `.git` is another repository's tree"
+    );
+
+    // Without the marker the same directory is walked, so the rule turns on
+    // the marker rather than on the name `vendored`.
+    std::fs::remove_file(vendored.join(".git")).unwrap();
+    assert!(!repository_walk_skips(repo, &vendored));
+}

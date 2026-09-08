@@ -261,6 +261,46 @@ pub fn is_separate_checkout(dir: &Path) -> bool {
     dir.join(".git").exists()
 }
 
+/// Whether a walk over a repository should skip this entry entirely.
+///
+/// The three repository walkers -- the corpus auditor, the freshness ledger
+/// and the archival sweeper -- each carried their own copy of this list, and
+/// each copy had the same two defects.
+///
+/// # It was a STRING prefix, so `.github/` was invisible
+///
+/// The skip was written `rel.starts_with(".git")` against a `String`, which is
+/// `str::starts_with` and not `Path::starts_with`. A string prefix does not
+/// stop at a path boundary, so `.github/`, `.gitignore` and `.gitattributes`
+/// all matched `.git`, and `targets/` matched `target`. These walkers scan the
+/// repository UNDER REVIEW, where `.github/` routinely holds
+/// `ISSUE_TEMPLATE`, `PULL_REQUEST_TEMPLATE` and `CONTRIBUTING.md` -- markdown
+/// the auditor exists to audit and never saw. Latent in anvil's own tree,
+/// which has no markdown under `.github/`, which is why nothing caught it.
+///
+/// Matching is now by path COMPONENT, so `.git` skips `.git` and nothing else.
+///
+/// # It did not skip nested checkouts
+///
+/// Same defect as #218, one domain over: a contributor with a worktree or a
+/// vendored clone inside their repository had every file in it audited as
+/// their own. See [`is_separate_checkout`].
+/// Takes the repository root and the ABSOLUTE path, and derives the relative
+/// one itself. An earlier draft took the relative path and handed it to
+/// [`is_separate_checkout`], which tests the filesystem -- so the checkout probe
+/// looked at a path relative to the process's working directory and answered
+/// about nothing. Both paths are needed and only one of them can be passed
+/// wrong, so neither is passed.
+#[must_use]
+pub fn repository_walk_skips(repo_dir: &Path, path: &Path) -> bool {
+    const SKIPPED: &[&str] = &[".git", "target", "buck-out", "node_modules"];
+    let relative = path.strip_prefix(repo_dir).unwrap_or(path);
+    relative
+        .components()
+        .any(|c| SKIPPED.contains(&c.as_os_str().to_string_lossy().as_ref()))
+        || (path.is_dir() && is_separate_checkout(path))
+}
+
 /// Rust source with its `#[cfg(test)]` modules blanked out, line numbering
 /// preserved.
 ///

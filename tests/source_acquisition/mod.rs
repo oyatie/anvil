@@ -55,15 +55,16 @@ impl SourceAccess for Filesystem {
         fs::read_to_string(path)
     }
 
-    /// By the presence of a `.git` ENTRY, of any kind.
+    /// The one predicate, held in the library so all three walkers share it.
     ///
-    /// `.exists()` and not `.is_dir()`: `git worktree add` writes `.git` as a
-    /// FILE holding `gitdir: ...`. Measured in this checkout, both nested
-    /// checkouts present -- two agent worktrees and a `devtree` -- carry a
-    /// 64-to-79-byte `.git` file and not one of them is a directory, so an
-    /// `is_dir` test would have missed every case the defect was reported for.
+    /// It was spelled inline in three places for one revision of this change,
+    /// and a review found the shape of that: the seam existed and two of the
+    /// three call sites bypassed it, so each copy was independently regressible
+    /// and only one of them had a test. `anvil::source_scan` carries the rule
+    /// and `tests/source_scan_test.rs` pins it against a real filesystem in
+    /// both `.git` forms.
     fn is_separate_checkout(&mut self, dir: &Path) -> bool {
-        dir.join(".git").exists()
+        anvil::source_scan::is_separate_checkout(dir)
     }
 }
 

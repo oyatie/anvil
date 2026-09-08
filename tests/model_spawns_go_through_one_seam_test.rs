@@ -1019,18 +1019,15 @@ fn rust_sources(repository: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             // the reported set changed when worktrees were removed while
             // nothing about the source under review did.
             //
-            // `.exists()` and not `.is_dir()`: `git worktree add` writes `.git`
-            // as a FILE holding `gitdir: ...`. Measured here, every nested
-            // checkout present carries a `.git` file and not one is a
-            // directory, so an `is_dir` test would have missed all of them.
-            //
-            // Not `git ls-files`. An untracked file under `src/` is in scope
-            // for a closed census -- it compiles -- and a `.git` entry is the
-            // structural definition of a checkout rather than a proxy for one.
+            // The predicate lives in `anvil::source_scan`, which is where both
+            // `.git` forms are documented and pinned. Not `git ls-files`: an
+            // untracked file under `src/` is in scope for a closed census -- it
+            // compiles -- and a `.git` entry is the structural definition of a
+            // checkout rather than a proxy for one.
             //
             // The two lines above stay: they name the repository's OWN `.git`
             // and `target`, neither of which this rule reaches.
-            if path.join(".git").exists() {
+            if anvil::source_scan::is_separate_checkout(&path) {
                 continue;
             }
             rust_sources(repository, &path, out);

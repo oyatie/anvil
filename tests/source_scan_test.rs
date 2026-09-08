@@ -235,3 +235,61 @@ fn the_pre_push_hook_runs_the_source_only_scans() {
         "the hook runs the scans and does not act on the result"
     );
 }
+
+/// #218. The predicate three walkers share, against a real filesystem.
+///
+/// This exists because a review measured that it had no coverage at all. Every
+/// test that reached it went through an in-memory access whose answer was
+/// hardcoded, so the fakes proved the walk CONSULTS the seam and nothing proved
+/// what the seam answers: replacing the body with `false` left the suite green.
+///
+/// Both `.git` forms are pinned, in both directions, because each was free to
+/// break while the other passed. `git worktree add` writes a FILE holding
+/// `gitdir: ...`; `git clone` writes a DIRECTORY. Measured in this checkout,
+/// every nested checkout present carries the file form -- so `is_dir` misses
+/// every case the issue was filed for, and `is_file` misses every plain nested
+/// clone. Seeding each of those in turn must fail this test.
+#[test]
+fn a_directory_is_a_separate_checkout_when_it_holds_a_git_entry_of_either_kind() {
+    use anvil::source_scan::is_separate_checkout;
+
+    let fixture = tempfile::tempdir().expect("fixture");
+    let root = fixture.path();
+
+    // The form `git worktree add` writes.
+    let worktree = root.join("as_a_file");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        "gitdir: /elsewhere/.git/worktrees/x\n",
+    )
+    .unwrap();
+    assert!(
+        is_separate_checkout(&worktree),
+        "a `.git` FILE is what `git worktree add` writes, and is the form every \
+         nested checkout in this repository actually has"
+    );
+
+    // The form `git clone` writes.
+    let clone = root.join("as_a_directory");
+    std::fs::create_dir_all(clone.join(".git")).unwrap();
+    assert!(
+        is_separate_checkout(&clone),
+        "a `.git` DIRECTORY is what a plain nested clone leaves, and is the case \
+         an `is_file` rule would walk straight into"
+    );
+
+    // And the negative, without which both assertions above pass for a
+    // predicate that simply always says yes.
+    let ordinary = root.join("just_a_directory");
+    std::fs::create_dir_all(ordinary.join("src")).unwrap();
+    std::fs::write(ordinary.join("src/a.rs"), "fn main() {}\n").unwrap();
+    assert!(
+        !is_separate_checkout(&ordinary),
+        "an ordinary directory is not a checkout and must still be walked"
+    );
+
+    // A file named `.git` in the parent must not make the parent's CHILDREN
+    // checkouts: the question is asked of one directory, not inherited.
+    assert!(!is_separate_checkout(&ordinary.join("src")));
+}

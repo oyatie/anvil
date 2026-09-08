@@ -222,6 +222,11 @@ pub fn without_commentary(src: &str) -> String {
 /// Splitting a large guard turns its test functions
 /// became, to the diff-parsing ratchet, five new hand-rolled diff parsers.
 /// Twelve scanners in this tree strip `#[cfg(test)]` the same way, so the
+/// answer belongs here once rather than in each of them.
+pub fn is_cfg_test_module_file(repo_root: &Path, path: &Path) -> Result<bool, String> {
+    paths::try_is_test_source(repo_root, path)
+}
+
 /// Whether `dir` is the top of a checkout of its own.
 ///
 /// A walk rooted at a repository must not descend into one: another checkout's
@@ -254,11 +259,6 @@ pub fn without_commentary(src: &str) -> String {
 #[must_use]
 pub fn is_separate_checkout(dir: &Path) -> bool {
     dir.join(".git").exists()
-}
-
-/// answer belongs here once rather than in each of them.
-pub fn is_cfg_test_module_file(repo_root: &Path, path: &Path) -> Result<bool, String> {
-    paths::try_is_test_source(repo_root, path)
 }
 
 /// Rust source with its `#[cfg(test)]` modules blanked out, line numbering

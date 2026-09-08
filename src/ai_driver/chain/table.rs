@@ -36,7 +36,7 @@ struct RawMeta {
     /// The stage this one judges, when it judges one.
     #[serde(default)]
     audits: Option<String>,
-    /// Stages that must have run before this one.
+    /// Stages this one requires to have already run.
     ///
     /// `audits = X` already implies "after X" and the loader derives that edge,
     /// so naming it here as well is the duplicate-tier defect in another shape
@@ -143,19 +143,14 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
             );
         };
         for prefix in &meta.writes {
-            if let Err(why) = scope_prefix_is_writable_by_the_hook(prefix) {
+            if let Err(why) = super::scope_grammar::scope_prefix_is_writable_by_the_hook(prefix) {
                 bail!("stage `{key}` declares write prefix {prefix:?}: {why}");
             }
         }
-        // A stage may not list the same (provider, model) twice.
-        //
-        // `recon` and `planning` shipped with ten tiers where five were unique:
-        // a regeneration script ran twice and nothing objected. Worst-case
-        // fallback latency doubled, 39 minutes to 78, and the tests could not
-        // see it -- one asserted only that a chain is non-empty, and the other
-        // read `text.split("[[stage.recon]]").nth(1)`, which is the FIRST copy.
         // A duplicate tier is never intentional: the second is unreachable
-        // except as time spent failing the first again.
+        // except as time spent failing the first again, and it doubles the
+        // chain's worst-case latency where nothing is looking.
+
         // Effort is ordered, so a ceiling is a comparison rather than equality.
         const EFFORT_RANK: &[&str] = &["low", "medium", "high", "xhigh", "max", "ultra"];
         if let Some(ceiling) = &meta.max_effort {
@@ -217,19 +212,9 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
         );
     }
 
-    // An auditing stage may not write into the scope of the stage it judges.
-    //
-    // The invariant was first stated as "audits implies writes = []", which the
-    // shipped config contradicted: `falsification` audits `implementation` and
-    // writes `tests/`, because it judges by CONSTRUCTING a counterexample rather
-    // than by reading. That is legitimate; the invariant was wrong.
-    //
-    // What must not happen is an auditor editing what it is judging. That was
-    //true for `falsification` only because `implementation` also claimed `tests/`
-    // -- which separately made "the implementer cannot quietly relax a test it
-    // fails" false by declaration. Implementation writes `src/`; the stages that
-    // author and harden tests write `tests/`; falsification writes its
-    // counterexample there too, and none of them overlaps what it audits.
+    // An auditor may not write what it judges, or the finding and the fix come
+    // from one act. It may still WRITE: judging by reading and judging by
+    // building are both auditing, so the rule bounds the scope, not the act.
     for (stage, plan) in &out {
         let Some(audited_key) = plan.audits.clone() else {
             continue;
@@ -258,7 +243,7 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
         }
     }
 
-    validate_order(&out)?;
+    super::order::validate(&out)?;
 
     for stage in Stage::ALL {
         if !out.contains_key(stage) {
@@ -269,140 +254,4 @@ pub(super) fn parse_table(text: &str) -> Result<BTreeMap<Stage, StagePlan>> {
         }
     }
     Ok(out)
-}
-
-/// Every ordering edge the file declares, explicit and derived.
-///
-/// `audits = X` IS an ordering claim -- you cannot judge what has not run -- so
-/// the edge is derived rather than restated. `test_audit` declared both, which
-/// is what made the redundancy visible.
-fn order_edges(plan: &StagePlan) -> impl Iterator<Item = &String> {
-    plan.runs_after.iter().chain(plan.audits.iter())
-}
-
-/// The declared order must name real stages, must not restate what `audits`
-/// already implies, and must admit an order at all.
-///
-/// A cycle is not a stylistic complaint: it means no sequence satisfies the
-/// file, so any runner walking it either loops or silently picks one edge to
-/// ignore. Refusing at load is the only point where that is still cheap.
-fn validate_order(out: &BTreeMap<Stage, StagePlan>) -> Result<()> {
-    let by_key: BTreeMap<&str, Stage> = out.keys().map(|s| (s.key(), *s)).collect();
-
-    for (stage, plan) in out {
-        for named in &plan.runs_after {
-            if !by_key.contains_key(named.as_str()) {
-                bail!(
-                    "stage `{}` declares it runs after `{named}`, which no `Stage` names. \
-                     An order over a stage that does not exist is not an order.",
-                    stage.key()
-                );
-            }
-            if plan.runs_after.iter().filter(|k| *k == named).count() > 1 {
-                bail!(
-                    "stage `{}` lists `{named}` in `runs_after` more than once. Kahn's \
-                     in-degree counts the entries and the decrement fires once per \
-                     predecessor, so a repeat would be reported as a CYCLE -- a diagnostic \
-                     naming the wrong defect is worse than none.",
-                    stage.key()
-                );
-            }
-            if plan.audits.as_deref() == Some(named.as_str()) {
-                bail!(
-                    "stage `{}` both audits `{named}` and lists it in `runs_after`. Auditing \
-                     it already means running after it; two spellings of one relation drift \
-                     apart, which is how `authored_before` and `runs_after` came to disagree.",
-                    stage.key()
-                );
-            }
-        }
-    }
-
-    // Kahn's algorithm. What is left when no node has zero remaining
-    // predecessors is exactly the cycle, and it is named rather than summarised
-    // -- a diagnostic that says "there is a cycle" leaves the reader to find it.
-    let mut pending: BTreeMap<Stage, usize> = out
-        .iter()
-        .map(|(s, p)| (*s, order_edges(p).count()))
-        .collect();
-    let mut ready: Vec<Stage> = pending
-        .iter()
-        .filter(|(_, n)| **n == 0)
-        .map(|(s, _)| *s)
-        .collect();
-
-    let mut settled = 0usize;
-    while let Some(done) = ready.pop() {
-        settled += 1;
-        pending.remove(&done);
-        for (stage, plan) in out {
-            if !pending.contains_key(stage) {
-                continue;
-            }
-            if order_edges(plan).any(|k| k.as_str() == done.key()) {
-                let left = pending.get_mut(stage).expect("still pending");
-                *left -= 1;
-                if *left == 0 {
-                    ready.push(*stage);
-                }
-            }
-        }
-    }
-
-    if settled != out.len() {
-        let stuck: Vec<&str> = pending.keys().map(|s| s.key()).collect();
-        bail!(
-            "the declared order has a cycle among {stuck:?}, so no sequence satisfies \
-             config/model-routing.toml. A runner walking it would loop, or would drop one \
-             edge without saying which."
-        );
-    }
-    Ok(())
-}
-
-/// The `pre-commit` hook's own declaration grammar, ported clause for clause.
-///
-/// The loader previously approximated it with three checks -- leading `/`,
-/// `..`, blank -- and the hook's grammar is strictly larger. Eight forms loaded
-/// here and were then refused by the consumer, which does not merely fail: a
-/// declaration the hook cannot parse refuses EVERY commit in that run. One
-/// form, a prefix containing a newline, did worse and silently split into two
-/// prefixes, widening the scope past what a reader of the file would see.
-///
-/// This mirrors `anvil_scope_literal(.., declaration)` in
-/// `src/git_manager/hooks/pre-commit`. The two must not drift, and
-/// `a_declaration_the_hook_would_refuse_is_a_load_error` holds the shared
-/// fixtures that say they have not.
-fn scope_prefix_is_writable_by_the_hook(prefix: &str) -> Result<(), &'static str> {
-    // The hook does no trimming, so surrounding whitespace is part of the
-    // literal and would silently match nothing. Refused loudly here instead.
-    if prefix != prefix.trim() {
-        return Err("has leading or trailing whitespace, which the hook takes literally");
-    }
-    // One trailing slash, as the hook strips for a declaration.
-    let literal = prefix.strip_suffix('/').unwrap_or(prefix);
-    if literal.is_empty() {
-        return Err("is empty");
-    }
-    if literal.starts_with('/') {
-        return Err("is absolute; the scope is repository-relative");
-    }
-    let bytes = literal.as_bytes();
-    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-        return Err("looks like a drive-lettered path");
-    }
-    if literal.contains('\\') {
-        return Err("contains a backslash");
-    }
-    if literal.contains('"') {
-        return Err("contains a quote");
-    }
-    if literal.chars().any(char::is_control) {
-        return Err("contains a control byte; a newline would silently split it in two");
-    }
-    let framed = format!("/{literal}/");
-    if framed.contains("//") || framed.contains("/./") || framed.contains("/../") {
-        return Err("has an empty, `.` or `..` path component");
-    }
-    Ok(())
 }

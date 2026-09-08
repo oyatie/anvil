@@ -112,10 +112,10 @@ impl RunScope {
             match age {
                 Some(age) if age > stale_after() => {
                     // Say it. A run that silently takes a scope from another
-                    // process is indistinguishable from the bug this fixes.
-                    eprintln!(
-                        "anvil: taking over an abandoned run scope at {} -- declared {}s ago by \
-                         pid {}, past the {}s ceiling. If that process is still running, its \
+                    // process is indistinguishable from the defect this fixes.
+                    tracing::warn!(
+                        "taking over an abandoned run scope at {} -- declared {}s ago by pid \
+                         {}, past the {}s ceiling. If that process is still running, its \
                          commits are no longer scoped.",
                         path.display(),
                         age.as_secs(),

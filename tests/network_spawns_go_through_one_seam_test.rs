@@ -216,6 +216,19 @@ fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
         });
         let p = e.path();
         if p.is_dir() {
+            // #218. A directory holding its own `.git` is a separate checkout,
+            // and this census claims to be closed over THIS one. Anvil keeps
+            // agent worktrees under `.claude/worktrees/` and a `devtree`
+            // beside them; each contributed a full copy of every real site.
+            //
+            // Both call sites root at `src/` today, so this cannot fire in the
+            // suite as it stands. It is here because the walker takes a `dir`
+            // and the next caller need not: the rule belongs to the walk, not
+            // to who happens to call it. The predicate and its proof live in
+            // `anvil::source_scan`.
+            if anvil::source_scan::is_separate_checkout(&p) {
+                continue;
+            }
             rust_sources(&p, out);
         } else if p.extension().is_some_and(|x| x == "rs") {
             out.push(p);

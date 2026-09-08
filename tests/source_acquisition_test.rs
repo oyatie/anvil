@@ -69,6 +69,13 @@ impl SourceAccess for MemorySources {
         }
     }
 
+    fn is_separate_checkout(&mut self, _dir: &Path) -> bool {
+        // This fixture has none, and says so rather than probing: `kind`
+        // panics on an unexpected lookup by design, so answering through it
+        // would turn the new question into a spurious failure here.
+        false
+    }
+
     fn read_text(&mut self, path: &Path) -> io::Result<String> {
         assert!(matches!(
             path.to_str(),
@@ -285,4 +292,92 @@ fn required_comparison_keeps_successful_measurement_and_revision() {
             merge_base: "exact-base".into()
         }
     );
+}
+
+/// A tree with a checkout inside it, and nothing else different.
+///
+/// `root/a.rs` ships. `root/nested/` holds a `.git` and `root/nested/b.rs`,
+/// which is another repository's source sitting inside this one's directory.
+struct TreeWithNestedCheckout;
+
+impl SourceAccess for TreeWithNestedCheckout {
+    fn read_dir(&mut self, dir: &Path) -> io::Result<Vec<io::Result<PathBuf>>> {
+        match dir.to_str().expect("in-memory path") {
+            "root" => Ok(vec![Ok("root/a.rs".into()), Ok("root/nested".into())]),
+            // Reaching here at all is the defect: the walk descended into a
+            // checkout of its own.
+            "root/nested" => Ok(vec![Ok("root/nested/b.rs".into())]),
+            unexpected => panic!("unexpected enumeration: {unexpected}"),
+        }
+    }
+
+    fn kind(&mut self, path: &Path) -> io::Result<EntryKind> {
+        match path.to_str().expect("in-memory path") {
+            "root" | "root/nested" => Ok(EntryKind::Directory),
+            "root/a.rs" | "root/nested/b.rs" => Ok(EntryKind::RegularFile),
+            unexpected => panic!("unexpected kind lookup: {unexpected}"),
+        }
+    }
+
+    fn read_text(&mut self, _path: &Path) -> io::Result<String> {
+        Ok("fn main() {}\n".into())
+    }
+
+    fn is_separate_checkout(&mut self, dir: &Path) -> bool {
+        dir == Path::new("root/nested")
+    }
+}
+
+/// #218. A census that calls itself closed must not count another checkout's
+/// sources.
+///
+/// Measured before this rule existed: anvil keeps agent worktrees under
+/// `.claude/worktrees/` and a `devtree` beside them, and each contributed a
+/// full copy of every real site. Removing worktrees changed the reported set
+/// while nothing about the source under review changed -- which is a census
+/// whose membership depends on what a developer has lying around.
+///
+/// It passes in CI regardless, because CI checks out a clean tree. So the
+/// defect is invisible exactly where the census is trusted, and visible only
+/// where it is assumed to be noise.
+#[test]
+fn a_checkout_inside_the_tree_contributes_nothing_to_the_corpus() {
+    let found = rust_sources_with(Path::new("root"), &mut TreeWithNestedCheckout)
+        .expect("the root itself is a readable tree");
+    let paths: Vec<&str> = found
+        .iter()
+        .map(|f| f.path.to_str().expect("in-memory path"))
+        .collect();
+    assert_eq!(
+        paths,
+        ["root/a.rs"],
+        "the nested checkout's source was counted as this repository's"
+    );
+}
+
+/// And the rule is about a `.git` ENTRY, not about the name `nested`.
+///
+/// The same tree, with the fixture no longer calling anything a checkout,
+/// yields both files -- so the exclusion above is doing the work, and this
+/// test would catch a rule that had quietly stopped firing.
+#[test]
+fn without_the_marker_the_same_directory_is_walked() {
+    struct NoCheckouts(TreeWithNestedCheckout);
+    impl SourceAccess for NoCheckouts {
+        fn read_dir(&mut self, dir: &Path) -> io::Result<Vec<io::Result<PathBuf>>> {
+            self.0.read_dir(dir)
+        }
+        fn kind(&mut self, path: &Path) -> io::Result<EntryKind> {
+            self.0.kind(path)
+        }
+        fn read_text(&mut self, path: &Path) -> io::Result<String> {
+            self.0.read_text(path)
+        }
+        fn is_separate_checkout(&mut self, _dir: &Path) -> bool {
+            false
+        }
+    }
+    let found = rust_sources_with(Path::new("root"), &mut NoCheckouts(TreeWithNestedCheckout))
+        .expect("readable tree");
+    assert_eq!(found.len(), 2, "the walk itself reaches both files");
 }

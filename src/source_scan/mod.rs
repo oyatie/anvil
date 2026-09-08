@@ -227,6 +227,40 @@ pub fn is_cfg_test_module_file(repo_root: &Path, path: &Path) -> Result<bool, St
     paths::try_is_test_source(repo_root, path)
 }
 
+/// Whether `dir` is the top of a checkout of its own.
+///
+/// A walk rooted at a repository must not descend into one: another checkout's
+/// sources are not this repository's sources, and a census that counts them is
+/// not closed over the tree it names. Anvil keeps agent worktrees under
+/// `.claude/worktrees/` and a `devtree` beside them, and every root-walking
+/// census counted each real site once per checkout (#218).
+///
+/// # Why `.exists()` and not `.is_dir()` or `.is_file()`
+///
+/// Both forms occur and neither may be assumed. `git worktree add` writes
+/// `.git` as a FILE holding `gitdir: ...`; `git clone` writes it as a
+/// DIRECTORY. Measured in this checkout, all three nested checkouts present
+/// carry a 64-to-79-byte file and not one is a directory -- so an `is_dir` rule
+/// misses every case #218 was filed for, and an `is_file` rule misses every
+/// plain nested clone. `tests/source_scan_test.rs` pins both directions
+/// against a real filesystem, because a fixture that only ever writes one form
+/// leaves the other free to break.
+///
+/// # What this deliberately also skips
+///
+/// A submodule. Its `.git` marks source this repository DOES track, through a
+/// gitlink, so skipping it under-reports rather than over-reports -- the worse
+/// direction. Measured today: no `.gitmodules`, and `git ls-files` names no
+/// path under a `.git` component, so nothing is lost. Revisit this the day a
+/// submodule is added.
+///
+/// An IO error answers `false` and the walk descends, which inflates rather
+/// than hides. That is the pre-existing direction and not a new hazard.
+#[must_use]
+pub fn is_separate_checkout(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
 /// Rust source with its `#[cfg(test)]` modules blanked out, line numbering
 /// preserved.
 ///

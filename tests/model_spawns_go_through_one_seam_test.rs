@@ -1012,6 +1012,27 @@ fn rust_sources(repository: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             if path == repository.join(".git") || path == repository.join("target") {
                 continue;
             }
+            // #218. A directory holding its own `.git` is a separate checkout,
+            // and this census claims to be CLOSED over this one. Anvil keeps
+            // agent worktrees under `.claude/worktrees/` and a `devtree`
+            // alongside; each contributed a full copy of every real site, and
+            // the reported set changed when worktrees were removed while
+            // nothing about the source under review did.
+            //
+            // `.exists()` and not `.is_dir()`: `git worktree add` writes `.git`
+            // as a FILE holding `gitdir: ...`. Measured here, every nested
+            // checkout present carries a `.git` file and not one is a
+            // directory, so an `is_dir` test would have missed all of them.
+            //
+            // Not `git ls-files`. An untracked file under `src/` is in scope
+            // for a closed census -- it compiles -- and a `.git` entry is the
+            // structural definition of a checkout rather than a proxy for one.
+            //
+            // The two lines above stay: they name the repository's OWN `.git`
+            // and `target`, neither of which this rule reaches.
+            if path.join(".git").exists() {
+                continue;
+            }
             rust_sources(repository, &path, out);
         } else if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
             && extension.eq_ignore_ascii_case("rs")
@@ -8013,6 +8034,71 @@ fn module_sources_cannot_escape_the_production_census() {
             Some(&scanned)
         )
         .is_empty()
+    );
+}
+
+/// #218. A checkout inside the tree contributes nothing to a closed census.
+///
+/// Anvil keeps agent worktrees under `.claude/worktrees/` and a `devtree`
+/// beside them. Each is a full copy of this repository, and the walk descended
+/// into every one: measured on a developer machine with 66 worktrees present,
+/// this census reported every real site once per checkout. Removing 32 of them
+/// changed the reported set while nothing about the source under review did.
+///
+/// The direction is inflation, which looks safe -- a census reporting too much
+/// fails closed. It stops being safe at the moment somebody quiets it, and the
+/// obvious quieting move, an exclusion for `.claude/worktrees/`, is one edit
+/// away from excluding a path that matters. It also passes in CI regardless,
+/// because CI checks out a clean tree, so the defect is invisible exactly where
+/// the census is trusted.
+///
+/// The fixture uses a `.git` FILE, which is what `git worktree add` writes
+/// (`gitdir: ...`). Measured in this checkout, every nested checkout present
+/// carries a `.git` file and not one is a directory -- an `is_dir` rule would
+/// have passed this test's `no_marker` half and still missed every real case.
+#[test]
+fn a_checkout_inside_the_repository_is_not_part_of_its_census() {
+    let fixture = tempfile::tempdir().unwrap();
+    let repository = fixture.path().to_path_buf();
+
+    let own = repository.join("src/own.rs");
+    let nested = repository.join("vendored");
+    let nested_source = nested.join("src/theirs.rs");
+    for path in [&own, &nested_source] {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "fn main() {}\n").unwrap();
+    }
+    // What makes a directory a checkout, written the way git writes it.
+    fs::write(
+        nested.join(".git"),
+        "gitdir: /somewhere/else/.git/worktrees/x\n",
+    )
+    .unwrap();
+
+    // Sorted at every comparison: `rust_sources` yields directory order, which
+    // is the filesystem's business and not this property's.
+    let mut paths = Vec::new();
+    rust_sources(&repository, &repository, &mut paths);
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![own.clone()],
+        "a nested checkout's source was counted as this repository's"
+    );
+
+    // And the exclusion turns on the marker, not on the directory's name or
+    // depth: without it the same tree yields both files. Without this half, a
+    // rule that had quietly stopped firing -- or one that skipped `vendored`
+    // for some unrelated reason -- would still pass the assertion above.
+    fs::remove_file(nested.join(".git")).unwrap();
+    let mut paths = Vec::new();
+    rust_sources(&repository, &repository, &mut paths);
+    paths.sort();
+    let mut both = vec![own, nested_source];
+    both.sort();
+    assert_eq!(
+        paths, both,
+        "the walk must reach both files once neither directory is a checkout"
     );
 }
 

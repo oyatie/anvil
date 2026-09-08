@@ -60,3 +60,89 @@ fn a_gate_holding_a_diff_context_does_not_scope_at_its_own_build_directory() {
         offences.join("\n  ")
     );
 }
+
+/// #218. A filesystem walk in this suite must not descend into another
+/// checkout.
+///
+/// Anvil keeps agent worktrees under `.claude/worktrees/` and a `devtree`
+/// beside them. Every walk rooted at the repository descended into each one, so
+/// censuses that call themselves CLOSED counted every real site once per
+/// checkout, and the reported set changed when worktrees were removed while
+/// nothing about the source under review did.
+///
+/// Fixing the three walkers that were measured leaves the fourth to be written
+/// the same way. This is the rule that makes the fourth fail here instead: a
+/// file that calls `fs::read_dir` either carries the exclusion, or is listed
+/// below with the bounded subtree it walks. The list only shrinks.
+///
+/// Not a lint against `read_dir` itself -- walking is legitimate, and a walk
+/// bounded to `src/` cannot reach `.claude/` or `devtree/` at all.
+#[test]
+fn every_filesystem_walk_either_skips_nested_checkouts_or_says_why_it_need_not() {
+    // Each entry is a file whose walk cannot reach a nested checkout, with the
+    // reason. Anvil's checkouts live at `.claude/worktrees/` and `devtree/`,
+    // both outside `src/` and outside `tests/`.
+    const BOUNDED: &[(&str, &str)] = &[(
+        "source_acquisition_test.rs",
+        "drives the shared walker with an in-memory access; the checkout rule is what two of its cases assert",
+    )];
+
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut unguarded = Vec::new();
+    let mut walkers = 0usize;
+    let mut stack = vec![tests.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("tests listable") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable");
+            let code = anvil::source_scan::without_commentary(&text);
+            if !code.contains("read_dir(") {
+                continue;
+            }
+            walkers += 1;
+            // Either the exclusion is spelled here, or the walk is rooted at a
+            // subtree that cannot contain one. `join("src")` / `join("tests")`
+            // is that root, spelled the way this suite spells it.
+            let excludes =
+                code.contains(".join(\".git\").exists()") || code.contains("is_separate_checkout");
+            let bounded = code.contains("CARGO_MANIFEST_DIR\")).join(\"src\")")
+                || code.contains("CARGO_MANIFEST_DIR\").join(\"src\")")
+                || code.contains("CARGO_MANIFEST_DIR\")).join(\"tests\")")
+                || code.contains("CARGO_MANIFEST_DIR\").join(\"tests\")");
+            let name = path
+                .file_name()
+                .expect("named")
+                .to_string_lossy()
+                .to_string();
+            let listed = BOUNDED.iter().any(|(f, _)| *f == name);
+            if !excludes && !bounded && !listed {
+                unguarded.push(name);
+            }
+        }
+    }
+
+    // The instrument first: a scan finding no walkers would pass by being blind.
+    assert!(
+        walkers >= 20,
+        "the walk census found {walkers} files calling `read_dir`, far fewer than \
+         this suite has -- the scan is broken, not the code"
+    );
+
+    unguarded.sort();
+    unguarded.dedup();
+    assert!(
+        unguarded.is_empty(),
+        "these walk the filesystem without excluding nested checkouts, so anything \
+         left inside the repository inflates what they report:\n  {}\nSkip a \
+         directory whose `.git` entry exists (`p.join(\".git\").exists()`), root the \
+         walk at a bounded subtree, or add it to BOUNDED with the reason.",
+        unguarded.join("\n  ")
+    );
+}

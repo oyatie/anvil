@@ -216,6 +216,17 @@ fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
         });
         let p = e.path();
         if p.is_dir() {
+            // #218. A directory holding its own `.git` is a separate checkout,
+            // and this census claims to be closed over THIS one. Anvil keeps
+            // agent worktrees under `.claude/worktrees/` and a `devtree`
+            // beside them; each contributed a full copy of every real site.
+            //
+            // `.exists()` and not `.is_dir()`: `git worktree add` writes `.git`
+            // as a FILE holding `gitdir: ...`, and measured here every nested
+            // checkout carries one -- not one is a directory.
+            if p.join(".git").exists() {
+                continue;
+            }
             rust_sources(&p, out);
         } else if p.extension().is_some_and(|x| x == "rs") {
             out.push(p);

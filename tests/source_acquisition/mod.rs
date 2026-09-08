@@ -21,6 +21,14 @@ pub trait SourceAccess {
     fn read_dir(&mut self, dir: &Path) -> io::Result<Vec<io::Result<PathBuf>>>;
     fn kind(&mut self, path: &Path) -> io::Result<EntryKind>;
     fn read_text(&mut self, path: &Path) -> io::Result<String>;
+
+    /// Whether `dir` is the top of a checkout of its own.
+    ///
+    /// A separate method rather than a `kind` probe because `kind` may not be
+    /// asked about paths that do not exist: the in-memory access used by the
+    /// control tests panics on an unexpected lookup, deliberately, so that a
+    /// walk reaching somewhere it should not is a failure and not a shrug.
+    fn is_separate_checkout(&mut self, dir: &Path) -> bool;
 }
 
 struct Filesystem;
@@ -45,6 +53,17 @@ impl SourceAccess for Filesystem {
 
     fn read_text(&mut self, path: &Path) -> io::Result<String> {
         fs::read_to_string(path)
+    }
+
+    /// By the presence of a `.git` ENTRY, of any kind.
+    ///
+    /// `.exists()` and not `.is_dir()`: `git worktree add` writes `.git` as a
+    /// FILE holding `gitdir: ...`. Measured in this checkout, both nested
+    /// checkouts present -- two agent worktrees and a `devtree` -- carry a
+    /// 64-to-79-byte `.git` file and not one of them is a directory, so an
+    /// `is_dir` test would have missed every case the defect was reported for.
+    fn is_separate_checkout(&mut self, dir: &Path) -> bool {
+        dir.join(".git").exists()
     }
 }
 
@@ -96,6 +115,17 @@ fn discover(
             .kind(&path)
             .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
         if matches!(kind, EntryKind::Directory) {
+            // #218. A directory holding its own `.git` is a separate checkout,
+            // and its sources are not this repository's sources. Anvil keeps
+            // agent worktrees under `.claude/worktrees/` and a `devtree` beside
+            // them, and each contributed a full copy of every real site to
+            // censuses that call themselves closed.
+            //
+            // Tested at the point of DESCENT, so the root is never asked and
+            // needs no exemption -- the repository under test has a `.git` too.
+            if access.is_separate_checkout(&path) {
+                continue;
+            }
             discover(&path, access, out)?;
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             if !matches!(kind, EntryKind::RegularFile) {

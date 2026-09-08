@@ -700,6 +700,29 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // names an absent file, not a newly classified test. These eight production
     // occurrences remain exact.
     let added_method_events = [
+        // Reviewed for #215. `RunScope::declare` writes the stage's declared
+        // write scope to `.anvil/run-scope` for the length of one turn. Same
+        // shape as `PromptFile` below: the receiver is a `std::fs::File` /
+        // `OpenOptions`, no socket is constructed, imported or named in that
+        // module, and it is a module of its own for exactly that reason.
+        //
+        // The `opts.write(true)` occurrence is under `create`, not `declare`:
+        // the scanner attributes by ENCLOSING FUNCTION, and the open moved into
+        // an extracted helper when the declaration gained a stale-takeover
+        // retry. Re-attributed, not removed -- the total stays 44 and the
+        // occurrence stays REVIEWED. Deleting the line instead would have
+        // demoted it into the 34 pinned only by digest, which is how a
+        // reviewed record quietly becomes an unreviewed one.
+        (
+            "src/ai_driver/chain/run_scope.rs",
+            "create",
+            "network-instance-method:write",
+        ),
+        (
+            "src/ai_driver/chain/run_scope.rs",
+            "declare",
+            "network-instance-method:flush",
+        ),
         (
             "src/clean_architecture_guard/scan.rs",
             "expand_use_groups",
@@ -712,21 +735,6 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
         // provider. No socket is constructed, imported or named anywhere in that
         // module -- which is why it is a module of its own and not part of the
         // transport.
-        // Reviewed for #215. `RunScope::declare` writes the stage's declared
-        // write scope to `.anvil/run-scope` for the length of one turn. Same
-        // shape as `PromptFile` above: the receiver is a `std::fs::File` /
-        // `OpenOptions`, no socket is constructed, imported or named in that
-        // module, and it is a module of its own for exactly that reason.
-        (
-            "src/ai_driver/chain/run_scope.rs",
-            "declare",
-            "network-instance-method:flush",
-        ),
-        (
-            "src/ai_driver/chain/run_scope.rs",
-            "declare",
-            "network-instance-method:write",
-        ),
         (
             "src/exec/agent/prompt_file.rs",
             "write",

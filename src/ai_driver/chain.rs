@@ -19,6 +19,7 @@ use crate::exec::Posture;
 use crate::model_prompt::ModelPrompt;
 use anyhow::{Result, bail};
 pub use budget::{MIN_TIER_ALLOTMENT, StageBudget};
+pub use order::runs_after_transitively;
 pub use run_scope::RunScope;
 
 /// Parse an arbitrary table, so a test can exercise the loader's refusals
@@ -33,7 +34,9 @@ use std::time::Duration;
 use table::parse_table;
 
 pub mod budget;
+mod order;
 mod run_scope;
+mod scope_grammar;
 mod table;
 
 /// The routing table, compiled in.
@@ -122,43 +125,12 @@ pub struct StagePlan {
     pub audits: Option<String>,
     /// Path prefixes this stage may stage for commit; empty means none.
     pub writes: Vec<String>,
-    /// Stages that must have run before this one, as declared.
+    /// Stages this one requires to have already run, as declared.
     ///
     /// Order WITHOUT judgement; `audits` carries the rest. See
     /// [`runs_after_transitively`] for the closure, which is what a caller
     /// asking "is this stage downstream of that one" actually wants.
     pub runs_after: Vec<String>,
-}
-
-/// Whether `later` must run after `earlier`, following the declared order
-/// through as many hops as it takes.
-///
-/// The direct question is almost never the useful one: `implementation` does
-/// not name `test_authoring`, it names `test_authoring_review`, which audits
-/// `test_authoring`. A caller that asked only about direct edges would conclude
-/// the implementer may run first.
-///
-/// The loader refuses a cyclic table, so this terminates.
-#[must_use]
-pub fn runs_after_transitively(later: Stage, earlier: Stage) -> bool {
-    let mut seen = BTreeMap::new();
-    let mut frontier = vec![later];
-    while let Some(stage) = frontier.pop() {
-        if seen.insert(stage, ()).is_some() {
-            continue;
-        }
-        let p = plan(stage);
-        for key in p.runs_after.iter().chain(p.audits.iter()) {
-            let Some(next) = Stage::ALL.iter().find(|s| s.key() == key) else {
-                continue;
-            };
-            if *next == earlier {
-                return true;
-            }
-            frontier.push(*next);
-        }
-    }
-    false
 }
 
 /// One tier of a stage's chain, exactly as the file declares it.
@@ -234,8 +206,19 @@ pub async fn run_stage(
 ///
 /// A caller already under a supervisor keeps its own bound, and the bound is on
 /// the stage rather than on each attempt: five tiers declaring 600s apiece
-/// under a 600s watchdog get 600s between them, not 3000s. See [`StageBudget`]
-/// for what each caller believed before this, and what it was measured to do.
+/// under a 600s watchdog get 600s between them, not 3000s. [`StageBudget`]
+/// carries the measurement behind that.
+///
+/// # No run scope is declared here
+///
+/// A scope held for the length of a turn is released when the turn ends, and no
+/// production turn commits -- every prompt says "Do NOT commit; leave your
+/// changes in the working tree." `queue_healer` stages and commits 125 lines
+/// AFTER its turn returns, so a scope held here is gone by the time the hook
+/// runs and the guardrail cannot fire.
+///
+/// The scope belongs to the OPERATION that commits: its caller declares it and
+/// holds it across dispatch, staging and commit. See [`RunScope::declare`].
 pub async fn run_stage_within(
     stage: Stage,
     prompt: &ModelPrompt,
@@ -243,18 +226,6 @@ pub async fn run_stage_within(
     what: &str,
     budget: Option<Duration>,
 ) -> Result<String> {
-    // NOT declared here, and that is the correction.
-    //
-    // A scope declared for the length of a turn is released when the turn ends,
-    // and no production turn commits: every prompt says "Do NOT commit; leave
-    // your changes in the working tree." `queue_healer` stages and commits 125
-    // lines AFTER its turn returns, so a scope held here was always gone by the
-    // time the hook ran -- the guardrail could not fire, which is exactly the
-    // defect this was meant to close.
-    //
-    // The scope belongs to the OPERATION that commits, so its caller declares
-    // it and holds it across dispatch, staging and commit. See
-    // `RunScope::declare`.
     let posture = Posture::in_workspace(working_dir);
     let mut refusals = Vec::new();
     let mut left = StageBudget::of(budget);
@@ -262,11 +233,9 @@ pub async fn run_stage_within(
 
     for (i, tier) in chain(stage).iter().enumerate() {
         let label = format!("{what} [{}/{} {}]", i + 1, chain(stage).len(), tier.model);
-        // The budget bounds the STAGE, so what a tier gets is what the table
-        // declares or what the stage has left, whichever is smaller. `None`
-        // means the rest of the chain was never reached -- which is a different
-        // fact from a tier that ran and refused, and I1 forbids collapsing the
-        // two.
+        // `None` means the rest of the chain was never reached, which is a
+        // different fact from a tier that ran and refused. I1 forbids
+        // collapsing the two.
         let Some(timeout) = left.allot(tier.timeout) else {
             for untried in &chain(stage)[i..] {
                 refusals.push(format!(

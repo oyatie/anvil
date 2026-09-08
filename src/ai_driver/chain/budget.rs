@@ -1,8 +1,9 @@
 //! What a caller's bound leaves for the next tier.
 //!
 //! A budget handed to [`super::run_stage_within`] is a bound on the WHOLE
-//! stage, not an allowance each tier gets to spend in full. It used to be the
-//! latter, and both callers were wrong in opposite directions:
+//! stage, not an allowance each tier gets to spend in full. One number cannot
+//! mean both, and reading it as the second breaks both callers in opposite
+//! directions:
 //!
 //! * `queue_healer` passes `AGY_TURN_LIMIT` (600s) and its comment claimed "a
 //!   chain declaring a longer timeout cannot outlive the healer's own bound."

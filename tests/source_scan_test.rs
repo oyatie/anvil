@@ -289,7 +289,13 @@ fn a_directory_is_a_separate_checkout_when_it_holds_a_git_entry_of_either_kind()
         "an ordinary directory is not a checkout and must still be walked"
     );
 
-    // A file named `.git` in the parent must not make the parent's CHILDREN
-    // checkouts: the question is asked of one directory, not inherited.
-    assert!(!is_separate_checkout(&ordinary.join("src")));
+    // The question is asked of ONE directory and is not inherited: a checkout's
+    // subdirectories are not themselves checkouts. This asserted it against an
+    // UNMARKED parent, which tested nothing the negative above had not -- a
+    // comment describing an assertion that was not there.
+    std::fs::create_dir_all(clone.join("src")).unwrap();
+    assert!(
+        !is_separate_checkout(&clone.join("src")),
+        "the marker belongs to the directory that holds it, not to its children"
+    );
 }

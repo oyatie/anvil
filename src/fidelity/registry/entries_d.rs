@@ -31,8 +31,8 @@ pub const TEST_SUITE_STATUS: GateFidelity = GateFidelity {
           ceilings. The `ExecClass::Build` bound of 1800s was sized for a type-check and now \
           has to cover a build and a run, and `heal_ejected_pr` calls `run_local_test_gate` twice \
           (queue_healer.rs::heal_in_worktree), so one heal can spend an hour before reporting that it \
-          measured nothing. And the run executes every `#[test]` in a contributor's branch, which a \
-          type-check never did; what it may read is bounded by the allowlist above and by \
+          measured nothing. And the run executes every test function in a contributor's branch, \
+          which a type-check never did; what it may read is bounded by the allowlist above and by \
           nothing else, because this is not a sandbox. The cost is a cold build per \
           pull request, in an ephemeral worktree with no shared target directory.",
     blocked_on: None,

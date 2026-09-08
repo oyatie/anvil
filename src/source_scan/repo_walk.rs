@@ -28,11 +28,16 @@ use std::path::Path;
 ///
 /// # What this deliberately also skips
 ///
-/// A submodule. Its `.git` marks source this repository DOES track, through a
+/// A submodule. Its `.git` marks source the repository DOES track, through a
 /// gitlink, so skipping it under-reports rather than over-reports -- the worse
-/// direction. Measured today: no `.gitmodules`, and `git ls-files` names no
-/// path under a `.git` component, so nothing is lost. Revisit this the day a
-/// submodule is added.
+/// direction.
+///
+/// That was measured on ANVIL's tree for #218, where anvil was the subject. It
+/// does not carry over to [`repository_walk_skips`], whose subject is a
+/// CONTRIBUTOR's tree, where submodules are ordinary and their contents now
+/// drop out of the audit silently. Arguably right -- vendored source is not the
+/// contributor's prose to audit -- but recorded here as a decision rather than
+/// inherited as a measurement of a different tree.
 ///
 /// An IO error answers `false` and the walk descends, which inflates rather
 /// than hides. That is the pre-existing direction and not a new hazard.
@@ -54,11 +59,24 @@ pub fn is_separate_checkout(dir: &Path) -> bool {
 /// stop at a path boundary, so `.github/`, `.gitignore` and `.gitattributes`
 /// all matched `.git`, and `targets/` matched `target`. These walkers scan the
 /// repository UNDER REVIEW, where `.github/` routinely holds
-/// `ISSUE_TEMPLATE`, `PULL_REQUEST_TEMPLATE` and `CONTRIBUTING.md` -- markdown
-/// the auditor exists to audit and never saw. Latent in anvil's own tree,
-/// which has no markdown under `.github/`, which is why nothing caught it.
+/// `ISSUE_TEMPLATE`, `PULL_REQUEST_TEMPLATE` and `CONTRIBUTING.md`.
+///
+/// This was live in anvil's own tree, not merely latent there. The auditor
+/// and the sweeper filter on `.md || .yaml || .yml`, and anvil's own
+/// `.github/` holds EIGHT such files; the freshness ledger counts every file,
+/// so all ten under `.github/` plus `.gitignore` were missing from its own
+/// `total_files` and `freshness_ratio`. A census of `*.md` alone returns zero
+/// here and makes the defect look dormant. Nothing caught it because no gate
+/// compares these counts against a tree whose answer is known.
 ///
 /// Matching is now by path COMPONENT, so `.git` skips `.git` and nothing else.
+///
+/// That is a deliberate WIDENING, not a narrowing. A top-level string prefix
+/// never matched `docs/target/`, so it was walked; a component match skips it.
+/// In exchange a nested `target/` in a workspace member and a nested
+/// `node_modules/` -- both routine in the repositories this audits -- are
+/// skipped where they were walked. The gain is far more common than the loss,
+/// and a contributor with a genuine `docs/target/` full of prose now loses it.
 ///
 /// # It did not skip nested checkouts
 ///

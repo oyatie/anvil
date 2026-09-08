@@ -43,11 +43,10 @@ impl DocArchivalSweeper {
                         .to_string_lossy()
                         .to_string();
 
-                    // Skip ignored dirs
-                    if rel.starts_with(".git")
-                        || rel.starts_with("target")
-                        || rel.starts_with("buck-out")
-                    {
+                    // This copy had also drifted: it omitted `node_modules`,
+                    // which the other two skip. Three hand-maintained copies of
+                    // one list is how that happens.
+                    if crate::source_scan::repository_walk_skips(repo_dir, &path) {
                         continue;
                     }
 

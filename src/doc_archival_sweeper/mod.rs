@@ -84,17 +84,34 @@ impl DocArchivalSweeper {
                 {
                     files_archived.push(rel_path.clone());
                     if !dry_run {
+                        // The archive copy is written FIRST, and the original is
+                        // replaced only if it succeeded.
+                        //
+                        // `dest` was computed, its parent created, and nothing
+                        // ever written to it; the original was then overwritten
+                        // with a stub naming a file that did not exist. The
+                        // content was gone and the forward pointer dangled.
+                        //
+                        // Every write here was `let _ =`, so this ordering is
+                        // not cosmetic: a failed copy followed by a successful
+                        // stub is the same data loss with a healthy-looking
+                        // report. A stub may only ever replace content that is
+                        // already safe somewhere else.
                         let dest = repo_dir.join("archive/2026").join(&rel_path);
-                        if let Some(parent) = dest.parent() {
-                            let _ = tokio::fs::create_dir_all(parent).await;
+                        let archived = match dest.parent() {
+                            Some(parent) => tokio::fs::create_dir_all(parent).await.is_ok(),
+                            None => false,
+                        } && tokio::fs::write(&dest, &content).await.is_ok();
+
+                        if archived {
+                            let stub = format!(
+                                "---\nschema: hyperscaler.doc.v1\nstatus: archived\ncanonical_authority: false\n---\n\n> **HISTORICAL / ARCHIVED:** Moved to `archive/2026/{}`.\n",
+                                rel_path
+                            );
+                            if tokio::fs::write(&full_path, stub).await.is_ok() {
+                                stubs_written.push(rel_path.clone());
+                            }
                         }
-                        // Write forward-pointer stub
-                        let stub = format!(
-                            "---\nschema: hyperscaler.doc.v1\nstatus: archived\ncanonical_authority: false\n---\n\n> **HISTORICAL / ARCHIVED:** Moved to `archive/2026/{}`.\n",
-                            rel_path
-                        );
-                        let _ = tokio::fs::write(&full_path, stub).await;
-                        stubs_written.push(rel_path.clone());
                     }
                 }
             }

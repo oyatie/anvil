@@ -1,9 +1,9 @@
 //! What the declaration graph does when it cannot measure a file.
 //!
-//! Every case here used to be answered with a confident verdict: an empty
-//! test set, every contained file called production, or `classify` reporting
-//! "not a test" for sources it had never reached. Absent evidence is never a
-//! pass, so each is now an error naming the file and the reason.
+//! Absent evidence is never a pass. An unmeasurable graph may not answer with
+//! an empty test set, with every contained file called production, or with
+//! "not a test" for a source it never reached: each is a verdict drawn from no
+//! evidence. It names the file and the reason instead.
 
 use super::*;
 

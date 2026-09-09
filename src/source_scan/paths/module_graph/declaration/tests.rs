@@ -72,12 +72,9 @@ fn an_unmeasurable_graph_is_not_a_role_map_that_omits_the_test_role() {
     let repo = tempfile::tempdir().unwrap();
     let root = unmeasurable_root(repo.path());
     let canonical_repo = fs::canonicalize(repo.path()).unwrap();
-    // `fixture.rs` is declared `#[cfg(test)]`, so a role map that answers at
-    // all must record the test role. This is upstream of `classify`, which is
-    // where the defect was visible: every classifier is built from this map,
-    // so a map that omits a role is a classifier that calls a test source
-    // production. `TestSourceClassifier::new` takes this result with `?`, so
-    // there is no longer a classifier to ask.
+    // Every classifier is built from this map, so a map that omits a role is
+    // a classifier that calls a test source production. `new` takes this with
+    // `?`, so an unmeasurable graph leaves no classifier to ask.
     let error = module_roles_from_roots(&canonical_repo, &[root])
         .expect_err("an unmeasurable graph must not be answered with a role map");
     names_the_file_and_the_reason(&error);

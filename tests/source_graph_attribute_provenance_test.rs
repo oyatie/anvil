@@ -105,23 +105,24 @@ fn external_macro_use_makes_unqualified_builtin_spelling_ambiguous() {
 }
 
 #[test]
-fn classifier_uncertainty_removes_exemptions_instead_of_breaking_the_census() {
+fn classifier_uncertainty_is_an_error_not_a_silent_verdict() {
     let root = tree("use evil::Serialize; #[derive(Serialize)] pub struct S;");
     let shipping = root.path().join("tests/shipping.rs");
     write(&shipping, "pub fn shipping(){}");
 
-    let classifier = anvil::source_scan::paths::TestSourceClassifier::new(root.path())
-        .expect("classification has a conservative incomplete mode");
-    assert!(
-        !classifier.classify(&shipping).unwrap(),
-        "unknown expansion must remove a layout-based test exemption"
-    );
+    // Uncertainty must not grant a layout-based test exemption. It must not
+    // withdraw one silently either: both are verdicts drawn from no evidence,
+    // and the second accuses every test source in the tree at once.
+    let Err(reason) = anvil::source_scan::paths::TestSourceClassifier::new(root.path()) else {
+        panic!("an unmeasurable expansion must not yield a classifier");
+    };
+    assert!(reason.contains("Serialize"), "{reason}");
+
     let roots = vec![root.path().join("src/lib.rs")];
-    assert!(
+    let reason =
         anvil::source_scan::paths::declared_production_module_files_from_roots(root.path(), &roots)
-            .unwrap()
-            .contains(&fs::canonicalize(shipping).unwrap())
-    );
+            .expect_err("an unmeasurable graph must not be widened to every contained file");
+    assert!(reason.contains("Serialize"), "{reason}");
 }
 
 #[test]

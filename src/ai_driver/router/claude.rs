@@ -107,10 +107,16 @@ impl SubscriptionExecutor {
                     .await;
             }
             Err(e) => {
+                // Same asymmetry as the codex arm: an invocation error is the
+                // shape a DOWN provider takes, and leaving the account hot made
+                // every later turn retry it and pay the timeout first.
                 warn!(
                     "Claude CLI invocation notice: ({}). Falling over to active subscription fallback...",
                     e
                 );
+                self.account_pool
+                    .mark_rate_limited(&account_id, Duration::from_secs(60))
+                    .await;
             }
         }
 

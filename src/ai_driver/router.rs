@@ -83,6 +83,13 @@ impl SubscriptionExecutor {
             ModelProvider::Antigravity => {
                 self.run_agy_subscription(prompt, working_dir, config).await
             }
+            // muse has no per-provider subscription path here: it is reached
+            // through the routing table, which is where a new provider belongs.
+            // `execute_prompt` keeps the legacy per-provider paths it already
+            // owned, and gains no sixth.
+            ModelProvider::Muse => anyhow::bail!(
+                "muse is dispatched through `ai_driver::run_stage`, not `execute_prompt`"
+            ),
         }
     }
 
@@ -161,7 +168,16 @@ impl SubscriptionExecutor {
                     .await;
             }
             Err(e) => {
+                // Cooldown on the invocation error too, not only on a non-zero
+                // exit. A provider that is DOWN rather than refusing produces
+                // this arm, and leaving the account hot meant every later turn
+                // retried it first and paid `print_timeout_secs` (300s by
+                // default) before the chain moved on. During an outage that is
+                // the dominant cost, and it was charged per turn.
                 warn!("OpenAI Codex invocation notice: {}", e);
+                self.account_pool
+                    .mark_rate_limited(&account_id, Duration::from_secs(60))
+                    .await;
             }
         }
 

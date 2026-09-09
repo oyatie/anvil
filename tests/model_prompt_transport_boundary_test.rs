@@ -21,7 +21,13 @@ const MODEL_PROMPT_SHA256: &str =
     "7707c32309fe867f1897ae4d879a55793e19b83b2d0fdc5497777afb6f2fc8d9";
 const HARNESS_SHA256: &str = "4fed353d75ecf43a47d85f03700248071fe905e388234fc40729e5b3d05c666c";
 const RUBRIC_SHA256: &str = "c9ba2aca89c5e2183318636befa317597e6ffc827d768fe0bfe416e07b799b4f";
-const TRANSPORT_SHA256: &str = "d46bdfd1c32c368e977eadb43b5d2e72f2cc98c236c1a426eba5e26c93328d9a";
+// Reviewed for #216. The prompt-byte dataflow gains ONE branch:
+// `Framing::MusePromptFile` writes the rendered prompt to a 0600 file and names
+// it with `--prompt-file`, because `muse exec` reads no prompt from STDIN and
+// refuses `/dev/stdin`. The bytes still leave `ModelPrompt` through the same
+// permit and reach exactly one `deliver_with_stdin` call; the file holds the
+// prompt and is unlinked on drop, and only its PATH reaches argv.
+const TRANSPORT_SHA256: &str = "58e2d6e69ba5f94326ffcff2aec6a9f659f6b6a56f27e99e3037d19acf7c6c11";
 const TRANSPORT_SESSION_SHA256: &str =
     "585bbba3f6c211c8c452cfe347c687499455b6e0046faa513f624b5a245870ff";
 

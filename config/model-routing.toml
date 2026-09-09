@@ -1,0 +1,465 @@
+# The routing table. This file is the authority: `src/ai_driver/chain.rs` loads
+# it with `include_str!` and refuses a table it cannot validate, so a stage named
+# here and nowhere in the `Stage` enum -- or the reverse -- is a load error
+# rather than a chain nothing dispatches.
+#
+# Tiers are ordered: the first is tried first, and a tier that fails hands the
+# turn to the next. Chains are cross-provider by construction, so a stage that
+# audits another does not audit it with the model that produced it.
+#
+# WHERE muse-spark-1.3 SITS, AND WHY IT IS LAST.
+#
+# It is the newest frontier entrant and it is fast, which argues for a high
+# tier. It is placed last anyway, because the number that would justify a high
+# tier cannot be checked: the 75.4% DeepSWE score does not appear on the public
+# DeepSWE leaderboard -- only 1.2 is listed -- and its Artificial Analysis rank
+# of 3rd puts it above GPT-6 and Gemini 3.8 Flash, both of which beat it in
+# direct testing. It placed 20th on Beauty Bench.
+#
+# Those direct tests are one arcade-game build and an SVG benchmark, neither of
+# which is this repository's workload, so they are weak evidence too. That is
+# the point: there is no measurement of muse on the work anvil actually does,
+# and an unverifiable leaderboard position is not one. Last tier gives the
+# fleet a fifth independent provider and a real fallback without betting a
+# primary on a number nobody can reproduce.
+#
+# Promote it when someone measures it here. "Numbers are measured, not quoted."
+
+[[stage.recon]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.recon]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.recon]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "high"
+timeout_secs = 420  # 68 steps
+
+[[stage.recon]]
+model = "gpt-6-astra"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 300  # 29 steps
+
+[[stage.recon]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[[stage.planning]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "high"
+timeout_secs = 420  # 68 steps
+
+[[stage.planning]]
+model = "gpt-6-astra"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 300  # 29 steps
+
+[[stage.planning]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.planning]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.planning]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.plan_review]
+audits = "planning"
+
+[[stage.plan_review]]
+model = "gpt-5.6-sol"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 420  # 61 steps
+
+[[stage.plan_review]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480  # 99 steps
+
+[[stage.plan_review]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.plan_review]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.plan_review]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[[stage.architect_spec]]
+model = "gpt-6-astra"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 300  # 29 steps
+
+[[stage.architect_spec]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "high"
+timeout_secs = 420  # 68 steps
+
+[[stage.architect_spec]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.architect_spec]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.architect_spec]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.spec_review]
+audits = "architect_spec"
+
+[[stage.spec_review]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480  # 99 steps
+
+[[stage.spec_review]]
+model = "gpt-5.6-sol"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 420  # 61 steps
+
+[[stage.spec_review]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.spec_review]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.spec_review]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[[stage.implementation]]
+model = "gpt-6-astra"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 300  # 29 steps
+
+[[stage.implementation]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "high"
+timeout_secs = 420  # 68 steps
+
+[[stage.implementation]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.implementation]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.implementation]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.falsification]
+audits = "implementation"
+
+[[stage.falsification]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480  # 99 steps
+
+[[stage.falsification]]
+model = "gpt-5.6-sol"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 420  # 61 steps
+
+[[stage.falsification]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.falsification]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.falsification]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.code_review_audit]
+mode = "quorum"
+audits = "implementation"
+
+[[stage.code_review_audit]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480  # 99 steps
+
+[[stage.code_review_audit]]
+model = "gpt-5.6-sol"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 420  # 61 steps
+
+[[stage.code_review_audit]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.code_review_audit]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.code_review_audit]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[[stage.remediation]]
+model = "gpt-6-astra"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 300  # 29 steps
+
+[[stage.remediation]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "high"
+timeout_secs = 420  # 68 steps
+
+[[stage.remediation]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.remediation]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.remediation]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.orchestration]
+mode = "deterministic"
+residual_conditions = ["ambiguous_conflict", "progress_exhausted"]
+
+[[stage.orchestration]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480  # 99 steps
+
+[[stage.orchestration]]
+model = "gpt-6-astra"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 300  # 29 steps
+
+[[stage.orchestration]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.orchestration]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[[stage.issue_triage]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.issue_triage]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.issue_triage]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "high"
+timeout_secs = 420  # 68 steps
+
+[[stage.issue_triage]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.security_audit]
+mode = "quorum"
+audits = "implementation"
+runs_after = ["code_review_audit", "spec_review"]
+same_provider_exception = "daybreak-blue IS gpt-5.6-sol, already code_review_audit's T2 against the same implementation -- the correlation is sol's, not a new one; claude-opus-5 behind it carries the cross-provider check"
+
+[[stage.security_audit]]
+model = "gpt-daybreak-blue-latest"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 480  # no step count published; conservative until measured
+
+[[stage.security_audit]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480  # 99 steps
+
+[[stage.security_audit]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.security_audit]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.security_audit]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.test_hardening]
+runs_after = ["falsification"]
+
+[[stage.test_hardening]]
+model = "claude-fable-5-1"
+provider = "claude"
+effort = "xhigh"
+timeout_secs = 420  # 68 steps
+
+[[stage.test_hardening]]
+model = "gpt-5.6-sol"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 420  # 61 steps
+
+[[stage.test_hardening]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.test_hardening]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.test_hardening]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+
+[stage_meta.test_audit]
+audits = "test_hardening"
+runs_after = ["test_hardening"]
+
+[[stage.test_audit]]
+model = "gpt-5.6-sol"
+provider = "codex"
+effort = "xhigh"
+timeout_secs = 420  # 61 steps
+
+[[stage.test_audit]]
+model = "claude-opus-5"
+provider = "claude"
+effort = "high"
+timeout_secs = 480  # 99 steps
+
+[[stage.test_audit]]
+model = "gemini-3.8-flash"
+provider = "agy"
+effort = "high"
+timeout_secs = 600  # 166 steps
+
+[[stage.test_audit]]
+model = "grok-4.6"
+provider = "grok"
+effort = "high"
+timeout_secs = 420  # 70 steps
+
+[[stage.test_audit]]
+model = "muse-spark-1.3"
+provider = "muse"
+effort = "max"
+timeout_secs = 600
+

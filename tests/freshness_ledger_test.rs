@@ -30,9 +30,14 @@ fn test_freshness_ledger_metrics() {
 /// under both. That is the proxy failure this test exists to close, committed
 /// inside the test that closes it.
 ///
-/// So the fixture is built so the two readings cannot coincide -- the checkout
-/// holds more files than `.github/` does -- and the dormant record, which
-/// carries PATHS rather than a count, is what the identities are read from.
+/// So the fixture is built so the two readings cannot coincide: the checkout
+/// holds five files against `.github/`'s two, which makes the correct answer 4
+/// and every single-rule regression something else -- 6 for the original string
+/// prefix, 8 with the checkout rule dropped, 5 with the component rule dropped,
+/// 10 with no skipping at all.
+///
+/// It is still a COUNT, and a count is the weaker instrument. The identities
+/// are asserted in `corpus_auditor_test`, against the walks that report paths.
 #[test]
 fn the_walk_counts_dot_github_and_skips_a_nested_checkout() {
     let dir = tempdir().unwrap();

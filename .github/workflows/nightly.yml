@@ -35,6 +35,20 @@ jobs:
           shared-key: anvil-nightly
       - name: Install nextest
         uses: taiki-e/install-action@nextest
+      # The audited macro surface is established by hashing the unpacked crate
+      # sources under CARGO_HOME/registry/src against pinned fingerprints. The
+      # Rust cache prunes that directory, and a warm target/ means no build
+      # unpacks it again -- so the surface is revoked, every #[derive(Serialize)]
+      # in the tree becomes unmeasurable, and the error names a source file
+      # rather than the missing cache. This job is where that was measured: red
+      # here while postsubmit was green on the same commit.
+      #
+      # `cargo fetch --locked` into an empty CARGO_HOME unpacks 161 crates. The
+      # windows-capture job runs it for a related reason (offline metadata on a
+      # machine with no cache at all); the test job that stays green runs no
+      # such step, and why it stays green is not measured.
+      - name: Restore the complete locked source cache the macro surface needs
+        run: cargo fetch --locked
       - name: Suite over the merged tree
         run: cargo nextest run --all-targets --no-fail-fast
       - name: Clippy over the merged tree

@@ -57,8 +57,11 @@ jobs:
       # The Rust cache prunes CARGO_HOME/registry/src, and a warm target/ means
       # no build unpacks it again. The audited macro surface is established by
       # hashing those unpacked sources, so without this step it is revoked and
-      # every #[derive(Serialize)] in the tree becomes unmeasurable. Measured on
-      # nightly, which carries the same step: 35 failing tests before, 0 after.
+      # every #[derive(Serialize)] in the tree becomes unmeasurable.
+      #
+      # Measured on this job, one tree, differing only by these lines:
+      #   34413962360 (6603ec7, no step): 2466 run, 2399 passed, 67 failed
+      #   34415430499 (546d5c3, step):    2466 run, 2466 passed,  0 failed
       - name: Restore the complete locked source cache the macro surface needs
         run: cargo fetch --locked
       - name: Clippy Lint

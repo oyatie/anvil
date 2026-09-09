@@ -43,10 +43,10 @@ jobs:
       # rather than the missing cache. This job is where that was measured: red
       # here while postsubmit was green on the same commit.
       #
-      # `cargo fetch --locked` into an empty CARGO_HOME unpacks 161 crates. The
-      # windows-capture job runs it for a related reason (offline metadata on a
-      # machine with no cache at all); the test job that stays green runs no
-      # such step, and why it stays green is not measured.
+      # The presubmit test job carries the same step for the same reason, and
+      # is where this was measured: 67 failures without it, 0 with it, on one
+      # tree. windows-capture runs it for a related reason -- offline metadata
+      # on a machine with no cache at all.
       - name: Restore the complete locked source cache the macro surface needs
         run: cargo fetch --locked
       - name: Suite over the merged tree

@@ -526,7 +526,10 @@ fn every_site_that_commits_is_scoped_or_declared_exempt() {
             // the tree's one answer to this question and its doc comment counts
             // twelve scanners that each got it slightly wrong. Two of them were
             // in this file.
-            if classifier.classify(&path).unwrap_or(false) {
+            if classifier
+                .classify(&path)
+                .unwrap_or_else(|reason| panic!("cannot classify {}: {reason}", path.display()))
+            {
                 continue;
             }
             let code = anvil::source_scan::without_commentary(
@@ -1095,7 +1098,10 @@ fn the_one_lane_that_does_not_use_the_table_is_named_and_the_list_only_shrinks()
             // its own doc comment counts twelve scanners that got it wrong --
             // and this census read `router/tests.rs` as a production caller
             // until it used it.
-            if classifier.classify(&path).unwrap_or(false) {
+            if classifier
+                .classify(&path)
+                .unwrap_or_else(|reason| panic!("cannot classify {}: {reason}", path.display()))
+            {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("readable");

@@ -210,10 +210,10 @@ fn actual_repository_restricted_profile_and_role_proof_are_complete() -> Result<
     if eligible == 0 {
         return Err("bindings: actual profile was not exercised".to_owned());
     }
-    // This API returns an empty set whenever the conjunctive role proof is
-    // incomplete; requiring this existing declared child proves completeness.
+    // A role walk that cannot measure the repository is an error naming the
+    // file and the reason; requiring this declared child proves it walked.
     let test_files = crate::source_scan::paths::declared_test_module_files(&root)
-        .map_err(|_| "later syntax completeness: role walk failed".to_owned())?;
+        .map_err(|reason| format!("later syntax completeness: role walk failed: {reason}"))?;
     let expected = std::fs::canonicalize(root.join("src/clean_architecture_guard/tests.rs"))
         .map_err(|_| "later syntax completeness: expected source identity".to_owned())?;
     if !test_files.contains(&expected) {

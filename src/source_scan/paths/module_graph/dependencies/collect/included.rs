@@ -67,13 +67,10 @@ impl Collector<'_> {
         let mut syntax = Syntax::with_context(scope, &self.symbols, lexical);
         syntax.visit_expr(&expression);
         if let Some(reason) = syntax.uncertainties.first() {
-            if self.strict {
-                return Err(format!(
-                    "production syntax in {} cannot be measured: {reason}",
-                    path.display()
-                ));
-            }
-            self.complete = false;
+            return Err(format!(
+                "production syntax in {} cannot be measured: {reason}",
+                path.display()
+            ));
         }
         let includes = std::mem::take(&mut syntax.includes);
         let modules = std::mem::take(&mut syntax.modules);

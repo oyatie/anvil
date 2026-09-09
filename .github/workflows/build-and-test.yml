@@ -54,6 +54,13 @@ jobs:
         with:
           shared-key: anvil-test
           cache-workspace-crates: "true"
+      # The Rust cache prunes CARGO_HOME/registry/src, and a warm target/ means
+      # no build unpacks it again. The audited macro surface is established by
+      # hashing those unpacked sources, so without this step it is revoked and
+      # every #[derive(Serialize)] in the tree becomes unmeasurable. Measured on
+      # nightly, which carries the same step: 35 failing tests before, 0 after.
+      - name: Restore the complete locked source cache the macro surface needs
+        run: cargo fetch --locked
       - name: Clippy Lint
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test

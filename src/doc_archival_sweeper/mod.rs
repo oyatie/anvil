@@ -76,11 +76,9 @@ impl DocArchivalSweeper {
 
         for (full_path, rel_path) in files_to_scan {
             if let Ok(content) = tokio::fs::read_to_string(&full_path).await {
-                // What is on disk now. The demotion below rewrites `full_path`,
-                // and the archival branch used the pre-demotion `content` --
-                // so a file matching BOTH branches was reported demoted while
-                // the only surviving copy still claimed canonical authority,
-                // and the next sweep demoted the archive itself.
+                // What is on disk now: the demotion below rewrites `full_path`,
+                // and archiving the pre-demotion text would file a copy still
+                // claiming canonical authority.
                 let mut current = content.clone();
                 // Check 1: Unauthorized SSOT claim
                 let is_canonical_dir =
@@ -102,54 +100,21 @@ impl DocArchivalSweeper {
                 // Check 2: Superseded ADR or plan needing archival
                 if (rel_path.starts_with("docs/adr-archive/")
                     || rel_path.starts_with(".grok/programs/"))
-                    // Already swept. Without this the ORIGINAL path still
-                    // matches on the next run, `current` is now the stub, and
-                    // the archive copy is truncate-overwritten with it -- so
-                    // sweep 1 saved the content and sweep 2 destroyed it. This
-                    // is a repeatable CLI command over a repository whose
-                    // sweep output is meant to be committed, so a second sweep
-                    // is the expected case, not an edge one.
-                    //
-                    // Not `create_new` on the destination: where the archive
-                    // was written and the stub write then failed, a re-run must
-                    // still be able to finish the job, and `create_new` would
-                    // refuse it forever.
+                    // A swept file still matches this path, so without this
+                    // the second sweep overwrites the archive with the stub.
+                    // See `archive_then_stub`.
                     && !current.contains("status: archived")
                 {
                     if dry_run {
                         files_archived.push(rel_path.clone());
                     } else {
-                        // The archive copy is written FIRST, and the original is
-                        // replaced only if it succeeded.
-                        //
-                        // `dest` was computed, its parent created, and nothing
-                        // ever written to it; the original was then overwritten
-                        // with a stub naming a file that did not exist. The
-                        // content was gone and the forward pointer dangled.
-                        //
-                        // Every write here was `let _ =`, so this ordering is
-                        // not cosmetic: a failed copy followed by a successful
-                        // stub is the same data loss with a healthy-looking
-                        // report. A stub may only ever replace content that is
-                        // already safe somewhere else.
-                        let dest = repo_dir.join("archive/2026").join(&rel_path);
-                        let archived = match dest.parent() {
-                            Some(parent) => tokio::fs::create_dir_all(parent).await.is_ok(),
-                            None => false,
-                        } && tokio::fs::write(&dest, &current).await.is_ok();
-
-                        if !archived {
-                            archive_failed.push(rel_path.clone());
-                        }
-
-                        if archived {
-                            files_archived.push(rel_path.clone());
-                            let stub = format!(
-                                "---\nschema: hyperscaler.doc.v1\nstatus: archived\ncanonical_authority: false\n---\n\n> **HISTORICAL / ARCHIVED:** Moved to `archive/2026/{}`.\n",
-                                rel_path
-                            );
-                            if tokio::fs::write(&full_path, stub).await.is_ok() {
-                                stubs_written.push(rel_path.clone());
+                        match archive_then_stub(repo_dir, &full_path, &rel_path, &current).await {
+                            ArchiveOutcome::Failed => archive_failed.push(rel_path.clone()),
+                            ArchiveOutcome::Archived { stub_written } => {
+                                files_archived.push(rel_path.clone());
+                                if stub_written {
+                                    stubs_written.push(rel_path.clone());
+                                }
                             }
                         }
                     }
@@ -173,6 +138,50 @@ impl DocArchivalSweeper {
             is_dry_run: dry_run,
             summary,
         })
+    }
+}
+
+enum ArchiveOutcome {
+    Failed,
+    Archived { stub_written: bool },
+}
+
+/// Copy `content` to the archive, and only then replace the original with a
+/// stub pointing at it.
+///
+/// The ordering is the whole point. A stub may only ever replace content that
+/// is already safe somewhere else: a failed copy followed by a successful stub
+/// destroys the document and leaves a forward pointer to a file that does not
+/// exist, while reporting success. Every write in the original was `let _ =`,
+/// so nothing noticed.
+///
+/// The destination is written with `write`, not `create_new`: if a previous
+/// run archived the file and then failed to write the stub, a re-run has to be
+/// able to finish the job. Re-archiving the same content is harmless; refusing
+/// forever is not. What makes that safe is the caller's `status: archived`
+/// guard, which stops a swept file from reaching here a second time with the
+/// stub as its content.
+async fn archive_then_stub(
+    repo_dir: &Path,
+    full_path: &Path,
+    rel_path: &str,
+    content: &str,
+) -> ArchiveOutcome {
+    let dest = repo_dir.join("archive/2026").join(rel_path);
+    let archived = match dest.parent() {
+        Some(parent) => tokio::fs::create_dir_all(parent).await.is_ok(),
+        None => false,
+    } && tokio::fs::write(&dest, content).await.is_ok();
+
+    if !archived {
+        return ArchiveOutcome::Failed;
+    }
+
+    let stub = format!(
+        "---\nschema: hyperscaler.doc.v1\nstatus: archived\ncanonical_authority: false\n---\n\n> **HISTORICAL / ARCHIVED:** Moved to `archive/2026/{rel_path}`.\n"
+    );
+    ArchiveOutcome::Archived {
+        stub_written: tokio::fs::write(full_path, stub).await.is_ok(),
     }
 }
 

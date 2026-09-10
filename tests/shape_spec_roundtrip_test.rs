@@ -154,7 +154,7 @@ fn members_source_grammar_is_exact() {
     assert_eq!(
         spec.unit_kinds["app"].members_source(),
         Ok(MembersSource::Discover {
-            marker: "manifest.json".into()
+            marker: "OWNERS".into()
         })
     );
 }

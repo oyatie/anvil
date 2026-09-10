@@ -14,7 +14,7 @@ pub mod worktree;
 use repository_identity::RepoIdentity;
 
 pub use diff_context::PrDiffContext;
-pub use subject::{CertifiedTree, SubjectRoot, Uncloned};
+pub use subject::{CertifiedCheckout, CertifiedTree, SubjectRoot, Uncloned};
 pub use worktree::EphemeralWorktree;
 
 /// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes

@@ -13,39 +13,23 @@ mod included;
 
 type Seen = (Vec<String>, PathBuf, PathBuf, String);
 
+/// The symbol universe a crate root reaches, or why it cannot be measured.
+///
+/// There is one collection mode and it is strict. A graph that cannot be
+/// measured names the file and the reason; it never returns a universe that
+/// silently omits what the walk could not resolve, because every consumer of
+/// an omission reads it as evidence of absence.
 pub(in crate::source_scan::paths::module_graph) fn symbols_for_root(
     path: &Path,
     repo_root: &Path,
     aliases: &BTreeSet<String>,
     audited_derive_crates: &BTreeMap<String, String>,
 ) -> Result<Symbols, String> {
-    collect_symbols(path, repo_root, aliases, audited_derive_crates, true)
-        .map(|(symbols, _)| symbols)
-}
-
-pub(in crate::source_scan::paths::module_graph) fn symbols_for_classification(
-    path: &Path,
-    repo_root: &Path,
-    aliases: &BTreeSet<String>,
-    audited_derive_crates: &BTreeMap<String, String>,
-) -> Result<(Symbols, bool), String> {
-    collect_symbols(path, repo_root, aliases, audited_derive_crates, false)
-}
-
-fn collect_symbols(
-    path: &Path,
-    repo_root: &Path,
-    aliases: &BTreeSet<String>,
-    audited_derive_crates: &BTreeMap<String, String>,
-    strict: bool,
-) -> Result<(Symbols, bool), String> {
     let mut collector = Collector {
         symbols: Symbols::default(),
         seen: BTreeSet::new(),
         active_files: BTreeSet::new(),
         repo_root,
-        strict,
-        complete: true,
     };
     for alias in aliases {
         collector.symbols.add_crate_alias(alias);
@@ -55,7 +39,7 @@ fn collect_symbols(
     }
     let context = path.parent().unwrap_or(Path::new("."));
     collector.file(path, &[], context, context, LexicalContext::default())?;
-    Ok((collector.symbols, collector.complete))
+    Ok(collector.symbols)
 }
 
 struct Collector<'root> {
@@ -63,8 +47,6 @@ struct Collector<'root> {
     seen: BTreeSet<Seen>,
     active_files: BTreeSet<PathBuf>,
     repo_root: &'root Path,
-    strict: bool,
-    complete: bool,
 }
 
 impl Collector<'_> {
@@ -188,13 +170,10 @@ impl Collector<'_> {
             }
         }
         if let Some(reason) = syntax.uncertainties.first() {
-            if self.strict {
-                return Err(format!(
-                    "production syntax in {} cannot be measured: {reason}",
-                    containing_file.display()
-                ));
-            }
-            self.complete = false;
+            return Err(format!(
+                "production syntax in {} cannot be measured: {reason}",
+                containing_file.display()
+            ));
         }
         let includes = std::mem::take(&mut syntax.includes);
         let modules = std::mem::take(&mut syntax.modules);

@@ -22,7 +22,7 @@ mod root;
 mod symbols;
 mod syntax;
 mod walk;
-pub(super) use collect::{symbols_for_classification, symbols_for_root};
+pub(super) use collect::symbols_for_root;
 use containment::contained_source;
 pub(super) use symbols::Symbols;
 pub(super) use syntax::{LexicalContext, SourceInclude, SourceModule, Syntax};
@@ -155,15 +155,35 @@ pub(super) fn scan_syntax<'symbols>(
     )
 }
 
-pub(super) fn scan_syntax_for_classification<'symbols>(
+/// Syntax reached under an inherited test scope.
+///
+/// Provenance is required of *production* syntax: an attribute with no audited
+/// provenance may expand into shipped code, and code that ships unmeasured is
+/// the thing the graph exists to refuse. Nothing an attribute expands inside a
+/// `#[cfg(test)]` module can ship, so its provenance is not the question here —
+/// `#[tokio::test]` is a test harness, not an unmeasured production surface.
+/// Declarations still resolve normally; only the production-provenance demand
+/// is out of scope. A `mod` an attribute expands into is unreached rather than
+/// unmeasured, and an unreached file falls to path-based classification — the
+/// same answer any file the walk never names has always received.
+pub(super) fn scan_test_scope_syntax<'symbols>(
     items: &[Item],
     logical_module: &[String],
     symbols: &'symbols Symbols,
     lexical: LexicalContext,
-) -> (Syntax<'symbols>, bool) {
-    let syntax = syntax_from_items(items, logical_module, symbols, lexical);
-    let complete = syntax.uncertainties.is_empty();
-    (syntax, complete)
+) -> Syntax<'symbols> {
+    syntax_from_items(items, logical_module, symbols, lexical)
+}
+
+/// The expression form of [`scan_test_scope_syntax`], for an included source
+/// reached under an inherited test scope.
+pub(super) fn scan_test_scope_expression<'symbols>(
+    expression: &syn::Expr,
+    logical_module: &[String],
+    symbols: &'symbols Symbols,
+    lexical: LexicalContext,
+) -> Syntax<'symbols> {
+    syntax_from_expression(expression, logical_module, symbols, lexical)
 }
 
 fn syntax_from_items<'symbols>(
@@ -208,17 +228,6 @@ pub(super) fn scan_expression_syntax<'symbols>(
         syntax_from_expression(expression, logical_module, symbols, lexical),
         containing_file,
     )
-}
-
-pub(super) fn scan_expression_for_classification<'symbols>(
-    expression: &syn::Expr,
-    logical_module: &[String],
-    symbols: &'symbols Symbols,
-    lexical: LexicalContext,
-) -> (Syntax<'symbols>, bool) {
-    let syntax = syntax_from_expression(expression, logical_module, symbols, lexical);
-    let complete = syntax.uncertainties.is_empty();
-    (syntax, complete)
 }
 
 fn syntax_from_expression<'symbols>(

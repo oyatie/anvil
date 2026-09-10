@@ -189,10 +189,12 @@ impl CertifiedCheckout {
         self.tree.as_path()
     }
 
-    /// The root, borrowed. Deliberately not a `&CertifiedTree`: that type is
-    /// `Clone`, so handing one out lets a caller take an owned tree whose path
-    /// outlives the worktree backing it -- the escape this type exists to
-    /// close.
+    /// The root, borrowed.
+    ///
+    /// Narrower than handing out a `&CertifiedTree`, and not a seal:
+    /// [`SubjectRoot`] derives `Clone` as well, so `checkout.root().clone()`
+    /// still yields an owned path that can outlive the worktree. What keeps
+    /// the one site doing that sound is drop order, not this signature.
     pub fn root(&self) -> &SubjectRoot {
         self.tree.root()
     }

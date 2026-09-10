@@ -266,15 +266,31 @@ jobs:
       # The version this lane measured, recorded so a failure names it. Asserts
       # the override took: a canary that has silently fallen back to the pin is
       # the failure this lane exists to not have.
+      #
+      # It compares the ACTIVE TOOLCHAIN against the pin, not the version
+      # string. Matching `*-nightly*` worked only while the pin was a release:
+      # once the pin became `nightly-YYYY-MM-DD`, a fallback to it also prints
+      # `1.100.0-nightly (...)` and passes the check written to catch it. The
+      # guard would have been blind from the moment the pin moved.
       - name: Which nightly
         id: which
         run: |
           set -eu
+          pinned=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)
+          [ -n "$pinned" ]
+          active=$(rustup show active-toolchain | cut -d' ' -f1)
           version=$(rustc --version)
-          echo "$version"
-          case "$version" in
-            *-nightly*) ;;
-            *) echo "the canary is not on nightly: ${version}" >&2; exit 1 ;;
+          echo "pinned:  ${pinned}"
+          echo "active:  ${active}"
+          echo "version: ${version}"
+          case "$active" in
+            "${pinned}"|"${pinned}-"*)
+              echo "the canary fell back to the pin (${pinned}); RUSTUP_TOOLCHAIN did not take" >&2
+              exit 1 ;;
+          esac
+          case "$active" in
+            nightly-*) ;;
+            *) echo "the canary is not on a nightly toolchain: ${active}" >&2; exit 1 ;;
           esac
           echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: Restore the complete locked source cache the macro surface needs

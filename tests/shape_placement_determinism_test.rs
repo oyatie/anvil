@@ -4,8 +4,8 @@
 
 use anvil::shape::adapters::InMemoryTree;
 use anvil::shape::core::{
-    DepFacts, DepGraph, PathFacts, Placement, ResolvedSpec, RoleFacts, ShapeSpec, SpecSource,
-    measure, place, resolve,
+    DepFacts, DepGraph, PathFacts, Placement, ResolvedSpec, ResolvedUnit, RoleFacts, ShapeSpec,
+    SpecSource, measure, place, resolve,
 };
 use std::path::PathBuf;
 
@@ -13,12 +13,23 @@ fn resolved() -> ResolvedSpec {
     let p =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/shape/oyatie.shape.json");
     let spec = ShapeSpec::parse(&std::fs::read_to_string(p).unwrap()).unwrap();
-    let registry = serde_json::json!({
-        "capabilities": [ { "name": "iam" }, { "name": "billing" } ],
-        "meta_directories": [ { "dir": "kernel" } ],
-        "faces": [ { "face": "core" } ]
-    });
-    resolve(&spec, Some(&registry)).unwrap()
+    resolve(&spec, None).unwrap()
+}
+
+/// The unit a placement question is asked about.
+///
+/// Built directly rather than resolved: placement takes a unit and answers
+/// where a file belongs, so tying these cases to how units are DISCOVERED
+/// coupled them to a registry the spec no longer has.
+fn unit(name: &str) -> ResolvedUnit {
+    ResolvedUnit {
+        name: name.to_string(),
+        kind: "capability".to_string(),
+        root: format!("{name}/"),
+        skeleton: "standard".to_string(),
+        destination_stable: false,
+        satellites_not_applicable: vec![],
+    }
 }
 
 const PATHS: &[&str] = &[
@@ -69,7 +80,7 @@ fn the_same_tree_in_any_order_yields_an_identical_report() {
 #[test]
 fn every_canonical_destination_stays_inside_the_unit_root() {
     let spec = resolved();
-    let iam = spec.units.iter().find(|u| u.name == "iam").unwrap().clone();
+    let iam = unit("iam");
     for rel in [
         "iam/observability/slos/a.openslo.yaml",
         "iam/policies/p.json",
@@ -99,14 +110,13 @@ fn an_artifact_class_step_places_by_pattern_before_unit_rules() {
         rel: "iam/ADR-0009-x.md".into(),
         is_dir: false,
     };
-    let iam = spec.units.iter().find(|u| u.name == "iam").unwrap().clone();
     let r = RoleFacts {
-        unit: Some(iam),
+        unit: Some(unit("iam")),
         ..Default::default()
     };
     match place(&spec, &p, &r, &DepFacts::default()) {
         Placement::Canonical { dest, step } => {
-            assert_eq!(dest, "governance/ADR-0009-x.md");
+            assert_eq!(dest, "docs/decisions/ADR-0009-x.md");
             assert_eq!(step, "artifact_class:decision");
         }
         other => panic!("{other:?}"),

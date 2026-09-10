@@ -4,7 +4,8 @@
 //! unit's skeleton, else `<root><unit>/`.
 
 use crate::shape::ports::{
-    DepEdge, DependencySource, LanguageProfile, ResolvedSpec, ResolvedUnit, SourceError, TreeSource,
+    DepEdge, DependencySource, Discriminator, LanguageProfile, ResolvedSpec, ResolvedUnit,
+    SourceError, TreeSource,
 };
 
 pub struct RustUseDeps;
@@ -25,7 +26,10 @@ impl DependencySource for RustUseDeps {
         let Some(root) = spec
             .discovery
             .iter()
-            .filter(|d| d.marker == LanguageProfile::RustModuleTree.unit_marker())
+            .filter(|d| {
+                matches!(&d.how, Discriminator::Marker(m)
+                    if m == LanguageProfile::RustModuleTree.unit_marker())
+            })
             .filter_map(|d| {
                 d.root_pattern
                     .split_once("<name>")

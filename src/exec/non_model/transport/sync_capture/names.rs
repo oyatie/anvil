@@ -23,11 +23,9 @@ pub(super) fn next_name(stream: Stream) -> io::Result<String> {
 }
 
 fn next_serial(counter: &AtomicU64) -> io::Result<u64> {
-    // `try_update`, not `fetch_update`: std renamed it and deprecated the old
-    // spelling. Nightly warns, and CI's `clippy -D warnings` makes that a build
-    // break -- which is the pin doing its job. A rename met on the nightly that
-    // introduced it costs one line; met on the day stable ships it, it costs a
-    // red trunk shared by everyone.
+    // `try_update`, not `fetch_update`: std renamed it. Nightly warns and CI's
+    // `clippy -D warnings` makes that fatal, which is the pin doing its job --
+    // one line now instead of a red trunk the day stable ships the rename.
     counter
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)

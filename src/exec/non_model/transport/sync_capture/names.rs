@@ -23,8 +23,13 @@ pub(super) fn next_name(stream: Stream) -> io::Result<String> {
 }
 
 fn next_serial(counter: &AtomicU64) -> io::Result<u64> {
+    // `try_update`, not `fetch_update`: std renamed it and deprecated the old
+    // spelling. Nightly warns, and CI's `clippy -D warnings` makes that a build
+    // break -- which is the pin doing its job. A rename met on the nightly that
+    // introduced it costs one line; met on the day stable ships it, it costs a
+    // red trunk shared by everyone.
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .map_err(|_| io::Error::other("synchronous capture pipe names exhausted"))

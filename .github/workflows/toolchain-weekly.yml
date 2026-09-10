@@ -205,24 +205,132 @@ jobs:
   nightly:
     name: nightly-canary
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     # Advisory. Nightly breaking is information about a future stable, not a
     # defect in this tree, and it must never gate a merge.
+    #
+    # Advisory is not the same as unread. A job whose failure reaches nobody is
+    # not a canary, so the report step below routes the failure to an issue.
     continue-on-error: true
+    # rustup resolves the toolchain from `rust-toolchain.toml` whenever cargo or
+    # rustc runs inside the repository, and that file names the pin. Installing
+    # nightly does not change it: this lane installed nightly and then built
+    # with the pinned stable, printing "rustc 1.98.0" from a step titled "Which
+    # nightly" while reporting success. RUSTUP_TOOLCHAIN outranks the file, and
+    # is the only reason anything below is measured on nightly at all.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     steps:
+      # Several gates measure this repository's own history and refuse to
+      # report a pass over a shallow clone, which is the right refusal and the
+      # reason the suite needs the full history here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - name: Resolve latest nightly
         uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
           toolchain: nightly
-          components: clippy
-      - name: Which nightly
-        run: rustc --version
-      - name: Compile and test on nightly
+          components: clippy, rustfmt
+      # The suite is not hermetic: `authority.rs` spawns `cargo metadata` under
+      # an explicitly pinned RUSTUP_TOOLCHAIN so contributor toolchain files
+      # cannot redirect it, and several gates shell out to rustfmt. Running the
+      # suite on nightly therefore needs the pinned toolchain present too --
+      # without it, `cargo metadata` fails, the audited macro surface is revoked
+      # and 70 tests fail for a reason that has nothing to do with nightly.
+      # Read from the file so this cannot drift from the pin the way the
+      # hardcoded copy in authority.rs already has.
+      - name: Install the pinned toolchain the suite spawns
         run: |
-          cargo build --all-targets --locked
-          cargo test --locked --no-run
+          set -eu
+          pinned=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)
+          [ -n "$pinned" ]
+          echo "the suite spawns: ${pinned}"
+          rustup toolchain install "$pinned" --profile minimal --component rustfmt
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # The version this lane measured, recorded so a failure names it. Asserts
+      # the override took: a canary that has silently fallen back to the pin is
+      # the failure this lane exists to not have.
+      - name: Which nightly
+        id: which
+        run: |
+          set -eu
+          version=$(rustc --version)
+          echo "$version"
+          case "$version" in
+            *-nightly*) ;;
+            *) echo "the canary is not on nightly: ${version}" >&2; exit 1 ;;
+          esac
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Restore the complete locked source cache the macro surface needs
+        run: cargo fetch --locked
+      # `--no-run` proved these link, never that they pass. A test that compiles
+      # on nightly and panics on nightly is the case this lane is for, and it
+      # was indistinguishable from a clean run.
+      - name: Suite on nightly
+        id: suite
+        run: cargo nextest run --all-targets --locked --no-fail-fast
       - name: Clippy on nightly
+        id: clippy
         run: cargo clippy --all-targets -- -D warnings
+
+      # The step that makes this a canary rather than a log line.
+      #
+      # One issue, reopened and updated rather than duplicated, so a nightly
+      # that breaks for six weeks running is one thread and not six. The App
+      # token is minted here and scoped to issues only: this lane never writes
+      # code, and nothing below can push.
+      - name: Mint repository-scoped App token
+        id: app-token
+        if: ${{ !cancelled() && (steps.which.outcome == 'failure' || steps.suite.outcome == 'failure' || steps.clippy.outcome == 'failure') }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.ANVIL_APP_ID }}
+          private-key: ${{ secrets.ANVIL_APP_PRIVATE_KEY }}
+          permission-issues: write
+
+      - name: Route the breakage to an owner
+        if: ${{ !cancelled() && (steps.which.outcome == 'failure' || steps.suite.outcome == 'failure' || steps.clippy.outcome == 'failure') }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.which.outputs.version }}
+          WHICH: ${{ steps.which.outcome }}
+          SUITE: ${{ steps.suite.outcome }}
+          CLIPPY: ${{ steps.clippy.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          command -v jq >/dev/null
+          title="nightly-canary: the tree does not build on current nightly"
+          # Which stage broke is the first thing a reader needs, and the only
+          # part of this body that is not a fixed string or a run URL.
+          # `[ x ] && y` under `set -e` aborts the script when the test is
+          # false, which is every run where only one stage broke.
+          failed=""
+          if [ "$WHICH" = failure ]; then
+            failed="${failed}- the canary could not confirm it was on nightly at all\n"
+          fi
+          if [ "$SUITE" = failure ]; then
+            failed="${failed}- the suite failed\n"
+          fi
+          if [ "$CLIPPY" = failure ]; then
+            failed="${failed}- clippy failed\n"
+          fi
+          body=$(printf 'Nightly: `%s`\n\nWhat broke:\n%s\nRun: %s\n\nThis lane is advisory and never gates a merge. It reports what a future stable will require, so the work is done before the pin moves rather than on the day it does.\n' \
+            "${VERSION:-unknown}" "$failed" "$RUN_URL")
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --search "$title in:title" \
+            --json number,title,state --jq "[.[] | select(.title == \"$title\")] | first // empty")
+          if [ -n "$existing" ]; then
+            number=$(jq -er '.number' <<<"$existing")
+            state=$(jq -er '.state' <<<"$existing")
+            if [ "$state" = CLOSED ]; then
+              gh issue reopen --repo "$GITHUB_REPOSITORY" "$number"
+            fi
+            gh issue comment --repo "$GITHUB_REPOSITORY" "$number" --body "$(printf '%b' "$body")"
+            echo "Updated #${number}"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$(printf '%b' "$body")"
+          fi

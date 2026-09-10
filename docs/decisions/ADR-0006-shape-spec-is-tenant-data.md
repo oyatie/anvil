@@ -60,6 +60,13 @@ shipped proposal now does.
 
 ## Consequences
 
+- **Amended 2026-09-10 (#269): face-directory form is validated for every
+  skeleton, not only those a `faces` kind discovers on.** Face directories drive
+  `unit_missing_face` and `face_edge_denied` however a unit was enrolled, so a
+  spec whose malformed face dirs sat on a skeleton reached only by a `discover:`
+  kind validated before and does not now. No shipped proposal was affected.
+  A skeleton no unit kind references is also refused.
+
 - oyatie, console and Anvil are measured by one engine against three specs;
   the specs in `tests/fixtures/shape/` are the proposals until each tenant
   adopts its own.

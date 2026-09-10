@@ -60,6 +60,19 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
             }
         }
     }
+    let referenced: BTreeSet<&str> = spec
+        .unit_kinds
+        .values()
+        .map(|k| k.skeleton.as_str())
+        .collect();
+    for skel_name in spec.skeletons.keys() {
+        if !referenced.contains(skel_name.as_str()) {
+            problems.push(format!(
+                "skeletons.{skel_name} is declared and no unit kind uses it; a skeleton \
+                 nothing references describes a shape the spec does not measure"
+            ));
+        }
+    }
     if needs_registry && spec.unit_registry.is_none() {
         problems.push(
             "a unit kind enumerates members from the registry but unit_registry is absent".into(),
@@ -77,12 +90,22 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
                     "skeletons.{skel_name}.faces.{face} is {dir:?}: {reason}"
                 ));
             }
-            if let Some(other) = seen_dirs.insert(dir.as_str(), face.as_str()) {
-                problems.push(format!(
-                    "skeletons.{skel_name}.faces.{face} and .{other} are both {dir:?}; \
-                     two faces sharing one directory can never be told apart"
-                ));
+            for (other_dir, other) in &seen_dirs {
+                let (a, b) = (dir.as_str(), *other_dir);
+                if a == b {
+                    problems.push(format!(
+                        "skeletons.{skel_name}.faces.{face} and .{other} are both {dir:?}; \
+                         two faces sharing one directory can never be told apart"
+                    ));
+                } else if a.starts_with(b) || b.starts_with(a) {
+                    problems.push(format!(
+                        "skeletons.{skel_name}.faces.{face} ({dir:?}) and .{other} \
+                         ({other_dir:?}): one contains the other, so the inner face can \
+                         never be present without the outer and its files belong to both"
+                    ));
+                }
             }
+            seen_dirs.insert(dir.as_str(), face.as_str());
         }
         let faces: BTreeSet<&str> = skel.faces.keys().map(String::as_str).collect();
         for f in &skel.required_faces {
@@ -196,6 +219,14 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
 ///
 /// Each rejected form was executed against `discover_units` and produced either
 /// a phantom unit or none at all, with `validate` returning clean.
+///
+/// WHERE FORM CHECKING STOPS, so the next round does not try to close it with a
+/// fifth predicate: `C:/core/`, `core /` (trailing space) and a homoglyph
+/// `сore/` all enrol nothing and validate clean, and no predicate can separate
+/// them from a correct spec pointed at the wrong tenant — each is a well-formed
+/// relative path naming a directory that happens not to exist. That case is
+/// caught by exercising the spec against a tenant-shaped tree
+/// (`every_discovering_kind_finds_units_in_an_oyatie_shaped_tree`), not by form.
 fn unusable_face_dir(dir: &str) -> Option<&'static str> {
     if dir.is_empty() {
         return Some("a face directory may not be empty");

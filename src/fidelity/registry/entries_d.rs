@@ -82,7 +82,7 @@ pub const ATTESTATION_STATUS: GateFidelity = GateFidelity {
           request files overwritten in place inside a per-run clone, so there is no \
           append-only log to chain in the first place. The receipt was also swept onto the \
           pull request by the certification pipeline's own staging sweep; all four staging \
-          sites now share `stage_excluding_receipts` (git_manager/mod.rs::ANVIL_OWNED_PATHS).",
+          sites now share `stage_excluding_receipts` (git_manager/staging.rs::ANVIL_OWNED_PATHS).",
     blocked_on: Some(
         "a signing identity and a log to publish to -- a key or an OIDC issuer plus Fulcio, \
          and a transparency log; none is reachable from here",

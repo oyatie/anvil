@@ -27,9 +27,14 @@ It describes a repository that does not exist.
 | `specs/` | 0 |
 | `.omc/` | 0 |
 
-The lane declared to enforce it, `governance-naming-convention`, appears
-nowhere in the tree. The registry its slot-2 rule requires,
-`[workspace.metadata.oyatie.microservices]`, is not in `Cargo.toml`.
+The lane declared to enforce it, `governance-naming-convention`, is cited by
+**four** standards documents (`naming-convention-bnf-v4.md`,
+`crate-naming-convention.md`, `clean-architecture.md`,
+`layer-enum-adr-0105.md`) and exists as no code: 0 occurrences under
+`.github/`, 0 in any Rust source. It is not a lane that was removed -- it is
+one that four standards defer to and that has never been written. The
+registry its slot-2 rule requires, `[workspace.metadata.oyatie.microservices]`,
+is not in `Cargo.toml`.
 
 Conformance of the 480 crates that do exist:
 
@@ -146,8 +151,13 @@ That makes buck2 `visibility` the right long-term home for the face
 dependency matrix — it fails at analysis naming the offending label, and a
 rename cannot launder it — and makes it useless as a check today. The trap to
 avoid: "does every BUCK declare visibility?" passes 496/496 while the matrix
-is wide open. The honest form, "no library target outside its face's allowed
-consumers is PUBLIC", would refuse roughly 1400 targets.
+is wide open.
+
+The honest form is "no library target outside its face's allowed consumers is
+PUBLIC", and the size of that migration is **475 `rust_library` targets**. The
+1437 figure is an occurrence count spread across 475 library, 56 binary and
+793 test targets, so it is not the number of targets that would need scoping;
+475 is.
 
 That is a migration, not a gate. It must also be sequenced per capability
 rather than swept: oyatie's `occupancy` claims whole files across open PRs

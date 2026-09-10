@@ -808,23 +808,22 @@ pub const MIGRATION_LEDGER: &[MigrationEntry] = &[
         component: "toolchain",
         verdict: Verdict::Migrating,
         confidence: Confidence::Verified,
-        oyatie_counterpart: "no counterpart: oyatie pins a channel and declares an MSRV, and nothing reads either",
+        oyatie_counterpart: "no counterpart: oyatie pins a channel in many places and nothing reconciles them",
         counterpart_loc: 0,
-        evidence: "PURE over two declared strings. MSRV and the toolchain channel are different \
-                   promises that move in opposite directions for opposite reasons: the channel \
-                   should chase stable, because every release carries soundness fixes and new \
-                   deny-by-default lints that become build breaks the day the pin moves; MSRV \
-                   should lag, because raising it strands consumers. Anvil declared 1.97.1 for \
-                   both while stable was 1.98.0 -- not a coincidence to tidy but the signature \
-                   of a pair nobody was managing, and nothing in the tree could tell. Equality \
-                   is therefore itself a finding rather than a consistency. Version ordering is \
-                   numeric because three-digit minors have arrived and 1.100.0 sorts before \
-                   1.98.0 as text. The lag budget is two trains rather than zero, because a \
-                   gate that fires every release Tuesday teaches readers to ignore it, and \
-                   latest-stable is passed in rather than fetched, because a verdict that \
-                   depends on network reachability is not deterministic and cannot run in a \
-                   hermetic build. Migrates because every repository pins a toolchain and \
-                   promises an MSRV.",
+        evidence: "PURE over one declared string. The pin is a single fact and every restatement \
+                   of it is drift waiting to happen: anvil carried eight copies of 1.98.0, seven \
+                   in workflow YAML and one in Rust source, plus a test asserting the literal -- \
+                   which fails when the pin moves and says nothing about whether the code carries \
+                   the right toolchain. A value stated once with something verifying it is a pin; \
+                   restated elsewhere it is a duplicate and must derive. The pin names ONE \
+                   compiler, an exact release or a dated nightly, never `stable`/`nightly`, which \
+                   are a different compiler each day and leave a bump nothing to move from. \
+                   Release ordering is numeric because 1.100.0 sorts before 1.98.0 as text; dated \
+                   nightlies order as ISO text, and nothing orders across the two kinds, because \
+                   moving between them is a decision rather than a drift. No MSRV is declared: \
+                   publish = false with no dependent means the promise had no counterparty and \
+                   no job ever built under it, and a promise nothing exercises is a claim. \
+                   Migrates because every repository pins a toolchain and restates it.",
     },
     MigrationEntry {
         component: "plan",

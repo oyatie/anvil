@@ -21,9 +21,18 @@ fn metadata_command_is_full_locked_offline_and_environment_cleared() {
         .get_envs()
         .collect::<std::collections::BTreeMap<_, _>>();
     assert!(environment.contains_key(std::ffi::OsStr::new("ANVIL_INTERNAL_NON_MODEL_ENV_CLEARED")));
+    // Read from disk, not quoted. A literal makes this a tripwire on a
+    // constant: it fails when the pin moves and says nothing about whether the
+    // command carries the right toolchain. The relationship is the assertion.
+    let declared = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rust-toolchain.toml"),
+    )
+    .expect("the repository declares a toolchain");
+    let declared = crate::toolchain::channel_text(&declared).expect("the channel is declared");
     assert_eq!(
         environment[std::ffi::OsStr::new("RUSTUP_TOOLCHAIN")],
-        Some(std::ffi::OsStr::new("1.98.0"))
+        Some(std::ffi::OsStr::new(declared)),
+        "the metadata command must spawn under the declared pin, not a copy of it"
     );
     assert_eq!(
         environment[std::ffi::OsStr::new("RUSTUP_AUTO_INSTALL")],

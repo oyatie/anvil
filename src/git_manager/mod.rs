@@ -5,61 +5,27 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 mod acquisition;
+mod clone_lock;
 pub mod diff_context;
 pub mod hook_liveness;
 mod repository_identity;
+mod staging;
 pub mod subject;
 pub mod worktree;
 
 use repository_identity::RepoIdentity;
 
+pub use clone_lock::CloneLock;
 pub use diff_context::PrDiffContext;
+pub use staging::stage_excluding_receipts;
 pub use subject::{CertifiedCheckout, CertifiedTree, SubjectRoot, Uncloned};
 pub use worktree::EphemeralWorktree;
-
-/// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes
-/// carries what the change produced, never Anvil's own bookkeeping
-/// (`.cursor/receipts` is the legacy location, still present in older
-/// checkouts).
-const ANVIL_OWNED_PATHS: &[&str] = &[
-    crate::attestation_guard::ANVIL_RECEIPTS_DIR,
-    ".cursor/receipts",
-];
-
-/// The `git add` that every Anvil staging site runs: stage the whole tree
-/// except Anvil's own bookkeeping.
-///
-/// Returns the built `Command` rather than its arguments. Four sites each
-/// spelled their own `["add", "-A"]` -- `certify.rs` did it sixteen lines under
-/// a comment saying it must never do that -- and only `QueueHealer` carried the
-/// exclusion, so three of them committed Anvil's receipt onto the pull request
-/// it had just written the receipt into. Handing back a `Vec` was not enough:
-/// a caller can take the arguments and pass `&args[..2]`, which is the bug
-/// again with the shared function's name on it.
-pub fn stage_excluding_receipts(repo_dir: &std::path::Path) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir).args(["add", "-A", "--", "."]);
-    for p in ANVIL_OWNED_PATHS {
-        cmd.arg(format!(":(exclude){p}"));
-    }
-    cmd
-}
 
 #[derive(Clone, Debug)]
 pub struct GitManager {
     repos_base_dir: PathBuf,
     worktrees_base_dir: PathBuf,
-    /// One lock per repository, guarding its shared clone's working tree.
-    ///
-    /// `Arc` because this type is `Clone`: a cloned manager with its own map
-    /// would hand out different locks for the same clone, which is a lock that
-    /// locks nothing. Sharing the map is what makes the guarantee survive the
-    /// derive.
-    clone_locks: std::sync::Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>,
-        >,
-    >,
+    clone_locks: clone_lock::CloneLocks,
 }
 
 impl GitManager {
@@ -68,48 +34,8 @@ impl GitManager {
         Self {
             repos_base_dir,
             worktrees_base_dir,
-            clone_locks: std::sync::Arc::new(tokio::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            )),
+            clone_locks: clone_lock::CloneLocks::default(),
         }
-    }
-
-    /// Exclusive use of a repository's shared clone WORKING TREE.
-    ///
-    /// `ensure_repo_cloned` makes one clone per repository and every consumer
-    /// shares it. `StateManager::acquire_pr_lock` serialises a pull request
-    /// against itself, which is a different question: two DIFFERENT pull
-    /// requests hold different PR locks and reach the same working tree.
-    ///
-    /// The fixer checks out `pr-<n>` there, writes model output over minutes,
-    /// then `add -A` and pushes `HEAD:<head_branch>`. Without this, #2's
-    /// checkout can land between #1's checkout and #1's commit, and #1 pushes
-    /// #2's tree onto #1's branch. The head SHA cannot catch it -- the fixer
-    /// takes one and never reads it (`_head_sha`).
-    ///
-    /// The lock lives here because this type owns the clone. A caller cannot
-    /// hold it correctly without knowing that, and a caller that forgets is
-    /// the defect.
-    ///
-    /// HOLD IT ACROSS THE WHOLE MUTATION: from before the checkout until after
-    /// the push. Releasing it earlier -- after the checkout, say -- leaves the
-    /// model turn and the commit unprotected, and that is the window that
-    /// matters, because it is minutes long.
-    ///
-    /// LOCK ORDER: pull request, then clone. Every caller already holds its PR
-    /// lock before reaching mutation, so taking these in the other order
-    /// anywhere would deadlock against them.
-    pub async fn lock_clone(&self, repo: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
-        let key = repo.to_lowercase();
-        if let Some(lock) = self.clone_locks.read().await.get(&key) {
-            return lock.clone();
-        }
-        self.clone_locks
-            .write()
-            .await
-            .entry(key)
-            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
     }
 
     /// An injective owner-qualified path; parsing is not watch-list authorization.
@@ -621,26 +547,6 @@ async fn lane_lease_unexpired(dir: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The exclusion has to name every path Anvil owns, not just the current
-    /// one: a checkout carried over from before the move still has the legacy
-    /// directory, and staging that is the same defect.
-    #[test]
-    fn the_staging_command_excludes_every_path_anvil_owns() {
-        let cmd = stage_excluding_receipts(Path::new("/tmp"));
-        let args: Vec<String> = cmd
-            .as_std()
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(&args[..4], &["add", "-A", "--", "."]);
-        for p in ANVIL_OWNED_PATHS {
-            assert!(
-                args.contains(&format!(":(exclude){p}")),
-                "{p} would be staged into somebody else's commit: {args:?}"
-            );
-        }
-    }
 
     #[tokio::test]
     async fn install_repo_hooks_writes_common_dir_and_leaves_hooks_path_unset() {

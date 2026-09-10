@@ -344,11 +344,19 @@ is not written down here on the strength of an expectation.
 - The `meta` unit kind is dropped. It enrolled zero units after the META_ROOTS
   revert and nothing noticed -- a declared kind that produces no findings and
   no failures reads exactly like one that found nothing wrong, which is this
-  document's own subject one level down. The test now asserts every
-  registry-backed kind resolves at least one unit.
+  document's own subject one level down. `every_discovering_kind_finds_units_in_an_oyatie_shaped_tree`
+  now asserts that per KIND rather than in total, so a spec with one working
+  and one broken discovering kind cannot pass on the working one.
 - `oyatie.shape.json` is reformatted by this change, so read the semantic diff
-  rather than the textual one: the marker, the `app` kind's members, the
-  registry path, `placement.steps` (8 → 10: three forbidden destinations
-  removed, four `meta_dir` steps added, the decision destination changed), and
-  two allowlist edits (`manifest.json` dropped from `allowed_unit_root_files`,
-  `bacon.toml` added to `root_files.rules`).
+  rather than the textual one. Measured key-by-key against `origin/dev`:
+
+  | key | change |
+  | --- | --- |
+  | `unit_kinds.capability.members` | `registry` → `faces` |
+  | `unit_kinds.app.members` | `discover:manifest.json` → `discover:OWNERS` |
+  | `unit_kinds.meta` | deleted |
+  | `unit_registry` | deleted |
+  | `skeletons.standard.unit_marker` | `manifest.json` → `OWNERS` |
+  | `placement.steps` | 8 → 10: three forbidden destinations removed, four `meta_dir` steps added, the decision destination changed |
+  | `skeletons.standard.allowed_unit_root_files` | `manifest.json` dropped |
+  | `root_files.rules` | `bacon.toml` added |

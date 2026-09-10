@@ -2,7 +2,7 @@
 //! fatal on its own, so a tenant fixes a spec in one round.
 
 use super::spec::{RuleMode, SCHEMA_V1, ShapeSpec};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub fn validate(spec: &ShapeSpec) -> Vec<String> {
     let mut problems = Vec::new();
@@ -43,20 +43,6 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
             | Ok(super::spec::MembersSource::RegistryMetaDirs) => needs_registry = true,
             Ok(super::spec::MembersSource::Discover { .. }) => {}
             Ok(super::spec::MembersSource::Faces) => {
-                // The face dir is the whole discriminator, so its FORM decides
-                // whether the kind matches anything: `core` also matches a
-                // file `core.rs`, and `/core/` matches nothing at all.
-                if let Some(skel) = spec.skeletons.get(&kind.skeleton) {
-                    for (face, dir) in &skel.faces {
-                        if dir.is_empty() || dir.starts_with('/') || !dir.ends_with('/') {
-                            problems.push(format!(
-                                "skeletons.{}.faces.{face} is {dir:?}; a face directory must be \
-                                 relative and end with '/', or it matches files, or nothing",
-                                kind.skeleton
-                            ));
-                        }
-                    }
-                }
                 // A faces-discovered kind whose skeleton names no faces has no
                 // discriminator: it enrols nothing and every rule then reports
                 // zero findings over zero units, which reads as conformance.
@@ -81,6 +67,23 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
     }
 
     for (skel_name, skel) in &spec.skeletons {
+        // Every skeleton, not only those a `faces` kind discovers on: face
+        // dirs drive `unit_missing_face` and `face_edge_denied` whatever
+        // enrolled the unit. See `unusable_face_dir`.
+        let mut seen_dirs: BTreeMap<&str, &str> = BTreeMap::new();
+        for (face, dir) in &skel.faces {
+            if let Some(reason) = unusable_face_dir(dir) {
+                problems.push(format!(
+                    "skeletons.{skel_name}.faces.{face} is {dir:?}: {reason}"
+                ));
+            }
+            if let Some(other) = seen_dirs.insert(dir.as_str(), face.as_str()) {
+                problems.push(format!(
+                    "skeletons.{skel_name}.faces.{face} and .{other} are both {dir:?}; \
+                     two faces sharing one directory can never be told apart"
+                ));
+            }
+        }
         let faces: BTreeSet<&str> = skel.faces.keys().map(String::as_str).collect();
         for f in &skel.required_faces {
             if !faces.contains(f.as_str()) {
@@ -181,4 +184,39 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
     }
 
     problems
+}
+
+/// Why a face directory cannot match, or `None` if it can.
+///
+/// Written against oyatie's own `invalid_git_path` rather than invented: empty,
+/// absolute, backslashes, and any `.`/`..`/empty segment. The trailing slash is
+/// this engine's own requirement -- `TreeSource::has_dir` takes a prefix ending
+/// in `/`, and without it the test degrades to a bare prefix match, so `core`
+/// also matches a file `core.rs` and invents a unit.
+///
+/// Each rejected form was executed against `discover_units` and produced either
+/// a phantom unit or none at all, with `validate` returning clean.
+fn unusable_face_dir(dir: &str) -> Option<&'static str> {
+    if dir.is_empty() {
+        return Some("a face directory may not be empty");
+    }
+    if dir.starts_with('/') {
+        return Some("a face directory must be relative to the unit root");
+    }
+    if dir.contains('\\') {
+        return Some("a face directory must use '/' separators");
+    }
+    if !dir.ends_with('/') {
+        return Some("a face directory must end with '/', or it matches files too");
+    }
+    // Trailing empty segment is the slash itself; every other one is a defect.
+    let mut segments: Vec<&str> = dir.split('/').collect();
+    segments.pop();
+    if segments
+        .iter()
+        .any(|s| s.is_empty() || *s == "." || *s == "..")
+    {
+        return Some("a face directory may not contain an empty, '.' or '..' segment");
+    }
+    None
 }

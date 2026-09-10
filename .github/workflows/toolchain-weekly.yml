@@ -46,28 +46,40 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       # Discovered, never hardcoded. A pin that names the answer cannot notice
-      # the answer changing, which is the whole failure this lane exists for.
-      - name: Resolve latest stable
-        uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
-        with:
-          toolchain: stable
-
-      - name: Compare the three numbers
+      # the answer changing, which is the whole failure this lane exists for --
+      # and this lane HAD that failure: it read `rustc --version` inside the
+      # repository, where rustup resolves the toolchain through
+      # rust-toolchain.toml, so it compared the pin against itself and reported
+      # `behind=no` forever. Measured on 2026-09-10: it printed "latest stable
+      # : 1.98.0" while stable had been 1.98.1 since 2026-09-03.
+      #
+      # The manifest is the authority no local file can override.
+      - name: Compare the pin against what the channel publishes
         id: compare
         run: |
-          set -eu
-          latest=$(rustc --version | cut -d' ' -f2)
+          set -euo pipefail
           channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)
-          msrv=$(sed -n 's/^rust-version *= *"\(.*\)".*/\1/p' Cargo.toml)
           edition=$(sed -n 's/^edition *= *"\(.*\)".*/\1/p' Cargo.toml)
-          echo "latest stable : ${latest}"
-          echo "pinned channel: ${channel}"
-          echo "declared MSRV : ${msrv}"
-          echo "edition       : ${edition}"
+          [ -n "$channel" ]
           [ "${edition}" = "2024" ] || { echo "edition must be 2024"; exit 1; }
+          # This repository pins a dated nightly; a release pin is a different
+          # decision and is not something this chore may make on its own.
+          case "$channel" in
+            nightly-*) ;;
+            *) echo "the pin ${channel} is not a dated nightly; this lane does not move between channel kinds" >&2; exit 1 ;;
+          esac
+          latest=nightly-$(curl -sSf --retry 3 https://static.rust-lang.org/dist/channel-rust-nightly.toml | sed -n 's/^date = "\(.*\)"/\1/p' | head -1)
+          [ "$latest" != "nightly-" ]
+          echo "pinned channel : ${channel}"
+          echo "latest nightly : ${latest}"
+          echo "edition        : ${edition}"
           echo "latest=${latest}" >> "$GITHUB_OUTPUT"
           echo "channel=${channel}" >> "$GITHUB_OUTPUT"
-          [ "${channel}" = "${latest}" ] && echo "behind=no" >> "$GITHUB_OUTPUT" || echo "behind=yes" >> "$GITHUB_OUTPUT"
+          if [ "${channel}" = "${latest}" ]; then
+            echo "behind=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "behind=yes" >> "$GITHUB_OUTPUT"
+          fi
 
       # New bumps use the existing probe/apply owner. An existing exact proposal
       # can be recovered without claiming a probe in this run. Both require
@@ -88,8 +100,8 @@ jobs:
             "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"|"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git") ;;
             *) echo "Unsupported checkout repository" >&2; exit 1 ;;
           esac
-          [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$CHANNEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$LATEST" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "$CHANNEL" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
           branch="chore/toolchain-${LATEST}"
           source_sha=$(git rev-parse HEAD)
           local_commit=""

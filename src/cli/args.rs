@@ -126,7 +126,7 @@ pub enum Commands {
         #[arg(long, default_value = ".", help = "Repository to bump")]
         repo_dir: PathBuf,
 
-        #[arg(long, help = "Target channel, e.g. 1.98.0")]
+        #[arg(long, help = "Target channel, e.g. nightly-2026-09-09")]
         to: String,
 
         #[arg(long, help = "Write the edit. Without it, the plan is printed only")]

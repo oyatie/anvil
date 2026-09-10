@@ -218,12 +218,20 @@ fn the_rule_can_tell_a_declared_grant_from_a_missing_one() {
     assert!(!grants_are_declared(&silent));
 }
 
+/// One App-token grant: the workflow, the job holding it, and the exact
+/// `permission-*` inputs that attenuate it.
+type Grant = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+);
+
 #[test]
 fn app_tokens_are_sha_pinned_repo_scoped_and_explicitly_attenuated() {
     // Every App-token grant in the tree, with its exact attenuation. A lane
     // that only files an issue has no business holding contents:write; what
     // may not vary is that a grant absent here fails the count assertion.
-    const GRANTS: &[(&str, &str, &[(&str, &str)])] = &[
+    const GRANTS: &[Grant] = &[
         (
             "promotion-open-next.yml",
             "open-next",

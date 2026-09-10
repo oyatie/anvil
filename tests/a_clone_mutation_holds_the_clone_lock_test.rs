@@ -16,6 +16,16 @@
 //! lets the guard drop still spells `locked_clone`, so this passes it. That
 //! extent is enforced instead by `LockedClone::run_git`, which borrows the
 //! guard across the await -- the evasion does not compile.
+//!
+//! KNOWN UNCOVERED, so that a green run here is not read as "every site". Two
+//! production writers of the shared clone are invisible to this scan because
+//! the acquisition and the mutating verbs sit in different function bodies:
+//! `PrSelfHealer::auto_heal_pr_branch` and `DocArchivalSweeper`, both reached
+//! from `cli/handlers.rs` where the clone is acquired and the verbs are not.
+//! Neither is fixed by taking this lock: they run as CLI subcommands, a
+//! different PROCESS, and an in-process mutex excludes nothing across
+//! processes. The upgrade is an advisory lock on the clone directory, named in
+//! `git_manager/clone_lock.rs`.
 
 use std::path::{Path, PathBuf};
 

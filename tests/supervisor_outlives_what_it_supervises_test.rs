@@ -72,25 +72,37 @@ fn the_doc_parity_probe_takes_all_three_deadlines_from_that_one_value() {
         code.contains("SupervisedTurn::bounded_at"),
         "the probe's budget is not a SupervisedTurn, so its deadlines can drift again"
     );
-    // Three, not two. The tool's own deadline used to be spelled here as
-    // `DOC_PARITY_PROBE.tool_arg()`; it is now derived inside
-    // `exec::agy_agent`, which this site hands the same budget. So all
-    // three deadlines still come from the one value, and the value is now
-    // written once per consumer rather than once per deadline: the watchdog,
-    // the argv builder, and the process bound.
+    // Two, not three, and the drop is the point. The tool's own deadline was
+    // spelled here as a third `DOC_PARITY_PROBE.supervisor()` handed to
+    // `agy_agent`. This site no longer picks a provider at all -- it names a
+    // stage -- so that argument moved into `ai_driver::run_stage_within`, where
+    // ONE capped value feeds both the process bound and the provider's own argv
+    // deadline. The value is written once per consumer, and there is now one
+    // fewer consumer here.
+    //
+    // Both remaining spellings are load-bearing: the watchdog's bound, and the
+    // cap handed to the chain so a tier declaring a longer timeout cannot
+    // outlive it.
     assert_eq!(
         code.matches("DOC_PARITY_PROBE.supervisor()").count(),
-        3,
+        2,
         "every deadline for this turn must come from the one value"
     );
     assert!(
-        code.contains("agy_agent("),
-        "agy must be told a deadline derived from the same value, which is what \
-         `agy_agent` does with the budget it is handed"
+        code.contains("run_stage_within("),
+        "the probe must hand the chain its budget, or a tier's declared timeout \
+         could outlive the watchdog that is supposed to bound it"
     );
-    // And that `agy_agent` really derives it is
-    // `agy_print_timeout_test::the_constructor_every_site_defers_to_passes_the_flag`,
-    // asserted there rather than restated here.
+    // That the chain really derives both deadlines from that cap is
+    // `the_declared_chain_is_the_dispatched_chain_test::
+    //  a_supplied_budget_bounds_the_whole_stage_not_each_attempt`,
+    // asserted there rather than restated here. It was named
+    // `..._caps_every_tier_and_reaches_the_provider` and this reference went
+    // stale when that test was renamed -- CAPPING EVERY TIER was the defect,
+    // not the property: one bound applied to each of five tiers is five times
+    // the bound. A cross-reference by name is not checked by anything, which
+    // is why the sentence below states the property rather than only pointing
+    // at it: the chain must apply the supplied budget to the STAGE.
     assert!(
         !code.contains("from_secs(30)"),
         "a hardcoded supervisor budget is back"

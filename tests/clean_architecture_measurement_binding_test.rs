@@ -51,5 +51,8 @@ fn ownership_uses_exact_roles_and_retains_alias_destinations() {
     assert!(compact_aliases.contains("self.local_alias_targets(target_kind,packages)?"));
     let declaration = module_source("src/source_scan/paths/module_graph/declaration/mod", root);
     assert!(declaration.contains("Ok(exact_role_evidence(measured))"));
-    assert!(declaration.contains("return all_contained_files(repo_root)"));
+    // An unmeasurable graph is propagated, not substituted: neither entry
+    // point may answer with a set it did not measure.
+    assert!(declaration.contains("module_roles_from_roots(repo_root, roots)?.roles"));
+    assert!(!declaration.contains("all_contained_files"));
 }

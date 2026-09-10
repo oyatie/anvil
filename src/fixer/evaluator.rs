@@ -1,6 +1,6 @@
 use crate::model_prompt::{HarnessText, ModelPrompt};
 use crate::reviewer::untrusted::{Untrusted, UntrustedLabel};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -140,32 +140,19 @@ pub fn extract_json_block(text: &str) -> String {
     text.to_string()
 }
 
-async fn run_agy(effort: &str, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
-    let budget = crate::exec::ExecClass::Model.timeout();
-    let cmd = crate::exec::agy_agent(
-        &crate::exec::Posture::in_workspace(working_dir),
-        effort,
-        budget,
-        None,
-    )?;
-    let turn = crate::exec::turn::run(cmd, prompt, budget, "agy evaluation")
-        .await
-        .context("Failed to run agy")?;
-    // `into_result` and not `turn.response`: preserve a failed or timed-out
-    // turn as an error rather than losing its status and trying to parse its
-    // empty response. Historically that parse failure fabricated a valid
-    // verdict for every review comment; invalid evaluations are now rejected.
-    let response = turn.into_result()?;
-    // An empty answer from a turn that exited zero is still no judgment. Reject
-    // it explicitly so absent evidence cannot be mistaken for a measurement
-    // or authorize edits (I1).
-    if response.trim().is_empty() {
-        anyhow::bail!(
-            "agy evaluation returned no output, so nothing judged these review \
-             comments; defaulting them to valid would fabricate the verdict"
-        );
-    }
-    Ok(response)
+async fn run_agy(_effort: &str, prompt: &ModelPrompt, working_dir: &Path) -> Result<String> {
+    // Judging whether a review comment warrants a fix is the CodeReviewAudit
+    // stage. `into_result` semantics are preserved inside `run_stage`: a failed
+    // or timed-out turn is an error, and a turn that exits zero with an empty
+    // answer is no judgment and moves to the next tier rather than being
+    // parsed into a verdict.
+    crate::ai_driver::run_stage(
+        crate::ai_driver::Stage::CodeReviewAudit,
+        prompt,
+        working_dir,
+        "fix evaluation",
+    )
+    .await
 }
 
 #[cfg(test)]

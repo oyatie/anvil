@@ -239,16 +239,12 @@ async fn main() -> Result<()> {
         git_mgr.clone(),
         github_client.clone(),
         merge_enlister.clone(),
-        config.agy_effort.clone(),
     ));
     let lockfile_reconciler = Arc::new(LockfileReconciler::new(
         git_mgr.clone(),
         github_client.clone(),
     ));
-    let ci_triager = Arc::new(CiTriager::new(
-        github_client.clone(),
-        config.agy_effort.clone(),
-    ));
+    let ci_triager = Arc::new(CiTriager::new(github_client.clone()));
     let metrics = Arc::new(anvil::metrics::PrometheusRegistry::new());
     let self_governor = Arc::new(anvil::self_governance::SelfGovernor::new());
     let telemetry_store =

@@ -294,3 +294,168 @@ fn a_non_ascii_path_inside_the_scope_is_allowed() {
     );
     let _ = fs::remove_dir_all(&d);
 }
+
+/// The producer half of the guardrail, end to end.
+///
+/// Every test above writes `.anvil/run-scope` itself. That is what let #206
+/// merge with the check inert: the hook read a file nothing in production
+/// wrote, so the branch below `if [ -f "$scope_file" ]` never executed in a
+/// real checkout, and the tests passed because they supplied the input
+/// production never would.
+///
+/// This one declares the scope the way a run does -- through
+/// `ai_driver::chain`, from `config/model-routing.toml` -- and then attempts
+/// the commit the guardrail exists to refuse.
+#[test]
+fn a_scope_declared_the_way_a_run_declares_it_refuses_an_out_of_scope_commit() {
+    let d = lab("producer");
+    // No hand-written scope file. The declaration comes from the same call the
+    // dispatcher makes, against the tracked routing table.
+    let scope = anvil::ai_driver::chain::declare_run_scope_for_test(
+        &d,
+        anvil::ai_driver::Stage::Implementation,
+    )
+    .expect("a run must be able to declare its scope");
+
+    let declared = fs::read_to_string(d.join(".anvil/run-scope")).expect("declaration on disk");
+    assert!(
+        declared.lines().any(|l| l.trim() == "src/"),
+        "implementation declares src/, and the file must say so: {declared:?}"
+    );
+
+    let out = commit(
+        &d,
+        &["outside.txt"],
+        "out of scope under a real declaration",
+    );
+    refused_for_scope(&out, "outside.txt");
+
+    // A refused commit leaves its paths staged, and the next `git add` would
+    // carry them into the following commit. Unstage so the in-scope case is
+    // testing the in-scope path and not the leftovers of the previous one.
+    git(&d, &["reset", "-q"]);
+
+    let ok = commit(&d, &["src/inside.txt"], "in scope under a real declaration");
+    assert!(
+        ok.status.success(),
+        "an in-scope path must still commit: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+
+    // And the declaration is run state, not repository state: it goes when the
+    // run does, so ordinary work sees no constraint.
+    drop(scope);
+    assert!(
+        !d.join(".anvil/run-scope").exists(),
+        "the declaration must not outlive the run that made it"
+    );
+    git(&d, &["reset", "-q"]);
+    let after = commit(&d, &["outside.txt"], "unconstrained once the run ends");
+    assert!(
+        after.status.success(),
+        "with no run in flight the check is absent, not permissive: {}",
+        String::from_utf8_lossy(&after.stderr)
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// A crash must not brick the workspace.
+///
+/// `create_new` is right about concurrency and was wrong about crashes. `Drop`
+/// does not run for SIGKILL, an OOM kill or a pulled plug, so a killed run left
+/// `.anvil/run-scope` behind and every later run in that checkout failed with
+/// "another run holds this workspace" -- true once, false from then on, and
+/// repairable only by knowing to delete a dotfile. There was no pid, no
+/// timestamp and no expiry, so nothing could tell the two apart.
+#[test]
+fn a_declaration_left_by_a_crashed_run_ages_out_instead_of_bricking_the_workspace() {
+    let d = lab("stale-scope");
+    fs::create_dir_all(d.join(".anvil")).unwrap();
+
+    // Exactly what a killed run leaves: the file, with its owner line, and no
+    // process behind it. The timestamp is far past any ceiling the table can
+    // produce.
+    fs::write(
+        d.join(".anvil/run-scope"),
+        "# anvil-run-scope pid=999999 started=1000000000\nsrc/\n",
+    )
+    .unwrap();
+
+    let scope = anvil::ai_driver::chain::declare_run_scope_for_test(
+        &d,
+        anvil::ai_driver::Stage::Implementation,
+    )
+    .expect("an abandoned declaration must age out, not refuse every later run forever");
+
+    let declared = fs::read_to_string(d.join(".anvil/run-scope")).expect("declaration on disk");
+    assert!(
+        declared.contains(&format!("pid={}", std::process::id())),
+        "the new declaration must be owned by THIS process, not the corpse it \
+         replaced: {declared:?}"
+    );
+
+    // Taking it over is not the same as ignoring it: the scope is real.
+    let out = commit(&d, &["outside.txt"], "out of scope after a takeover");
+    refused_for_scope(&out, "outside.txt");
+    drop(scope);
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// And a declaration that has NOT aged out is still refused, because the case
+/// the original `create_new` was right about is the common one.
+#[test]
+fn a_declaration_that_has_not_aged_out_still_holds_the_workspace() {
+    let d = lab("live-scope");
+    let held = anvil::ai_driver::chain::declare_run_scope_for_test(
+        &d,
+        anvil::ai_driver::Stage::Implementation,
+    )
+    .expect("the first run declares");
+
+    // `declare_run_scope_for_test` returns `impl Sized`, so the error is read
+    // out of the `Err` arm rather than through `expect_err`.
+    let msg = match anvil::ai_driver::chain::declare_run_scope_for_test(
+        &d,
+        anvil::ai_driver::Stage::Implementation,
+    ) {
+        Ok(_) => panic!("a live declaration must not be taken over"),
+        Err(e) => format!("{e:#}"),
+    };
+    assert!(
+        msg.contains(&format!("pid {}", std::process::id())),
+        "the refusal must name WHO holds it, or the reader cannot check whether \
+         that process is alive: {msg}"
+    );
+    assert!(
+        msg.contains("ages out after"),
+        "and must say how the workspace recovers if it is not: {msg}"
+    );
+    drop(held);
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// The owner line travels inside the declaration, so it has to be provably
+/// inert to the hook that reads it.
+///
+/// The hook skips column-zero `#` lines. If it did not, this line would be
+/// parsed as a path prefix -- and a prefix nothing matches is the harmless
+/// failure; a prefix that matches everything is not. This is the assertion that
+/// the metadata cannot widen a scope.
+#[test]
+fn the_owner_line_grants_nothing() {
+    let d = lab("owner-line");
+    fs::create_dir_all(d.join(".anvil")).unwrap();
+    // No real prefixes at all: the owner line is the whole declaration. If the
+    // hook read it as one, something would be permitted.
+    fs::write(
+        d.join(".anvil/run-scope"),
+        "# anvil-run-scope pid=1 started=1000000000\n",
+    )
+    .unwrap();
+    let out = commit(&d, &["src/inside.txt"], "nothing is in scope here");
+    refused_for_scope(&out, "src/inside.txt");
+    git(&d, &["reset", "-q"]);
+    let out = commit(&d, &["outside.txt"], "nor is this");
+    refused_for_scope(&out, "outside.txt");
+    let _ = fs::remove_dir_all(&d);
+}

@@ -76,10 +76,9 @@ fn a_spec_whose_marker_is_undemonstrated_is_named_rather_than_quiet() {
         if MARKER_NOT_DEMONSTRATED.contains(&tenant.as_str()) {
             continue;
         }
-        // On the FILE NAME. The earlier spelling asked whether the absolute
-        // path contained "anvil", and the repository directory is named anvil
-        // -- so every spec was "demonstrated" in every real checkout and in
-        // CI. The check passed while measuring nothing.
+        // On the tenant name. Asking whether the absolute path contained
+        // "anvil" matched the repository directory itself, so every spec was
+        // "demonstrated" in every real checkout and in CI.
         let demonstrated = MARKER_DEMONSTRATED.contains(&tenant.as_str());
         assert!(
             demonstrated,

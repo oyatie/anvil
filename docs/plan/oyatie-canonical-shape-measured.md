@@ -148,22 +148,49 @@ Each time the check was a lexical rule written inside Anvil, and each time it
 agreed with the guess. **oyatie's admissibility predicate is code, dispatched
 per root** (`layout.rs:201-209`), and every one of its four dot-roots carries a
 closed schema: `.config` admits one file, `.githooks` two, `.github` a fixed
-set, `.cargo` its own. Every non-dot root is a capability or forbidden.
+set, `.cargo` its own. Not every other root is a capability either:
+`META_ROOTS` (`layout.rs:131`), `BUILD_ROOT_DIRS` (`:70`) and `DATA_ROOTS`
+(`:134`) are none of the three, and `build/` and `third-party/` accept an
+arbitrary file — by being unconstrained, which is permissiveness rather than
+endorsement.
 
-So the registry has **no admissible home in oyatie today**, established two
-ways: the `oyatie` session enumerated the four schemas, and the review executed
-oyatie's own `layout_violations` against candidate paths with a control that
-returns `[]`. The spec still declares `.config/anvil/capability-registry.json`
--- the semantically right home for tool config -- and
-`tests/a_shipped_proposal_can_be_measured_test.rs` names it in
-`PATH_NOT_YET_ADMITTED` with the tenant change it needs, rather than Anvil
-inventing a fourth guess and a lexical rule that would agree with it. Its `unit_marker`, `manifest.json`,
-is also absent from every capability and product root: three files in the repo
-carry that exact name (a test fixture and two sovereignty packs), and a fourth,
-`client-manifest.json`, only ends with it.
+So the registry had **no blessed home in oyatie**, established two ways: the
+`oyatie` session enumerated the four dot-root schemas, and the review executed
+oyatie's own `layout_violations` against fifteen candidate paths with a control
+that returns `[]`.
 
-Both halves were unmoored, and the second fails quietly: a marker matching
-nothing discovers no units and yields a clean zero that reads as conformance.
+The spec's `unit_marker`, `manifest.json`, was absent from every capability and
+product root too: three files in the repo carry that exact name (a test fixture
+and two sovereignty packs), and a fourth, `client-manifest.json`, only ends
+with it. Both halves were unmoored, and the second fails quietly: a marker
+matching nothing discovers no units and yields a clean zero that reads as
+conformance.
+
+**The registry is deleted rather than relocated, and that is the resolution.**
+A fourth round asked what the file was *for*. It listed the 21 capabilities:
+
+```
+cd $OY && git ls-tree -r --name-only HEAD \
+  | awk -F/ 'NF>=3 && ($2=="core"||$2=="ports"||$2=="adapters"||$2=="facade"){print $1}' \
+  | sort -u | wc -l
+21          # and the hand-maintained list held the same 21
+```
+
+Identical. The file restated what the tree already says: a second source of
+truth, hand-edited on every new capability, silently wrong the first time
+somebody forgets, and checkable against nothing. The same defect as §1's
+standard, one directory down.
+
+`unit_kinds.capability` now uses `members: "faces"` — a unit is a directory
+holding at least one face the skeleton declares — and the registry, its
+fixture, the location question and the tenant schema change it needed are all
+gone. The measurement is unchanged. Pinning a single face (`discover:core/`)
+would have worked today and lost a capability the day it dropped that face,
+which is the silent zero again, so it was not taken.
+
+The three-refusal table above is kept as history because the shape of the
+mistake outlasts it: three rounds argued about where to put a file, and the
+question that dissolved it was whether the file needed to exist.
 
 The spec also declared three placement destinations — `kernel/`, `os/` and
 `governance/` — all in the same `FORBIDDEN_NAMES` list this document cites to
@@ -174,16 +201,14 @@ the same file is the defect this repository keeps producing. They are now
 
 ## 4. The corrected proposal, measured
 
-Corrections, each grounded in §2 rather than chosen: marker `manifest.json` →
-`OWNERS` (21/21 and 7/7); the `app` kind discovers on the same; the registry
-declares `.config/anvil/capability-registry.json` and is recorded as
-not-yet-admitted; three forbidden placement destinations replaced;
+Corrections, each grounded in §2 rather than chosen: capabilities derive from
+the faces the skeleton declares and the registry is deleted; the `app` kind
+discovers on `OWNERS` (7/7); three forbidden placement destinations replaced;
 `bacon.toml` admitted; the `meta` unit kind dropped.
 
 ```
 anvil shape measure --repo-dir $OY --rev b4556b57fbbe… --repo oyatie/oyatie \
-  --spec-override tests/fixtures/shape/oyatie.shape.json \
-  --registry tests/fixtures/shape/oyatie.capability-registry.json
+  --spec-override tests/fixtures/shape/oyatie.shape.json
 
 shape: oyatie/oyatie @ b4556b57fbbe (PROPOSED spec …/oyatie.shape.json)
   units: 28 (4 conformant)
@@ -282,17 +307,19 @@ is not written down here on the strength of an expectation.
    directories that do not exist, deferred to by four documents and enforced by
    nothing. Retiring or rewriting it is a decision; leaving it Accepted means
    the repository's canonical naming authority describes another repository.
-3. **Which root opens for tool config.** This is the ruling, and it is not a
-   path to pick. oyatie has no admissible home for a file like this: all four
-   dot-roots carry closed schemas (`.config` admits exactly
-   `.config/nextest.toml`), every non-dot root is a capability, and
-   `governance`, `specs`, `tools`, `libs`, `infra`, `plan`, `tests` are
-   forbidden. Three guesses were refused by three different rules. The question
-   is whether `validate_config_path` extends to admit `.config/anvil/`, or a
-   new root is admitted, or the registry lives somewhere already-permissive --
-   `build/` returns no violation today, but only because `build/` is
-   unconstrained, which is permissiveness rather than endorsement. Anvil cannot
-   settle this: the predicate is oyatie's code.
+3. ~~Which root opens for tool config.~~ **Struck: there is no file, so there
+   is no ruling.** Three rounds argued about where to put a list that restates
+   the tree. Deriving the capability set deleted the artifact, the question,
+   and the schema change oyatie would have had to make. Kept here because the
+   shape is worth more than the answer: a config location is a cost, and the
+   first question about one is whether the file needs to exist at all.
+
+   Measured while it was still live, and still true: oyatie has no *blessed*
+   home for tool config. All four dot-roots carry closed schemas (`.config`
+   admits exactly `.config/nextest.toml`); `build/` and `third-party/` accept
+   an arbitrary file only by being unconstrained. If a future tool genuinely
+   needs per-repo config, that is a schema decision for oyatie, taken on that
+   tool's merits rather than on Anvil's.
 
 ## 8. Open, and named rather than quiet
 

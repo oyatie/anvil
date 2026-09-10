@@ -24,6 +24,6 @@ pub use measure::measure;
 pub use placement::{DepFacts, PathFacts, Placement, RoleFacts, place};
 pub use profile::LanguageProfile;
 pub use report::{Finding, Fix, RuleId, ShapeDistance, ShapeReport, SpecSource, UnitConformance};
-pub use resolve::{DiscoveryRule, ResolvedSpec, ResolvedUnit, resolve};
+pub use resolve::{DiscoveryRule, Discriminator, ResolvedSpec, ResolvedUnit, resolve};
 pub use spec::{RuleMode, SCHEMA_V1, ShapeSpec, SpecError};
 pub use validate::validate;

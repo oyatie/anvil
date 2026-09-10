@@ -43,6 +43,20 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
             | Ok(super::spec::MembersSource::RegistryMetaDirs) => needs_registry = true,
             Ok(super::spec::MembersSource::Discover { .. }) => {}
             Ok(super::spec::MembersSource::Faces) => {
+                // The face dir is the whole discriminator, so its FORM decides
+                // whether the kind matches anything: `core` also matches a
+                // file `core.rs`, and `/core/` matches nothing at all.
+                if let Some(skel) = spec.skeletons.get(&kind.skeleton) {
+                    for (face, dir) in &skel.faces {
+                        if dir.is_empty() || dir.starts_with('/') || !dir.ends_with('/') {
+                            problems.push(format!(
+                                "skeletons.{}.faces.{face} is {dir:?}; a face directory must be \
+                                 relative and end with '/', or it matches files, or nothing",
+                                kind.skeleton
+                            ));
+                        }
+                    }
+                }
                 // A faces-discovered kind whose skeleton names no faces has no
                 // discriminator: it enrols nothing and every rule then reports
                 // zero findings over zero units, which reads as conformance.

@@ -48,6 +48,38 @@ fn the_gate_corpus_builds_the_tree_it_measures() {
     );
 }
 
+/// Gates that read the tree out of `diff_ctx` get the certified one too.
+///
+/// Half the corpus takes `repo_dir` explicitly and half reads
+/// `diff_ctx.repo_working_dir`, which `prepare_pr_diff` sets to the shared
+/// clone. Rooting only the explicit half left `compliance_guard`,
+/// `clean_architecture_guard`, `rust_language_policy` and the pre-merge
+/// evaluator still reading whichever pull request the fixer last touched --
+/// under a report signed for this head. Order matters as much as presence, so
+/// this asserts the rebinding precedes the first gate rather than merely
+/// appearing somewhere in the function.
+#[test]
+fn the_context_handed_to_the_gates_is_rooted_at_the_certified_tree() {
+    let src = module_source("src/webhook/pipelines/certify", repo());
+    let body = src
+        .split_once("pub async fn certify_pull_request")
+        .expect("the corpus entry point exists")
+        .1;
+
+    let rebind = body.find("repo_working_dir: tree.root()").expect(
+        "the corpus never re-roots `diff_ctx` at the certified tree, so every gate \
+             reading `diff_ctx.repo_working_dir` measures the shared clone",
+    );
+    let first_gate = body
+        .find("// 2.")
+        .expect("the gates follow the tree construction");
+    assert!(
+        rebind < first_gate,
+        "`diff_ctx` is re-rooted at the certified tree only AFTER a gate has already \
+         read it, so that gate measured the shared clone"
+    );
+}
+
 /// There is one way to make one, and it measures rather than asserts.
 #[test]
 fn a_certified_tree_can_only_come_from_a_rev_parse() {

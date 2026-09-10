@@ -15,7 +15,7 @@ pub mod worktree;
 
 use repository_identity::RepoIdentity;
 
-pub use clone_lock::CloneLock;
+pub use clone_lock::{CloneLock, LockedClone};
 pub use diff_context::PrDiffContext;
 pub use staging::stage_excluding_receipts;
 pub use subject::{CertifiedCheckout, CertifiedTree, SubjectRoot, Uncloned};

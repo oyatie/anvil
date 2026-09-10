@@ -1,8 +1,10 @@
 //! Exclusive use of a repository's shared clone working tree.
 
+use anyhow::Result;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
 /// The map [`super::GitManager`] carries.
 ///
@@ -37,9 +39,16 @@ impl super::GitManager {
     /// model turn and the commit unprotected, and that is the window that
     /// matters, because it is minutes long.
     ///
-    /// LOCK ORDER: pull request, then clone. Every caller already holds its PR
-    /// lock before reaching mutation, so taking these in the other order
-    /// anywhere would deadlock against them.
+    /// LOCK ORDER: pull request, then clone, wherever both are held. Not every
+    /// caller holds a PR lock -- `reconcile_pr` reaches mutation from the CLI
+    /// and the manual webhook handlers without one -- so the rule is about
+    /// order, never about a PR lock being present.
+    ///
+    /// CEILING: this is an in-process mutex over a filesystem resource. A
+    /// second Anvil process on the same clone -- the CLI subcommands behind
+    /// `PrSelfHealer` and `DocArchivalSweeper` are exactly that -- shares the
+    /// working tree and not the map, so it is not excluded. An advisory lock
+    /// on the clone directory is the upgrade if that ever bites.
     pub async fn lock_clone(&self, repo: &str) -> CloneLock {
         let key = repo.to_lowercase();
         if let Some(lock) = self.clone_locks.read().await.get(&key) {
@@ -51,5 +60,50 @@ impl super::GitManager {
             .entry(key)
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+}
+
+/// A repository's clone, and exclusive use of it, inseparably.
+///
+/// The two-step spelling -- `ensure_repo_cloned` for the path, `lock_clone`
+/// for the lock -- lets a caller take the path and skip the lock, and that
+/// omission is invisible: the code compiles, the tests pass, and the damage
+/// only appears when two pull requests overlap in production. Handing back a
+/// value that owns the guard removes the unlocked spelling instead of asking
+/// callers to remember.
+///
+/// The guard is released when this is dropped, so hold it for the whole
+/// mutation -- see [`super::GitManager::lock_clone`] for why that matters.
+pub struct LockedClone {
+    root: super::SubjectRoot,
+    _guard: OwnedMutexGuard<()>,
+}
+
+impl LockedClone {
+    pub fn root(&self) -> &super::SubjectRoot {
+        &self.root
+    }
+
+    pub fn as_path(&self) -> &Path {
+        self.root.as_path()
+    }
+}
+
+impl AsRef<Path> for LockedClone {
+    fn as_ref(&self) -> &Path {
+        self.as_path()
+    }
+}
+
+impl super::GitManager {
+    /// The clone, already locked. Prefer this to `ensure_repo_cloned` plus
+    /// [`Self::lock_clone`] at any site that mutates the working tree.
+    pub async fn locked_clone(&self, repo: &str) -> Result<LockedClone> {
+        let root = self.ensure_repo_cloned(repo).await?;
+        let guard = self.lock_clone(repo).await.lock_owned().await;
+        Ok(LockedClone {
+            root,
+            _guard: guard,
+        })
     }
 }

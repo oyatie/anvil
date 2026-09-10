@@ -20,8 +20,10 @@ pub struct ResolvedUnit {
 pub struct DiscoveryRule {
     pub kind: String,
     pub root_pattern: String,
+    /// Empty when `by_faces` is set: the skeleton's faces are the discriminator.
     pub marker: String,
     pub skeleton: String,
+    pub by_faces: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +53,14 @@ pub fn resolve(
                 root_pattern: kind.root.clone(),
                 marker,
                 skeleton: kind.skeleton.clone(),
+                by_faces: false,
+            }),
+            MembersSource::Faces => discovery.push(DiscoveryRule {
+                kind: kind_name.clone(),
+                root_pattern: kind.root.clone(),
+                marker: String::new(),
+                skeleton: kind.skeleton.clone(),
+                by_faces: true,
             }),
             MembersSource::Registry | MembersSource::RegistryMetaDirs => {
                 let reg_ref = spec

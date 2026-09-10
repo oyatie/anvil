@@ -167,7 +167,10 @@ fn registry_backed_units_resolve_from_the_tenant_registry() {
 
 #[test]
 fn a_registry_backed_spec_without_a_registry_document_is_not_guessed() {
-    let spec = ShapeSpec::parse(&fixture("oyatie.shape.json")).unwrap();
+    // On the inline spec: no shipped tenant proposal is registry-backed any
+    // more, and this is engine behaviour (ADR-0006 §4), not a property of
+    // anyone's proposal.
+    let spec = ShapeSpec::parse(&spec_with_every_members_source()).unwrap();
     match resolve(&spec, None) {
         Err(SpecError::Registry(msg)) => assert!(msg.contains("no registry document"), "{msg}"),
         other => panic!("must refuse to invent units, got {other:?}"),

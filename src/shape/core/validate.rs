@@ -42,6 +42,22 @@ pub fn validate(spec: &ShapeSpec) -> Vec<String> {
             Ok(super::spec::MembersSource::Registry)
             | Ok(super::spec::MembersSource::RegistryMetaDirs) => needs_registry = true,
             Ok(super::spec::MembersSource::Discover { .. }) => {}
+            Ok(super::spec::MembersSource::Faces) => {
+                // A faces-discovered kind whose skeleton names no faces has no
+                // discriminator: it enrols nothing and every rule then reports
+                // zero findings over zero units, which reads as conformance.
+                if spec
+                    .skeletons
+                    .get(&kind.skeleton)
+                    .is_some_and(|s| s.faces.is_empty())
+                {
+                    problems.push(format!(
+                        "unit_kinds.{kind_name}.members is \"faces\" but skeleton {:?} \
+                         declares none, so the kind would enrol nothing",
+                        kind.skeleton
+                    ));
+                }
+            }
         }
     }
     if needs_registry && spec.unit_registry.is_none() {

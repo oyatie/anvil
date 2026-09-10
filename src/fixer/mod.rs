@@ -57,36 +57,33 @@ impl Fixer {
             return Ok(None);
         }
 
-        let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
+        // Locked for the whole mutation -- checkout, model turn, commit,
+        // push. `locked_clone` is the only spelling that hands back the path,
+        // so the lock cannot be skipped here.
+        let clone = self.git_mgr.locked_clone(repo).await?;
+        let repo_dir = clone.root();
 
         // Ensure PR branch is checked out
-        let mut fetch_cmd = Command::new("git");
-        fetch_cmd.current_dir(&repo_dir).args([
-            "fetch",
-            "origin",
-            &format!("pull/{}/head", pr_number),
-            "--force",
-        ]);
-        let _ = crate::exec::run_bounded(
-            fetch_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git fetch pull head",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                [
+                    "fetch",
+                    "origin",
+                    &format!("pull/{}/head", pr_number),
+                    "--force",
+                ],
+                crate::exec::ExecClass::Vcs,
+                "git fetch pull head",
+            )
+            .await;
 
-        let mut checkout_cmd = Command::new("git");
-        checkout_cmd.current_dir(&repo_dir).args([
-            "checkout",
-            "-B",
-            &format!("pr-{}", pr_number),
-            "FETCH_HEAD",
-        ]);
-        let _ = crate::exec::run_bounded(
-            checkout_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git checkout PR branch",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                ["checkout", "-B", &format!("pr-{}", pr_number), "FETCH_HEAD"],
+                crate::exec::ExecClass::Vcs,
+                "git checkout PR branch",
+            )
+            .await;
 
         info!(
             "Evaluating {} review feedback items for {}#{} on branch {}",
@@ -98,7 +95,7 @@ impl Fixer {
 
         // Step 1: Evaluate signals (Valid Issue vs. False Signal)
         let eval_result =
-            evaluator::evaluate_feedback_items(repo, &repo_dir, feedback_items, &self.agy_effort)
+            evaluator::evaluate_feedback_items(repo, repo_dir, feedback_items, &self.agy_effort)
                 .await?;
 
         let mut valid_items = Vec::new();
@@ -148,15 +145,15 @@ impl Fixer {
 
         // Step 3: Apply code fixes using Antigravity
         self.engine
-            .apply_code_fixes(repo, &repo_dir, &valid_items)
+            .apply_code_fixes(repo, repo_dir, &valid_items)
             .await?;
 
         // Step 4: Run local verification gate (tests/typecheck)
-        let test_ok = self.engine.run_test_verification_gate(&repo_dir).await?;
+        let test_ok = self.engine.run_test_verification_gate(repo_dir).await?;
         if !test_ok {
             warn!("Test gate reported failures. Attempting self-correction with Antigravity...");
-            self.engine.attempt_self_correction(&repo_dir).await?;
-            let retest_ok = self.engine.run_test_verification_gate(&repo_dir).await?;
+            self.engine.attempt_self_correction(repo_dir).await?;
+            let retest_ok = self.engine.run_test_verification_gate(repo_dir).await?;
             if !retest_ok {
                 // Previously this only warned "Proceeding with caution" and then
                 // committed and pushed anyway, so the verification gate never
@@ -174,7 +171,7 @@ impl Fixer {
         // Step 5: Check git status, commit, and push
         let mut status_cmd = Command::new("git");
         status_cmd
-            .current_dir(&repo_dir)
+            .current_dir(repo_dir)
             .args(["status", "--porcelain"]);
         let status_out =
             crate::exec::run_bounded(status_cmd, crate::exec::ExecClass::Quick, "git status")
@@ -193,7 +190,7 @@ impl Fixer {
         // `repo_dir` is the clone `review.rs` stamps the lane receipt into, so
         // a bare sweep here committed Anvil's own bookkeeping onto the pull
         // request it was fixing.
-        let add_cmd = crate::git_manager::stage_excluding_receipts(&repo_dir);
+        let add_cmd = crate::git_manager::stage_excluding_receipts(repo_dir);
         let _ = crate::exec::run_bounded(add_cmd, crate::exec::ExecClass::Quick, "git add (fixer)")
             .await;
 
@@ -207,14 +204,14 @@ impl Fixer {
             valid_items.len()
         );
 
-        let mut commit_cmd = Command::new("git");
-        commit_cmd
-            .current_dir(&repo_dir)
-            .args(["commit", "-m", &commit_msg]);
-        let commit_out =
-            crate::exec::run_bounded(commit_cmd, crate::exec::ExecClass::Quick, "git commit")
-                .await
-                .context("Failed to create fix commit")?;
+        let commit_out = clone
+            .run_git(
+                ["commit", "-m", &commit_msg],
+                crate::exec::ExecClass::Quick,
+                "git commit",
+            )
+            .await
+            .context("Failed to create fix commit")?;
 
         if !commit_out.status.success() {
             let err = String::from_utf8_lossy(&commit_out.stderr);
@@ -222,7 +219,7 @@ impl Fixer {
         }
 
         let mut sha_cmd = Command::new("git");
-        sha_cmd.current_dir(&repo_dir).args(["rev-parse", "HEAD"]);
+        sha_cmd.current_dir(repo_dir).args(["rev-parse", "HEAD"]);
         let sha_out =
             crate::exec::run_bounded(sha_cmd, crate::exec::ExecClass::Quick, "git rev-parse HEAD")
                 .await?;
@@ -235,14 +232,14 @@ impl Fixer {
 
         info!("Pushing fix to origin branch {}...", head_branch);
         let push_target = format!("HEAD:{}", head_branch);
-        let mut push_cmd = Command::new("git");
-        push_cmd
-            .current_dir(&repo_dir)
-            .args(["push", "origin", &push_target]);
-        let push_out =
-            crate::exec::run_bounded(push_cmd, crate::exec::ExecClass::Vcs, "git push fix commit")
-                .await
-                .context("Failed to execute git push")?;
+        let push_out = clone
+            .run_git(
+                ["push", "origin", &push_target],
+                crate::exec::ExecClass::Vcs,
+                "git push fix commit",
+            )
+            .await
+            .context("Failed to execute git push")?;
 
         if !push_out.status.success() {
             let err = String::from_utf8_lossy(&push_out.stderr);

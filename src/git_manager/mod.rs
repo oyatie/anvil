@@ -5,50 +5,27 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 mod acquisition;
+mod clone_lock;
 pub mod diff_context;
 pub mod hook_liveness;
 mod repository_identity;
+mod staging;
 pub mod subject;
 pub mod worktree;
 
 use repository_identity::RepoIdentity;
 
+pub use clone_lock::{CloneLock, LockedClone};
 pub use diff_context::PrDiffContext;
-pub use subject::{CertifiedTree, SubjectRoot, Uncloned};
+pub use staging::stage_excluding_receipts;
+pub use subject::{CertifiedCheckout, CertifiedTree, SubjectRoot, Uncloned};
 pub use worktree::EphemeralWorktree;
-
-/// Paths Anvil writes into somebody else's checkout. A commit Anvil pushes
-/// carries what the change produced, never Anvil's own bookkeeping
-/// (`.cursor/receipts` is the legacy location, still present in older
-/// checkouts).
-const ANVIL_OWNED_PATHS: &[&str] = &[
-    crate::attestation_guard::ANVIL_RECEIPTS_DIR,
-    ".cursor/receipts",
-];
-
-/// The `git add` that every Anvil staging site runs: stage the whole tree
-/// except Anvil's own bookkeeping.
-///
-/// Returns the built `Command` rather than its arguments. Four sites each
-/// spelled their own `["add", "-A"]` -- `certify.rs` did it sixteen lines under
-/// a comment saying it must never do that -- and only `QueueHealer` carried the
-/// exclusion, so three of them committed Anvil's receipt onto the pull request
-/// it had just written the receipt into. Handing back a `Vec` was not enough:
-/// a caller can take the arguments and pass `&args[..2]`, which is the bug
-/// again with the shared function's name on it.
-pub fn stage_excluding_receipts(repo_dir: &std::path::Path) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_dir).args(["add", "-A", "--", "."]);
-    for p in ANVIL_OWNED_PATHS {
-        cmd.arg(format!(":(exclude){p}"));
-    }
-    cmd
-}
 
 #[derive(Clone, Debug)]
 pub struct GitManager {
     repos_base_dir: PathBuf,
     worktrees_base_dir: PathBuf,
+    clone_locks: clone_lock::CloneLocks,
 }
 
 impl GitManager {
@@ -57,6 +34,7 @@ impl GitManager {
         Self {
             repos_base_dir,
             worktrees_base_dir,
+            clone_locks: clone_lock::CloneLocks::default(),
         }
     }
 
@@ -569,26 +547,6 @@ async fn lane_lease_unexpired(dir: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The exclusion has to name every path Anvil owns, not just the current
-    /// one: a checkout carried over from before the move still has the legacy
-    /// directory, and staging that is the same defect.
-    #[test]
-    fn the_staging_command_excludes_every_path_anvil_owns() {
-        let cmd = stage_excluding_receipts(Path::new("/tmp"));
-        let args: Vec<String> = cmd
-            .as_std()
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(&args[..4], &["add", "-A", "--", "."]);
-        for p in ANVIL_OWNED_PATHS {
-            assert!(
-                args.contains(&format!(":(exclude){p}")),
-                "{p} would be staged into somebody else's commit: {args:?}"
-            );
-        }
-    }
 
     #[tokio::test]
     async fn install_repo_hooks_writes_common_dir_and_leaves_hooks_path_unset() {

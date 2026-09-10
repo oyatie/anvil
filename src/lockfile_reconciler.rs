@@ -30,40 +30,39 @@ impl LockfileReconciler {
             .github_client
             .fetch_pr_metadata(repo, pr_number)
             .await?;
-        let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
+        // Same shared working tree as the fixer, and the same window: this
+        // checks out `pr-<n>`, rewrites the lockfile, commits and pushes.
+        let clone = self.git_mgr.locked_clone(repo).await?;
+        let repo_dir = clone.root();
 
         // Checkout PR branch
-        let mut fetch_cmd = Command::new("git");
-        fetch_cmd.current_dir(&repo_dir).args([
-            "fetch",
-            "origin",
-            &format!("pull/{}/head", pr_number),
-            "--force",
-        ]);
-        let _ = crate::exec::run_bounded(
-            fetch_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git fetch pull head (lockfile reconciler)",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                [
+                    "fetch",
+                    "origin",
+                    &format!("pull/{}/head", pr_number),
+                    "--force",
+                ],
+                crate::exec::ExecClass::Vcs,
+                "git fetch pull head (lockfile reconciler)",
+            )
+            .await;
 
         let branch_name = format!("pr-{}", pr_number);
-        let mut checkout_cmd = Command::new("git");
-        checkout_cmd
-            .current_dir(&repo_dir)
-            .args(["checkout", "-B", &branch_name, "FETCH_HEAD"]);
-        let _ = crate::exec::run_bounded(
-            checkout_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git checkout -B (lockfile reconciler)",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                ["checkout", "-B", &branch_name, "FETCH_HEAD"],
+                crate::exec::ExecClass::Vcs,
+                "git checkout -B (lockfile reconciler)",
+            )
+            .await;
 
         // 1. Rust Cargo lockfile reconciliation
         if repo_dir.join("Cargo.toml").exists() {
             info!("Reconciling Cargo.lock in {:?}", repo_dir);
             let mut cargo_cmd = crate::exec::build_env::command("cargo");
-            cargo_cmd.current_dir(&repo_dir).args(["check", "--quiet"]);
+            cargo_cmd.current_dir(repo_dir).args(["check", "--quiet"]);
             let _ = crate::exec::run_bounded(
                 cargo_cmd,
                 crate::exec::ExecClass::Build,
@@ -76,7 +75,7 @@ impl LockfileReconciler {
         if repo_dir.join("package.json").exists() {
             info!("Reconciling package-lock.json in {:?}", repo_dir);
             let mut npm_cmd = crate::exec::build_env::command("npm");
-            npm_cmd.current_dir(&repo_dir).args([
+            npm_cmd.current_dir(repo_dir).args([
                 "install",
                 "--package-lock-only",
                 "--ignore-scripts",
@@ -96,7 +95,7 @@ impl LockfileReconciler {
             info!("Reconciling documentation manifest in {:?}", repo_dir);
             let mut node_cmd = crate::exec::build_env::command("node");
             node_cmd
-                .current_dir(&repo_dir)
+                .current_dir(repo_dir)
                 .arg("scripts/console/generate-documentation-manifest.mjs");
             let _ = crate::exec::run_bounded(
                 node_cmd,
@@ -111,7 +110,7 @@ impl LockfileReconciler {
             info!("Reconciling ADR index in {:?}", repo_dir);
             let mut node_cmd = crate::exec::build_env::command("node");
             node_cmd
-                .current_dir(&repo_dir)
+                .current_dir(repo_dir)
                 .arg("scripts/console/generate-adr-index.mjs");
             let _ = crate::exec::run_bounded(
                 node_cmd,
@@ -124,7 +123,7 @@ impl LockfileReconciler {
         // 4. Check for modified files
         let mut status_cmd = Command::new("git");
         status_cmd
-            .current_dir(&repo_dir)
+            .current_dir(repo_dir)
             .args(["status", "--porcelain"]);
         let status_out = crate::exec::run_bounded(
             status_cmd,
@@ -156,7 +155,7 @@ impl LockfileReconciler {
 
         for file in &reconciled_files {
             let mut add_cmd = Command::new("git");
-            add_cmd.current_dir(&repo_dir).args(["add", file]);
+            add_cmd.current_dir(repo_dir).args(["add", file]);
             let _ = crate::exec::run_bounded(
                 add_cmd,
                 crate::exec::ExecClass::Quick,
@@ -169,30 +168,24 @@ impl LockfileReconciler {
             "chore(deps): auto-reconcile lockfiles and documentation ledgers on PR #{}",
             pr_number
         );
-        let mut commit_cmd = Command::new("git");
-        commit_cmd
-            .current_dir(&repo_dir)
-            .args(["commit", "-m", &commit_msg]);
-        let _ = crate::exec::run_bounded(
-            commit_cmd,
-            crate::exec::ExecClass::Quick,
-            "git commit (lockfile reconciler)",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                ["commit", "-m", &commit_msg],
+                crate::exec::ExecClass::Quick,
+                "git commit (lockfile reconciler)",
+            )
+            .await;
 
         // Never push to a branch that belongs to a fork; see github::fork_guard.
         crate::github::fork_guard::ensure_push_allowed(repo, pr_number, meta.is_cross_repository)?;
         let push_target = format!("HEAD:{}", meta.head_ref_name);
-        let mut push_cmd = Command::new("git");
-        push_cmd
-            .current_dir(&repo_dir)
-            .args(["push", "origin", &push_target]);
-        let push_out = crate::exec::run_bounded(
-            push_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git push (lockfile reconciler)",
-        )
-        .await?;
+        let push_out = clone
+            .run_git(
+                ["push", "origin", &push_target],
+                crate::exec::ExecClass::Vcs,
+                "git push (lockfile reconciler)",
+            )
+            .await?;
 
         if push_out.status.success() {
             info!(

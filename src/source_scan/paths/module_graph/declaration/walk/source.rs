@@ -1,5 +1,6 @@
-use super::{
-    LexicalContext, Roles, Seen, Symbols, modules, scan_expression_for_classification, visit_items,
+use super::{LexicalContext, Roles, Seen, Symbols, modules, visit_items};
+use crate::source_scan::paths::module_graph::dependencies::{
+    scan_expression_syntax, scan_test_scope_expression,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -50,7 +51,11 @@ pub(super) fn parse_and_visit(
             path.display()
         )
     })?;
-    let (syntax, _) = scan_expression_for_classification(&expression, scope, symbols, lexical);
+    let syntax = if inherited_test {
+        scan_test_scope_expression(&expression, scope, symbols, lexical)
+    } else {
+        scan_expression_syntax(&expression, path, scope, symbols, lexical)?
+    };
     modules::visit_syntax(
         syntax.modules,
         syntax.includes,

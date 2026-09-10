@@ -48,7 +48,10 @@ shipped proposal now does.
 3. A spec that refers to a registry (`unit_registry`) reads it by JSON pointer
    and key; Anvil never copies the registry. Proposals that would change the
    registry (a satellite key, the SLO location) are opened as PRs to its
-   owner (plan §27.4).
+   owner. (This cited "plan §27.4", which does not exist -- the roadmap has
+   §1-§8 and `27.4` appears nowhere under `docs/plan/`. Struck rather than
+   repointed, since the sentence stands without a citation. #198's own class,
+   found in the file amending it.)
 4. Unknown keys are errors. A rule the spec does not declare is not run. A
    spec that needs a registry it was not given resolves nothing rather than
    guessing.

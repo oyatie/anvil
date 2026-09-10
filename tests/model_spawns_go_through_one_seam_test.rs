@@ -24,8 +24,43 @@ mod mixed_spawn_tests;
 mod qualified_attribute_tests;
 
 const PROVIDER_SEAM: &str = "src/exec/agent/provider.rs";
+/// Reviewed for #216. `provider.rs` gains `muse_agent` and `muse_args`, and
+/// nothing else in the file changes.
+///
+/// What this hash is protecting, checked in order:
+///
+/// - **Signature.** `muse_agent(posture, model, effort)` matches the shape of
+///   the other five: it takes a `Posture`, never a raw `Command`, and returns
+///   `Result<AgentCommand>` so a refusal is an error rather than a command that
+///   runs anyway.
+/// - **Validation flow.** `muse_args` calls `validate_model_selector` and
+///   `validate_effort` BEFORE building argv, so a rejected model or effort never
+///   reaches a vector. Both were already the gate for `agy_args`.
+/// - **Argv.** `exec --json --provider meta --model <m> --reasoning-effort <e>`.
+///
+///   CORRECTION. This comment previously claimed the ORDER is load-bearing and
+///   that `--model` is refused without `--provider meta`. Both are false. The
+///   second generalised one measurement past what it showed: what was measured
+///   was `--provider echo --model X`, where an INCOMPATIBLE provider is named.
+///   Measured again, three ways:
+///
+///   ```text
+///   muse exec --provider echo --model X  -> "--model requires --provider meta"
+///   muse exec --model X                  -> accepted; meta is the default
+///   muse exec --model X --provider meta  -> accepted; order irrelevant
+///   ```
+///
+///   `--provider meta` is still passed explicitly, because depending on a CLI
+///   default is depending on something nothing here pins -- but that is a
+///   choice, not a constraint the tool imposes, and the difference is the whole
+///   value of this comment.
+/// - **`--prompt-file` is NOT here.** It is appended by the transport once the
+///   prompt exists, because the path names a file that does not exist at
+///   construction time. That is the one place this provider differs from the
+///   others, and it is recorded in the transport census rather than hidden in
+///   argv built here.
 const EXPECTED_PROVIDER_SEAM_TOKEN_SHA256: &str =
-    "0d6dca38e9bcfbb71045dce507a1c6c89be2870eb238566849b1cc6a66e5b7a8";
+    "22492ed81c57fa69df65cae6acb279d7704c147a7c73b56132d7641d8c9eca49";
 const MODEL_TRANSPORT: &str = "src/exec/agent/transport.rs";
 const NON_MODEL_TRANSPORT: &str = "src/exec/non_model.rs";
 const CLIPPY_CONFIG: &str = "clippy.toml";
@@ -179,6 +214,20 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "trusted_provider_command_from",
         "command-new:std::process::Command::new:tool",
     ),
+    // `PromptFile`'s own accessors, unchanged except for their home: the writer
+    // moved out of `transport.rs` into `prompt_file.rs`, because the raw stdin
+    // seam is censused byte for byte and a file writer is not part of it. Two
+    // tuple-field reads, no new capability.
+    (
+        "src/exec/agent/prompt_file.rs",
+        "drop",
+        "raw-tuple-field:self.0",
+    ),
+    (
+        "src/exec/agent/prompt_file.rs",
+        "path",
+        "raw-tuple-field:self.0",
+    ),
     (
         "src/exec/agent/provider.rs",
         "",
@@ -255,6 +304,16 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "call:super::command:str:\"grok\"",
     ),
     (
+        "src/exec/agent/provider.rs",
+        "muse_agent",
+        "argv:cmd:args:args",
+    ),
+    (
+        "src/exec/agent/provider.rs",
+        "muse_agent",
+        "call:super::command:str:\"muse\"",
+    ),
+    (
         "src/exec/agent/transport.rs",
         "",
         "import:super::AgentCommand->AgentCommand",
@@ -274,11 +333,39 @@ const EXPECTED_AGENT_CAPABILITY_EVENTS: &[(&str, &str, &str)] = &[
         "",
         "type-alias:ReadTask",
     ),
+    // `deliver` appends `--prompt-file <path>` for `Framing::MusePromptFile`.
+    //
+    // This is a REAL widening: until now the transport chose a payload and
+    // never touched argv, and argv is the surface `ps` makes world-readable.
+    // It is admitted because the alternative is worse -- `muse exec` reads no
+    // prompt from STDIN (measured: "missing prompt") and refuses
+    // `--prompt-file /dev/stdin` as "not a regular file", so the only routes
+    // are a positional PROMPT, which puts contributor text directly in argv,
+    // or a file whose PATH goes in argv while the text does not. The path is
+    // to a 0600 file created with that mode, and the prompt itself never
+    // becomes an argument.
+    (
+        "src/exec/agent/transport.rs",
+        "deliver",
+        "argv:<non-path>:arg:<non-path>",
+    ),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver",
+        "argv:command:arg:str:\"--prompt-file\"",
+    ),
+    ("src/exec/agent/transport.rs", "deliver", "assign:guard"),
+    (
+        "src/exec/agent/transport.rs",
+        "deliver",
+        "command-method:command:arg",
+    ),
     (
         "src/exec/agent/transport.rs",
         "deliver",
         "destructure-agent:AgentCommand",
     ),
+    // `PromptFile`'s own accessors. A tuple field read, not a command mutator.
     (
         "src/exec/agent/transport.rs",
         "probe",
@@ -676,6 +763,13 @@ const RESERVED_TRUSTED_PATH_ROOTS: &[&str] = &[
     "tokio",
     "tracing",
 ];
+/// The executables anvil is permitted to run as a model provider.
+///
+/// This list IS the decision: `is_provider_program` refuses anything absent
+/// from it, so a name added here is a new binary the daemon may execute with a
+/// contributor's prompt on its stdin. That is why it is pinned separately from
+/// the argv and dataflow censuses -- those describe how a provider is invoked,
+/// this one decides which may be.
 const KNOWN_PROVIDERS: &[&str] = &[
     "agy",
     "claude",
@@ -684,6 +778,18 @@ const KNOWN_PROVIDERS: &[&str] = &[
     "cursor-agent",
     "gemini",
     "grok",
+    // Added for #216, and the one deliberate security decision in it.
+    //
+    // `muse` is an installed coding-agent CLI, resolved through the same
+    // `trusted_provider_command_from` PATH lookup as the others, run under the
+    // same `Posture` (cleared environment, allowlisted variables, workspace
+    // working directory). It gets no capability the existing six lack.
+    //
+    // The one difference is how the prompt reaches it, and it is a narrowing
+    // rather than a widening for argv: muse takes no prompt on stdin and
+    // refuses `/dev/stdin`, so the prompt is written to a 0600 file and only
+    // that PATH is passed as an argument. Contributor text never becomes argv.
+    "muse",
 ];
 const EXPECTED_RAW_STDIN_CALLS: &[(&str, &str, &str)] = &[
     (
@@ -904,6 +1010,24 @@ fn rust_sources(repository: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
         }
         if path.is_dir() {
             if path == repository.join(".git") || path == repository.join("target") {
+                continue;
+            }
+            // #218. A directory holding its own `.git` is a separate checkout,
+            // and this census claims to be CLOSED over this one. Anvil keeps
+            // agent worktrees under `.claude/worktrees/` and a `devtree`
+            // alongside; each contributed a full copy of every real site, and
+            // the reported set changed when worktrees were removed while
+            // nothing about the source under review did.
+            //
+            // The predicate lives in `anvil::source_scan`, which is where both
+            // `.git` forms are documented and pinned. Not `git ls-files`: an
+            // untracked file under `src/` is in scope for a closed census -- it
+            // compiles -- and a `.git` entry is the structural definition of a
+            // checkout rather than a proxy for one.
+            //
+            // The two lines above stay: they name the repository's OWN `.git`
+            // and `target`, neither of which this rule reaches.
+            if anvil::source_scan::is_separate_checkout(&path) {
                 continue;
             }
             rust_sources(repository, &path, out);
@@ -7907,6 +8031,71 @@ fn module_sources_cannot_escape_the_production_census() {
             Some(&scanned)
         )
         .is_empty()
+    );
+}
+
+/// #218. A checkout inside the tree contributes nothing to a closed census.
+///
+/// Anvil keeps agent worktrees under `.claude/worktrees/` and a `devtree`
+/// beside them. Each is a full copy of this repository, and the walk descended
+/// into every one: measured on a developer machine with 66 worktrees present,
+/// this census reported every real site once per checkout. Removing 32 of them
+/// changed the reported set while nothing about the source under review did.
+///
+/// The direction is inflation, which looks safe -- a census reporting too much
+/// fails closed. It stops being safe at the moment somebody quiets it, and the
+/// obvious quieting move, an exclusion for `.claude/worktrees/`, is one edit
+/// away from excluding a path that matters. It also passes in CI regardless,
+/// because CI checks out a clean tree, so the defect is invisible exactly where
+/// the census is trusted.
+///
+/// The fixture uses a `.git` FILE, which is what `git worktree add` writes
+/// (`gitdir: ...`). Measured in this checkout, every nested checkout present
+/// carries a `.git` file and not one is a directory -- an `is_dir` rule would
+/// have passed this test's `no_marker` half and still missed every real case.
+#[test]
+fn a_checkout_inside_the_repository_is_not_part_of_its_census() {
+    let fixture = tempfile::tempdir().unwrap();
+    let repository = fixture.path().to_path_buf();
+
+    let own = repository.join("src/own.rs");
+    let nested = repository.join("vendored");
+    let nested_source = nested.join("src/theirs.rs");
+    for path in [&own, &nested_source] {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "fn main() {}\n").unwrap();
+    }
+    // What makes a directory a checkout, written the way git writes it.
+    fs::write(
+        nested.join(".git"),
+        "gitdir: /somewhere/else/.git/worktrees/x\n",
+    )
+    .unwrap();
+
+    // Sorted at every comparison: `rust_sources` yields directory order, which
+    // is the filesystem's business and not this property's.
+    let mut paths = Vec::new();
+    rust_sources(&repository, &repository, &mut paths);
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![own.clone()],
+        "a nested checkout's source was counted as this repository's"
+    );
+
+    // And the exclusion turns on the marker, not on the directory's name or
+    // depth: without it the same tree yields both files. Without this half, a
+    // rule that had quietly stopped firing -- or one that skipped `vendored`
+    // for some unrelated reason -- would still pass the assertion above.
+    fs::remove_file(nested.join(".git")).unwrap();
+    let mut paths = Vec::new();
+    rust_sources(&repository, &repository, &mut paths);
+    paths.sort();
+    let mut both = vec![own, nested_source];
+    both.sort();
+    assert_eq!(
+        paths, both,
+        "the walk must reach both files once neither directory is a checkout"
     );
 }
 

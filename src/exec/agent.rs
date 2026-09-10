@@ -146,6 +146,13 @@ struct ProviderProbeCommand(Command);
 enum Framing {
     Plain,
     AgyStreamJson,
+    /// The prompt is written to a 0600 file and named by `--prompt-file`.
+    ///
+    /// `muse exec` reads no prompt from STDIN -- measured: piping one gives
+    /// "missing prompt" -- so it takes either a positional argument or a file.
+    /// Contributor text must never reach argv, which `ps` makes world-readable,
+    /// so the file is the only admissible seam.
+    MusePromptFile,
 }
 
 impl AgentCommand {
@@ -165,10 +172,11 @@ impl AgentCommand {
     }
 }
 
+mod prompt_file;
 mod provider;
 mod transport;
 pub(super) use provider::is_provider_program;
-pub use provider::{agy_agent, claude_agent, codex_agent, cursor_agent, grok_agent};
+pub use provider::{agy_agent, claude_agent, codex_agent, cursor_agent, grok_agent, muse_agent};
 pub(crate) use transport::ModelPromptPermit;
 
 /// Typed facade over the private transport. No raw command, prompt bytes,

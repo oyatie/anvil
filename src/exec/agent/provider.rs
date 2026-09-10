@@ -20,6 +20,7 @@ const PROVIDER_PROGRAMS: &[&str] = &[
     "cursor-agent",
     "gemini",
     "grok",
+    "muse",
 ];
 
 pub(in crate::exec) fn is_provider_program(program: &OsStr) -> bool {
@@ -90,6 +91,14 @@ pub fn grok_agent(posture: &Posture, model: &str) -> Result<AgentCommand> {
     Ok(cmd)
 }
 
+/// `muse exec`. Its prompt travels in a file; see `prompt_file` for why.
+pub fn muse_agent(posture: &Posture, model: &str, effort: &str) -> Result<AgentCommand> {
+    let args = muse_args(model, effort)?;
+    let mut cmd = super::command("muse", posture, Framing::MusePromptFile)?;
+    cmd.args(args);
+    Ok(cmd)
+}
+
 pub fn agy_agent(
     posture: &Posture,
     effort: &str,
@@ -137,6 +146,23 @@ fn grok_args(model: &str) -> Result<Vec<String>> {
         "/dev/stdin".into(),
         "--model".into(),
         model.into(),
+    ])
+}
+
+/// `--model` is refused without `--provider meta`. `--prompt-file` is appended
+/// by the transport, once the prompt exists.
+fn muse_args(model: &str, effort: &str) -> Result<Vec<String>> {
+    validate_model_selector(model)?;
+    validate_effort(effort)?;
+    Ok(vec![
+        "exec".into(),
+        "--json".into(),
+        "--provider".into(),
+        "meta".into(),
+        "--model".into(),
+        model.into(),
+        "--reasoning-effort".into(),
+        effort.into(),
     ])
 }
 

@@ -83,19 +83,101 @@ fn no_msrv_is_promised_because_nothing_would_hold_us_to_it() {
 }
 
 #[test]
-fn ci_installs_the_pinned_toolchain_not_stable() {
-    let ci = merge_path_text();
-    // rust-toolchain.toml is the pin. Repeating the version in YAML is a drift
-    // surface; dtolnay/rust-toolchain with no `toolchain:` input honours the file.
+fn every_workflow_installs_the_pinned_toolchain_and_nothing_else() {
+    // The pin is one fact. Every `toolchain:` input in every workflow is
+    // checked against it, not just the merge path and not just one match.
+    //
+    // The previous form asked whether the concatenated text of three files
+    // CONTAINED one occurrence of the pin, which a single matching copy
+    // satisfied -- so a different date in `nightly.yml` or
+    // `supply-chain-weekly.yml` passed the whole suite. The copies are the
+    // thing being policed; a check that stops at the first one polices nothing.
+    let dir = repo_root().join(".github/workflows");
     let channel = toolchain_channel();
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    let mut canary = Vec::new();
+
+    for entry in fs::read_dir(&dir).expect("workflows directory") {
+        let path = entry.expect("workflow entry").path();
+        if path.extension().is_none_or(|e| e != "yml") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let text = fs::read_to_string(&path).expect("workflow reads");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("workflow parses");
+        for (job, found) in toolchain_inputs(&doc) {
+            // The canary is the one lane that must NOT be on the pin: it runs
+            // ahead of it so a break is met before it is adopted. Named, and
+            // asserted below rather than skipped -- an exemption nothing checks
+            // is a hole, and this file exists because of holes like that.
+            if name == "toolchain-weekly.yml" && job.as_deref() == Some("nightly") {
+                canary.push(found);
+                continue;
+            }
+            checked += 1;
+            if found != channel {
+                wrong.push(format!("{name}: {job:?} toolchain: \"{found}\""));
+            }
+        }
+    }
+
+    assert_eq!(
+        canary,
+        vec!["nightly".to_string()],
+        "the canary lane must install floating `nightly`, which is what puts it \
+         ahead of the pin; on the pin it would measure what CI already measures"
+    );
+
     assert!(
-        ci.contains(&format!("toolchain: \"{channel}\"")),
-        "dtolnay/rust-toolchain@pinned SHA requires toolchain: \"{channel}\"; omitting it installs '' and rustup default becomes stable"
+        checked > 0,
+        "no `toolchain:` input was found in any workflow; this check would pass \
+         over a tree that installs whatever rustup defaults to"
     );
     assert!(
-        !ci.contains("toolchain: stable"),
-        "ci.yml must not install `stable`; rust-toolchain.toml is the pin"
+        wrong.is_empty(),
+        "every workflow must install the pinned channel {channel:?}; these do not: {wrong:?}. \
+         dtolnay/rust-toolchain at a pinned SHA needs the version named explicitly -- omitting \
+         it installs '' and rustup falls back to stable."
     );
+}
+
+/// Every `with.toolchain` value in a workflow, paired with the job holding it.
+fn toolchain_inputs(doc: &serde_yaml::Value) -> Vec<(Option<String>, String)> {
+    let mut found = Vec::new();
+    let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+        return found;
+    };
+    for (name, job) in jobs {
+        let job_name = name.as_str().map(str::to_string);
+        for pin in pins_within(job) {
+            found.push((job_name.clone(), pin));
+        }
+    }
+    found
+}
+
+fn pins_within(node: &serde_yaml::Value) -> Vec<String> {
+    let mut found = Vec::new();
+    match node {
+        serde_yaml::Value::Mapping(map) => {
+            for (key, value) in map {
+                if key.as_str() == Some("with")
+                    && let Some(pin) = value.get("toolchain").and_then(|v| v.as_str())
+                {
+                    found.push(pin.to_string());
+                }
+                found.extend(pins_within(value));
+            }
+        }
+        serde_yaml::Value::Sequence(items) => {
+            for item in items {
+                found.extend(pins_within(item));
+            }
+        }
+        _ => {}
+    }
+    found
 }
 
 #[test]

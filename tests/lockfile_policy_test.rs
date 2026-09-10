@@ -18,17 +18,12 @@ fn repo_root() -> PathBuf {
 fn toolchain_channel() -> String {
     let raw = fs::read_to_string(repo_root().join("rust-toolchain.toml"))
         .expect("rust-toolchain.toml must exist at the repo root");
-    raw.lines()
-        .find_map(|l| {
-            let l = l.trim();
-            l.strip_prefix("channel").map(|rest| {
-                rest.trim_start_matches([' ', '='])
-                    .trim()
-                    .trim_matches('"')
-                    .to_string()
-            })
-        })
+    // One parser. This was the last hand-rolled copy, and it diverged: on
+    // `channel = "..." # bumped weekly` its `trim_matches('"')` kept the
+    // trailing comment, which would have marked every workflow wrong.
+    anvil::toolchain::channel_text(&raw)
         .expect("rust-toolchain.toml must declare a channel")
+        .to_string()
 }
 
 #[test]
@@ -96,16 +91,25 @@ fn every_workflow_installs_the_pinned_toolchain_and_nothing_else() {
     let channel = toolchain_channel();
     let mut checked = 0;
     let mut wrong = Vec::new();
+    let mut missing = Vec::new();
     let mut canary = Vec::new();
 
     for entry in fs::read_dir(&dir).expect("workflows directory") {
         let path = entry.expect("workflow entry").path();
-        if path.extension().is_none_or(|e| e != "yml") {
+        // GitHub accepts `.yaml` equally; skipping it is an evasion nobody
+        // has used yet.
+        if !matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("yml" | "yaml")
+        ) {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let text = fs::read_to_string(&path).expect("workflow reads");
         let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("workflow parses");
+        for job in steps_without_a_named_toolchain(&doc) {
+            missing.push(format!("{name}: {job:?}"));
+        }
         for (job, found) in toolchain_inputs(&doc) {
             // The canary is the one lane that must NOT be on the pin: it runs
             // ahead of it so a break is met before it is adopted. Named, and
@@ -136,10 +140,53 @@ fn every_workflow_installs_the_pinned_toolchain_and_nothing_else() {
     );
     assert!(
         wrong.is_empty(),
-        "every workflow must install the pinned channel {channel:?}; these do not: {wrong:?}. \
-         dtolnay/rust-toolchain at a pinned SHA needs the version named explicitly -- omitting \
-         it installs '' and rustup falls back to stable."
+        "every workflow must install the pinned channel {channel:?}; these do not: {wrong:?}"
     );
+    // The message used to say an omitted input "installs '' and rustup falls
+    // back to stable", which this check could not see and which is not what
+    // the action does. Seeded: deleting the input entirely PASSED. So the
+    // omission is policed rather than described.
+    assert!(
+        missing.is_empty(),
+        "every dtolnay/rust-toolchain step must name the toolchain explicitly; these do not: \
+         {missing:?}. Without the input the action installs an empty toolchain and the \
+         resolved compiler is whatever the pin file or rustup default supplies -- which is \
+         the drift this file exists to catch."
+    );
+}
+
+/// Jobs with a `dtolnay/rust-toolchain` step that names no toolchain.
+///
+/// The version has to be explicit: with no input the action installs an empty
+/// toolchain, and what actually compiles is then decided by the pin file or the
+/// rustup default rather than by the workflow. Enumerating the values is not
+/// enough on its own -- a step that states nothing has no value to compare.
+fn steps_without_a_named_toolchain(doc: &serde_yaml::Value) -> Vec<Option<String>> {
+    let mut found = Vec::new();
+    let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+        return found;
+    };
+    for (name, job) in jobs {
+        let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+            continue;
+        };
+        for step in steps {
+            let uses = step
+                .get("uses")
+                .and_then(|u| u.as_str())
+                .unwrap_or_default();
+            if uses.starts_with("dtolnay/rust-toolchain@")
+                && step
+                    .get("with")
+                    .and_then(|w| w.get("toolchain"))
+                    .and_then(|t| t.as_str())
+                    .is_none()
+            {
+                found.push(name.as_str().map(str::to_string));
+            }
+        }
+    }
+    found
 }
 
 /// Every `with.toolchain` value in a workflow, paired with the job holding it.

@@ -91,6 +91,11 @@ impl GitManager {
     /// hold it correctly without knowing that, and a caller that forgets is
     /// the defect.
     ///
+    /// HOLD IT ACROSS THE WHOLE MUTATION: from before the checkout until after
+    /// the push. Releasing it earlier -- after the checkout, say -- leaves the
+    /// model turn and the commit unprotected, and that is the window that
+    /// matters, because it is minutes long.
+    ///
     /// LOCK ORDER: pull request, then clone. Every caller already holds its PR
     /// lock before reaching mutation, so taking these in the other order
     /// anywhere would deadlock against them.

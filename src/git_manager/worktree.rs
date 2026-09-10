@@ -78,28 +78,23 @@ impl EphemeralWorktree {
     /// is never checked out at the head under review -- so a filesystem read
     /// inside it is a read of this pull request rather than of whichever one
     /// the fixer last touched.
-    /// Takes `self` because the answer is only true while the worktree exists.
-    /// Returning a bare [`CertifiedTree`] let the worktree drop at the end of
-    /// the constructing expression, so the path was dead before the first gate
-    /// read it -- and it pointed at the shared clone anyway.
+    ///
+    /// Takes `self`, and returns a [`CertifiedCheckout`] that owns the
+    /// worktree, because the answer holds only while the worktree exists. A
+    /// bare [`CertifiedTree`] would let it drop at the end of the constructing
+    /// expression, leaving every gate a path to nothing.
     pub async fn verified_at(
         self,
         head_sha: &str,
     ) -> Result<crate::git_manager::CertifiedCheckout> {
-        // Explicit async cleanup on the failure path. `Drop` would also remove
-        // the worktree, but only through its synchronous fallback, which blocks
-        // the runtime; taking `self` moved the failure path here, so the
-        // teardown moved with it.
+        // Explicit, because `Drop` removes the worktree only through its
+        // synchronous fallback, which blocks the runtime.
         if let Err(error) = self.verify_at(head_sha).await {
             let _ = self.cleanup().await;
             return Err(error);
         }
-        // `worktree_path`, not `repo_dir`. This method's own doc says a gate
-        // taking a CertifiedTree cannot be given the shared clone, and it was
-        // handing over exactly that: `repo_dir` is the per-repository clone
-        // from `ensure_repo_cloned`, which is never checked out at the head
-        // under review. Every filesystem-reading gate measured whichever pull
-        // request the fixer last touched, and the report was signed over it.
+        // `worktree_path`, not `repo_dir`: the shared clone is never checked
+        // out at the head under review.
         let tree = crate::git_manager::CertifiedTree::proven(
             crate::git_manager::SubjectRoot::worktree(self.worktree_path.clone()),
             head_sha.to_string(),

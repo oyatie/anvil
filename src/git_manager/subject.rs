@@ -165,11 +165,10 @@ pub enum Uncloned {
 
 /// A [`CertifiedTree`] and the worktree that makes it true.
 ///
-/// The tree's path is only a fact while the worktree exists. `certified_tree_at`
-/// used to return the tree alone, so the `EphemeralWorktree` dropped at the end
-/// of that expression and `Drop` removed the directory before any gate ran --
-/// on top of the path naming the shared clone rather than the worktree. Holding
-/// both together makes the lifetime the compiler's problem instead of a comment's.
+/// The tree's path is only a fact while the worktree exists: `Drop` removes the
+/// directory. Returning the tree alone would let the worktree die at the end of
+/// the constructing expression, before any gate read the path. Holding both
+/// together makes that lifetime the compiler's problem rather than a comment's.
 pub struct CertifiedCheckout {
     _worktree: crate::git_manager::worktree::EphemeralWorktree,
     tree: CertifiedTree,

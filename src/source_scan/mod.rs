@@ -47,6 +47,8 @@ mod cfg;
 #[doc(hidden)]
 pub use cfg::Truth as CfgAvailability;
 pub mod paths;
+pub mod repo_walk;
+pub use repo_walk::{is_separate_checkout, repository_walk_skips};
 mod test_modules;
 use std::path::Path;
 

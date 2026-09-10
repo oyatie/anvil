@@ -5,17 +5,19 @@ use std::path::{Path, PathBuf};
 use super::roots::all_crate_roots;
 
 mod nested;
+#[cfg(test)]
+mod tests;
 mod walk;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Roles {
     pub(super) production: bool,
     pub(super) test: bool,
 }
 
+#[derive(Debug)]
 pub(super) struct RoleMap {
     pub(super) roles: BTreeMap<PathBuf, Roles>,
-    pub(super) complete: bool,
 }
 
 /// Files reached only through module declarations impossible with `test = false`.
@@ -39,11 +41,7 @@ pub fn declared_test_module_files_from_roots(
     repo_root: &Path,
     roots: &[PathBuf],
 ) -> Result<BTreeSet<PathBuf>, String> {
-    let measured = module_roles_from_roots(repo_root, roots)?;
-    if !measured.complete {
-        return Ok(BTreeSet::new());
-    }
-    let roles = measured.roles;
+    let roles = module_roles_from_roots(repo_root, roots)?.roles;
     Ok(roles
         .into_iter()
         .filter_map(|(path, roles)| (roles.test && !roles.production).then_some(path))
@@ -59,11 +57,7 @@ pub fn declared_production_module_files_from_roots(
     repo_root: &Path,
     roots: &[PathBuf],
 ) -> Result<BTreeSet<PathBuf>, String> {
-    let measured = module_roles_from_roots(repo_root, roots)?;
-    if !measured.complete {
-        return all_contained_files(repo_root);
-    }
-    let roles = measured.roles;
+    let roles = module_roles_from_roots(repo_root, roots)?.roles;
     Ok(roles
         .into_iter()
         .filter_map(|(path, roles)| roles.production.then_some(path))
@@ -74,25 +68,21 @@ fn module_roles_from_roots(repo_root: &Path, roots: &[PathBuf]) -> Result<RoleMa
     walk::module_roles_from_roots(repo_root, roots)
 }
 
-/// Exact evidence for ownership. Unlike the conservative public production
-/// set, incomplete classification never substitutes every contained file.
+/// Exact evidence for ownership: the files a single root declares as production.
 pub(super) fn exact_production_roles(
     repo_root: &Path,
     root: &Path,
-) -> Result<(BTreeSet<PathBuf>, bool), String> {
+) -> Result<BTreeSet<PathBuf>, String> {
     let measured = module_roles_from_roots(repo_root, &[root.to_path_buf()])?;
     Ok(exact_role_evidence(measured))
 }
 
-pub(super) fn exact_role_evidence(measured: RoleMap) -> (BTreeSet<PathBuf>, bool) {
-    (
-        measured
-            .roles
-            .into_iter()
-            .filter_map(|(path, role)| role.production.then_some(path))
-            .collect(),
-        measured.complete,
-    )
+pub(super) fn exact_role_evidence(measured: RoleMap) -> BTreeSet<PathBuf> {
+    measured
+        .roles
+        .into_iter()
+        .filter_map(|(path, role)| role.production.then_some(path))
+        .collect()
 }
 
 /// One declaration graph, reused while a guard classifies many changed files.
@@ -100,14 +90,12 @@ pub struct TestSourceClassifier {
     repo_root: PathBuf,
     declared_test_modules: BTreeSet<PathBuf>,
     declared_production_modules: BTreeSet<PathBuf>,
-    complete: bool,
 }
 
 impl TestSourceClassifier {
     pub fn new(repo_root: &Path) -> Result<Self, String> {
         let roots = all_crate_roots(repo_root)?;
-        let measured = module_roles_from_roots(repo_root, &roots)?;
-        let roles = measured.roles;
+        let roles = module_roles_from_roots(repo_root, &roots)?.roles;
         Ok(Self {
             repo_root: repo_root.to_path_buf(),
             declared_test_modules: roles
@@ -118,7 +106,6 @@ impl TestSourceClassifier {
                 .into_iter()
                 .filter_map(|(path, role)| role.production.then_some(path))
                 .collect(),
-            complete: measured.complete,
         })
     }
 
@@ -153,9 +140,6 @@ impl TestSourceClassifier {
                 canonical_repo.display()
             ));
         }
-        if !self.complete {
-            return Ok(false);
-        }
         if self.declared_production_modules.contains(&canonical) {
             return Ok(false);
         }
@@ -170,46 +154,6 @@ impl TestSourceClassifier {
         }
         Ok(false)
     }
-}
-
-fn all_contained_files(repo_root: &Path) -> Result<BTreeSet<PathBuf>, String> {
-    let canonical_root = fs::canonicalize(repo_root)
-        .map_err(|error| format!("cannot resolve repository {}: {error}", repo_root.display()))?;
-    let mut files = BTreeSet::new();
-    let mut pending = vec![canonical_root.clone()];
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(&directory)
-            .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
-        {
-            let entry = entry.map_err(|error| {
-                format!("cannot read an entry in {}: {error}", directory.display())
-            })?;
-            if entry.file_name() == ".git" {
-                continue;
-            }
-            let kind = entry
-                .file_type()
-                .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
-            if kind.is_dir() {
-                pending.push(entry.path());
-            } else if kind.is_file() || kind.is_symlink() {
-                let canonical = fs::canonicalize(entry.path()).map_err(|error| {
-                    format!("cannot resolve source {}: {error}", entry.path().display())
-                })?;
-                if !canonical.starts_with(&canonical_root) {
-                    return Err(format!(
-                        "source {} resolves outside repository {}",
-                        entry.path().display(),
-                        canonical_root.display()
-                    ));
-                }
-                if canonical.is_file() {
-                    files.insert(canonical);
-                }
-            }
-        }
-    }
-    Ok(files)
 }
 
 /// Whether a Rust path is test-only by Cargo layout or its declaration graph.

@@ -4,7 +4,7 @@ use anvil::source_scan::without_commentary;
 // Only the shared builder and lane staging may spell their own whole-tree
 // arguments. Moving this list does not grant a third owner an exemption.
 const MAY_SPELL_THEIR_OWN_STAGING: &[&str] = &[
-    "src/git_manager/mod.rs",
+    "src/git_manager/staging.rs",
     "src/change_delivery/adapters/git_vcs.rs",
 ];
 
@@ -41,7 +41,7 @@ mod tests {
     #[test]
     fn each_allowed_owner_still_requires_the_exclusion() {
         for owner in [
-            "src/git_manager/mod.rs",
+            "src/git_manager/staging.rs",
             "src/change_delivery/adapters/git_vcs.rs",
         ] {
             assert_eq!(

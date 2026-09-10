@@ -25,7 +25,16 @@ pub fn discover_units(spec: &ResolvedSpec, tree: &dyn TreeSource) -> Vec<Resolve
                 continue;
             }
             let root = format!("{prefix}{name}{suffix}");
-            if tree.contains(&format!("{root}{}", rule.marker)) {
+            let present = if rule.by_faces {
+                spec.spec.skeletons.get(&rule.skeleton).is_some_and(|skel| {
+                    skel.faces
+                        .values()
+                        .any(|dir| tree.has_dir(&format!("{root}{dir}")))
+                })
+            } else {
+                tree.contains(&format!("{root}{}", rule.marker))
+            };
+            if present {
                 let over = spec.spec.units.get(name);
                 units.push(ResolvedUnit {
                     name: name.to_string(),

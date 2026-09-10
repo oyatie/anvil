@@ -66,7 +66,14 @@ pub struct UnitKind {
 pub enum MembersSource {
     Registry,
     RegistryMetaDirs,
-    Discover { marker: String },
+    Discover {
+        marker: String,
+    },
+    /// Units are the directories holding at least one face the skeleton
+    /// declares. A registry listing them instead restates what the tree
+    /// already says, and drifts; pinning one face loses a unit the day it
+    /// drops that face.
+    Faces,
 }
 
 impl UnitKind {
@@ -74,12 +81,13 @@ impl UnitKind {
         match self.members.as_str() {
             "registry" => Ok(MembersSource::Registry),
             "registry-meta-dirs" => Ok(MembersSource::RegistryMetaDirs),
+            "faces" => Ok(MembersSource::Faces),
             other => match other.strip_prefix("discover:") {
                 Some(marker) if !marker.trim().is_empty() => Ok(MembersSource::Discover {
                     marker: marker.trim().to_string(),
                 }),
                 _ => Err(format!(
-                    "members must be \"registry\", \"registry-meta-dirs\" or \"discover:<marker>\", got {other:?}"
+                    "members must be \"registry\", \"registry-meta-dirs\", \"faces\" or \"discover:<marker>\", got {other:?}"
                 )),
             },
         }

@@ -22,7 +22,7 @@ fn registry() -> serde_json::Value {
 }
 
 fn findings_for(tree: &InMemoryTree, rule: &str) -> Vec<anvil::shape::core::Finding> {
-    let resolved = resolve(&spec("oyatie.shape.json"), Some(&registry())).unwrap();
+    let resolved = resolve(&spec("oyatie.shape.json"), None).unwrap();
     let report = measure(
         &resolved,
         tree,
@@ -60,7 +60,7 @@ fn slo_under_observability_is_an_alias_with_a_move() {
 
 #[test]
 fn policies_is_an_alias_of_policy() {
-    let tree = InMemoryTree::from_paths("fx", &["iam/policies/rbac.json"]);
+    let tree = InMemoryTree::from_paths("fx", &["iam/core/k/Cargo.toml", "iam/policies/rbac.json"]);
     let f = findings_for(&tree, "satellite_alias_used");
     assert_eq!(f.len(), 1);
     assert!(matches!(&f[0].fix, Some(Fix::Move { to, .. }) if to == "iam/policy/rbac.json"));
@@ -68,7 +68,8 @@ fn policies_is_an_alias_of_policy() {
 
 #[test]
 fn a_unit_missing_a_required_face_is_reported_per_face() {
-    // `storage` exists with a core face only; `iam` has no directory at all.
+    // `storage` exists with a core face only, so it is a unit and its missing
+    // required faces are reported.
     let tree = InMemoryTree::from_paths("fx", &["storage/core/x/Cargo.toml"]);
     let f = findings_for(&tree, "unit_missing_face");
     let keys: Vec<&str> = f.iter().map(|f| f.key.as_str()).collect();
@@ -77,9 +78,16 @@ fn a_unit_missing_a_required_face_is_reported_per_face() {
         "{keys:?}"
     );
     assert!(!keys.contains(&"storage:core"));
+    // The trade-off of deriving units instead of listing them, stated rather
+    // than discovered later: a capability with no directory at all is not a
+    // unit, so nothing reports it as missing every face. A registry could
+    // assert it ought to exist -- and that assertion is exactly the
+    // hand-maintained claim that drifts from the tree. The loss is small
+    // because a capability whose directory vanished takes its crates out of
+    // the workspace with it, which is loud elsewhere.
     assert!(
-        keys.contains(&"iam:core"),
-        "a registered unit with no directory misses every face: {keys:?}"
+        !keys.iter().any(|k| k.starts_with("iam:")),
+        "a directory that does not exist was treated as a unit: {keys:?}"
     );
     assert!(f.iter().all(|f| matches!(f.fix, Some(Fix::Create { .. }))));
 }
@@ -89,6 +97,9 @@ fn a_stray_directory_inside_a_unit_is_ambiguous_once_not_per_file() {
     let tree = InMemoryTree::from_paths(
         "fx",
         &[
+            // A face, so `iam` is a unit at all: a unit-scoped rule has
+            // nothing to say about a directory that is not one.
+            "iam/core/k/Cargo.toml",
             "iam/oya-identity/src/a.rs",
             "iam/oya-identity/src/b.rs",
             "iam/oya-identity/Cargo.toml",
@@ -105,7 +116,10 @@ fn a_stray_directory_inside_a_unit_is_ambiguous_once_not_per_file() {
 
 #[test]
 fn a_unit_root_file_off_the_allowlist_is_reported() {
-    let tree = InMemoryTree::from_paths("fx", &["iam/NOTES.txt", "iam/OWNERS"]);
+    let tree = InMemoryTree::from_paths(
+        "fx",
+        &["iam/core/k/Cargo.toml", "iam/NOTES.txt", "iam/OWNERS"],
+    );
     let f = findings_for(&tree, "unit_root_file_unallowlisted");
     assert_eq!(f.len(), 1);
     assert_eq!(f[0].key, "iam/NOTES.txt");

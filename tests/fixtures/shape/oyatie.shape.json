@@ -5,22 +5,11 @@
     "rust-cargo",
     "rust-buck2"
   ],
-  "unit_registry": {
-    "path": ".config/anvil/capability-registry.json",
-    "units": {
-      "pointer": "/capabilities",
-      "key": "name"
-    },
-    "faces": {
-      "pointer": "/faces",
-      "key": "face"
-    }
-  },
   "unit_kinds": {
     "capability": {
       "root": "<name>/",
       "skeleton": "standard",
-      "members": "registry"
+      "members": "faces"
     },
     "app": {
       "root": "app/<name>/",

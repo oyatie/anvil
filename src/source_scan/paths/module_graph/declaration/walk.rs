@@ -7,8 +7,8 @@ use syn::Item;
 use super::{RoleMap, Roles, nested};
 use crate::source_scan::paths::module_graph::child_module_dir;
 use crate::source_scan::paths::module_graph::dependencies::{
-    LexicalContext, SourceModule, Symbols, item_is_non_production,
-    scan_expression_for_classification, scan_syntax_for_classification, symbols_for_classification,
+    LexicalContext, SourceModule, Symbols, item_is_non_production, scan_syntax,
+    scan_test_scope_syntax, symbols_for_root,
 };
 
 mod modules;
@@ -39,7 +39,6 @@ fn roles_with_contexts(
     contexts: &[crate::source_scan::paths::module_graph::roots::CrateRoot],
 ) -> Result<RoleMap, String> {
     let mut roles = BTreeMap::new();
-    let mut complete = true;
     for root in roots {
         let canonical_root = contained(root, canonical_repo, "crate root")?;
         let mut matching = contexts
@@ -53,13 +52,12 @@ fn roles_with_contexts(
         for context in matching {
             let empty_aliases = BTreeSet::new();
             let empty_audited = BTreeMap::new();
-            let (symbols, root_complete) = symbols_for_classification(
+            let symbols = symbols_for_root(
                 &canonical_root,
                 canonical_repo,
                 context.map_or(&empty_aliases, |context| &context.aliases),
                 context.map_or(&empty_audited, |context| &context.audited_derive_crates),
             )?;
-            complete &= root_complete;
             let mut seen = BTreeSet::new();
             let mut active = BTreeSet::new();
             visit_file(
@@ -76,7 +74,7 @@ fn roles_with_contexts(
             )?;
         }
     }
-    Ok(RoleMap { roles, complete })
+    Ok(RoleMap { roles })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -206,7 +204,11 @@ fn visit_items(
         }
     }
 
-    let (syntax, _) = scan_syntax_for_classification(items, scope, symbols, lexical);
+    let syntax = if inherited_test {
+        scan_test_scope_syntax(items, scope, symbols, lexical)
+    } else {
+        scan_syntax(items, file, scope, symbols, lexical)?
+    };
     modules::visit_syntax(
         syntax.modules,
         syntax.includes,

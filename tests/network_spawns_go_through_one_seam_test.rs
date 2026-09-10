@@ -216,6 +216,19 @@ fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
         });
         let p = e.path();
         if p.is_dir() {
+            // #218. A directory holding its own `.git` is a separate checkout,
+            // and this census claims to be closed over THIS one. Anvil keeps
+            // agent worktrees under `.claude/worktrees/` and a `devtree`
+            // beside them; each contributed a full copy of every real site.
+            //
+            // Both call sites root at `src/` today, so this cannot fire in the
+            // suite as it stands. It is here because the walker takes a `dir`
+            // and the next caller need not: the rule belongs to the walk, not
+            // to who happens to call it. The predicate and its proof live in
+            // `anvil::source_scan`.
+            if anvil::source_scan::is_separate_checkout(&p) {
+                continue;
+            }
             rust_sources(&p, out);
         } else if p.extension().is_some_and(|x| x == "rs") {
             out.push(p);
@@ -700,6 +713,29 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // names an absent file, not a newly classified test. These eight production
     // occurrences remain exact.
     let added_method_events = [
+        // Reviewed for #215. `RunScope::declare` writes the stage's declared
+        // write scope to `.anvil/run-scope` for the length of one turn. Same
+        // shape as `PromptFile` below: the receiver is a `std::fs::File` /
+        // `OpenOptions`, no socket is constructed, imported or named in that
+        // module, and it is a module of its own for exactly that reason.
+        //
+        // The `opts.write(true)` occurrence is under `create`, not `declare`:
+        // the scanner attributes by ENCLOSING FUNCTION, and the open moved into
+        // an extracted helper when the declaration gained a stale-takeover
+        // retry. Re-attributed, not removed -- the total stays 44 and the
+        // occurrence stays REVIEWED. Deleting the line instead would have
+        // demoted it into the 34 pinned only by digest, which is how a
+        // reviewed record quietly becomes an unreviewed one.
+        (
+            "src/ai_driver/chain/run_scope.rs",
+            "create",
+            "network-instance-method:write",
+        ),
+        (
+            "src/ai_driver/chain/run_scope.rs",
+            "declare",
+            "network-instance-method:flush",
+        ),
         (
             "src/clean_architecture_guard/scan.rs",
             "expand_use_groups",
@@ -772,11 +808,11 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // separate exact set instead of weakening the outbound-method policy.
     assert_eq!(
         conservative_method_events.len(),
-        42,
+        44,
         "{conservative_method_events:#?}"
     );
     // This complete current set was reviewed by owner and source expression:
-    // 42 occurrences = the eight explicit production records above + 34 below.
+    // 44 occurrences = the ten explicit production records above + 34 below.
     // The 34 and their digest are unchanged: newly reviewed occurrences go in
     // the explicit list, so adding one cannot perturb the historical set.
     // The former historical 38-entry digest could not be reproduced, so this

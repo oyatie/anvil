@@ -95,8 +95,14 @@ fn the_doc_parity_probe_takes_all_three_deadlines_from_that_one_value() {
     );
     // That the chain really derives both deadlines from that cap is
     // `the_declared_chain_is_the_dispatched_chain_test::
-    //  a_supplied_budget_caps_every_tier_and_reaches_the_provider`,
-    // asserted there rather than restated here.
+    //  a_supplied_budget_bounds_the_whole_stage_not_each_attempt`,
+    // asserted there rather than restated here. It was named
+    // `..._caps_every_tier_and_reaches_the_provider` and this reference went
+    // stale when that test was renamed -- CAPPING EVERY TIER was the defect,
+    // not the property: one bound applied to each of five tiers is five times
+    // the bound. A cross-reference by name is not checked by anything, which
+    // is why the sentence below states the property rather than only pointing
+    // at it: the chain must apply the supplied budget to the STAGE.
     assert!(
         !code.contains("from_secs(30)"),
         "a hardcoded supervisor budget is back"

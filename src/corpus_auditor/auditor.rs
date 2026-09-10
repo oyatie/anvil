@@ -48,11 +48,7 @@ impl CorpusAuditor {
                         .to_string_lossy()
                         .to_string();
 
-                    if rel.starts_with(".git")
-                        || rel.starts_with("target")
-                        || rel.starts_with("buck-out")
-                        || rel.starts_with("node_modules")
-                    {
+                    if crate::source_scan::repository_walk_skips(repo_dir, &path) {
                         continue;
                     }
 

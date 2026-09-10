@@ -14,9 +14,13 @@ def require(condition, reason):
 
 
 def version(value):
-    require(isinstance(value, str) and re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value),
-            "unsupported stable version")
-    return tuple(int(part) for part in value.split("."))
+    # A dated nightly, which is what this repository pins. ISO dates order
+    # lexically, so the string itself is the comparison -- no calendar parsing,
+    # and a date rustup does not publish fails at install, which is a better
+    # place to find out than a regex encoding month lengths.
+    require(isinstance(value, str) and re.fullmatch(r"nightly-\d{4}-\d{2}-\d{2}", value),
+            "unsupported channel: expected a dated nightly")
+    return value
 
 
 def sha(value):

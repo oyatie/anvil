@@ -31,6 +31,15 @@ fn read_spec(path: &Path) -> ShapeSpec {
     ShapeSpec::parse(&text).unwrap_or_else(|e| panic!("parsing {}: {e:?}", path.display()))
 }
 
+fn tenant_of(spec_path: &Path) -> String {
+    spec_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.split('.').next())
+        .expect("a tenant name")
+        .to_string()
+}
+
 fn shipped_specs() -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(fixture_dir())
         .expect("the shape fixture directory")
@@ -50,12 +59,7 @@ fn every_shipped_proposal_that_names_a_registry_ships_one_that_resolves() {
         let Some(registry_ref) = spec.unit_registry.clone() else {
             continue;
         };
-        let tenant = spec_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .and_then(|n| n.split('.').next())
-            .expect("a tenant name")
-            .to_string();
+        let tenant = tenant_of(&spec_path);
 
         // Named for the tenant, beside the spec, because the tenant's own
         // copy lives at a path only that tenant has.
@@ -83,6 +87,64 @@ fn every_shipped_proposal_that_names_a_registry_ships_one_that_resolves() {
             !resolved.units.is_empty(),
             "{} resolved zero units against its own registry, so a measurement \
              against it would report zero findings without measuring anything",
+            spec_path.display()
+        );
+    }
+}
+
+/// Anvil's own config location, and the only path literal ADR-0006 §2 permits
+/// the engine to know. A registry declared anywhere else is a tenant path this
+/// repository cannot vouch for -- and the shipped one named
+/// `governance/capability-registry.json`, a directory oyatie's layout gate
+/// forbids at the root, so it could never have resolved.
+const ANVIL_CONFIG_DIR: &str = ".anvil/";
+
+/// Shipped specs whose marker has NOT been demonstrated against their tenant.
+///
+/// Not an excuse list -- a visible one. `console.shape.json` discovers on
+/// `manifest.json` at `<name>/`, and console's 51 files of that name sit at
+/// depths 4 to 7 (`backend/crates/<x>/rest/openapi/manifest.json`), never at a
+/// unit root, so it discovers zero units and reports a clean zero. Measured at
+/// console@83b92700 on 2026-09-10. Adding a spec here is a diff a reviewer
+/// sees; shipping one silently is what this file exists to stop.
+const MARKER_NOT_DEMONSTRATED: &[&str] = &["console"];
+
+/// The registry a spec names has to be somewhere Anvil can actually read it.
+#[test]
+fn every_declared_registry_lives_where_anvil_keeps_its_config() {
+    for spec_path in shipped_specs() {
+        let spec = read_spec(&spec_path);
+        let Some(registry_ref) = spec.unit_registry.clone() else {
+            continue;
+        };
+        assert!(
+            registry_ref.path.starts_with(ANVIL_CONFIG_DIR),
+            "{} declares its unit registry at {:?}, outside `{ANVIL_CONFIG_DIR}`. That is \
+             a tenant path Anvil cannot vouch for: the tenant's own layout rules may \
+             forbid it, and then the spec resolves nothing while every rule reports zero \
+             findings",
+            spec_path.display(),
+            registry_ref.path
+        );
+    }
+}
+
+/// Every shipped spec either demonstrates its marker or is listed as not
+/// having done so.
+#[test]
+fn a_spec_whose_marker_is_undemonstrated_is_named_rather_than_quiet() {
+    for spec_path in shipped_specs() {
+        let tenant = tenant_of(&spec_path);
+        if MARKER_NOT_DEMONSTRATED.contains(&tenant.as_str()) {
+            continue;
+        }
+        let demonstrated = tenant == "oyatie" || spec_path.to_string_lossy().contains("anvil");
+        assert!(
+            demonstrated,
+            "{} ships a unit marker that no test exercises against a tree shaped like \
+             its tenant, and is not named in MARKER_NOT_DEMONSTRATED. A marker that \
+             matches nothing discovers no units and reports a clean zero, which reads \
+             exactly like conformance",
             spec_path.display()
         );
     }

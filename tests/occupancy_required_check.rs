@@ -110,9 +110,31 @@ fn native_dependencies_are_complete_locked_and_required_before_compilation() {
         native[index - 1]["uses"].as_str(),
         Some("dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17")
     );
+    // Derived, not quoted. A literal here is a second copy of the pin that
+    // goes stale the day the pin moves, and its failure reads as "this test is
+    // wrong" rather than "CI installs a different compiler than the tree
+    // declares" -- which is the thing worth asserting.
+    let declared = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rust-toolchain.toml"),
+    )
+    .expect("the repository declares a toolchain");
+    let declared = declared
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let rest = line
+                .strip_prefix("channel")?
+                .trim_start()
+                .strip_prefix('=')?;
+            let rest = rest.split('#').next()?.trim();
+            rest.strip_prefix('"')?.split('"').next()
+        })
+        .expect("rust-toolchain.toml declares a channel");
     assert_eq!(
         native[index - 1]["with"]["toolchain"].as_str(),
-        Some("1.98.0")
+        Some(declared),
+        "the native lane must install the channel this tree declares"
     );
     assert_eq!(native[index + 1]["id"].as_str(), Some("native-check"));
     assert!(native[index + 1]["if"].is_null());

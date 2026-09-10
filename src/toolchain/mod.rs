@@ -58,17 +58,6 @@ impl Version {
             patch: it.next().unwrap_or("0").trim().parse().ok()?,
         })
     }
-
-    /// Releases between two versions, counting minors only.
-    ///
-    /// Rust ships a minor every six weeks and patches out of band, so the
-    /// minor is the unit of "how far behind" a channel is.
-    pub fn minors_behind(self, newer: Version) -> u32 {
-        if newer.major != self.major {
-            return u32::MAX;
-        }
-        newer.minor.saturating_sub(self.minor)
-    }
 }
 
 impl std::fmt::Display for Version {
@@ -138,7 +127,12 @@ impl std::fmt::Display for Channel {
 /// What is wrong with a repository's pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Drift {
-    /// The pin trails the channel it tracks by more than the budget.
+    /// The pin is not the newest the channel publishes.
+    ///
+    /// There is no lag budget. A budget made sense when the channel was stable
+    /// and moved every six weeks; a dated nightly moves daily and is rolled on
+    /// a cadence this repository picks, so "behind" is a fact to report and the
+    /// cadence decides what to do about it.
     ChannelBehind { channel: Channel, latest: Channel },
     /// The pin is not declared at all, so nothing can be measured.
     Undeclared { which: &'static str },
@@ -208,7 +202,7 @@ pub fn channel_text(text: &str) -> Option<&str> {
             let rest = line.strip_prefix("channel")?.trim_start();
             let rest = rest.strip_prefix('=')?.trim();
             // A trailing comment would otherwise be read as part of the
-            // channel, the same way it silently breaks `field_after`.
+            // channel, which would read as a pin nobody declared.
             let rest = rest.split('#').next()?.trim();
             let value = rest.strip_prefix('"')?.split('"').next()?;
             (!value.is_empty()).then_some(value)
@@ -220,41 +214,12 @@ pub fn channel_from_toml(text: &str) -> Option<Channel> {
     channel_text(text).and_then(Channel::parse)
 }
 
-#[allow(dead_code)]
-fn field_after(text: &str, key: &str) -> Option<Version> {
-    text.lines()
-        .map(str::trim)
-        // A whole-line comment cannot match anyway -- its key carries the `#`
-        // -- but a TRAILING one silently breaks parsing:
-        // `channel = "1.98.0" # bumped` leaves `1.98.0" # bumped` after the
-        // quote trim, whose patch component does not parse, so the pin reads
-        // as UNDECLARED. A version this module cannot see is one it cannot
-        // report as behind, which is the quiet direction of the failure.
-        .filter(|l| !l.starts_with('#'))
-        .find_map(|l| {
-            let (k, rest) = l.split_once('=')?;
-            if k.trim() != key {
-                return None;
-            }
-            let value = rest.split('#').next().unwrap_or(rest);
-            Version::parse(value.trim().trim_matches('"'))
-        })
-}
-
 pub fn read(repo_dir: &Path) -> Declared {
     let channel = std::fs::read_to_string(repo_dir.join("rust-toolchain.toml"))
         .ok()
         .and_then(|t| channel_from_toml(&t));
     Declared { channel }
 }
-
-/// How many releases the channel may trail stable before it is a finding.
-///
-/// Two, not zero. A release lands and a fleet needs a window to absorb it; a
-/// budget of zero would make every Tuesday a finding and teach readers to
-/// ignore the gate. Two six-week trains is twelve weeks of slack and is still
-/// inside the window where the next deny-lint has not yet shipped.
-pub const CHANNEL_LAG_BUDGET: u32 = 2;
 
 /// Every drift in the pair. Empty means both facts are declared, distinct and
 /// current.

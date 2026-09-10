@@ -119,13 +119,6 @@
         "README.md",
         "REORG-DRAIN.md"
       ]
-    },
-    "meta": {
-      "faces": {
-        "harness": "harness/"
-      },
-      "required_faces": [],
-      "satellites": {}
     }
   },
   "placement": {

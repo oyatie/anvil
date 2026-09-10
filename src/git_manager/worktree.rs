@@ -78,12 +78,33 @@ impl EphemeralWorktree {
     /// is never checked out at the head under review -- so a filesystem read
     /// inside it is a read of this pull request rather than of whichever one
     /// the fixer last touched.
-    pub async fn verified_at(&self, head_sha: &str) -> Result<crate::git_manager::CertifiedTree> {
-        self.verify_at(head_sha).await?;
-        Ok(crate::git_manager::CertifiedTree::proven(
-            self.repo_dir.clone(),
+    /// Takes `self` because the answer is only true while the worktree exists.
+    /// Returning a bare [`CertifiedTree`] let the worktree drop at the end of
+    /// the constructing expression, so the path was dead before the first gate
+    /// read it -- and it pointed at the shared clone anyway.
+    pub async fn verified_at(
+        self,
+        head_sha: &str,
+    ) -> Result<crate::git_manager::CertifiedCheckout> {
+        // Explicit async cleanup on the failure path. `Drop` would also remove
+        // the worktree, but only through its synchronous fallback, which blocks
+        // the runtime; taking `self` moved the failure path here, so the
+        // teardown moved with it.
+        if let Err(error) = self.verify_at(head_sha).await {
+            let _ = self.cleanup().await;
+            return Err(error);
+        }
+        // `worktree_path`, not `repo_dir`. This method's own doc says a gate
+        // taking a CertifiedTree cannot be given the shared clone, and it was
+        // handing over exactly that: `repo_dir` is the per-repository clone
+        // from `ensure_repo_cloned`, which is never checked out at the head
+        // under review. Every filesystem-reading gate measured whichever pull
+        // request the fixer last touched, and the report was signed over it.
+        let tree = crate::git_manager::CertifiedTree::proven(
+            crate::git_manager::SubjectRoot::worktree(self.worktree_path.clone()),
             head_sha.to_string(),
-        ))
+        );
+        Ok(crate::git_manager::CertifiedCheckout::new(self, tree))
     }
 
     /// Explicit asynchronous cleanup of the ephemeral worktree
@@ -179,7 +200,7 @@ impl super::GitManager {
         repo: &str,
         pr_number: u64,
         head_sha: &str,
-    ) -> Result<super::CertifiedTree> {
+    ) -> Result<super::CertifiedCheckout> {
         let worktree = self
             .create_ephemeral_worktree(repo, pr_number, head_sha)
             .await
@@ -188,12 +209,6 @@ impl super::GitManager {
                     "no tree at {head_sha} for {repo}#{pr_number}, so nothing was certified: {e:#}"
                 )
             })?;
-        match worktree.verified_at(head_sha).await {
-            Ok(tree) => Ok(tree),
-            Err(e) => {
-                let _ = worktree.cleanup().await;
-                Err(e)
-            }
-        }
+        worktree.verified_at(head_sha).await
     }
 }

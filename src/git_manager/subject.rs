@@ -68,6 +68,17 @@ impl SubjectRoot {
         Self(dir)
     }
 
+    /// An ephemeral worktree checked out at a named commit and verified there.
+    ///
+    /// Distinct from [`Self::cloned`] on purpose: the shared clone is a
+    /// repository, this is a repository AT A COMMIT. `verified_at` is the only
+    /// caller, after `rev-parse` agreed, and the worktree it names is kept
+    /// alive by [`crate::git_manager::CertifiedCheckout`] for as long as the
+    /// root is usable.
+    pub(crate) fn worktree(dir: PathBuf) -> Self {
+        Self(dir)
+    }
+
     /// A root asserted rather than cloned, naming why.
     ///
     /// The escape hatch is deliberate and deliberately awkward. Some callers
@@ -150,4 +161,40 @@ pub enum Uncloned {
     /// which tree to work on, which is the one case where a human, and not
     /// the clone step, is the authority.
     OperatorSupplied,
+}
+
+/// A [`CertifiedTree`] and the worktree that makes it true.
+///
+/// The tree's path is only a fact while the worktree exists. `certified_tree_at`
+/// used to return the tree alone, so the `EphemeralWorktree` dropped at the end
+/// of that expression and `Drop` removed the directory before any gate ran --
+/// on top of the path naming the shared clone rather than the worktree. Holding
+/// both together makes the lifetime the compiler's problem instead of a comment's.
+pub struct CertifiedCheckout {
+    _worktree: crate::git_manager::worktree::EphemeralWorktree,
+    tree: CertifiedTree,
+}
+
+impl CertifiedCheckout {
+    pub(crate) fn new(
+        worktree: crate::git_manager::worktree::EphemeralWorktree,
+        tree: CertifiedTree,
+    ) -> Self {
+        Self {
+            _worktree: worktree,
+            tree,
+        }
+    }
+
+    pub fn as_path(&self) -> &Path {
+        self.tree.as_path()
+    }
+
+    pub fn tree(&self) -> &CertifiedTree {
+        &self.tree
+    }
+
+    pub fn head_sha(&self) -> &str {
+        self.tree.head_sha()
+    }
 }

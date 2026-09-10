@@ -25,7 +25,6 @@ pub(super) struct OwnershipRoot {
 struct TargetEvidence {
     root: OwnershipRoot,
     files: BTreeSet<PathBuf>,
-    complete: bool,
     self_aliases: BTreeSet<String>,
     uncertain_aliases: BTreeSet<String>,
 }
@@ -49,13 +48,12 @@ impl ArchitectureOwnership {
             .map_err(|error| format!("cannot resolve architecture repository: {error}"))?;
         let mut targets = Vec::new();
         for root in architecture_roots(&repo)? {
-            let (files, complete) = exact_production_roles(&repo, &root.identity.root)?;
+            let files = exact_production_roles(&repo, &root.identity.root)?;
             let (_, syntax) = read_parsed(&root.identity.root)?;
             let (self_aliases, uncertain_aliases) = self_aliases(&syntax);
             targets.push(TargetEvidence {
                 root,
                 files,
-                complete,
                 self_aliases,
                 uncertain_aliases,
             });
@@ -81,14 +79,14 @@ impl ArchitectureOwnership {
     fn relation_at(&self, path: &Path, name: &str) -> RootRelation {
         let mut result = RootRelation::Foreign;
         let mut owners = 0;
-        let mut unknown = self.targets.iter().any(|target| !target.complete);
+        let mut unknown = false;
         for target in self
             .targets
             .iter()
             .filter(|target| target.files.contains(path))
         {
             owners += 1;
-            if !target.complete || target.uncertain_aliases.contains(name) {
+            if target.uncertain_aliases.contains(name) {
                 unknown = true;
                 continue;
             }

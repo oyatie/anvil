@@ -16,11 +16,23 @@ tree has no such layout) and cannot state for a tenant whose layout differs.
 Invariant I13 forbids exactly this: a rule Anvil cannot state generically
 belongs in the tenant repository, not in the tool.
 
-oyatie already expresses its shape as data — `governance/capability-registry.json`
-(the closed unit set, the faces), ADR-0562 §3 (a deterministic placement
-rule), and per-gate `<gate>-policy.json` files. What it lacks is a declared
-satellite set (runbooks, SLOs, contracts, …) and a single engine that measures
-every unit, capability or app, against one skeleton.
+oyatie already expresses its shape as data — ADR-0562 §3 (a deterministic
+placement rule) and per-gate `<gate>-policy.json` files. What it lacks is a
+declared satellite set (runbooks, SLOs, contracts, …) and a single engine that
+measures every unit, capability or app, against one skeleton.
+
+**Amended 2026-09-10 (#198, #269).** This paragraph cited
+`governance/capability-registry.json` as oyatie's closed unit set. No such path
+exists there, and none can: `governance` is in that repository's
+`FORBIDDEN_NAMES`. Measuring the proposal against oyatie refused outright, so
+it had never produced a figure since this ADR was accepted.
+
+The citation is not repointed, because the file is not wanted. The 21
+capabilities are exactly the directories holding a declared face, so a registry
+listing them restates the tree — hand-maintained, drifting, checkable against
+nothing. `unit_kinds` gained `members: "faces"` and oyatie's spec names no
+registry at all. §3 below still governs a spec that *does* refer to one; no
+shipped proposal now does.
 
 ## Decision
 

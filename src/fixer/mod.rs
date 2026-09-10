@@ -59,6 +59,17 @@ impl Fixer {
 
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
+        // Held from before the checkout until after the push, because every
+        // step between them is a mutation of a working tree shared with every
+        // other pull request on this repository. Dropping it earlier -- after
+        // the checkout, say -- would leave the model turn and the commit
+        // unprotected, which is the window that matters: it is minutes long.
+        //
+        // The PR lock the callers already hold does not cover this. It
+        // serialises #1 against #1; the collision is #1 against #2.
+        let clone_lock = self.git_mgr.lock_clone(repo).await;
+        let _clone_guard = clone_lock.lock().await;
+
         // Ensure PR branch is checked out
         let mut fetch_cmd = Command::new("git");
         fetch_cmd.current_dir(&repo_dir).args([

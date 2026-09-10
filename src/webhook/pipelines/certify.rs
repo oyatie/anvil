@@ -83,6 +83,14 @@ pub async fn certify_pull_request(
         .certified_tree_at(repo, pr_number, head_sha)
         .await?;
     let repo_dir = tree.as_path();
+    // Half the corpus reads the tree out of `diff_ctx`, which `prepare_pr_diff`
+    // roots at the shared clone. Rebinding here covers that half too; see
+    // `the_context_handed_to_the_gates_is_rooted_at_the_certified_tree`.
+    let certified_ctx = PrDiffContext {
+        repo_working_dir: tree.root().clone(),
+        ..diff_ctx.clone()
+    };
+    let diff_ctx = &certified_ctx;
     // 2. DocGuard: Documentation & Doctrine Parity
     let doc_report = state
         .doc_guard

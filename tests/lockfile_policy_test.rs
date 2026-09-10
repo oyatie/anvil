@@ -1,9 +1,12 @@
-//! The toolchain pin and the lockfile format are declared in three places that
-//! must agree: `rust-toolchain.toml`, `[package] rust-version`, and the
-//! `Cargo.lock` header. A drift between them is how CI ends up building on a
-//! toolchain nobody chose — which is exactly how Anvil ran on 1.97.1 before
-//! this pin existed: the host had it installed, CI said `stable`, and the two
-//! agreed by coincidence.
+//! The toolchain pin and the lockfile format are declared in two places that
+//! must agree: `rust-toolchain.toml` and the `Cargo.lock` header. A drift
+//! between them is how CI ends up building on a toolchain nobody chose. Anvil
+//! once ran on 1.97.1 by accident: the host had it installed, CI said `stable`,
+//! and the two agreed by coincidence.
+//!
+//! `[package] rust-version` was the third place, and is gone. An MSRV is a
+//! contract with consumers; anvil is `publish = false` with no dependent, so
+//! it had no counterparty and no job ever built under it.
 
 use std::fs;
 use std::path::PathBuf;
@@ -15,83 +18,213 @@ fn repo_root() -> PathBuf {
 fn toolchain_channel() -> String {
     let raw = fs::read_to_string(repo_root().join("rust-toolchain.toml"))
         .expect("rust-toolchain.toml must exist at the repo root");
-    raw.lines()
-        .find_map(|l| {
-            let l = l.trim();
-            l.strip_prefix("channel").map(|rest| {
-                rest.trim_start_matches([' ', '='])
-                    .trim()
-                    .trim_matches('"')
-                    .to_string()
-            })
-        })
+    // One parser. This was the last hand-rolled copy, and it diverged: on
+    // `channel = "..." # bumped weekly` its `trim_matches('"')` kept the
+    // trailing comment, which would have marked every workflow wrong.
+    anvil::toolchain::channel_text(&raw)
         .expect("rust-toolchain.toml must declare a channel")
-}
-
-fn package_rust_version() -> String {
-    let raw = fs::read_to_string(repo_root().join("Cargo.toml")).expect("Cargo.toml");
-    raw.lines()
-        .find_map(|l| {
-            let l = l.trim();
-            l.strip_prefix("rust-version").map(|rest| {
-                rest.trim_start_matches([' ', '='])
-                    .trim()
-                    .trim_matches('"')
-                    .to_string()
-            })
-        })
-        .expect("Cargo.toml must declare [package] rust-version")
+        .to_string()
 }
 
 #[test]
-fn toolchain_is_pinned_to_an_exact_version_not_a_channel_name() {
+fn the_toolchain_is_pinned_to_an_exact_build_not_a_moving_channel() {
+    // The point is not the shape, it is that the pin names ONE compiler.
+    // `stable` and `nightly` are different compilers on different days, so a
+    // build under either is not reproducible and a bump has nothing to move
+    // from. A release triple and a dated nightly both name exactly one.
     let channel = toolchain_channel();
-    let looks_like_version = channel.split('.').count() == 3
+    let exact_release = channel.split('.').count() == 3
         && channel
             .split('.')
             .all(|p| p.chars().all(|c| c.is_ascii_digit()));
+    let dated_nightly = channel.strip_prefix("nightly-").is_some_and(|date| {
+        match date.split('-').collect::<Vec<_>>()[..] {
+            [y, m, d] => {
+                y.len() == 4
+                    && m.len() == 2
+                    && d.len() == 2
+                    && [y, m, d]
+                        .iter()
+                        .all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+            }
+            _ => false,
+        }
+    });
     assert!(
-        looks_like_version,
-        "rust-toolchain.toml channel must be an exact version (x.y.z), got {channel:?}; \
+        exact_release || dated_nightly,
+        "rust-toolchain.toml channel must name one compiler -- an exact release \
+         (x.y.z) or a dated nightly (nightly-YYYY-MM-DD) -- got {channel:?}; \
          `stable`/`nightly` make the build depend on the day it runs"
     );
 }
 
 #[test]
-fn package_rust_version_is_not_ahead_of_the_toolchain_pin() {
-    // This asserted EQUALITY, which made the two facts one number: the channel
-    // is what we compile with and should chase stable, MSRV is what consumers
-    // may compile under and should rise rarely. `src/toolchain` now reports
-    // equality as a finding.
-    //
-    // The old assertion had a real point underneath it, kept here: an MSRV
-    // BELOW the channel that no job ever builds under is a promise with no
-    // measurement behind it. That is `Drift::MsrvUnverified`, and anvil is in
-    // that state today -- every CI job installs the channel. The remedy is a
-    // build under MSRV, not a number that agrees with itself.
-    let msrv = package_rust_version();
-    let channel = toolchain_channel();
+fn no_msrv_is_promised_because_nothing_would_hold_us_to_it() {
+    // This replaces a test comparing MSRV against the channel. The pair is
+    // gone, and what is worth guarding is that it stays gone: a `rust-version`
+    // reintroduced without a job that builds under it is a promise with no
+    // measurement behind it, which is worse than no promise at all.
+    let manifest = fs::read_to_string(repo_root().join("Cargo.toml")).expect("Cargo.toml reads");
+    let declared = manifest
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rust-version"));
     assert!(
-        msrv <= channel,
-        "MSRV {msrv} is newer than the pinned channel {channel}: the promised \
-         minimum cannot build here at all"
+        declared.is_none(),
+        "anvil is publish = false with no dependent, so an MSRV has no \
+         counterparty; if one is reintroduced it needs a CI job that builds \
+         under it. Found: {declared:?}"
     );
 }
 
 #[test]
-fn ci_installs_the_pinned_toolchain_not_stable() {
-    let ci = merge_path_text();
-    // rust-toolchain.toml is the pin. Repeating the version in YAML is a drift
-    // surface; dtolnay/rust-toolchain with no `toolchain:` input honours the file.
+fn every_workflow_installs_the_pinned_toolchain_and_nothing_else() {
+    // The pin is one fact. Every `toolchain:` input in every workflow is
+    // checked against it, not just the merge path and not just one match.
+    //
+    // The previous form asked whether the concatenated text of three files
+    // CONTAINED one occurrence of the pin, which a single matching copy
+    // satisfied -- so a different date in `nightly.yml` or
+    // `supply-chain-weekly.yml` passed the whole suite. The copies are the
+    // thing being policed; a check that stops at the first one polices nothing.
+    let dir = repo_root().join(".github/workflows");
     let channel = toolchain_channel();
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    let mut missing = Vec::new();
+    let mut canary = Vec::new();
+
+    for entry in fs::read_dir(&dir).expect("workflows directory") {
+        let path = entry.expect("workflow entry").path();
+        // GitHub accepts `.yaml` equally; skipping it is an evasion nobody
+        // has used yet.
+        if !matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("yml" | "yaml")
+        ) {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let text = fs::read_to_string(&path).expect("workflow reads");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("workflow parses");
+        for job in steps_without_a_named_toolchain(&doc) {
+            missing.push(format!("{name}: {job:?}"));
+        }
+        for (job, found) in toolchain_inputs(&doc) {
+            // The canary is the one lane that must NOT be on the pin: it runs
+            // ahead of it so a break is met before it is adopted. Named, and
+            // asserted below rather than skipped -- an exemption nothing checks
+            // is a hole, and this file exists because of holes like that.
+            if name == "toolchain-weekly.yml" && job.as_deref() == Some("nightly") {
+                canary.push(found);
+                continue;
+            }
+            checked += 1;
+            if found != channel {
+                wrong.push(format!("{name}: {job:?} toolchain: \"{found}\""));
+            }
+        }
+    }
+
+    assert_eq!(
+        canary,
+        vec!["nightly".to_string()],
+        "the canary lane must install floating `nightly`, which is what puts it \
+         ahead of the pin; on the pin it would measure what CI already measures"
+    );
+
     assert!(
-        ci.contains(&format!("toolchain: \"{channel}\"")),
-        "dtolnay/rust-toolchain@pinned SHA requires toolchain: \"{channel}\"; omitting it installs '' and rustup default becomes stable"
+        checked > 0,
+        "no `toolchain:` input was found in any workflow; this check would pass \
+         over a tree that installs whatever rustup defaults to"
     );
     assert!(
-        !ci.contains("toolchain: stable"),
-        "ci.yml must not install `stable`; rust-toolchain.toml is the pin"
+        wrong.is_empty(),
+        "every workflow must install the pinned channel {channel:?}; these do not: {wrong:?}"
     );
+    // The message used to say an omitted input "installs '' and rustup falls
+    // back to stable", which this check could not see and which is not what
+    // the action does. Seeded: deleting the input entirely PASSED. So the
+    // omission is policed rather than described.
+    assert!(
+        missing.is_empty(),
+        "every dtolnay/rust-toolchain step must name the toolchain explicitly; these do not: \
+         {missing:?}. Without the input the action installs an empty toolchain and the \
+         resolved compiler is whatever the pin file or rustup default supplies -- which is \
+         the drift this file exists to catch."
+    );
+}
+
+/// Jobs with a `dtolnay/rust-toolchain` step that names no toolchain.
+///
+/// The version has to be explicit: with no input the action installs an empty
+/// toolchain, and what actually compiles is then decided by the pin file or the
+/// rustup default rather than by the workflow. Enumerating the values is not
+/// enough on its own -- a step that states nothing has no value to compare.
+fn steps_without_a_named_toolchain(doc: &serde_yaml::Value) -> Vec<Option<String>> {
+    let mut found = Vec::new();
+    let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+        return found;
+    };
+    for (name, job) in jobs {
+        let Some(steps) = job.get("steps").and_then(|s| s.as_sequence()) else {
+            continue;
+        };
+        for step in steps {
+            let uses = step
+                .get("uses")
+                .and_then(|u| u.as_str())
+                .unwrap_or_default();
+            if uses.starts_with("dtolnay/rust-toolchain@")
+                && step
+                    .get("with")
+                    .and_then(|w| w.get("toolchain"))
+                    .and_then(|t| t.as_str())
+                    .is_none()
+            {
+                found.push(name.as_str().map(str::to_string));
+            }
+        }
+    }
+    found
+}
+
+/// Every `with.toolchain` value in a workflow, paired with the job holding it.
+fn toolchain_inputs(doc: &serde_yaml::Value) -> Vec<(Option<String>, String)> {
+    let mut found = Vec::new();
+    let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+        return found;
+    };
+    for (name, job) in jobs {
+        let job_name = name.as_str().map(str::to_string);
+        for pin in pins_within(job) {
+            found.push((job_name.clone(), pin));
+        }
+    }
+    found
+}
+
+fn pins_within(node: &serde_yaml::Value) -> Vec<String> {
+    let mut found = Vec::new();
+    match node {
+        serde_yaml::Value::Mapping(map) => {
+            for (key, value) in map {
+                if key.as_str() == Some("with")
+                    && let Some(pin) = value.get("toolchain").and_then(|v| v.as_str())
+                {
+                    found.push(pin.to_string());
+                }
+                found.extend(pins_within(value));
+            }
+        }
+        serde_yaml::Value::Sequence(items) => {
+            for item in items {
+                found.extend(pins_within(item));
+            }
+        }
+        _ => {}
+    }
+    found
 }
 
 #[test]

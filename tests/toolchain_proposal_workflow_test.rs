@@ -8,31 +8,31 @@ use std::process::{Command, Stdio};
 
 // Exact shell-body review binding, not a shell parser or credential boundary.
 const REVIEWED_RECONCILIATION_SHA256: &str =
-    "a5f362c92d4e18775e3d561fd2e02113f7fb4ca5c8bab43cf3069133b85488a7";
+    "c4f244570c589dbb47effd0d5bd57976ddad3d2b1f9e586527e01dbef3371ffd";
 const BASE: &str = "1111111111111111111111111111111111111111";
 const HEAD: &str = "2222222222222222222222222222222222222222";
 
 fn observation(existing: bool) -> Value {
-    let before = "[toolchain]\nchannel = \"1.98.0\"\nprofile = \"minimal\"\n";
+    let before = "[toolchain]\nchannel = \"nightly-2026-03-05\"\nprofile = \"minimal\"\n";
     json!({
-        "phase": "observe", "repo": "owner/repository", "latest": "1.99.0", "channel": "1.98.0",
+        "phase": "observe", "repo": "owner/repository", "latest": "nightly-2026-03-12", "channel": "nightly-2026-03-05",
         "base": {"ref": "refs/heads/dev", "object": {"type": "commit", "sha": BASE}},
         "checkout": BASE, "dirty": "", "pages": [[]],
         "remote_status": if existing {0} else {2},
-        "remote_ref": if existing {format!("{HEAD}\trefs/heads/chore/toolchain-1.99.0\n")} else {String::new()},
+        "remote_ref": if existing {format!("{HEAD}\trefs/heads/chore/toolchain-nightly-2026-03-12\n")} else {String::new()},
         "fetched": if existing {HEAD} else {""},
         "parents": if existing {format!("{HEAD} {BASE}")} else {String::new()},
         "changes": if existing {"M\trust-toolchain.toml\n"} else {""},
         "base_entry": format!("100644 blob {BASE}\trust-toolchain.toml\n"),
         "head_entry": if existing {format!("100644 blob {HEAD}\trust-toolchain.toml\n")} else {String::new()},
         "before_hex": hex::encode(before),
-        "after_hex": if existing {hex::encode(before.replace("1.98.0", "1.99.0"))} else {String::new()}
+        "after_hex": if existing {hex::encode(before.replace("nightly-2026-03-05", "nightly-2026-03-12"))} else {String::new()}
     })
 }
 
 fn proposal() -> Value {
     json!({"number": 12, "state": "open", "merged_at": null,
-        "head": {"ref": "chore/toolchain-1.99.0", "sha": HEAD, "repo": {"full_name": "owner/repository"}},
+        "head": {"ref": "chore/toolchain-nightly-2026-03-12", "sha": HEAD, "repo": {"full_name": "owner/repository"}},
         "base": {"ref": "dev", "repo": {"full_name": "owner/repository"}}})
 }
 
@@ -153,14 +153,19 @@ fn branch_recovery_requires_current_dev_and_exact_single_pin_bytes_and_mode() {
             "head_entry",
             json!(format!("100755 blob {HEAD}\trust-toolchain.toml\n")),
         ),
-        ("after_hex", json!(hex::encode("channel = \"1.99.0\"\n"))),
+        (
+            "after_hex",
+            json!(hex::encode("channel = \"nightly-2026-03-12\"\n")),
+        ),
         (
             "before_hex",
-            json!(hex::encode("channel = \"1.98.0\"\nchannel = \"1.98.0\"\n")),
+            json!(hex::encode(
+                "channel = \"nightly-2026-03-05\"\nchannel = \"nightly-2026-03-05\"\n"
+            )),
         ),
         ("remote_status", json!(128)),
         ("remote_ref", json!("")),
-        ("latest", json!("1.98.0")),
+        ("latest", json!("nightly-2026-03-05")),
         ("latest", json!("stable")),
     ] {
         let mut input = observation(true);

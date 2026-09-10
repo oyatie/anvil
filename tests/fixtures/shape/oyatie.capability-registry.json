@@ -79,18 +79,5 @@
       "name": "tenancy"
     }
   ],
-  "meta_directories": [
-    {
-      "dir": "build"
-    },
-    {
-      "dir": "docs"
-    },
-    {
-      "dir": "templates"
-    },
-    {
-      "dir": "third-party"
-    }
-  ]
+  "meta_directories": []
 }

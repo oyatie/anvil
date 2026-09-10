@@ -180,7 +180,7 @@ fn an_app_is_discovered_by_marker_and_held_to_the_same_skeleton() {
     let tree = InMemoryTree::from_paths(
         "fx",
         &[
-            "app/calendar/manifest.json",
+            "app/calendar/OWNERS",
             "app/calendar/slos/x.openslo.yaml",
             "app/calendar/observability/slos/y.openslo.yaml",
         ],

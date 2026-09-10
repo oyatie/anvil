@@ -11,10 +11,6 @@
       "pointer": "/capabilities",
       "key": "name"
     },
-    "meta_dirs": {
-      "pointer": "/meta_directories",
-      "key": "dir"
-    },
     "faces": {
       "pointer": "/faces",
       "key": "face"
@@ -30,11 +26,6 @@
       "root": "app/<name>/",
       "skeleton": "standard",
       "members": "discover:OWNERS"
-    },
-    "meta": {
-      "root": "<name>/",
-      "skeleton": "meta",
-      "members": "registry-meta-dirs"
     }
   },
   "skeletons": {

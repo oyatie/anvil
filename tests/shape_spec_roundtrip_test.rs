@@ -87,12 +87,46 @@ fn a_rule_the_spec_does_not_declare_is_not_run() {
     );
 }
 
+/// A spec declaring every members source, so engine coverage of
+/// `registry-meta-dirs` does not depend on a tenant proposal happening to use
+/// it. oyatie's did, and dropping that kind would have taken the only coverage
+/// with it.
+fn spec_with_every_members_source() -> String {
+    r#"{
+      "schema": "anvil/shape/v1",
+      "profiles": ["rust-cargo"],
+      "unit_registry": {
+        "path": ".config/anvil/registry.json",
+        "units": { "pointer": "/capabilities", "key": "name" },
+        "meta_dirs": { "pointer": "/meta_directories", "key": "dir" },
+        "faces": { "pointer": "/faces", "key": "face" }
+      },
+      "unit_kinds": {
+        "capability": { "root": "<name>/", "skeleton": "s", "members": "registry" },
+        "meta": { "root": "<name>/", "skeleton": "s", "members": "registry-meta-dirs" },
+        "app": { "root": "app/<name>/", "skeleton": "s", "members": "discover:OWNERS" }
+      },
+      "skeletons": { "s": {
+        "faces": { "core": "core/" },
+        "required_faces": [],
+        "unit_marker": "OWNERS",
+        "face_dependency_matrix": { "core": [] },
+        "cross_unit_edges": "facade-only",
+        "satellites": {},
+        "allowed_unit_root_files": ["OWNERS"]
+      } },
+      "root_files": { "mode": "allowlist", "rules": [] },
+      "rules": { "unit_missing_face": { "mode": "advisory-until-infra" } }
+    }"#
+    .to_string()
+}
+
 #[test]
 fn registry_backed_units_resolve_from_the_tenant_registry() {
-    let spec = ShapeSpec::parse(&fixture("oyatie.shape.json")).unwrap();
+    let spec = ShapeSpec::parse(&spec_with_every_members_source()).unwrap();
     let registry = serde_json::json!({
         "capabilities": [ { "name": "iam" }, { "name": "storage" } ],
-        "meta_directories": [ { "dir": "kernel" }, { "dir": "governance" } ],
+        "meta_directories": [ { "dir": "build" }, { "dir": "docs" } ],
         "faces": [ { "face": "core" }, { "face": "ports" }, { "face": "adapters" }, { "face": "facade" } ]
     });
     let resolved = resolve(&spec, Some(&registry)).expect("resolves");
@@ -102,7 +136,7 @@ fn registry_backed_units_resolve_from_the_tenant_registry() {
         "{names:?}"
     );
     assert!(
-        names.contains(&"kernel") && names.contains(&"governance"),
+        names.contains(&"build") && names.contains(&"docs"),
         "{names:?}"
     );
     let iam = resolved.units.iter().find(|u| u.name == "iam").unwrap();
@@ -142,7 +176,7 @@ fn a_registry_backed_spec_without_a_registry_document_is_not_guessed() {
 
 #[test]
 fn members_source_grammar_is_exact() {
-    let spec = ShapeSpec::parse(&fixture("oyatie.shape.json")).unwrap();
+    let spec = ShapeSpec::parse(&spec_with_every_members_source()).unwrap();
     assert_eq!(
         spec.unit_kinds["capability"].members_source(),
         Ok(MembersSource::Registry)

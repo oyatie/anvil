@@ -220,15 +220,43 @@ fn the_rule_can_tell_a_declared_grant_from_a_missing_one() {
 
 #[test]
 fn app_tokens_are_sha_pinned_repo_scoped_and_explicitly_attenuated() {
-    for (workflow_name, job_name, contents) in [
-        ("promotion-open-next.yml", "open-next", "read"),
-        ("toolchain-weekly.yml", "channel", "write"),
-    ] {
+    // Every App-token grant in the tree, with its exact attenuation. A lane
+    // that only files an issue has no business holding contents:write; what
+    // may not vary is that a grant absent here fails the count assertion.
+    const GRANTS: &[(&str, &str, &[(&str, &str)])] = &[
+        (
+            "promotion-open-next.yml",
+            "open-next",
+            &[
+                ("permission-contents", "read"),
+                ("permission-pull-requests", "write"),
+            ],
+        ),
+        (
+            "toolchain-weekly.yml",
+            "channel",
+            &[
+                ("permission-contents", "write"),
+                ("permission-pull-requests", "write"),
+            ],
+        ),
+        (
+            "toolchain-weekly.yml",
+            "nightly",
+            &[("permission-issues", "write")],
+        ),
+    ];
+
+    for (workflow_name, job_name, permissions) in GRANTS {
         let (body, doc) = workflow(workflow_name);
+        let declared = GRANTS
+            .iter()
+            .filter(|(name, _, _)| name == workflow_name)
+            .count();
         assert_eq!(
             body.matches("actions/create-github-app-token@").count(),
-            1,
-            "{workflow_name}: every App-token grant must pass through the one checked step"
+            declared,
+            "{workflow_name}: every App-token grant must be one of the checked steps above"
         );
         let step = app_token_step(job_steps(&doc, workflow_name, job_name), workflow_name);
 
@@ -244,15 +272,16 @@ fn app_tokens_are_sha_pinned_repo_scoped_and_explicitly_attenuated() {
         );
 
         let actual = string_map(&step["with"], &format!("{workflow_name}: App token with"));
-        let expected = BTreeMap::from([
+        let mut expected = BTreeMap::from([
             ("app-id".to_string(), "${{ vars.ANVIL_APP_ID }}".to_string()),
-            ("permission-contents".to_string(), contents.to_string()),
-            ("permission-pull-requests".to_string(), "write".to_string()),
             (
                 "private-key".to_string(),
                 "${{ secrets.ANVIL_APP_PRIVATE_KEY }}".to_string(),
             ),
         ]);
+        for (key, value) in *permissions {
+            expected.insert((*key).to_string(), (*value).to_string());
+        }
         assert_eq!(
             actual, expected,
             "{workflow_name}: App-token inputs must be exact. With no permission-* inputs the \

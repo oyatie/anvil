@@ -28,7 +28,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
-          toolchain: "nightly-2026-09-09"
+          toolchain: "nightly-2026-09-10"
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
       - name: Advisories, licences, bans and sources

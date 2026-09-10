@@ -1,9 +1,12 @@
-//! The toolchain pin and the lockfile format are declared in three places that
-//! must agree: `rust-toolchain.toml`, `[package] rust-version`, and the
-//! `Cargo.lock` header. A drift between them is how CI ends up building on a
-//! toolchain nobody chose — which is exactly how Anvil ran on 1.97.1 before
-//! this pin existed: the host had it installed, CI said `stable`, and the two
-//! agreed by coincidence.
+//! The toolchain pin and the lockfile format are declared in two places that
+//! must agree: `rust-toolchain.toml` and the `Cargo.lock` header. A drift
+//! between them is how CI ends up building on a toolchain nobody chose — which
+//! is exactly how Anvil ran on 1.97.1 before this pin existed: the host had it
+//! installed, CI said `stable`, and the two agreed by coincidence.
+//!
+//! `[package] rust-version` was the third place, and is gone. An MSRV is a
+//! contract with consumers; anvil is `publish = false` with no dependent, so
+//! it had no counterparty and no job ever built under it.
 
 use std::fs;
 use std::path::PathBuf;
@@ -28,53 +31,54 @@ fn toolchain_channel() -> String {
         .expect("rust-toolchain.toml must declare a channel")
 }
 
-fn package_rust_version() -> String {
-    let raw = fs::read_to_string(repo_root().join("Cargo.toml")).expect("Cargo.toml");
-    raw.lines()
-        .find_map(|l| {
-            let l = l.trim();
-            l.strip_prefix("rust-version").map(|rest| {
-                rest.trim_start_matches([' ', '='])
-                    .trim()
-                    .trim_matches('"')
-                    .to_string()
-            })
-        })
-        .expect("Cargo.toml must declare [package] rust-version")
-}
-
 #[test]
-fn toolchain_is_pinned_to_an_exact_version_not_a_channel_name() {
+fn the_toolchain_is_pinned_to_an_exact_build_not_a_moving_channel() {
+    // The point is not the shape, it is that the pin names ONE compiler.
+    // `stable` and `nightly` are different compilers on different days, so a
+    // build under either is not reproducible and a bump has nothing to move
+    // from. A release triple and a dated nightly both name exactly one.
     let channel = toolchain_channel();
-    let looks_like_version = channel.split('.').count() == 3
+    let exact_release = channel.split('.').count() == 3
         && channel
             .split('.')
             .all(|p| p.chars().all(|c| c.is_ascii_digit()));
+    let dated_nightly = channel.strip_prefix("nightly-").is_some_and(|date| {
+        match date.split('-').collect::<Vec<_>>()[..] {
+            [y, m, d] => {
+                y.len() == 4
+                    && m.len() == 2
+                    && d.len() == 2
+                    && [y, m, d]
+                        .iter()
+                        .all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+            }
+            _ => false,
+        }
+    });
     assert!(
-        looks_like_version,
-        "rust-toolchain.toml channel must be an exact version (x.y.z), got {channel:?}; \
+        exact_release || dated_nightly,
+        "rust-toolchain.toml channel must name one compiler -- an exact release \
+         (x.y.z) or a dated nightly (nightly-YYYY-MM-DD) -- got {channel:?}; \
          `stable`/`nightly` make the build depend on the day it runs"
     );
 }
 
 #[test]
-fn package_rust_version_is_not_ahead_of_the_toolchain_pin() {
-    // This asserted EQUALITY, which made the two facts one number: the channel
-    // is what we compile with and should chase stable, MSRV is what consumers
-    // may compile under and should rise rarely. `src/toolchain` now reports
-    // equality as a finding.
-    //
-    // The old assertion had a real point underneath it, kept here: an MSRV
-    // BELOW the channel that no job ever builds under is a promise with no
-    // measurement behind it. That is `Drift::MsrvUnverified`, and anvil is in
-    // that state today -- every CI job installs the channel. The remedy is a
-    // build under MSRV, not a number that agrees with itself.
-    let msrv = package_rust_version();
-    let channel = toolchain_channel();
+fn no_msrv_is_promised_because_nothing_would_hold_us_to_it() {
+    // This replaces a test comparing MSRV against the channel. The pair is
+    // gone, and what is worth guarding is that it stays gone: a `rust-version`
+    // reintroduced without a job that builds under it is a promise with no
+    // measurement behind it, which is worse than no promise at all.
+    let manifest = fs::read_to_string(repo_root().join("Cargo.toml")).expect("Cargo.toml reads");
+    let declared = manifest
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rust-version"));
     assert!(
-        msrv <= channel,
-        "MSRV {msrv} is newer than the pinned channel {channel}: the promised \
-         minimum cannot build here at all"
+        declared.is_none(),
+        "anvil is publish = false with no dependent, so an MSRV has no \
+         counterparty; if one is reintroduced it needs a CI job that builds \
+         under it. Found: {declared:?}"
     );
 }
 

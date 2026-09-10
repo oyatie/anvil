@@ -1,30 +1,37 @@
-//! Two facts that are not one number: what we compile WITH, and what we
-//! promise to compile UNDER.
+//! What this repository compiles with, and why that is the only such fact.
 //!
-//! # Why they are different
+//! # One pin, named exactly
 //!
-//! The toolchain channel is an operational choice. It should track stable,
-//! because every release carries soundness fixes, new deny-by-default lints
-//! that are future build breaks, and stdlib APIs that let hand-rolled code be
-//! deleted. Lagging is debt that compounds.
+//! The channel is pinned to a dated nightly. Not to `nightly`, which is a
+//! different compiler every day and makes a build unreproducible; not to a
+//! stable release, which arrives six weeks after the lints that will break the
+//! build are already knowable. A dated nightly is an exact toolchain that
+//! moves on a schedule this repository chooses, which is how a fleet is
+//! upgraded: pin a revision, roll it forward on a cadence, run a canary ahead
+//! of the pin so a break is met before it is adopted.
 //!
-//! MSRV is a contract with consumers. It should rise rarely and deliberately,
-//! because raising it strands every downstream that has not moved. Lagging is
-//! a feature.
+//! # Why there is no MSRV
 //!
-//! They move in opposite directions for opposite reasons, so one number cannot
-//! serve both. Anvil carried `1.97.1` in `rust-toolchain.toml` and `1.97.1` as
-//! `rust-version` while stable was `1.98.0`: not a coincidence, an unmanaged
-//! pair. Neither fact was being decided, and nothing in the tree could tell.
+//! An MSRV is a contract with consumers: raise it and every downstream that
+//! has not moved is stranded. `anvil` is `publish = false` with no dependent
+//! in the organisation, so that contract has no counterparty. A promise with
+//! nobody on the other side is not caution, it is a second number to keep
+//! honest. The `rust-version` this repository declared was never built under by
+//! any job, which makes it a claim rather than a measurement.
+//!
+//! The principle that number was meant to serve is kept and moved: what is
+//! promised must be exercised. The pin is exercised because every CI job
+//! builds on it, and the canary is exercised because a person receives its
+//! failures.
 //!
 //! # What a release costs when it is missed
 //!
 //! 1.98 added `invalid_runtime_symbol_definitions` as DENY-by-default. A new
 //! deny lint is a build break scheduled for whenever the pin moves, and the
 //! hyperscaler answer is to meet it early -- Google builds the fleet on HEAD
-//! so a breaking lint is fixed before it ships. The equivalent here is that
-//! the channel lag is measured and published rather than discovered on the
-//! day someone bumps it.
+//! so a breaking lint is fixed before it ships. Tracking dated nightly is that
+//! answer applied here: the break arrives as one weekly bump PR carrying its
+//! own lint fixes, rather than as a wall on the day someone bumps stable.
 
 pub mod bump;
 
@@ -51,17 +58,6 @@ impl Version {
             patch: it.next().unwrap_or("0").trim().parse().ok()?,
         })
     }
-
-    /// Releases between two versions, counting minors only.
-    ///
-    /// Rust ships a minor every six weeks and patches out of band, so the
-    /// minor is the unit of "how far behind" a channel is.
-    pub fn minors_behind(self, newer: Version) -> u32 {
-        if newer.major != self.major {
-            return u32::MAX;
-        }
-        newer.minor.saturating_sub(self.minor)
-    }
 }
 
 impl std::fmt::Display for Version {
@@ -70,55 +66,99 @@ impl std::fmt::Display for Version {
     }
 }
 
-/// What is wrong with a repository's toolchain pair.
+/// A channel as `rust-toolchain.toml` may name it.
+///
+/// Two shapes are pinnable and they order differently: a release by version
+/// triple, a dated nightly by date. Nothing orders one against the other,
+/// because "is this nightly behind that release" is not a question this
+/// repository asks -- it tracks one channel at a time, and a move between
+/// kinds is a decision rather than a drift.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Channel {
+    Release(Version),
+    /// A nightly pinned to its manifest date, kept as `YYYY-MM-DD` text.
+    ///
+    /// ISO dates order lexically, so the text is the comparison; parsing it
+    /// into a calendar type would buy nothing and add a dependency.
+    Nightly(String),
+}
+
+impl Channel {
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if let Some(date) = s.strip_prefix("nightly-") {
+            return is_iso_date(date).then(|| Channel::Nightly(date.to_owned()));
+        }
+        Version::parse(s).map(Channel::Release)
+    }
+
+    /// Whether `self` is newer than `other`, or `None` across kinds.
+    ///
+    /// `None` is not "equal" and not "unknown": it is "the comparison is not
+    /// defined", and a caller that treats it as either would propose a move
+    /// between channels as though it were a routine bump.
+    pub fn newer_than(&self, other: &Channel) -> Option<bool> {
+        match (self, other) {
+            (Channel::Release(a), Channel::Release(b)) => Some(a > b),
+            (Channel::Nightly(a), Channel::Nightly(b)) => Some(a > b),
+            _ => None,
+        }
+    }
+}
+
+/// `YYYY-MM-DD`, shape only. A date rustup does not publish fails at install,
+/// which is a better place to find out than a regex that encodes a calendar.
+fn is_iso_date(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    matches!(parts.as_slice(), [y, m, d]
+        if y.len() == 4 && m.len() == 2 && d.len() == 2
+            && [y, m, d].iter().all(|p| p.bytes().all(|b| b.is_ascii_digit())))
+}
+
+impl std::fmt::Display for Channel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Channel::Release(v) => write!(f, "{v}"),
+            Channel::Nightly(date) => write!(f, "nightly-{date}"),
+        }
+    }
+}
+
+/// What is wrong with a repository's pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Drift {
-    /// One number for both facts. Neither is being managed.
-    Conflated { at: Version },
-    /// The channel trails stable by more than the budget.
-    ChannelBehind { channel: Version, by: u32 },
-    /// MSRV promises more than the channel can deliver: unbuildable.
-    MsrvAheadOfChannel { msrv: Version, channel: Version },
-    /// A fact is not declared at all, so nothing can be measured.
-    Undeclared { which: &'static str },
-    /// MSRV is declared below the channel and nothing ever builds under it.
+    /// The pin is not the newest the channel publishes.
     ///
-    /// A promise no build exercises is a claim, not a measurement -- the same
-    /// class as a gate that reports healthy from constants. Separating MSRV
-    /// from the channel is only an improvement if the lower number is then
-    /// PROVEN; otherwise it is a worse state than conflation, because it looks
-    /// managed and is not.
-    MsrvUnverified { msrv: Version },
+    /// There is no lag budget. A budget made sense when the channel was stable
+    /// and moved every six weeks; a dated nightly moves daily and is rolled on
+    /// a cadence this repository picks, so "behind" is a fact to report and the
+    /// cadence decides what to do about it.
+    ChannelBehind { channel: Channel, latest: Channel },
+    /// The pin is not declared at all, so nothing can be measured.
+    Undeclared { which: &'static str },
+    /// The declared pin and the latest are different kinds of channel.
+    ///
+    /// Moving between a release and a nightly is a decision about how this
+    /// repository is built. Reporting it as a bump would let the weekly chore
+    /// make that decision on its own, which is not a chore's to make.
+    ChannelKindChanged { channel: Channel, latest: Channel },
 }
 
 impl Drift {
     pub fn explain(&self) -> String {
         match self {
-            Drift::Conflated { at } => format!(
-                "`rust-toolchain.toml` channel and `rust-version` are both {at}. \
-                 They are different promises -- one is what we compile with and \
-                 should track stable, the other is what consumers may compile \
-                 under and should rise rarely. One number means neither was \
-                 decided."
-            ),
-            Drift::ChannelBehind { channel, by } => format!(
-                "the toolchain channel {channel} is {by} release(s) behind \
-                 stable; every skipped release carries soundness fixes and \
-                 deny-by-default lints that become build breaks the day the \
-                 pin moves"
-            ),
-            Drift::MsrvAheadOfChannel { msrv, channel } => format!(
-                "MSRV {msrv} is newer than the channel {channel}: the promised \
-                 minimum cannot build here at all"
+            Drift::ChannelBehind { channel, latest } => format!(
+                "the pin {channel} trails {latest}; every skipped toolchain \
+                 carries soundness fixes and deny-by-default lints that become \
+                 build breaks the day the pin moves"
             ),
             Drift::Undeclared { which } => {
                 format!("{which} is not declared, so it cannot be measured")
             }
-            Drift::MsrvUnverified { msrv } => format!(
-                "MSRV {msrv} is promised and never built: no job installs it, so \
-                 the minimum is a claim rather than a measurement. Add a build \
-                 under it, or raise it to the channel and promise only what is \
-                 tested."
+            Drift::ChannelKindChanged { channel, latest } => format!(
+                "the pin {channel} and the latest {latest} are different kinds \
+                 of channel: moving between them is a decision about how this \
+                 repository is built, not a bump to propose automatically"
             ),
         }
     }
@@ -127,57 +167,59 @@ impl Drift {
 /// The pair a repository declares.
 #[derive(Debug, Clone)]
 pub struct Declared {
-    pub channel: Option<Version>,
-    pub msrv: Option<Version>,
+    pub channel: Option<Channel>,
 }
 
-/// `channel = "..."` from a `rust-toolchain.toml`.
-pub fn channel_from_toml(text: &str) -> Option<Version> {
-    field_after(text, "channel")
+/// This binary's own pinned channel, embedded from the repository's
+/// `rust-toolchain.toml` when it was compiled.
+///
+/// Anything that spawns cargo and must not be redirected by the toolchain file
+/// of whatever repository it is pointed at needs to name a toolchain. Naming it
+/// as a literal makes a copy, and a copy does not move when the pin moves. This
+/// repository had eight copies of `1.98.0` -- seven in workflow YAML, one in
+/// `authority.rs` -- and the only thing that noticed was a test asserting the
+/// literal, which reports the divergence as its own failure rather than as the
+/// drift it is.
+///
+/// `include_str!` makes the copy unrepresentable: there is one pin, and code
+/// that needs it reads that one.
+pub fn pinned_channel() -> &'static str {
+    const FILE: &str = include_str!("../../rust-toolchain.toml");
+    channel_text(FILE).expect("this repository's rust-toolchain.toml declares a channel")
 }
 
-/// `rust-version = "..."` from a `Cargo.toml`.
-pub fn msrv_from_manifest(text: &str) -> Option<Version> {
-    field_after(text, "rust-version")
-}
-
-fn field_after(text: &str, key: &str) -> Option<Version> {
+/// The channel exactly as written, which `channel_from_toml` cannot return.
+///
+/// A channel is not always a version triple: `nightly-2026-09-10` and `stable`
+/// are both valid and neither parses as semver. Callers that pass the channel
+/// to rustup need the text; only callers comparing release distance need
+/// [`Version`].
+pub fn channel_text(text: &str) -> Option<&str> {
     text.lines()
         .map(str::trim)
-        // A whole-line comment cannot match anyway -- its key carries the `#`
-        // -- but a TRAILING one silently breaks parsing:
-        // `channel = "1.98.0" # bumped` leaves `1.98.0" # bumped` after the
-        // quote trim, whose patch component does not parse, so the pin reads
-        // as UNDECLARED. A version this module cannot see is one it cannot
-        // report as behind, which is the quiet direction of the failure.
         .filter(|l| !l.starts_with('#'))
-        .find_map(|l| {
-            let (k, rest) = l.split_once('=')?;
-            if k.trim() != key {
-                return None;
-            }
-            let value = rest.split('#').next().unwrap_or(rest);
-            Version::parse(value.trim().trim_matches('"'))
+        .find_map(|line| {
+            let rest = line.strip_prefix("channel")?.trim_start();
+            let rest = rest.strip_prefix('=')?.trim();
+            // A trailing comment would otherwise be read as part of the
+            // channel, which would read as a pin nobody declared.
+            let rest = rest.split('#').next()?.trim();
+            let value = rest.strip_prefix('"')?.split('"').next()?;
+            (!value.is_empty()).then_some(value)
         })
+}
+
+/// `channel = "..."` from a `rust-toolchain.toml`, as a [`Channel`].
+pub fn channel_from_toml(text: &str) -> Option<Channel> {
+    channel_text(text).and_then(Channel::parse)
 }
 
 pub fn read(repo_dir: &Path) -> Declared {
     let channel = std::fs::read_to_string(repo_dir.join("rust-toolchain.toml"))
         .ok()
         .and_then(|t| channel_from_toml(&t));
-    let msrv = std::fs::read_to_string(repo_dir.join("Cargo.toml"))
-        .ok()
-        .and_then(|t| msrv_from_manifest(&t));
-    Declared { channel, msrv }
+    Declared { channel }
 }
-
-/// How many releases the channel may trail stable before it is a finding.
-///
-/// Two, not zero. A release lands and a fleet needs a window to absorb it; a
-/// budget of zero would make every Tuesday a finding and teach readers to
-/// ignore the gate. Two six-week trains is twelve weeks of slack and is still
-/// inside the window where the next deny-lint has not yet shipped.
-pub const CHANNEL_LAG_BUDGET: u32 = 2;
 
 /// Every drift in the pair. Empty means both facts are declared, distinct and
 /// current.
@@ -185,34 +227,23 @@ pub const CHANNEL_LAG_BUDGET: u32 = 2;
 /// `latest_stable` is passed in rather than fetched: a gate that reaches the
 /// network cannot run in a hermetic build, and a verdict that depends on
 /// reachability is not deterministic.
-pub fn drift(d: &Declared, latest_stable: Option<Version>, msrv_built: bool) -> Vec<Drift> {
+pub fn drift(d: &Declared, latest: Option<Channel>) -> Vec<Drift> {
     let mut out = Vec::new();
-    let Some(channel) = d.channel else {
+    let Some(channel) = d.channel.clone() else {
         out.push(Drift::Undeclared {
             which: "the toolchain channel",
         });
         return out;
     };
-    let Some(msrv) = d.msrv else {
-        out.push(Drift::Undeclared {
-            which: "MSRV (`rust-version`)",
-        });
+    let Some(latest) = latest else {
         return out;
     };
-    if channel == msrv {
-        out.push(Drift::Conflated { at: channel });
-    }
-    if msrv < channel && !msrv_built {
-        out.push(Drift::MsrvUnverified { msrv });
-    }
-    if msrv > channel {
-        out.push(Drift::MsrvAheadOfChannel { msrv, channel });
-    }
-    if let Some(stable) = latest_stable {
-        let by = channel.minors_behind(stable);
-        if by > CHANNEL_LAG_BUDGET {
-            out.push(Drift::ChannelBehind { channel, by });
-        }
+    match channel.newer_than(&latest) {
+        // Behind is the only direction worth reporting: a pin ahead of what
+        // the channel publishes is a pin someone chose deliberately.
+        Some(false) if channel != latest => out.push(Drift::ChannelBehind { channel, latest }),
+        Some(_) => {}
+        None => out.push(Drift::ChannelKindChanged { channel, latest }),
     }
     out
 }

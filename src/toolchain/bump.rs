@@ -28,7 +28,7 @@
 // and the seal counts them exactly.
 use crate::exec::{ExecClass, run_bounded};
 use crate::harness::{Finding, Fix};
-use crate::toolchain::Version;
+use crate::toolchain::Channel;
 use std::path::Path;
 
 /// Whether the target toolchain can build and test this tree.
@@ -134,7 +134,7 @@ pub async fn probe(repo_dir: &Path, toolchain: &str) -> Safety {
 /// expects is absent, which is what a version bump is. The anchor carries the
 /// key, so `channel = "1.97.1"` cannot be confused with any other line that
 /// happens to hold the same version string.
-pub fn channel_bump(from: Version, to: Version) -> Finding {
+pub fn channel_bump(from: &Channel, to: &Channel) -> Finding {
     Finding {
         rule: "toolchain_channel_behind",
         key: format!("channel:{from}"),
@@ -156,7 +156,7 @@ pub fn channel_bump(from: Version, to: Version) -> Finding {
 ///
 /// A bump that moves only part of the pin leaves CI and developers on
 /// different compilers.
-pub fn ci_toolchain_bump(from: Version, to: Version) -> Finding {
+pub fn ci_toolchain_bump(from: &Channel, to: &Channel) -> Finding {
     Finding {
         rule: "toolchain_channel_behind",
         key: format!("ci-toolchain:{from}"),
@@ -165,24 +165,6 @@ pub fn ci_toolchain_bump(from: Version, to: Version) -> Finding {
         fix: Some(Fix::DependOnInstead {
             replace: format!("toolchain: \"{from}\""),
             with: format!("toolchain: \"{to}\""),
-        }),
-    }
-}
-
-/// The edit that moves MSRV.
-///
-/// Separate function, deliberately. MSRV rises for a different reason and on a
-/// different schedule, and a single "bump the toolchain" that moved both would
-/// re-create the conflated pair this module exists to separate.
-pub fn msrv_bump(from: Version, to: Version) -> Finding {
-    Finding {
-        rule: "toolchain_msrv",
-        key: format!("msrv:{from}"),
-        subject: "Cargo.toml".to_string(),
-        detail: format!("rust-version {from} -> {to}"),
-        fix: Some(Fix::DependOnInstead {
-            replace: format!("rust-version = \"{from}\""),
-            with: format!("rust-version = \"{to}\""),
         }),
     }
 }

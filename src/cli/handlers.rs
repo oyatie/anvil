@@ -183,8 +183,8 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             apply,
         } => {
             let declared = crate::toolchain::read(&repo_dir);
-            let Some(target) = crate::toolchain::Version::parse(&to) else {
-                println!("❌ `{to}` is not a version");
+            let Some(target) = crate::toolchain::Channel::parse(&to) else {
+                println!("❌ `{to}` is not a channel: want `1.98.1` or `nightly-YYYY-MM-DD`");
                 return Ok(());
             };
             let Some(current) = declared.channel else {
@@ -203,8 +203,8 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
             // Every site the pin appears at, together. A bump that moves the
             // manifest and leaves CI behind gives a tree whose CI and whose
             // developers build with different compilers.
-            let channel = crate::toolchain::bump::channel_bump(current, target);
-            let ci = crate::toolchain::bump::ci_toolchain_bump(current, target);
+            let channel = crate::toolchain::bump::channel_bump(&current, &target);
+            let ci = crate::toolchain::bump::ci_toolchain_bump(&current, &target);
             let mut files = std::collections::BTreeMap::new();
             let mut findings: Vec<&crate::harness::Finding> = vec![&channel];
             files.insert(

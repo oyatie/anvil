@@ -106,7 +106,7 @@ fn an_artifact_class_step_places_by_pattern_before_unit_rules() {
     };
     match place(&spec, &p, &r, &DepFacts::default()) {
         Placement::Canonical { dest, step } => {
-            assert_eq!(dest, "governance/ADR-0009-x.md");
+            assert_eq!(dest, "docs/decisions/ADR-0009-x.md");
             assert_eq!(step, "artifact_class:decision");
         }
         other => panic!("{other:?}"),

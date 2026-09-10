@@ -134,7 +134,6 @@
         }
       },
       "allowed_unit_root_files": [
-        "manifest.json",
         "BUCK",
         "OWNERS",
         "README.md",
@@ -153,16 +152,24 @@
     "steps": [
       {
         "kind": "meta_dir",
-        "dir": "kernel/"
+        "dir": "build/"
       },
       {
         "kind": "meta_dir",
-        "dir": "os/"
+        "dir": "docs/"
+      },
+      {
+        "kind": "meta_dir",
+        "dir": "templates/"
+      },
+      {
+        "kind": "meta_dir",
+        "dir": "third-party/"
       },
       {
         "kind": "artifact_class",
         "class": "decision",
-        "dest": "governance/",
+        "dest": "docs/decisions/",
         "patterns": [
           "ADR-*.md"
         ]
@@ -306,6 +313,11 @@
         "id": "editorconfig",
         "kind": "exact",
         "value": ".editorconfig"
+      },
+      {
+        "id": "bacon",
+        "kind": "exact",
+        "value": "bacon.toml"
       }
     ]
   },

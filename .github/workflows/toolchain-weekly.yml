@@ -228,7 +228,22 @@ jobs:
         uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:
           toolchain: nightly
-          components: clippy
+          components: clippy, rustfmt
+      # The suite is not hermetic: `authority.rs` spawns `cargo metadata` under
+      # an explicitly pinned RUSTUP_TOOLCHAIN so contributor toolchain files
+      # cannot redirect it, and several gates shell out to rustfmt. Running the
+      # suite on nightly therefore needs the pinned toolchain present too --
+      # without it, `cargo metadata` fails, the audited macro surface is revoked
+      # and 70 tests fail for a reason that has nothing to do with nightly.
+      # Read from the file so this cannot drift from the pin the way the
+      # hardcoded copy in authority.rs already has.
+      - name: Install the pinned toolchain the suite spawns
+        run: |
+          set -eu
+          pinned=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml)
+          [ -n "$pinned" ]
+          echo "the suite spawns: ${pinned}"
+          rustup toolchain install "$pinned" --profile minimal --component rustfmt
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       # The version this lane measured, recorded so a failure names it. Asserts

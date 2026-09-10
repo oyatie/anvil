@@ -46,15 +46,25 @@ nothing to restore, and writing it would refuse the whole repository on its
 first run. The registry its slot-2 rule requires,
 `[workspace.metadata.oyatie.microservices]`, is absent from `Cargo.toml`.
 
-Conformance of the 480 crates that exist (N-007 requires the directory name to
-equal the package name, so leaf names are the right subject):
+Conformance of the 480 crates that exist, measured on `[package].name` read
+from each manifest. The first draft used leaf directory names and justified it
+with N-007 ("the directory name MUST equal the package name") — which is the
+single most-violated rule in the repository: **466 of 480** manifests have a
+directory name that differs from the package name. The prefix row was measured
+on both subjects and is 0 either way, so the headline stands; its stated
+justification did not.
 
 | Rule | Conformant | Command |
 | --- | --- | --- |
 | N-002, `oyatie-` prefix | **0 / 480** | `rg -c '^oyatie-' leaves.txt` |
 | BNF v4.1, `oya-` prefix | **0 / 480** | `rg -c '^oya-' leaves.txt` |
-| N-005, ends in an ADR-0105 layer token | 266 / 480 | `rg -c -- '-(kernel\|domain\|usecase\|app\|adapter\|infrastructure\|cli\|rest\|grpc\|worker\|sdk\|api)$' leaves.txt` |
-| N-003, `check-` crates | 1 | `rg -c '^check-' leaves.txt` |
+| N-005, ends in an ADR-0105 layer token | 264 / 479 | `rg -v '^check-' pkgnames.txt \| rg -c -- '-(kernel\|domain\|usecase\|app\|adapter\|infrastructure\|cli\|rest\|grpc\|worker\|sdk)$'` |
+| N-003, `check-` crates | 1 | `rg -c '^check-' pkgnames.txt` |
+
+The N-005 denominator is 479, not 480: N-005 governs "every **non-checker**
+crate". Its token set excludes `api`, which `layer-enum-adr-0105.md` does not
+list — the enum is closed there, and an earlier 266/480 came from including it
+and forgetting the checker exclusion, two errors that partly cancelled.
 
 The prefix figure is the load-bearing one and was measured twice by
 instruments that agree: the table above, and Anvil's own engine reporting
@@ -79,11 +89,17 @@ labelled its buckets as patterns, merging three different shapes into one row:
 - **21 capabilities**, each carrying `OWNERS` at its root — 21 of 21, no
   exceptions. Faces are drawn from `core/ ports/ adapters/ facade/`.
 - **7 products** under `app/`, each also carrying `OWNERS` — 7 of 7.
-- **`build/` is not a capability.** oyatie's own
-  `pipeline/core/admission/src/layout.rs:131` declares
+- **`build/` is not a capability, and is not measured by this proposal.**
+  oyatie's `pipeline/core/admission/src/layout.rs:131` declares
   `META_ROOTS = ["app", "build", "docs", "templates", "third-party"]`, and its
-  20 crates are a named ADR-0538 exception in `Cargo.toml:28-31`. They are
-  enrolled as meta directories in the proposed registry, not silently dropped.
+  20 crates are a named ADR-0538 exception in `Cargo.toml:28-31`. Enrolling the
+  four meta roots as `meta` units was tried and reverted: it added four units,
+  1 finding, and four "conformant" — because the `meta` skeleton declares
+  `required_faces: []` and no satellites, so both halves of the conformance
+  predicate (`report.rs:118-122`) are vacuously true and a meta unit **cannot**
+  be non-conformant. The headline would have read 8 conformant instead of 4 on
+  the strength of units held to nothing. Those 20 crates still produce 36
+  findings, all carrying `unit: None`. Named here rather than counted.
 - **496 BUCK files.** Not one per crate: 16 have no sibling `Cargo.toml`
   (`third-party/fixups/…`, `docs/decisions`, proto trees, toolchains), and the
   root manifest has no BUCK.
@@ -117,7 +133,13 @@ document was supplied
 ```
 
 `governance/capability-registry.json` does not exist in oyatie, and cannot —
-`governance` is in `FORBIDDEN_NAMES` above. Its `unit_marker`, `manifest.json`,
+`governance` is in `FORBIDDEN_NAMES` above. The first correction moved it to
+`.anvil/`, which is inadmissible for the same reason: `layout.rs:91`
+`ALLOWED_DOT_ROOT_DIRS` is `.cargo`, `.config`, `.github`, `.githooks`, and
+`layout.rs:196-198` emits ``unknown root `.anvil` `` exactly as `:186-188`
+rejects `governance/`. One forbidden root swapped for another. It is now
+`.config/anvil/capability-registry.json`, under a root the tenant's own gate
+admits. Its `unit_marker`, `manifest.json`,
 is also absent from every capability and product root: three files in the repo
 carry that exact name (a test fixture and two sovereignty packs), and a fourth,
 `client-manifest.json`, only ends with it.
@@ -136,9 +158,9 @@ the same file is the defect this repository keeps producing. They are now
 
 Corrections, each grounded in §2 rather than chosen: marker `manifest.json` →
 `OWNERS` (21/21 and 7/7); the `app` kind discovers on the same; the registry
-moves to `.anvil/capability-registry.json`, beside the spec and out of the
-forbidden root; `meta_directories` carries oyatie's `META_ROOTS`; three
-forbidden placement destinations replaced; `bacon.toml` admitted.
+moves to `.config/anvil/capability-registry.json`, under a root
+`ALLOWED_DOT_ROOT_DIRS` admits; three forbidden placement destinations
+replaced; `bacon.toml` admitted.
 
 ```
 anvil shape measure --repo-dir $OY --rev b4556b57fbbe… --repo oyatie/oyatie \
@@ -146,12 +168,12 @@ anvil shape measure --repo-dir $OY --rev b4556b57fbbe… --repo oyatie/oyatie \
   --registry tests/fixtures/shape/oyatie.capability-registry.json
 
 shape: oyatie/oyatie @ b4556b57fbbe (PROPOSED spec …/oyatie.shape.json)
-  units: 32 (8 conformant)
-  findings: 1523 (228 misplaced files, 420 denied edges)
+  units: 28 (4 conformant)
+  findings: 1522 (228 misplaced files, 419 denied edges)
     adapter_not_port_plus_technology 28
     crate_layer_suffix              170
     crate_name_prefix               480
-    cross_unit_non_facade           341
+    cross_unit_non_facade           340
     face_edge_denied                112
     placement_ambiguous               5
     port_defined_in_adapter           8
@@ -164,8 +186,7 @@ shape: oyatie/oyatie @ b4556b57fbbe (PROPOSED spec …/oyatie.shape.json)
 
 **"Conformant" means no missing face and no aliased satellite**
 (`src/shape/core/report.rs:118-122`). It does not mean zero findings — no unit
-has zero findings. The 8 are `community, hr, payroll, build, docs, pipeline,
-templates, third-party`.
+has zero findings. The 4 are `community`, `hr`, `payroll` and `pipeline`.
 
 The `not measured` list is the engine honouring I1: five capabilities (`bus`,
 `gateway`, `intelligence`, `observability`, `policy`) declare no crate under
@@ -235,7 +256,7 @@ is not written down here on the strength of an expectation.
 
 1. **Adopting the spec in oyatie.** The corrected proposal is one PR away, but
    `.anvil/shape.json` in oyatie is oyatie's data (ADR-0006 §3). Adopting it as
-   written starts reporting 1523 findings, and **12 of its 15 rules are
+   written starts reporting 1522 findings, and **12 of its 15 rules are
    `baseline-block-on-new` against no baseline**, so they block from day one.
    Every rule should land `advisory-until-infra` first, with the number
    published before anything is enforced.
@@ -245,14 +266,21 @@ is not written down here on the strength of an expectation.
    the repository's canonical naming authority describes another repository.
 3. **Where the capability registry lives.** ADR-0562 named
    `governance/capability-registry.json`; oyatie's own layout gate forbids a
-   root `governance/`. This proposal uses `.anvil/capability-registry.json`.
+   root `governance/` (`layout.rs:186-188`) and admits only `.cargo`,
+   `.config`, `.github`, `.githooks` among dot-directories (`layout.rs:91`).
+   `.anvil/` was tried and is refused by the same function, so this proposal
+   uses **`.config/anvil/capability-registry.json`**. No such file exists in
+   oyatie today; adopting the spec means creating it.
 
 ## 8. Open, and named rather than quiet
 
 - **`console.shape.json` discovers zero units, measured.** It uses
-  `discover:manifest.json` at `<name>/`; console's 51 files of that name sit at
-  depths 4 to 7 (`backend/crates/<x>/rest/openapi/manifest.json`), never at a
-  unit root. Its real shape is `backend/crates/<name>/<face>/`, which the spec
+  `discover:manifest.json` at `<name>/`; console has **35** files whose
+  BASENAME is `manifest.json`, at depths 4 and 6
+  (`backend/crates/<x>/<face>/openapi/manifest.json`), never at a unit root.
+  (51 paths merely end with that string, across eight basenames — the same
+  suffix-vs-basename error this document corrects for oyatie four sections
+  earlier, and re-committed here in its first draft.) Its real shape is `backend/crates/<name>/<face>/`, which the spec
   does not describe. Measured at `console@83b92700`. Correcting it needs
   console's unit model decided, so this document does not invent one;
   `tests/a_shipped_proposal_can_be_measured_test.rs` names console in
@@ -264,6 +292,9 @@ is not written down here on the strength of an expectation.
   (`build/dependency-declarations/adapters/generation-reindeer/tests/harness/`);
   `meta_directories` is about root-level meta directories, and the earlier
   claim that none existed anywhere was wrong.
-- `oyatie.shape.json` is reformatted by this change. The semantic diff is six
-  values — marker, app members, registry path, two placement destinations, one
-  allowlist entry — and the rest is `json.dump` indentation.
+- `oyatie.shape.json` is reformatted by this change, so read the semantic diff
+  rather than the textual one: the marker, the `app` kind's members, the
+  registry path, `placement.steps` (8 → 10: three forbidden destinations
+  removed, four `meta_dir` steps added, the decision destination changed), and
+  two allowlist edits (`manifest.json` dropped from `allowed_unit_root_files`,
+  `bacon.toml` added to `root_files.rules`).

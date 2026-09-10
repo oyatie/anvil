@@ -92,22 +92,34 @@ fn every_shipped_proposal_that_names_a_registry_ships_one_that_resolves() {
     }
 }
 
-/// Anvil's own config location, and the only path literal ADR-0006 §2 permits
-/// the engine to know. A registry declared anywhere else is a tenant path this
-/// repository cannot vouch for -- and the shipped one named
-/// `governance/capability-registry.json`, a directory oyatie's layout gate
-/// forbids at the root, so it could never have resolved.
-const ANVIL_CONFIG_DIR: &str = ".anvil/";
+/// Where Anvil keeps its own files inside a tenant.
+///
+/// Not a seal, and worth saying so: a lexical prefix cannot tell whether the
+/// tenant admits this directory. `.anvil/` looked like the fix for the shipped
+/// `governance/capability-registry.json` and was inadmissible for the same
+/// reason -- oyatie's `layout.rs:91` `ALLOWED_DOT_ROOT_DIRS` lists `.cargo`,
+/// `.config`, `.github`, `.githooks` and neither `governance` nor `.anvil`.
+/// `.config/anvil/` is admitted there. Whether a given tenant admits it is a
+/// question only that tenant's rules answer, and §7.3 of the plan puts it to
+/// its owner rather than assuming.
+const ANVIL_CONFIG_DIR: &str = ".config/anvil/";
 
 /// Shipped specs whose marker has NOT been demonstrated against their tenant.
 ///
 /// Not an excuse list -- a visible one. `console.shape.json` discovers on
-/// `manifest.json` at `<name>/`, and console's 51 files of that name sit at
-/// depths 4 to 7 (`backend/crates/<x>/rest/openapi/manifest.json`), never at a
-/// unit root, so it discovers zero units and reports a clean zero. Measured at
-/// console@83b92700 on 2026-09-10. Adding a spec here is a diff a reviewer
+/// `manifest.json` at `<name>/`, and console's 35 files with that BASENAME sit
+/// at depths 4 and 6 (`backend/crates/<x>/<face>/openapi/manifest.json`),
+/// never at a unit root, so it discovers zero units and reports a clean zero.
+/// (51 paths merely END with the string, across eight basenames -- the suffix
+/// error this file exists to catch, committed while describing it.) Measured
+/// at console@83b92700 on 2026-09-10. Adding a spec here is a diff a reviewer
 /// sees; shipping one silently is what this file exists to stop.
 const MARKER_NOT_DEMONSTRATED: &[&str] = &["console"];
+
+/// Shipped specs whose marker IS exercised against a tree shaped like its
+/// tenant. Both lists are explicit so that either way of adding a spec is a
+/// diff somebody reads.
+const MARKER_DEMONSTRATED: &[&str] = &["oyatie", "anvil"];
 
 /// The registry a spec names has to be somewhere Anvil can actually read it.
 #[test]
@@ -117,6 +129,21 @@ fn every_declared_registry_lives_where_anvil_keeps_its_config() {
         let Some(registry_ref) = spec.unit_registry.clone() else {
             continue;
         };
+        // `..` first: a prefix check alone admits
+        // `.config/anvil/../../governance/x.json`, which is the defect wearing
+        // the prefix.
+        let p = std::path::Path::new(&registry_ref.path);
+        assert!(
+            p.is_relative()
+                && !p
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir)),
+            "{} declares its unit registry at {:?}, which escapes upward or is absolute; \
+             a path that climbs out of Anvil's directory can name anything the tenant \
+             forbids",
+            spec_path.display(),
+            registry_ref.path
+        );
         assert!(
             registry_ref.path.starts_with(ANVIL_CONFIG_DIR),
             "{} declares its unit registry at {:?}, outside `{ANVIL_CONFIG_DIR}`. That is \
@@ -138,7 +165,11 @@ fn a_spec_whose_marker_is_undemonstrated_is_named_rather_than_quiet() {
         if MARKER_NOT_DEMONSTRATED.contains(&tenant.as_str()) {
             continue;
         }
-        let demonstrated = tenant == "oyatie" || spec_path.to_string_lossy().contains("anvil");
+        // On the FILE NAME. The earlier spelling asked whether the absolute
+        // path contained "anvil", and the repository directory is named anvil
+        // -- so every spec was "demonstrated" in every real checkout and in
+        // CI. The check passed while measuring nothing.
+        let demonstrated = MARKER_DEMONSTRATED.contains(&tenant.as_str());
         assert!(
             demonstrated,
             "{} ships a unit marker that no test exercises against a tree shaped like \

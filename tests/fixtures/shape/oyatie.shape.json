@@ -6,7 +6,7 @@
     "rust-buck2"
   ],
   "unit_registry": {
-    "path": ".anvil/capability-registry.json",
+    "path": ".config/anvil/capability-registry.json",
     "units": {
       "pointer": "/capabilities",
       "key": "name"

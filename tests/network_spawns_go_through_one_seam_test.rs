@@ -773,6 +773,15 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
             "run_with_stdin",
             "network-instance-method:shutdown",
         ),
+        // Reviewed for #267. `GitManager::lock_clone` takes the write half of a
+        // `tokio::sync::RwLock` guarding the per-repository clone-lock map. The
+        // receiver is that lock, not a socket: no socket is constructed,
+        // imported or named in the module, which exists only to own this map.
+        (
+            "src/git_manager/clone_lock.rs",
+            "lock_clone",
+            "network-instance-method:write",
+        ),
         (
             "src/github/reviews.rs",
             "submit_pr_review_with_diff",
@@ -808,11 +817,11 @@ fn no_generic_network_transport_can_be_called_by_anvil_or_library_users() {
     // separate exact set instead of weakening the outbound-method policy.
     assert_eq!(
         conservative_method_events.len(),
-        44,
+        45,
         "{conservative_method_events:#?}"
     );
     // This complete current set was reviewed by owner and source expression:
-    // 44 occurrences = the ten explicit production records above + 34 below.
+    // 45 occurrences = the eleven explicit production records above + 34 below.
     // The 34 and their digest are unchanged: newly reviewed occurrences go in
     // the explicit list, so adding one cannot perturb the historical set.
     // The former historical 38-entry digest could not be reproduced, so this

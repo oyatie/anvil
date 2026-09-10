@@ -78,12 +78,28 @@ impl EphemeralWorktree {
     /// is never checked out at the head under review -- so a filesystem read
     /// inside it is a read of this pull request rather than of whichever one
     /// the fixer last touched.
-    pub async fn verified_at(&self, head_sha: &str) -> Result<crate::git_manager::CertifiedTree> {
-        self.verify_at(head_sha).await?;
-        Ok(crate::git_manager::CertifiedTree::proven(
-            self.repo_dir.clone(),
+    ///
+    /// Takes `self`, and returns a [`CertifiedCheckout`] that owns the
+    /// worktree, because the answer holds only while the worktree exists. A
+    /// bare [`CertifiedTree`] would let it drop at the end of the constructing
+    /// expression, leaving every gate a path to nothing.
+    pub async fn verified_at(
+        self,
+        head_sha: &str,
+    ) -> Result<crate::git_manager::CertifiedCheckout> {
+        // Explicit, because `Drop` removes the worktree only through its
+        // synchronous fallback, which blocks the runtime.
+        if let Err(error) = self.verify_at(head_sha).await {
+            let _ = self.cleanup().await;
+            return Err(error);
+        }
+        // `worktree_path`, not `repo_dir`: the shared clone is never checked
+        // out at the head under review.
+        let tree = crate::git_manager::CertifiedTree::proven(
+            crate::git_manager::SubjectRoot::worktree(self.worktree_path.clone()),
             head_sha.to_string(),
-        ))
+        );
+        Ok(crate::git_manager::CertifiedCheckout::new(self, tree))
     }
 
     /// Explicit asynchronous cleanup of the ephemeral worktree
@@ -179,7 +195,7 @@ impl super::GitManager {
         repo: &str,
         pr_number: u64,
         head_sha: &str,
-    ) -> Result<super::CertifiedTree> {
+    ) -> Result<super::CertifiedCheckout> {
         let worktree = self
             .create_ephemeral_worktree(repo, pr_number, head_sha)
             .await
@@ -188,12 +204,6 @@ impl super::GitManager {
                     "no tree at {head_sha} for {repo}#{pr_number}, so nothing was certified: {e:#}"
                 )
             })?;
-        match worktree.verified_at(head_sha).await {
-            Ok(tree) => Ok(tree),
-            Err(e) => {
-                let _ = worktree.cleanup().await;
-                Err(e)
-            }
-        }
+        worktree.verified_at(head_sha).await
     }
 }

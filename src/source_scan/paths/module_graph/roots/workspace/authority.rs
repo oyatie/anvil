@@ -74,9 +74,11 @@ fn metadata_command(root: &Path, cargo_home: &Path, rustup_home: &Path) -> std::
         "--all-features",
     ]);
     // Own rustup's selection before Cargo sees --offline; contributor toolchain
-    // files and ambient RUSTUP_TOOLCHAIN cannot trigger another toolchain/install.
+    // files and ambient RUSTUP_TOOLCHAIN cannot trigger another install. The
+    // toolchain is this binary's own pin rather than a literal, which would be
+    // a second copy going stale the day the pin moves.
     command
-        .env("RUSTUP_TOOLCHAIN", "1.98.0")
+        .env("RUSTUP_TOOLCHAIN", crate::toolchain::pinned_channel())
         .env("RUSTUP_AUTO_INSTALL", "0")
         .env("CARGO_HOME", cargo_home)
         .env("RUSTUP_HOME", rustup_home);

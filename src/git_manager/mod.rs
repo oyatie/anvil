@@ -49,6 +49,17 @@ pub fn stage_excluding_receipts(repo_dir: &std::path::Path) -> Command {
 pub struct GitManager {
     repos_base_dir: PathBuf,
     worktrees_base_dir: PathBuf,
+    /// One lock per repository, guarding its shared clone's working tree.
+    ///
+    /// `Arc` because this type is `Clone`: a cloned manager with its own map
+    /// would hand out different locks for the same clone, which is a lock that
+    /// locks nothing. Sharing the map is what makes the guarantee survive the
+    /// derive.
+    clone_locks: std::sync::Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>,
+        >,
+    >,
 }
 
 impl GitManager {
@@ -57,7 +68,43 @@ impl GitManager {
         Self {
             repos_base_dir,
             worktrees_base_dir,
+            clone_locks: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
         }
+    }
+
+    /// Exclusive use of a repository's shared clone WORKING TREE.
+    ///
+    /// `ensure_repo_cloned` makes one clone per repository and every consumer
+    /// shares it. `StateManager::acquire_pr_lock` serialises a pull request
+    /// against itself, which is a different question: two DIFFERENT pull
+    /// requests hold different PR locks and reach the same working tree.
+    ///
+    /// The fixer checks out `pr-<n>` there, writes model output over minutes,
+    /// then `add -A` and pushes `HEAD:<head_branch>`. Without this, #2's
+    /// checkout can land between #1's checkout and #1's commit, and #1 pushes
+    /// #2's tree onto #1's branch. The head SHA cannot catch it -- the fixer
+    /// takes one and never reads it (`_head_sha`).
+    ///
+    /// The lock lives here because this type owns the clone. A caller cannot
+    /// hold it correctly without knowing that, and a caller that forgets is
+    /// the defect.
+    ///
+    /// LOCK ORDER: pull request, then clone. Every caller already holds its PR
+    /// lock before reaching mutation, so taking these in the other order
+    /// anywhere would deadlock against them.
+    pub async fn lock_clone(&self, repo: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        let key = repo.to_lowercase();
+        if let Some(lock) = self.clone_locks.read().await.get(&key) {
+            return lock.clone();
+        }
+        self.clone_locks
+            .write()
+            .await
+            .entry(key)
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     /// An injective owner-qualified path; parsing is not watch-list authorization.

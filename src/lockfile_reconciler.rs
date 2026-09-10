@@ -32,6 +32,12 @@ impl LockfileReconciler {
             .await?;
         let repo_dir = self.git_mgr.ensure_repo_cloned(repo).await?;
 
+        // Same shared working tree as the fixer, and the same window: this
+        // checks out `pr-<n>`, rewrites the lockfile, commits and pushes. Held
+        // across all of it.
+        let clone_lock = self.git_mgr.lock_clone(repo).await;
+        let _clone_guard = clone_lock.lock().await;
+
         // Checkout PR branch
         let mut fetch_cmd = Command::new("git");
         fetch_cmd.current_dir(&repo_dir).args([

@@ -89,6 +89,35 @@ impl LockedClone {
     }
 }
 
+impl LockedClone {
+    /// A git command in this clone, run while the guard is held.
+    ///
+    /// The borrow is what matters. `&self` is alive across the `.await`, so the
+    /// guard cannot have been released before the command ran -- the compiler
+    /// says so, and no scan has to. Building the command from a path taken out
+    /// of here and running it after the guard dropped does not typecheck.
+    ///
+    /// This is the answer to a real evasion: a caller that writes
+    /// `let dir = { let c = mgr.locked_clone(r).await?; c.root().clone() };`
+    /// releases the guard at the closing brace and mutates unprotected for the
+    /// minutes that follow. A text scan cannot see that -- it still spells
+    /// `locked_clone` -- so the extent is enforced by the borrow instead.
+    pub async fn run_git<I, S>(
+        &self,
+        args: I,
+        class: crate::exec::ExecClass,
+        what: &str,
+    ) -> anyhow::Result<std::process::Output>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.current_dir(self.as_path()).args(args);
+        crate::exec::run_bounded(cmd, class, what).await
+    }
+}
+
 impl AsRef<Path> for LockedClone {
     fn as_ref(&self) -> &Path {
         self.as_path()

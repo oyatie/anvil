@@ -55,9 +55,12 @@ fn the_gate_corpus_builds_the_tree_it_measures() {
 /// clone. Rooting only the explicit half left `compliance_guard`,
 /// `clean_architecture_guard`, `rust_language_policy` and the pre-merge
 /// evaluator still reading whichever pull request the fixer last touched --
-/// under a report signed for this head. Order matters as much as presence, so
-/// this asserts the rebinding precedes the first gate rather than merely
-/// appearing somewhere in the function.
+/// under a report signed for this head.
+///
+/// Constructed is not substituted. An earlier version of this test located the
+/// struct literal and checked it came first; deleting the one line that binds
+/// `diff_ctx` to it left the literal in place, sent every gate back to the
+/// shared clone, and this test passed. So it asserts the SHADOW.
 #[test]
 fn the_context_handed_to_the_gates_is_rooted_at_the_certified_tree() {
     let src = module_source("src/webhook/pipelines/certify", repo());
@@ -66,16 +69,22 @@ fn the_context_handed_to_the_gates_is_rooted_at_the_certified_tree() {
         .expect("the corpus entry point exists")
         .1;
 
-    let rebind = body.find("repo_working_dir: tree.root()").expect(
-        "the corpus never re-roots `diff_ctx` at the certified tree, so every gate \
-             reading `diff_ctx.repo_working_dir` measures the shared clone",
+    let substitution = body.find("let diff_ctx = &certified_ctx;").expect(
+        "the corpus builds a certified context but never binds `diff_ctx` to it, so \
+             every gate keeps reading the shared clone the caller passed in",
     );
-    let first_gate = body
-        .find("// 2.")
-        .expect("the gates follow the tree construction");
     assert!(
-        rebind < first_gate,
-        "`diff_ctx` is re-rooted at the certified tree only AFTER a gate has already \
+        body[..substitution].contains("repo_working_dir: tree.root()"),
+        "`diff_ctx` is bound to a context that was not rooted at the certified tree"
+    );
+    // A gate CALL, not a numbered comment: the comment can stay put while the
+    // call it labels moves above the substitution.
+    let first_gate = body
+        .find(".ensure_documentation_parity(")
+        .expect("the first gate call follows the tree construction");
+    assert!(
+        substitution < first_gate,
+        "`diff_ctx` is bound to the certified context only AFTER a gate has already \
          read it, so that gate measured the shared clone"
     );
 }

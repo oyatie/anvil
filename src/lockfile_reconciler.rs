@@ -36,31 +36,27 @@ impl LockfileReconciler {
         let repo_dir = clone.root();
 
         // Checkout PR branch
-        let mut fetch_cmd = Command::new("git");
-        fetch_cmd.current_dir(repo_dir).args([
-            "fetch",
-            "origin",
-            &format!("pull/{}/head", pr_number),
-            "--force",
-        ]);
-        let _ = crate::exec::run_bounded(
-            fetch_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git fetch pull head (lockfile reconciler)",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                [
+                    "fetch",
+                    "origin",
+                    &format!("pull/{}/head", pr_number),
+                    "--force",
+                ],
+                crate::exec::ExecClass::Vcs,
+                "git fetch pull head (lockfile reconciler)",
+            )
+            .await;
 
         let branch_name = format!("pr-{}", pr_number);
-        let mut checkout_cmd = Command::new("git");
-        checkout_cmd
-            .current_dir(repo_dir)
-            .args(["checkout", "-B", &branch_name, "FETCH_HEAD"]);
-        let _ = crate::exec::run_bounded(
-            checkout_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git checkout -B (lockfile reconciler)",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                ["checkout", "-B", &branch_name, "FETCH_HEAD"],
+                crate::exec::ExecClass::Vcs,
+                "git checkout -B (lockfile reconciler)",
+            )
+            .await;
 
         // 1. Rust Cargo lockfile reconciliation
         if repo_dir.join("Cargo.toml").exists() {
@@ -172,30 +168,24 @@ impl LockfileReconciler {
             "chore(deps): auto-reconcile lockfiles and documentation ledgers on PR #{}",
             pr_number
         );
-        let mut commit_cmd = Command::new("git");
-        commit_cmd
-            .current_dir(repo_dir)
-            .args(["commit", "-m", &commit_msg]);
-        let _ = crate::exec::run_bounded(
-            commit_cmd,
-            crate::exec::ExecClass::Quick,
-            "git commit (lockfile reconciler)",
-        )
-        .await;
+        let _ = clone
+            .run_git(
+                ["commit", "-m", &commit_msg],
+                crate::exec::ExecClass::Quick,
+                "git commit (lockfile reconciler)",
+            )
+            .await;
 
         // Never push to a branch that belongs to a fork; see github::fork_guard.
         crate::github::fork_guard::ensure_push_allowed(repo, pr_number, meta.is_cross_repository)?;
         let push_target = format!("HEAD:{}", meta.head_ref_name);
-        let mut push_cmd = Command::new("git");
-        push_cmd
-            .current_dir(repo_dir)
-            .args(["push", "origin", &push_target]);
-        let push_out = crate::exec::run_bounded(
-            push_cmd,
-            crate::exec::ExecClass::Vcs,
-            "git push (lockfile reconciler)",
-        )
-        .await?;
+        let push_out = clone
+            .run_git(
+                ["push", "origin", &push_target],
+                crate::exec::ExecClass::Vcs,
+                "git push (lockfile reconciler)",
+            )
+            .await?;
 
         if push_out.status.success() {
             info!(

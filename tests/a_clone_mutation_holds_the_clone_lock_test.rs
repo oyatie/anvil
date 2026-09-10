@@ -7,11 +7,15 @@
 //! green at 2467 passed, which is how a fix ends up shipping with nothing
 //! measuring it.
 //!
-//! So this measures the USE. `GitManager::locked_clone` hands back the path
-//! and the guard together, and the two-step spelling -- `ensure_repo_cloned`
-//! for the path, `lock_clone` for the lock -- lets a caller take the first and
-//! forget the second, invisibly. This refuses any production function that
-//! reaches a clone and then mutates its working tree without the guard.
+//! So this measures the USE: it refuses any production function that reaches a
+//! clone with `ensure_repo_cloned` and then mutates its working tree without
+//! the guard.
+//!
+//! What it does NOT check, because a text scan cannot: how long the guard is
+//! held. A caller that takes `locked_clone`, clones the path out of it and
+//! lets the guard drop still spells `locked_clone`, so this passes it. That
+//! extent is enforced instead by `LockedClone::run_git`, which borrows the
+//! guard across the await -- the evasion does not compile.
 
 use std::path::{Path, PathBuf};
 
@@ -47,9 +51,13 @@ fn production_sources(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
 
 /// Bodies of `fn` items, matched by brace depth from the opening `{`.
 ///
-/// Crude on purpose: a brace inside a string literal would end a body early,
-/// which can only make this scan look at LESS text and so can only produce a
-/// false pass on a defect, never a false accusation against clean code.
+/// Crude, and not sound in the direction first claimed here. A `}` inside a
+/// string ends a body early; a `{` inside one does the opposite -- depth never
+/// returns to zero, the body runs on, and it can absorb a later function whose
+/// `locked_clone` then exculpates a real offender. Measured today: 0 offenders
+/// and 0 exculpated across `src/`, but this is a heuristic that can miss, not
+/// one that cannot. The guard's EXTENT is not checked here at all -- that is
+/// `LockedClone::run_git`'s borrow, which the compiler enforces.
 fn function_bodies(source: &str) -> Vec<String> {
     let mut bodies = Vec::new();
     let bytes = source.as_bytes();

@@ -1,8 +1,8 @@
 //! The toolchain pin and the lockfile format are declared in two places that
 //! must agree: `rust-toolchain.toml` and the `Cargo.lock` header. A drift
-//! between them is how CI ends up building on a toolchain nobody chose — which
-//! is exactly how Anvil ran on 1.97.1 before this pin existed: the host had it
-//! installed, CI said `stable`, and the two agreed by coincidence.
+//! between them is how CI ends up building on a toolchain nobody chose. Anvil
+//! once ran on 1.97.1 by accident: the host had it installed, CI said `stable`,
+//! and the two agreed by coincidence.
 //!
 //! `[package] rust-version` was the third place, and is gone. An MSRV is a
 //! contract with consumers; anvil is `publish = false` with no dependent, so

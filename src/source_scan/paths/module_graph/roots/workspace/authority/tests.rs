@@ -21,12 +21,9 @@ fn metadata_command_is_full_locked_offline_and_environment_cleared() {
         .get_envs()
         .collect::<std::collections::BTreeMap<_, _>>();
     assert!(environment.contains_key(std::ffi::OsStr::new("ANVIL_INTERNAL_NON_MODEL_ENV_CLEARED")));
-    // The repository's declared pin, read from disk here rather than quoted.
-    // Quoting it makes this test a tripwire on a constant: it fails when the
-    // pin moves and says nothing about whether the command carries the right
-    // toolchain. What is required is the relationship -- the command spawns
-    // cargo under whatever channel this repository declares -- so that putting
-    // a literal back is what fails.
+    // Read from disk, not quoted. A literal makes this a tripwire on a
+    // constant: it fails when the pin moves and says nothing about whether the
+    // command carries the right toolchain. The relationship is the assertion.
     let declared = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rust-toolchain.toml"),
     )

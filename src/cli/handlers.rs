@@ -184,9 +184,7 @@ pub async fn handle_cli(state: AppState) -> Result<()> {
         } => {
             let declared = crate::toolchain::read(&repo_dir);
             let Some(target) = crate::toolchain::Channel::parse(&to) else {
-                println!(
-                    "❌ `{to}` is not a channel: expected a release like `1.98.1` or a dated nightly like `nightly-2026-09-10`"
-                );
+                println!("❌ `{to}` is not a channel: want `1.98.1` or `nightly-YYYY-MM-DD`");
                 return Ok(());
             };
             let Some(current) = declared.channel else {

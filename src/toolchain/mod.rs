@@ -16,8 +16,8 @@
 //! has not moved is stranded. `anvil` is `publish = false` with no dependent
 //! in the organisation, so that contract has no counterparty. A promise with
 //! nobody on the other side is not caution, it is a second number to keep
-//! honest -- and this repository previously carried `rust-version` that no job
-//! ever built under, which is a claim rather than a measurement.
+//! honest. The `rust-version` this repository declared was never built under by
+//! any job, which makes it a claim rather than a measurement.
 //!
 //! The principle that number was meant to serve is kept and moved: what is
 //! promised must be exercised. The pin is exercised because every CI job

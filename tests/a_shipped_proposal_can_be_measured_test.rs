@@ -89,20 +89,52 @@ fn every_shipped_proposal_that_names_a_registry_ships_one_that_resolves() {
              against it would report zero findings without measuring anything",
             spec_path.display()
         );
+
+        // Per KIND, not just in total. A `meta` kind shipped here enrolling
+        // nothing, and the spec still resolved 21 units, so no test noticed --
+        // the same "reads as though it had been checked" shape this file
+        // exists to close, one level down. `discover:` kinds enrol at measure
+        // time against a tree and cannot resolve here; registry-backed ones
+        // can and must.
+        let resolved_kinds: std::collections::BTreeSet<&str> =
+            resolved.units.iter().map(|u| u.kind.as_str()).collect();
+        for (name, kind) in &spec.unit_kinds {
+            if kind.members.starts_with("discover:") {
+                continue;
+            }
+            assert!(
+                resolved_kinds.contains(name.as_str()),
+                "{} declares unit kind {name:?}, which enrols from the registry and \
+                 resolves nothing. A kind with no members produces no findings and no \
+                 failures, and reads exactly like one that found nothing wrong",
+                spec_path.display()
+            );
+        }
     }
 }
 
-/// Where Anvil keeps its own files inside a tenant.
+/// Tenants whose declared registry location the tenant does not admit yet, and
+/// the tenant change each one needs.
 ///
-/// Not a seal, and worth saying so: a lexical prefix cannot tell whether the
-/// tenant admits this directory. `.anvil/` looked like the fix for the shipped
-/// `governance/capability-registry.json` and was inadmissible for the same
-/// reason -- oyatie's `layout.rs:91` `ALLOWED_DOT_ROOT_DIRS` lists `.cargo`,
-/// `.config`, `.github`, `.githooks` and neither `governance` nor `.anvil`.
-/// `.config/anvil/` is admitted there. Whether a given tenant admits it is a
-/// question only that tenant's rules answer, and §7.3 of the plan puts it to
-/// its owner rather than assuming.
-const ANVIL_CONFIG_DIR: &str = ".config/anvil/";
+/// Three rounds put oyatie's registry in three inadmissible places:
+/// `governance/` (a `FORBIDDEN_NAMES` root), `.anvil/` (absent from
+/// `ALLOWED_DOT_ROOT_DIRS`), and `.config/anvil/` (admitted ROOT, but
+/// `layout/root_meta.rs:44-50` matches exactly `[".config", "nextest.toml"]`).
+/// Each time the check here was a lexical rule invented in this file, and each
+/// time it agreed with the guess.
+///
+/// Anvil cannot decide admissibility. The predicate is a few lines of code
+/// inside the tenant, dispatched per root, and unguessable from outside. So
+/// this stops guessing: a declared location that the tenant does not admit is
+/// named here with the change that would admit it, which is a diff a reviewer
+/// sees and a question its owner can answer.
+const PATH_NOT_YET_ADMITTED: &[(&str, &str)] = &[(
+    "oyatie",
+    "`.config/anvil/` needs validate_config_path (pipeline/core/admission/src/layout/\
+     root_meta.rs:44-50) to admit more than the nextest profile. All four of oyatie's \
+     dot-roots carry closed schemas and no root is blessed for tool config, so which \
+     one opens is a ruling rather than a path to pick",
+)];
 
 /// Shipped specs whose marker has NOT been demonstrated against their tenant.
 ///
@@ -121,7 +153,8 @@ const MARKER_NOT_DEMONSTRATED: &[&str] = &["console"];
 /// diff somebody reads.
 const MARKER_DEMONSTRATED: &[&str] = &["oyatie", "anvil"];
 
-/// The registry a spec names has to be somewhere Anvil can actually read it.
+/// A declared registry location is either one the tenant admits, or one named
+/// as not-yet-admitted with the change it needs.
 #[test]
 fn every_declared_registry_lives_where_anvil_keeps_its_config() {
     for spec_path in shipped_specs() {
@@ -129,27 +162,26 @@ fn every_declared_registry_lives_where_anvil_keeps_its_config() {
         let Some(registry_ref) = spec.unit_registry.clone() else {
             continue;
         };
-        // `..` first: a prefix check alone admits
-        // `.config/anvil/../../governance/x.json`, which is the defect wearing
-        // the prefix.
+        // A path that climbs can name anything the tenant forbids, whatever
+        // its prefix.
         let p = std::path::Path::new(&registry_ref.path);
         assert!(
             p.is_relative()
                 && !p
                     .components()
                     .any(|c| matches!(c, std::path::Component::ParentDir)),
-            "{} declares its unit registry at {:?}, which escapes upward or is absolute; \
-             a path that climbs out of Anvil's directory can name anything the tenant \
-             forbids",
+            "{} declares its unit registry at {:?}, which escapes upward or is absolute",
             spec_path.display(),
             registry_ref.path
         );
+        let tenant = tenant_of(&spec_path);
         assert!(
-            registry_ref.path.starts_with(ANVIL_CONFIG_DIR),
-            "{} declares its unit registry at {:?}, outside `{ANVIL_CONFIG_DIR}`. That is \
-             a tenant path Anvil cannot vouch for: the tenant's own layout rules may \
-             forbid it, and then the spec resolves nothing while every rule reports zero \
-             findings",
+            PATH_NOT_YET_ADMITTED.iter().any(|(t, _)| *t == tenant),
+            "{} declares a unit registry at {:?} and {tenant:?} is not named in \
+             PATH_NOT_YET_ADMITTED. Anvil cannot tell whether a tenant admits a \
+             directory -- that predicate is code inside the tenant -- so a declared \
+             location is either already admitted there or named here with the change \
+             it needs",
             spec_path.display(),
             registry_ref.path
         );

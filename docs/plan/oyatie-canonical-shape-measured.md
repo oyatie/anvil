@@ -133,13 +133,31 @@ document was supplied
 ```
 
 `governance/capability-registry.json` does not exist in oyatie, and cannot —
-`governance` is in `FORBIDDEN_NAMES` above. The first correction moved it to
-`.anvil/`, which is inadmissible for the same reason: `layout.rs:91`
-`ALLOWED_DOT_ROOT_DIRS` is `.cargo`, `.config`, `.github`, `.githooks`, and
-`layout.rs:196-198` emits ``unknown root `.anvil` `` exactly as `:186-188`
-rejects `governance/`. One forbidden root swapped for another. It is now
-`.config/anvil/capability-registry.json`, under a root the tenant's own gate
-admits. Its `unit_marker`, `manifest.json`,
+`governance` is in `FORBIDDEN_NAMES` above.
+
+Three corrections put it in three inadmissible places, and the third is the
+instructive one:
+
+| declared | refused by | why |
+| --- | --- | --- |
+| `governance/capability-registry.json` | `layout.rs:186-188` | `governance` is a `FORBIDDEN_NAMES` root |
+| `.anvil/capability-registry.json` | `layout.rs:196-198` | absent from `ALLOWED_DOT_ROOT_DIRS` |
+| `.config/anvil/capability-registry.json` | `layout/root_meta.rs:44-50` | root admitted, PATH is not: `matches!(parts, [".config", "nextest.toml"])` |
+
+Each time the check was a lexical rule written inside Anvil, and each time it
+agreed with the guess. **oyatie's admissibility predicate is code, dispatched
+per root** (`layout.rs:201-209`), and every one of its four dot-roots carries a
+closed schema: `.config` admits one file, `.githooks` two, `.github` a fixed
+set, `.cargo` its own. Every non-dot root is a capability or forbidden.
+
+So the registry has **no admissible home in oyatie today**, established two
+ways: the `oyatie` session enumerated the four schemas, and the review executed
+oyatie's own `layout_violations` against candidate paths with a control that
+returns `[]`. The spec still declares `.config/anvil/capability-registry.json`
+-- the semantically right home for tool config -- and
+`tests/a_shipped_proposal_can_be_measured_test.rs` names it in
+`PATH_NOT_YET_ADMITTED` with the tenant change it needs, rather than Anvil
+inventing a fourth guess and a lexical rule that would agree with it. Its `unit_marker`, `manifest.json`,
 is also absent from every capability and product root: three files in the repo
 carry that exact name (a test fixture and two sovereignty packs), and a fourth,
 `client-manifest.json`, only ends with it.
@@ -158,9 +176,9 @@ the same file is the defect this repository keeps producing. They are now
 
 Corrections, each grounded in §2 rather than chosen: marker `manifest.json` →
 `OWNERS` (21/21 and 7/7); the `app` kind discovers on the same; the registry
-moves to `.config/anvil/capability-registry.json`, under a root
-`ALLOWED_DOT_ROOT_DIRS` admits; three forbidden placement destinations
-replaced; `bacon.toml` admitted.
+declares `.config/anvil/capability-registry.json` and is recorded as
+not-yet-admitted; three forbidden placement destinations replaced;
+`bacon.toml` admitted; the `meta` unit kind dropped.
 
 ```
 anvil shape measure --repo-dir $OY --rev b4556b57fbbe… --repo oyatie/oyatie \
@@ -264,13 +282,17 @@ is not written down here on the strength of an expectation.
    directories that do not exist, deferred to by four documents and enforced by
    nothing. Retiring or rewriting it is a decision; leaving it Accepted means
    the repository's canonical naming authority describes another repository.
-3. **Where the capability registry lives.** ADR-0562 named
-   `governance/capability-registry.json`; oyatie's own layout gate forbids a
-   root `governance/` (`layout.rs:186-188`) and admits only `.cargo`,
-   `.config`, `.github`, `.githooks` among dot-directories (`layout.rs:91`).
-   `.anvil/` was tried and is refused by the same function, so this proposal
-   uses **`.config/anvil/capability-registry.json`**. No such file exists in
-   oyatie today; adopting the spec means creating it.
+3. **Which root opens for tool config.** This is the ruling, and it is not a
+   path to pick. oyatie has no admissible home for a file like this: all four
+   dot-roots carry closed schemas (`.config` admits exactly
+   `.config/nextest.toml`), every non-dot root is a capability, and
+   `governance`, `specs`, `tools`, `libs`, `infra`, `plan`, `tests` are
+   forbidden. Three guesses were refused by three different rules. The question
+   is whether `validate_config_path` extends to admit `.config/anvil/`, or a
+   new root is admitted, or the registry lives somewhere already-permissive --
+   `build/` returns no violation today, but only because `build/` is
+   unconstrained, which is permissiveness rather than endorsement. Anvil cannot
+   settle this: the predicate is oyatie's code.
 
 ## 8. Open, and named rather than quiet
 
@@ -292,6 +314,11 @@ is not written down here on the strength of an expectation.
   (`build/dependency-declarations/adapters/generation-reindeer/tests/harness/`);
   `meta_directories` is about root-level meta directories, and the earlier
   claim that none existed anywhere was wrong.
+- The `meta` unit kind is dropped. It enrolled zero units after the META_ROOTS
+  revert and nothing noticed -- a declared kind that produces no findings and
+  no failures reads exactly like one that found nothing wrong, which is this
+  document's own subject one level down. The test now asserts every
+  registry-backed kind resolves at least one unit.
 - `oyatie.shape.json` is reformatted by this change, so read the semantic diff
   rather than the textual one: the marker, the `app` kind's members, the
   registry path, `placement.steps` (8 → 10: three forbidden destinations

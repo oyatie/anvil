@@ -223,7 +223,12 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: nightly
     steps:
+      # Several gates measure this repository's own history and refuse to
+      # report a pass over a shallow clone, which is the right refusal and the
+      # reason the suite needs the full history here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - name: Resolve latest nightly
         uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
         with:

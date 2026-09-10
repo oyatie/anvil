@@ -189,11 +189,11 @@ impl CertifiedCheckout {
         self.tree.as_path()
     }
 
-    pub fn tree(&self) -> &CertifiedTree {
-        &self.tree
-    }
-
-    pub fn head_sha(&self) -> &str {
-        self.tree.head_sha()
+    /// The root, borrowed. Deliberately not a `&CertifiedTree`: that type is
+    /// `Clone`, so handing one out lets a caller take an owned tree whose path
+    /// outlives the worktree backing it -- the escape this type exists to
+    /// close.
+    pub fn root(&self) -> &SubjectRoot {
+        self.tree.root()
     }
 }

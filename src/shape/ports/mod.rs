@@ -10,7 +10,9 @@ pub use crate::shape::core::profile::LanguageProfile;
 pub use crate::shape::core::report::{
     Finding, Fix, RuleId, ShapeDistance, ShapeReport, SpecSource, UnitConformance,
 };
-pub use crate::shape::core::resolve::{DiscoveryRule, ResolvedSpec, ResolvedUnit, resolve};
+pub use crate::shape::core::resolve::{
+    DiscoveryRule, Discriminator, ResolvedSpec, ResolvedUnit, resolve,
+};
 pub use crate::shape::core::skeleton::discover_units;
 pub use crate::shape::core::spec::{RuleMode, SCHEMA_V1, ShapeSpec, SpecError};
 pub use crate::shape::core::tree::{SourceError, TreeSource};

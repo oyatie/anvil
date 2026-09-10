@@ -68,6 +68,17 @@ impl SubjectRoot {
         Self(dir)
     }
 
+    /// An ephemeral worktree checked out at a named commit and verified there.
+    ///
+    /// Distinct from [`Self::cloned`] on purpose: the shared clone is a
+    /// repository, this is a repository AT A COMMIT. `verified_at` is the only
+    /// caller, after `rev-parse` agreed, and the worktree it names is kept
+    /// alive by [`crate::git_manager::CertifiedCheckout`] for as long as the
+    /// root is usable.
+    pub(crate) fn worktree(dir: PathBuf) -> Self {
+        Self(dir)
+    }
+
     /// A root asserted rather than cloned, naming why.
     ///
     /// The escape hatch is deliberate and deliberately awkward. Some callers
@@ -150,4 +161,41 @@ pub enum Uncloned {
     /// which tree to work on, which is the one case where a human, and not
     /// the clone step, is the authority.
     OperatorSupplied,
+}
+
+/// A [`CertifiedTree`] and the worktree that makes it true.
+///
+/// The tree's path is only a fact while the worktree exists: `Drop` removes the
+/// directory. Returning the tree alone would let the worktree die at the end of
+/// the constructing expression, before any gate read the path. Holding both
+/// together makes that lifetime the compiler's problem rather than a comment's.
+pub struct CertifiedCheckout {
+    _worktree: crate::git_manager::worktree::EphemeralWorktree,
+    tree: CertifiedTree,
+}
+
+impl CertifiedCheckout {
+    pub(crate) fn new(
+        worktree: crate::git_manager::worktree::EphemeralWorktree,
+        tree: CertifiedTree,
+    ) -> Self {
+        Self {
+            _worktree: worktree,
+            tree,
+        }
+    }
+
+    pub fn as_path(&self) -> &Path {
+        self.tree.as_path()
+    }
+
+    /// The root, borrowed.
+    ///
+    /// Narrower than handing out a `&CertifiedTree`, and not a seal:
+    /// [`SubjectRoot`] derives `Clone` as well, so `checkout.root().clone()`
+    /// still yields an owned path that can outlive the worktree. What keeps
+    /// the one site doing that sound is drop order, not this signature.
+    pub fn root(&self) -> &SubjectRoot {
+        self.tree.root()
+    }
 }

@@ -4,7 +4,7 @@
 
 use super::placement::{DepFacts, PathFacts, Placement, RoleFacts, place};
 use super::report::{Finding, Fix, RuleId, UnitConformance};
-use super::resolve::{ResolvedSpec, ResolvedUnit};
+use super::resolve::{Discriminator, ResolvedSpec, ResolvedUnit};
 use super::tree::TreeSource;
 use std::collections::BTreeSet;
 
@@ -25,7 +25,17 @@ pub fn discover_units(spec: &ResolvedSpec, tree: &dyn TreeSource) -> Vec<Resolve
                 continue;
             }
             let root = format!("{prefix}{name}{suffix}");
-            if tree.contains(&format!("{root}{}", rule.marker)) {
+            let present = match &rule.how {
+                Discriminator::Marker(marker) => tree.contains(&format!("{root}{marker}")),
+                Discriminator::Faces => {
+                    spec.spec.skeletons.get(&rule.skeleton).is_some_and(|skel| {
+                        skel.faces
+                            .values()
+                            .any(|dir| tree.has_dir(&format!("{root}{dir}")))
+                    })
+                }
+            };
+            if present {
                 let over = spec.spec.units.get(name);
                 units.push(ResolvedUnit {
                     name: name.to_string(),

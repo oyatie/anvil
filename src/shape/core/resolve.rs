@@ -20,8 +20,21 @@ pub struct ResolvedUnit {
 pub struct DiscoveryRule {
     pub kind: String,
     pub root_pattern: String,
-    pub marker: String,
+    pub how: Discriminator,
     pub skeleton: String,
+}
+
+/// What makes a directory a unit.
+///
+/// One value rather than a marker string plus a flag: that pairing left the
+/// string meaningless in one of its two states, with nothing but a convention
+/// saying which field to read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Discriminator {
+    /// A file the unit root must contain.
+    Marker(String),
+    /// Any directory the skeleton declares as a face.
+    Faces,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +62,13 @@ pub fn resolve(
             MembersSource::Discover { marker } => discovery.push(DiscoveryRule {
                 kind: kind_name.clone(),
                 root_pattern: kind.root.clone(),
-                marker,
+                how: Discriminator::Marker(marker),
+                skeleton: kind.skeleton.clone(),
+            }),
+            MembersSource::Faces => discovery.push(DiscoveryRule {
+                kind: kind_name.clone(),
+                root_pattern: kind.root.clone(),
+                how: Discriminator::Faces,
                 skeleton: kind.skeleton.clone(),
             }),
             MembersSource::Registry | MembersSource::RegistryMetaDirs => {
